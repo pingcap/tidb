@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "set",
+    srcs = [
+        "float64_set.go",
+        "int_set.go",
+        "mem_aware_map.go",
+        "set_with_memory_usage.go",
+        "string_set.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/set",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/hack",
+        "//util/memory",
+    ],
+)
+
+go_test(
+    name = "set_test",
+    timeout = "short",
+    srcs = [
+        "float64_set_test.go",
+        "int_set_test.go",
+        "main_test.go",
+        "mem_aware_map_test.go",
+        "set_with_memory_usage_test.go",
+        "string_set_test.go",
+    ],
+    embed = [":set"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

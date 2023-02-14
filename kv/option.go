@@ -14,6 +14,12 @@
 
 package kv
 
+import (
+	"context"
+
+	"github.com/tikv/client-go/v2/util"
+)
+
 // Transaction options
 const (
 	// BinlogInfo contains the binlog data and client.
@@ -26,7 +32,7 @@ const (
 	Priority
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	// SyncLog is not used anymore.
 	SyncLog
 	// KeyOnly retrieve only keys, it can be used in scan now.
 	KeyOnly
@@ -62,12 +68,37 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTag indicates the resource group of the kv request.
+	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
+	// CommitTSUpperBoundChec is used by cached table
+	// The commitTS must be greater than all the write lock lease of the visited cached table.
+	CommitTSUpperBoundCheck
+	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
+	// additional logic before and after the underlying client-go RPC request.
+	RPCInterceptor
+	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
+	// Save them here to reduce redundant computations.
+	TableToColumnMaps
+	// AssertionLevel controls how strict the assertions on data during transactions should be.
+	AssertionLevel
+	// RequestSourceInternal set request source scope of transaction.
+	RequestSourceInternal
+	// RequestSourceType set request source type of the current statement.
+	RequestSourceType
+	// ReplicaReadAdjuster set the adjust function of cop requsts.
+	ReplicaReadAdjuster
+	// ScanBatchSize set the iter scan batch size.
+	ScanBatchSize
+	// TxnSource set the source of this transaction.
+	TxnSource
+	// ResourceGroupName set the bind resource group name.
+	ResourceGroupName
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -82,6 +113,12 @@ const (
 	ReplicaReadMixed
 	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
 	ReplicaReadClosest
+	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone if the response size exceeds certain threshold'
+	ReplicaReadClosestAdaptive
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
+	// ReplicaReadPreferLeader stands for 'read from leader and auto-turn to followers if leader is abnormal'.
+	ReplicaReadPreferLeader
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
@@ -93,3 +130,60 @@ func (r ReplicaReadType) IsFollowerRead() bool {
 func (r ReplicaReadType) IsClosestRead() bool {
 	return r == ReplicaReadClosest
 }
+
+// RequestSourceKey is used as the key of request source type in context.
+var RequestSourceKey = util.RequestSourceKey
+
+// RequestSource is the scope and type of the request and it's passed by go context.
+type RequestSource = util.RequestSource
+
+// WithInternalSourceType create context with internal source.
+var WithInternalSourceType = util.WithInternalSourceType
+
+// GetInternalSourceType get internal source
+func GetInternalSourceType(ctx context.Context) string {
+	v := ctx.Value(util.RequestSourceKey)
+	if v == nil {
+		return ""
+	}
+	return v.(util.RequestSource).RequestSourceType
+}
+
+const (
+	// InternalTxnOthers is the type of requests that consume low resources.
+	// This reduces the size of metrics.
+	InternalTxnOthers = util.InternalTxnOthers
+	// InternalTxnGC is the type of GC txn.
+	InternalTxnGC = util.InternalTxnGC
+	// InternalTxnBootstrap is the type of TiDB bootstrap txns.
+	InternalTxnBootstrap = InternalTxnOthers
+	// InternalTxnMeta is the type of the miscellaneous meta usage.
+	InternalTxnMeta = util.InternalTxnMeta
+	// InternalTxnDDL is the type of inner txns in ddl module.
+	InternalTxnDDL = "ddl"
+	// InternalTxnBackfillDDLPrefix is the prefix of the types of DDL operations needs backfilling.
+	InternalTxnBackfillDDLPrefix = "ddl_"
+	// InternalTxnCacheTable is the type of cache table usage.
+	InternalTxnCacheTable = InternalTxnOthers
+	// InternalTxnStats is the type of statistics txn.
+	InternalTxnStats = "stats"
+	// InternalTxnBindInfo is the type of bind info txn.
+	InternalTxnBindInfo = InternalTxnOthers
+	// InternalTxnSysVar is the type of sys var txn.
+	InternalTxnSysVar = InternalTxnOthers
+	// InternalTxnTelemetry is the type of telemetry.
+	InternalTxnTelemetry = InternalTxnOthers
+	// InternalTxnAdmin is the type of admin operations.
+	InternalTxnAdmin = "admin"
+	// InternalTxnPrivilege is the type of privilege txn.
+	InternalTxnPrivilege = InternalTxnOthers
+	// InternalTxnTools is the type of tools usage of TiDB.
+	// Do not classify different tools by now.
+	InternalTxnTools = "tools"
+	// InternalTxnBR is the type of BR usage.
+	InternalTxnBR = InternalTxnTools
+	// InternalTxnTrace handles the trace statement.
+	InternalTxnTrace = "Trace"
+	// InternalTxnTTL is the type of TTL usage
+	InternalTxnTTL = "TTL"
+)

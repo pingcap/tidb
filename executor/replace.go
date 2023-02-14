@@ -23,12 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -43,6 +44,9 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -89,6 +93,10 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	if err != nil {
 		return false, err
 	}
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return false, nil
 }
@@ -99,11 +107,7 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 		return false, nil
 	}
 	for i, ai := range a {
-		collation := ai.Collation()
-		// We should use binary collation to compare datum, otherwise the result will be incorrect
-		ai.SetCollation(charset.CollationBin)
-		v, err := ai.CompareDatum(sc, &b[i])
-		ai.SetCollation(collation)
+		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -167,22 +171,18 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 // removeIndexRow removes the row which has a duplicated key.
 // the return values:
-//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
-//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
-//              and the row was removed.
-//     3. error: the error.
+//  1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//  2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//     and the row was removed.
+//  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKey)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 		if err != nil {
-			if kv.IsErrNotFound(err) {
-				continue
-			}
 			return false, false, err
 		}
-		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
-		if err != nil {
-			return false, true, err
+		if handle == nil {
+			continue
 		}
 		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
@@ -226,7 +226,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
@@ -271,4 +271,19 @@ func (e *ReplaceExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

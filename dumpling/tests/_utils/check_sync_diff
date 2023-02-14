@@ -10,6 +10,11 @@ check_time=${2-10}
 
 LOG=$DUMPLING_OUTPUT_DIR/sync_diff_inspector.log
 
+# change output dir "./output" to "$DUMPLING_OUTPUT_DIR/output"
+DUMPLING_OUTPUT_DIR_REGEX=$(echo "$DUMPLING_OUTPUT_DIR/output" | sed -e 's/\//\\\//g')
+sed "s/.\/output/${DUMPLING_OUTPUT_DIR_REGEX}/g" $conf > $DUMPLING_OUTPUT_DIR/diff_config.toml
+conf=$DUMPLING_OUTPUT_DIR/diff_config.toml
+
 i=0
 while [ $i -lt $check_time ]
 do

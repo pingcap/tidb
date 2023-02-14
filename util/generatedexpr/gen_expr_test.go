@@ -18,14 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/stretchr/testify/require"
-
 	_ "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseExpression(t *testing.T) {
-	t.Parallel()
-
 	node, err := ParseExpression("json_extract(a, '$.a')")
 	require.NoError(t, err)
 	require.Equal(t, "json_extract", node.(*ast.FuncCallExpr).FnName.L)

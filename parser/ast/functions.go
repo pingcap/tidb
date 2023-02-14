@@ -64,6 +64,10 @@ const (
 	Like               = "like"
 	Case               = "case"
 	Regexp             = "regexp"
+	RegexpLike         = "regexp_like"
+	RegexpSubstr       = "regexp_substr"
+	RegexpInStr        = "regexp_instr"
+	RegexpReplace      = "regexp_replace"
 	IsNull             = "isnull"
 	IsTruthWithoutNull = "istrue" // Avoid name conflict with IsTrue in github/pingcap/check.
 	IsTruthWithNull    = "istrue_with_null"
@@ -182,6 +186,7 @@ const (
 	// For more info, please see AsOfClause.
 	TiDBBoundedStaleness = "tidb_bounded_staleness"
 	TiDBParseTso         = "tidb_parse_tso"
+	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions
 	ASCII           = "ascii"
@@ -257,6 +262,7 @@ const (
 	TiDBVersion          = "tidb_version"
 	TiDBIsDDLOwner       = "tidb_is_ddl_owner"
 	TiDBDecodePlan       = "tidb_decode_plan"
+	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
@@ -279,6 +285,7 @@ const (
 	IsIPv4Mapped    = "is_ipv4_mapped"
 	IsIPv6          = "is_ipv6"
 	IsUsedLock      = "is_used_lock"
+	IsUUID          = "is_uuid"
 	MasterPosWait   = "master_pos_wait"
 	NameConst       = "name_const"
 	ReleaseAllLocks = "release_all_locks"
@@ -288,10 +295,9 @@ const (
 	UUIDToBin       = "uuid_to_bin"
 	BinToUUID       = "bin_to_uuid"
 	VitessHash      = "vitess_hash"
-	// get_lock() and release_lock() is parsed but do nothing.
-	// It is used for preventing error in Ruby's activerecord migrations.
-	GetLock     = "get_lock"
-	ReleaseLock = "release_lock"
+	TiDBShard       = "tidb_shard"
+	GetLock         = "get_lock"
+	ReleaseLock     = "release_lock"
 
 	// encryption and compression functions
 	AesDecrypt               = "aes_decrypt"
@@ -309,6 +315,7 @@ const (
 	SHA1                     = "sha1"
 	SHA                      = "sha"
 	SHA2                     = "sha2"
+	SM3                      = "sm3"
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
@@ -324,7 +331,9 @@ const (
 	JSONInsert        = "json_insert"
 	JSONReplace       = "json_replace"
 	JSONRemove        = "json_remove"
+	JSONOverlaps      = "json_overlaps"
 	JSONContains      = "json_contains"
+	JSONMemberOf      = "json_memberof"
 	JSONContainsPath  = "json_contains_path"
 	JSONValid         = "json_valid"
 	JSONArrayAppend   = "json_array_append"
@@ -334,6 +343,7 @@ const (
 	JSONPretty        = "json_pretty"
 	JSONQuote         = "json_quote"
 	JSONSearch        = "json_search"
+	JSONStorageFree   = "json_storage_free"
 	JSONStorageSize   = "json_storage_size"
 	JSONDepth         = "json_depth"
 	JSONKeys          = "json_keys"
@@ -372,21 +382,9 @@ type FuncCallExpr struct {
 
 // Restore implements Node interface.
 func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
-	var specialLiteral string
-	switch n.FnName.L {
-	case DateLiteral:
-		specialLiteral = "DATE "
-	case TimeLiteral:
-		specialLiteral = "TIME "
-	case TimestampLiteral:
-		specialLiteral = "TIMESTAMP "
-	}
-	if specialLiteral != "" {
-		ctx.WritePlain(specialLiteral)
-		if err := n.Args[0].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
-		}
-		return nil
+	done, err := n.customRestore(ctx)
+	if done {
+		return err
 	}
 
 	if len(n.Schema.String()) != 0 {
@@ -487,29 +485,70 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
+	var specialLiteral string
+	switch n.FnName.L {
+	case DateLiteral:
+		specialLiteral = "DATE "
+	case TimeLiteral:
+		specialLiteral = "TIME "
+	case TimestampLiteral:
+		specialLiteral = "TIMESTAMP "
+	}
+	if specialLiteral != "" {
+		ctx.WritePlain(specialLiteral)
+		if err := n.Args[0].Restore(ctx); err != nil {
+			return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Expr")
+		}
+		return true, nil
+	}
+	if n.FnName.L == JSONMemberOf {
+		if err := n.Args[0].Restore(ctx); err != nil {
+			return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
+		}
+		ctx.WriteKeyWord(" MEMBER OF ")
+		ctx.WritePlain("(")
+		if err := n.Args[1].Restore(ctx); err != nil {
+			return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
+		}
+		ctx.WritePlain(")")
+		return true, nil
+	}
+	return false, nil
+}
+
 // Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, "%s(", n.FnName.L)
 	if !n.specialFormatArgs(w) {
+		fmt.Fprintf(w, "%s(", n.FnName.L)
 		for i, arg := range n.Args {
 			arg.Format(w)
 			if i != len(n.Args)-1 {
 				fmt.Fprint(w, ", ")
 			}
 		}
+		fmt.Fprint(w, ")")
 	}
-	fmt.Fprint(w, ")")
 }
 
 // specialFormatArgs formats argument list for some special functions.
 func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 	switch n.FnName.L {
 	case DateAdd, DateSub, AddDate, SubDate:
+		fmt.Fprintf(w, "%s(", n.FnName.L)
 		n.Args[0].Format(w)
 		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
 		fmt.Fprint(w, " ")
 		n.Args[2].Format(w)
+		fmt.Fprint(w, ")")
+		return true
+	case JSONMemberOf:
+		n.Args[0].Format(w)
+		fmt.Fprint(w, " MEMBER OF ")
+		fmt.Fprint(w, " (")
+		n.Args[1].Format(w)
+		fmt.Fprint(w, ")")
 		return true
 	}
 	return false

@@ -51,6 +51,17 @@ func (c *clientRedirector) Close() error {
 	return err
 }
 
+func (c *clientRedirector) CloseAddr(addr string) error {
+	err := c.mockClient.CloseAddr(addr)
+	if err != nil {
+		return err
+	}
+	if c.rpcClient != nil {
+		err = c.rpcClient.CloseAddr(addr)
+	}
+	return err
+}
+
 func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.StoreTp == tikvrpc.TiDB {
 		c.Once.Do(func() {

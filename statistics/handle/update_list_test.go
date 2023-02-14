@@ -22,11 +22,10 @@ import (
 )
 
 func TestInsertAndDelete(t *testing.T) {
-	t.Parallel()
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		feedback: statistics.NewQueryFeedbackMap(),
 	}
+	h.feedback.data = statistics.NewQueryFeedbackMap()
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())

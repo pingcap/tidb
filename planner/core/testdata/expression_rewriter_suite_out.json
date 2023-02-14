@@ -63,5 +63,18 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestBitFuncsReturnType",
+    "Cases": [
+      {
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:bit_or(Column#6)->Column#4",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:bit_or(cast(mul(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY)), bigint(20) BINARY))->Column#6",
+          "    └─TableFullScan 1.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
   }
 ]

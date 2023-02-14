@@ -3,11 +3,13 @@
 package summary
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/go-units"
+	berror "github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -44,12 +46,18 @@ type LogCollector interface {
 
 	SetSuccessStatus(success bool)
 
+	NowDureTime() time.Duration
+
+	AdjustStartTimeToEarlierTime(t time.Duration)
+
 	Summary(name string)
+
+	Log(msg string, fields ...zap.Field)
 }
 
 type logFunc func(msg string, fields ...zap.Field)
 
-var collector LogCollector = NewLogCollector(log.Info)
+var collector = NewLogCollector(log.Info)
 
 // InitCollector initilize global collector instance.
 func InitCollector( // revive:disable-line:flag-parameter
@@ -88,7 +96,7 @@ type logCollector struct {
 }
 
 // NewLogCollector returns a new LogCollector.
-func NewLogCollector(log logFunc) LogCollector {
+func NewLogCollector(logf logFunc) LogCollector {
 	return &logCollector{
 		successUnitCount: 0,
 		failureUnitCount: 0,
@@ -98,7 +106,7 @@ func NewLogCollector(log logFunc) LogCollector {
 		durations:        make(map[string]time.Duration),
 		ints:             make(map[string]int),
 		uints:            make(map[string]uint64),
-		log:              log,
+		log:              logf,
 		startTime:        time.Now(),
 	}
 }
@@ -159,6 +167,18 @@ func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
 }
 
+func (tc *logCollector) NowDureTime() time.Duration {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return time.Since(tc.startTime)
+}
+
+func (tc *logCollector) AdjustStartTimeToEarlierTime(t time.Duration) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.startTime = tc.startTime.Add(-t)
+}
+
 func (tc *logCollector) Summary(name string) {
 	tc.mu.Lock()
 	defer func() {
@@ -188,9 +208,16 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	if len(tc.failureReasons) != 0 || !tc.successStatus {
+		var canceledUnits int
 		for unitName, reason := range tc.failureReasons {
-			logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
+			if berror.Cause(reason) != context.Canceled {
+				logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
+			} else {
+				canceledUnits++
+			}
 		}
+		// only print total number of cancel unit
+		log.Info("units canceled", zap.Int("cancel-unit", canceledUnits))
 		tc.log(name+" failed summary", logFields...)
 		return
 	}
@@ -226,6 +253,10 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	tc.log(name+" success summary", logFields...)
+}
+
+func (tc *logCollector) Log(msg string, fields ...zap.Field) {
+	tc.log(msg, fields...)
 }
 
 // SetLogCollector allow pass LogCollector outside.

@@ -5,41 +5,32 @@ package utils_test
 import (
 	"context"
 	"sync"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
 
-var _ = Suite(&testSafePointSuite{})
-
-type testSafePointSuite struct{}
-
-func (s *testSafePointSuite) SetUpSuite(c *C) {}
-
-func (s *testSafePointSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
-
-func (s *testSafePointSuite) TestCheckGCSafepoint(c *C) {
+func TestCheckGCSafepoint(t *testing.T) {
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333+1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333-1)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 0)
-		c.Assert(err, ErrorMatches, ".*GC safepoint 2333 exceed TS 0.*")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "GC safepoint 2333 exceed TS 0")
 	}
 }
 
@@ -73,7 +64,7 @@ func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64)
 	return m.safepoint, nil
 }
 
-func (s *testSafePointSuite) TestStartServiceSafePointKeeper(c *C) {
+func TestStartServiceSafePointKeeper(t *testing.T) {
 	pdClient := &mockSafePoint{safepoint: 2333}
 
 	cases := []struct {
@@ -128,11 +119,11 @@ func (s *testSafePointSuite) TestStartServiceSafePointKeeper(c *C) {
 	for i, cs := range cases {
 		ctx, cancel := context.WithCancel(context.Background())
 		err := utils.StartServiceSafePointKeeper(ctx, pdClient, cs.sp)
-		checker := IsNil
-		if !cs.ok {
-			checker = NotNil
+		if cs.ok {
+			require.NoErrorf(t, err, "case #%d, %v", i, cs)
+		} else {
+			require.Errorf(t, err, "case #%d, %v", i, cs)
 		}
-		c.Assert(err, checker, Commentf("case #%d, %v", i, cs))
 		cancel()
 	}
 }

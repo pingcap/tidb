@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pooltask",
+    srcs = [
+        "task.go",
+        "task_manager.go",
+        "task_manager_iterator.go",
+        "task_manager_scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/pooltask",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/channel",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "pooltask_test",
+    timeout = "short",
+    srcs = ["task_test.go"],
+    embed = [":pooltask"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

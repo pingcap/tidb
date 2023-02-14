@@ -47,11 +47,41 @@ func TestValueExprRestore(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		test := test
 		t.Run(test.expect, func(t *testing.T) {
-			t.Parallel()
 			var sb strings.Builder
 			expr := &ValueExpr{Datum: test.datum}
 			err := expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			require.NoError(t, err)
+			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
+		})
+	}
+}
+
+func TestValueExprFormat(t *testing.T) {
+	tests := []struct {
+		datum  types.Datum
+		expect string
+	}{
+		{types.NewDatum(nil), "NULL"},
+		{types.NewIntDatum(1), "1"},
+		{types.NewIntDatum(-1), "-1"},
+		{types.NewUintDatum(1), "1"},
+		{types.NewFloat32Datum(1.1), "1.1e+00"},
+		{types.NewFloat64Datum(1.1), "1.1e+00"},
+		{types.NewStringDatum("test `s't\"r."), "'test `s''t\"r.'"},
+		{types.NewBytesDatum([]byte("test `s't\"r.")), "'test `s''t\"r.'"},
+		{types.NewBinaryLiteralDatum([]byte("test `s't\"r.")), "b'11101000110010101110011011101000010000001100000011100110010011101110100001000100111001000101110'"},
+		{types.NewDecimalDatum(types.NewDecFromInt(321)), "321"},
+		{types.NewStringDatum("\\"), "'\\\\'"},
+		{types.NewStringDatum("''"), "''''''"},
+		{types.NewStringDatum("\\''\t\n"), "'\\\\''''\t\n'"},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.expect, func(t *testing.T) {
+			var sb strings.Builder
+			expr := &ValueExpr{Datum: test.datum}
+			expr.Format(&sb)
 			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
 		})
 	}

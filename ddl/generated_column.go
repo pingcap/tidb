@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // columnGenerationInDDL is a struct for validating generated columns in DDL.
@@ -44,11 +45,11 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 				if attr.generated && attribute.position <= attr.position {
 					// A generated column definition can refer to other
 					// generated columns occurring earlier in the table.
-					err := errGeneratedColumnNonPrior.GenWithStackByArgs()
+					err := dbterror.ErrGeneratedColumnNonPrior.GenWithStackByArgs()
 					return errors.Trace(err)
 				}
 			} else {
-				err := ErrBadField.GenWithStackByArgs(depCol, "generated column function")
+				err := dbterror.ErrBadField.GenWithStackByArgs(depCol, "generated column function")
 				return errors.Trace(err)
 			}
 		}
@@ -68,7 +69,7 @@ func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*ta
 		if _, ok := dependColNames[col.Name.L]; ok {
 			if col.IsGenerated() && col.Offset >= pos {
 				// Generated column can refer only to generated columns defined prior to it.
-				return errGeneratedColumnNonPrior.GenWithStackByArgs()
+				return dbterror.ErrGeneratedColumnNonPrior.GenWithStackByArgs()
 			}
 		}
 	}
@@ -85,7 +86,7 @@ func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column)
 	}
 	if len(dependCols) != 0 {
 		for arbitraryCol := range dependCols {
-			return ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
+			return dbterror.ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
 		}
 	}
 	return nil
@@ -111,7 +112,7 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 			}
 		}
 		if col == nil {
-			return -1, ErrBadField.GenWithStackByArgs(pos.RelativeColumn, "generated column function")
+			return -1, dbterror.ErrBadField.GenWithStackByArgs(pos.RelativeColumn, "generated column function")
 		}
 		// Inserted position is after the mentioned column.
 		position = col.Offset + 1
@@ -121,13 +122,19 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
+func findDependedColumnNames(schemaName model.CIStr, tableName model.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
-			colNames := findColumnNamesInExpr(option.Expr)
+			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
+				if depCol.Schema.L != "" && schemaName.L != "" && depCol.Schema.L != schemaName.L {
+					return false, nil, dbterror.ErrWrongDBName.GenWithStackByArgs(depCol.Schema.O)
+				}
+				if depCol.Table.L != "" && tableName.L != "" && depCol.Table.L != tableName.L {
+					return false, nil, dbterror.ErrWrongTableName.GenWithStackByArgs(depCol.Table.O)
+				}
 				colsMap[depCol.Name.L] = struct{}{}
 			}
 			break
@@ -136,8 +143,8 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	return
 }
 
-// findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
-func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
+// FindColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
+func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
 	return c.cols
@@ -159,11 +166,11 @@ func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.Colum
 	if newCol.IsGenerated() || col.IsGenerated() {
 		// TODO: Make it compatible with MySQL error.
 		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
 		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	return nil
 }
@@ -191,12 +198,12 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
 	if oldColIsStored != newColIsStored {
-		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
 
 	// rule 2.
@@ -251,7 +258,10 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol
 		}
 
 		// rule 4.
-		_, dependColNames := findDependedColumnNames(newColDef)
+		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name, newColDef)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
@@ -267,12 +277,14 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol
 }
 
 type illegalFunctionChecker struct {
-	hasIllegalFunc       bool
-	hasAggFunc           bool
-	hasRowVal            bool // hasRowVal checks whether the functional index refers to a row value
-	hasWindowFunc        bool
-	hasNotGAFunc4ExprIdx bool
-	otherErr             error
+	hasIllegalFunc        bool
+	hasAggFunc            bool
+	hasRowVal             bool // hasRowVal checks whether the functional index refers to a row value
+	hasWindowFunc         bool
+	hasNotGAFunc4ExprIdx  bool
+	hasCastArrayFunc      bool
+	disallowCastArrayFunc bool
+	otherErr              error
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -307,7 +319,16 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	case *ast.WindowFuncExpr:
 		c.hasWindowFunc = true
 		return inNode, true
+	case *ast.FuncCastExpr:
+		c.hasCastArrayFunc = c.hasCastArrayFunc || node.Tp.IsArray()
+		if c.disallowCastArrayFunc && node.Tp.IsArray() {
+			c.otherErr = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return inNode, true
+		}
+	case *ast.ParenthesesExpr:
+		return inNode, false
 	}
+	c.disallowCastArrayFunc = true
 	return inNode, false
 }
 
@@ -329,30 +350,33 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	if c.hasIllegalFunc {
 		switch genType {
 		case typeColumn:
-			return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(name)
+			return dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(name)
 		case typeIndex:
-			return ErrFunctionalIndexFunctionIsNotAllowed.GenWithStackByArgs(name)
+			return dbterror.ErrFunctionalIndexFunctionIsNotAllowed.GenWithStackByArgs(name)
 		}
 	}
 	if c.hasAggFunc {
-		return ErrInvalidGroupFuncUse
+		return dbterror.ErrInvalidGroupFuncUse
 	}
 	if c.hasRowVal {
 		switch genType {
 		case typeColumn:
-			return ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(name)
+			return dbterror.ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(name)
 		case typeIndex:
-			return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(name)
+			return dbterror.ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(name)
 		}
 	}
 	if c.hasWindowFunc {
-		return errWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
+		return dbterror.ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
 	}
 	if c.otherErr != nil {
 		return c.otherErr
 	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return ErrUnsupportedExpressionIndex
+		return dbterror.ErrUnsupportedExpressionIndex
+	}
+	if genType == typeColumn && c.hasCastArrayFunc {
+		return expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 	}
 	return nil
 }
@@ -363,13 +387,13 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	}
 
 	if newCol.GeneratedStored {
-		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
 	for _, idx := range tbl.Indices() {
 		for _, col := range idx.Meta().Columns {
 			if col.Name.L == newCol.Name.L {
-				return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
+				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
 			}
 		}
 	}
@@ -382,7 +406,7 @@ func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo
 	exists, autoIncrementColumn := infoschema.HasAutoIncrementColumn(tbInfo)
 	if exists {
 		if _, found := dependencies[autoIncrementColumn]; found {
-			return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
+			return dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
 		}
 	}
 	return nil
@@ -393,7 +417,7 @@ func checkExpressionIndexAutoIncrement(name string, dependencies map[string]stru
 	exists, autoIncrementColumn := infoschema.HasAutoIncrementColumn(tbInfo)
 	if exists {
 		if _, found := dependencies[autoIncrementColumn]; found {
-			return ErrExpressionIndexCanNotRefer.GenWithStackByArgs(name)
+			return dbterror.ErrExpressionIndexCanNotRefer.GenWithStackByArgs(name)
 		}
 	}
 	return nil

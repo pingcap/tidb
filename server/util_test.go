@@ -20,18 +20,16 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDumpBinaryTime(t *testing.T) {
-	t.Parallel()
-
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
@@ -71,7 +69,7 @@ func TestDumpBinaryTime(t *testing.T) {
 	d = dumpBinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	myDuration, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
+	myDuration, _, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
 	require.NoError(t, err)
 	d = dumpBinaryTime(myDuration.Duration)
 	require.Equal(t, []byte{0}, d)
@@ -87,7 +85,6 @@ func TestDumpBinaryTime(t *testing.T) {
 }
 
 func TestResultEncoder(t *testing.T) {
-	t.Parallel()
 	// Encode bytes to utf-8.
 	d := newResultEncoder("utf-8")
 	src := []byte("test_string")
@@ -106,14 +103,12 @@ func TestResultEncoder(t *testing.T) {
 }
 
 func TestDumpTextValue(t *testing.T) {
-	t.Parallel()
-
 	columns := []*ColumnInfo{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := &resultEncoder{}
+	dp := newResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -190,7 +185,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
 
-	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
 	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -198,7 +193,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
-	duration, err := types.ParseDuration(sc, "11:30:45", 0)
+	duration, _, err := types.ParseDuration(sc, "11:30:45", 0)
 	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
@@ -239,7 +234,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, "sname", mustDecodeStr(t, bs))
 
 	js := types.Datum{}
-	binaryJSON, err := json.ParseBinaryFromString(`{"a": 1, "b": 2}`)
+	binaryJSON, err := types.ParseBinaryJSONFromString(`{"a": 1, "b": 2}`)
 	require.NoError(t, err)
 	js.SetMysqlJSON(binaryJSON)
 	columns[0].Type = mysql.TypeJSON
@@ -255,8 +250,6 @@ func mustDecodeStr(t *testing.T, b []byte) string {
 }
 
 func TestAppendFormatFloat(t *testing.T) {
-	t.Parallel()
-
 	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
@@ -439,8 +432,6 @@ func TestAppendFormatFloat(t *testing.T) {
 }
 
 func TestDumpLengthEncodedInt(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		num    uint64
 		buffer []byte
@@ -469,8 +460,6 @@ func TestDumpLengthEncodedInt(t *testing.T) {
 }
 
 func TestParseLengthEncodedInt(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		buffer []byte
 		num    uint64
@@ -519,8 +508,6 @@ func TestParseLengthEncodedInt(t *testing.T) {
 }
 
 func TestDumpUint(t *testing.T) {
-	t.Parallel()
-
 	testCases := []uint64{
 		0,
 		1,
@@ -539,8 +526,6 @@ func TestDumpUint(t *testing.T) {
 }
 
 func TestParseLengthEncodedBytes(t *testing.T) {
-	t.Parallel()
-
 	buffer := []byte{'\xfb'}
 	b, isNull, n, err := parseLengthEncodedBytes(buffer)
 	require.Nil(t, b)
@@ -564,8 +549,6 @@ func TestParseLengthEncodedBytes(t *testing.T) {
 }
 
 func TestParseNullTermString(t *testing.T) {
-	t.Parallel()
-
 	for _, tc := range []struct {
 		input  string
 		str    string
@@ -603,5 +586,6 @@ func newTestConfig() *config.Config {
 	cfg.Host = "127.0.0.1"
 	cfg.Status.StatusHost = "127.0.0.1"
 	cfg.Security.AutoTLS = false
+	cfg.Socket = ""
 	return cfg
 }

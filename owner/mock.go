@@ -27,9 +27,10 @@ var _ Manager = &mockManager{}
 // It's used for local store and testing.
 // So this worker will always be the owner.
 type mockManager struct {
-	owner  int32
-	id     string // id is the ID of manager.
-	cancel context.CancelFunc
+	owner       int32
+	id          string // id is the ID of manager.
+	cancel      context.CancelFunc
+	beOwnerHook func()
 }
 
 // NewMockManager creates a new mock Manager.
@@ -52,6 +53,9 @@ func (m *mockManager) IsOwner() bool {
 }
 
 func (m *mockManager) toBeOwner() {
+	if m.beOwnerHook != nil {
+		m.beOwnerHook()
+	}
 	atomic.StoreInt32(&m.owner, 1)
 }
 
@@ -66,7 +70,7 @@ func (m *mockManager) Cancel() {
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
-func (m *mockManager) GetOwnerID(ctx context.Context) (string, error) {
+func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	if m.IsOwner() {
 		return m.ID(), nil
 	}
@@ -80,9 +84,23 @@ func (m *mockManager) CampaignOwner() error {
 }
 
 // ResignOwner lets the owner start a new election.
-func (m *mockManager) ResignOwner(ctx context.Context) error {
+func (m *mockManager) ResignOwner(_ context.Context) error {
 	if m.IsOwner() {
 		m.RetireOwner()
 	}
 	return nil
+}
+
+// RequireOwner implements Manager.RequireOwner interface.
+func (*mockManager) RequireOwner(context.Context) error {
+	return nil
+}
+
+func (m *mockManager) SetBeOwnerHook(hook func()) {
+	m.beOwnerHook = hook
+}
+
+// CampaignCancel implements Manager.CampaignCancel interface
+func (m *mockManager) CampaignCancel() {
+	// do nothing
 }

@@ -22,10 +22,10 @@ import (
 )
 
 type repairInfo struct {
-	sync.RWMutex
-	repairMode      bool
-	repairTableList []string
 	repairDBInfoMap map[int64]*model.DBInfo
+	repairTableList []string
+	sync.RWMutex
+	repairMode bool
 }
 
 // RepairInfo indicates the repaired table info.

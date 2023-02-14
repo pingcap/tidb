@@ -26,14 +26,14 @@ func TestAllocator(t *testing.T) {
 	alloc := NewAllocator()
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	initCap := 5
@@ -76,14 +76,14 @@ func TestAllocator(t *testing.T) {
 
 func TestColumnAllocator(t *testing.T) {
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	var alloc1 poolColumnAllocator
@@ -114,5 +114,178 @@ func TestColumnAllocator(t *testing.T) {
 	// Check max column size.
 	freeList := alloc1.pool[getFixedLen(ft)]
 	require.NotNil(t, freeList)
-	require.Equal(t, len(freeList.data), maxFreeColumnsPerType)
+	require.Equal(t, freeList.Len(), maxFreeColumnsPerType)
+}
+
+func TestNoDuplicateColumnReuse(t *testing.T) {
+	// For issue https://github.com/pingcap/tidb/issues/29554
+	// Some chunk columns are just references to other chunk columns.
+	// So when reusing Chunk, some columns may point to the same memory address.
+
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
+	}
+	alloc := NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		chk := alloc.Alloc(fieldTypes, 5, 10)
+		chk.MakeRef(1, 3)
+	}
+	alloc.Reset()
+
+	a := alloc.columnAlloc
+	// Make sure no duplicated column in the pool.
+	for _, p := range a.pool {
+		dup := make(map[*Column]struct{})
+		for !p.empty() {
+			c := p.pop()
+			_, exist := dup[c]
+			require.False(t, exist)
+			dup[c] = struct{}{}
+		}
+	}
+}
+
+func TestAvoidColumnReuse(t *testing.T) {
+	// For issue: https://github.com/pingcap/tidb/issues/31981
+	// Some chunk columns are references to rpc message.
+	// So when reusing Chunk, we should ignore them.
+
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+	alloc := NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		chk := alloc.Alloc(fieldTypes, 5, 10)
+		for _, col := range chk.columns {
+			col.avoidReusing = true
+		}
+	}
+	alloc.Reset()
+
+	a := alloc.columnAlloc
+	// Make sure no duplicated column in the pool.
+	for _, p := range a.pool {
+		require.True(t, p.empty())
+	}
+
+	// test decoder will set avoid reusing flag.
+	chk := alloc.Alloc(fieldTypes, 5, 1024)
+	for i := 0; i <= 10; i++ {
+		for _, col := range chk.columns {
+			col.AppendNull()
+		}
+	}
+	codec := &Codec{fieldTypes}
+	buf := codec.Encode(chk)
+
+	decoder := NewDecoder(
+		NewChunkWithCapacity(fieldTypes, 0),
+		fieldTypes,
+	)
+	decoder.Reset(buf)
+	decoder.ReuseIntermChk(chk)
+	for _, col := range chk.columns {
+		require.True(t, col.avoidReusing)
+	}
+}
+
+func TestColumnAllocatorLimit(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	//set cache size
+	InitChunkAllocSize(10, 20)
+	alloc := NewAllocator()
+	require.True(t, alloc.CheckReuseAllocSize())
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 10)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (p.Len() <= 20))
+	}
+
+	//Reduce capacity
+	InitChunkAllocSize(5, 10)
+	alloc = NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 5)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (p.Len() <= 10))
+	}
+
+	//increase capacity
+	InitChunkAllocSize(50, 100)
+	alloc = NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	alloc.Reset()
+	require.Equal(t, len(alloc.free), 50)
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (p.Len() <= 100))
+	}
+
+	//long characters are not cached
+	alloc = NewAllocator()
+	rs := alloc.Alloc([]*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()}, 1024, 1024)
+	nu := len(alloc.columnAlloc.pool[varElemLen].allocColumns)
+	require.Equal(t, nu, 1)
+	for _, col := range rs.columns {
+		for i := 0; i < 20480; i++ {
+			col.data = append(col.data, byte('a'))
+		}
+	}
+	alloc.Reset()
+	for _, p := range alloc.columnAlloc.pool {
+		require.True(t, (p.Len() == 0))
+	}
+
+	InitChunkAllocSize(0, 0)
+	alloc = NewAllocator()
+	require.False(t, alloc.CheckReuseAllocSize())
+}
+
+func TestColumnAllocatorCheck(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+	InitChunkAllocSize(10, 20)
+	alloc := NewAllocator()
+	for i := 0; i < 4; i++ {
+		alloc.Alloc(fieldTypes, 5, 10)
+	}
+	col := alloc.columnAlloc.NewColumn(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(), 10)
+	col.Reset(types.ETDatetime)
+	alloc.Reset()
+	num := alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP())].Len()
+	require.Equal(t, num, 4)
+	num = alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP())].Len()
+	require.Equal(t, num, 4)
 }

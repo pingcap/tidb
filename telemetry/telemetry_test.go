@@ -25,15 +25,14 @@ import (
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestTrackingID(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-
-	t.Parallel()
+	integration.BeforeTestExternal(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
@@ -55,11 +54,11 @@ func TestPreview(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTestExternal(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
@@ -102,4 +101,30 @@ func TestPreview(t *testing.T) {
 	r, err = telemetry.PreviewUsageData(se, etcdCluster.RandClient())
 	require.NoError(t, err)
 	require.Equal(t, "", r)
+}
+
+func TestReport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer etcdCluster.Terminate(t)
+	store := testkit.CreateMockStore(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+
+	config.GetGlobalConfig().EnableTelemetry = false
+	require.NoError(t, telemetry.ReportUsageData(se, etcdCluster.RandClient()))
+
+	status, err := telemetry.GetTelemetryStatus(etcdCluster.RandClient())
+	require.NoError(t, err)
+
+	jsonParsed, err := gabs.ParseJSON([]byte(status))
+	require.NoError(t, err)
+	require.True(t, jsonParsed.Path("is_error").Data().(bool))
+	require.Equal(t, "telemetry is disabled", jsonParsed.Path("error_msg").Data().(string))
+	require.False(t, jsonParsed.Path("is_request_sent").Data().(bool))
 }

@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "label",
+    srcs = [
+        "attributes.go",
+        "errors.go",
+        "rule.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/label",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//tablecodec",
+        "//util/codec",
+        "@in_gopkg_yaml_v2//:yaml_v2",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "label_test",
+    timeout = "short",
+    srcs = [
+        "attributes_test.go",
+        "main_test.go",
+        "rule_test.go",
+    ],
+    embed = [":label"],
+    flaky = True,
+    deps = [
+        "//parser/ast",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

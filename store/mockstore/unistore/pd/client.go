@@ -29,6 +29,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client is a PD (Placement Driver) client.
@@ -40,8 +41,8 @@ type Client interface {
 	IsBootstrapped(ctx context.Context) (bool, error)
 	PutStore(ctx context.Context, store *metapb.Store) error
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
-	GetRegion(ctx context.Context, key []byte) (*pd.Region, error)
-	GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error)
+	GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error)
+	GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error)
 	ReportRegion(*pdpb.RegionHeartbeatRequest)
 	AskSplit(ctx context.Context, region *metapb.Region) (*pdpb.AskSplitResponse, error)
 	AskBatchSplit(ctx context.Context, region *metapb.Region, count int) (*pdpb.AskBatchSplitResponse, error)
@@ -211,8 +212,8 @@ func (c *client) switchLeader(addrs []string) error {
 	return nil
 }
 
-func (c *client) getMembers(ctx context.Context, url string) (*pdpb.GetMembersResponse, error) {
-	cc, err := c.getOrCreateConn(url)
+func (c *client) getMembers(ctx context.Context, addr string) (*pdpb.GetMembersResponse, error) {
+	cc, err := c.getOrCreateConn(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +232,7 @@ func (c *client) getOrCreateConn(addr string) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	cc, err := grpc.Dial(u.Host, grpc.WithInsecure())
+	cc, err := grpc.Dial(u.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +467,7 @@ func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, e
 	return resp.Store, nil
 }
 
-func (c *client) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *client) GetAllStores(ctx context.Context, _ ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	var resp *pdpb.GetAllStoresResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -503,7 +504,7 @@ func (c *client) GetClusterConfig(ctx context.Context) (*metapb.Cluster, error) 
 	return resp.Cluster, nil
 }
 
-func (c *client) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+func (c *client) GetRegion(ctx context.Context, key []byte, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -530,7 +531,7 @@ func (c *client) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) 
 	return r, nil
 }
 
-func (c *client) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+func (c *client) GetRegionByID(ctx context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -650,9 +651,9 @@ func (c *client) StoreHeartbeat(ctx context.Context, stats *pdpb.StoreStats) err
 	return nil
 }
 
-func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
+func (c *client) GetTS(ctx context.Context) (physical int64, logical int64, err error) {
 	var resp *pdpb.TsoResponse
-	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
+	err = c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		tsoClient, err := client.Tso(ctx)
 		if err != nil {
 			return err

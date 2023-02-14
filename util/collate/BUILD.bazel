@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "collate",
+    srcs = [
+        "bin.go",
+        "charset.go",
+        "collate.go",
+        "gbk_bin.go",
+        "gbk_chinese_ci.go",
+        "gbk_chinese_ci_data.go",
+        "general_ci.go",
+        "pinyin_tidb_as_cs.go",
+        "unicode_ci.go",
+        "unicode_ci_data.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/collate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/charset",
+        "//parser/mysql",
+        "//parser/terror",
+        "//util/dbterror",
+        "//util/hack",
+        "//util/logutil",
+        "//util/stringutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+        "@org_golang_x_text//encoding",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "collate_test",
+    timeout = "short",
+    srcs = [
+        "collate_bench_test.go",
+        "collate_test.go",
+        "main_test.go",
+    ],
+    embed = [":collate"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

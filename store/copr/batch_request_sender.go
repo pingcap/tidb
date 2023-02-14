@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -29,21 +31,35 @@ import (
 
 // RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
-	Region    tikv.RegionVerID
-	Meta      *metapb.Region
-	Ranges    *KeyRanges
-	AllStores []uint64
+	Region         tikv.RegionVerID
+	Meta           *metapb.Region
+	Ranges         *KeyRanges
+	AllStores      []uint64
+	PartitionIndex int64 // used by PartitionTableScan, indicates the n-th partition of the partition table
+}
+
+func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {
+	return &coprocessor.RegionInfo{
+		RegionId: ri.Region.GetID(),
+		RegionEpoch: &metapb.RegionEpoch{
+			ConfVer: ri.Region.GetConfVer(),
+			Version: ri.Region.GetVer(),
+		},
+		Ranges: ri.Ranges.ToPBRanges(),
+	}
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	*tikv.RegionRequestSender
+	enableCollectExecutionInfo bool
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender: tikv.NewRegionRequestSender(cache.RegionCache, client),
+		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
+		enableCollectExecutionInfo: enableCollectExecutionInfo,
 	}
 }
 
@@ -59,7 +75,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
-	if ss.Stats != nil {
+	if ss.Stats != nil && ss.enableCollectExecutionInfo {
 		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
@@ -83,13 +99,15 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 		return tikverr.ErrTiDBShuttingDown
 	}
 
-	// The reload region param is always true. Because that every time we try, we must
-	// re-build the range then re-create the batch sender. As a result, the len of "failStores"
-	// will change. If tiflash's replica is more than two, the "reload region" will always be false.
-	// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
-	// when meeting io error.
-	rc := RegionCache{ss.GetRegionCache()}
-	rc.OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
+	if !config.GetGlobalConfig().DisaggregatedTiFlash {
+		// The reload region param is always true. Because that every time we try, we must
+		// re-build the range then re-create the batch sender. As a result, the len of "failStores"
+		// will change. If tiflash's replica is more than two, the "reload region" will always be false.
+		// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
+		// when meeting io error.
+		rc := RegionCache{ss.GetRegionCache()}
+		rc.OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
+	}
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.

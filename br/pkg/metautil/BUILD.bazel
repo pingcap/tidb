@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metautil",
+    srcs = ["metafile.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/metautil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/logutil",
+        "//br/pkg/storage",
+        "//br/pkg/summary",
+        "//parser/model",
+        "//statistics/handle",
+        "//tablecodec",
+        "//util/encrypt",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "metautil_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "metafile_test.go",
+    ],
+    embed = [":metautil"],
+    flaky = True,
+    deps = [
+        "//br/pkg/mock/storage",
+        "//testkit/testsetup",
+        "@com_github_golang_mock//gomock",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

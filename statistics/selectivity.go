@@ -15,20 +15,25 @@
 package statistics
 
 import (
+	"bytes"
 	"math"
 	"math/bits"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -120,7 +125,7 @@ func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
-			if mysql.HasUniKeyFlag(col.Info.Flag) {
+			if mysql.HasUniKeyFlag(col.Info.GetFlag()) {
 				return 1.0 / float64(coll.Count)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
@@ -179,14 +184,20 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
+	ret := 1.0
+	sc := ctx.GetSessionVars().StmtCtx
+	tableID := coll.PhysicalID
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		return pseudoSelectivity(coll, exprs), nil, nil
+		ret = pseudoSelectivity(coll, exprs)
+		if sc.EnableOptimizerCETrace {
+			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.Count))
+		}
+		return ret, nil, nil
 	}
-	ret := 1.0
+
 	var nodes []*StatsNode
-	sc := ctx.GetSessionVars().StmtCtx
 
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
@@ -198,12 +209,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(sc, coll.Pseudo) {
+		colHist := coll.Columns[c.UniqueID]
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
-
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
@@ -224,14 +234,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if colInfo.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
+				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 				continue
 			}
-			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
+			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -262,7 +272,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := coll.GetRowCountByIndexRanges(sc, id, ranges)
+			cnt, err := coll.GetRowCountByIndexRanges(ctx, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -281,6 +291,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
+	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
+	var curExpr []expression.Expression
+
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity
@@ -291,91 +304,209 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if set.partCover {
 			ret *= selectionFactor
 		}
+		if sc.EnableOptimizerCETrace {
+			// Tracing for the expression estimation results after applying this StatsNode.
+			for i := range remainedExprs {
+				if set.mask&(1<<uint64(i)) > 0 {
+					curExpr = append(curExpr, remainedExprs[i])
+				}
+			}
+			expr := expression.ComposeCNFCondition(ctx, curExpr...)
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+		}
 	}
 
-	// Now we try to cover those still not covered DNF conditions using independence assumption,
-	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+	notCoveredConstants := make(map[int]*expression.Constant)
+	notCoveredDNF := make(map[int]*expression.ScalarFunction)
+	notCoveredStrMatch := make(map[int]*expression.ScalarFunction)
+	notCoveredNegateStrMatch := make(map[int]*expression.ScalarFunction)
+	notCoveredOtherExpr := make(map[int]expression.Expression)
 	if mask > 0 {
-	OUTER:
 		for i, expr := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
 			}
-			scalarCond, ok := expr.(*expression.ScalarFunction)
-			// Make sure we only handle DNF condition.
-			if !ok || scalarCond.FuncName.L != ast.LogicOr {
+			switch x := expr.(type) {
+			case *expression.Constant:
+				notCoveredConstants[i] = x
 				continue
-			}
-			// If there're columns not in stats, we won't handle them. This case might happen after DDL operations.
-			cols := expression.ExtractColumns(scalarCond)
-			for i := range cols {
-				if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
-					continue OUTER
-				}
-			}
-
-			dnfItems := expression.FlattenDNFConditions(scalarCond)
-			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
-			// If the conditions only contain a single column, we won't handle them.
-			if len(dnfItems) <= 1 {
-				continue
-			}
-
-			selectivity := 0.0
-			for _, cond := range dnfItems {
-				// In selectivity calculation, we don't handle CorrelatedColumn, so we directly skip over it.
-				// Other kinds of `Expression`, i.e., Constant, Column and ScalarFunction all can possibly be built into
-				// ranges and used to calculation selectivity, so we accept them all.
-				_, ok := cond.(*expression.CorrelatedColumn)
-				if ok {
+			case *expression.ScalarFunction:
+				switch x.FuncName.L {
+				case ast.LogicOr:
+					notCoveredDNF[i] = x
 					continue
+				case ast.Like, ast.Regexp, ast.RegexpLike:
+					notCoveredStrMatch[i] = x
+					continue
+				case ast.UnaryNot:
+					inner := expression.GetExprInsideIsTruth(x.GetArgs()[0])
+					innerSF, ok := inner.(*expression.ScalarFunction)
+					if ok {
+						switch innerSF.FuncName.L {
+						case ast.Like, ast.Regexp, ast.RegexpLike:
+							notCoveredNegateStrMatch[i] = x
+							continue
+						}
+					}
 				}
-
-				var cnfItems []expression.Expression
-				if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
-					cnfItems = expression.FlattenCNFConditions(scalar)
-				} else {
-					cnfItems = append(cnfItems, cond)
-				}
-
-				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
-				if err != nil {
-					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-					selectivity = selectionFactor
-				}
-
-				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
 			}
-
-			if selectivity != 0 {
-				ret *= selectivity
-				mask &^= 1 << uint64(i)
-			}
+			notCoveredOtherExpr[i] = expr
 		}
 	}
 
-	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
+	// Try to cover remaining Constants
+	for i, c := range notCoveredConstants {
+		if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{c}) {
+			continue
+		}
+		if c.Value.IsNull() {
+			// c is null
+			ret *= 0
+			mask &^= 1 << uint64(i)
+			delete(notCoveredConstants, i)
+		} else if isTrue, err := c.Value.ToBool(sc); err == nil {
+			if isTrue == 0 {
+				// c is false
+				ret *= 0
+			}
+			// c is true, no need to change ret
+			mask &^= 1 << uint64(i)
+			delete(notCoveredConstants, i)
+		}
+		// Not expected to come here:
+		// err != nil, no need to do anything.
+	}
+
+	// Try to cover remaining DNF conditions using independence assumption,
+	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+OUTER:
+	for i, scalarCond := range notCoveredDNF {
+		// If there are columns not in stats, we won't handle them. This case might happen after DDL operations.
+		cols := expression.ExtractColumns(scalarCond)
+		for i := range cols {
+			if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
+				continue OUTER
+			}
+		}
+
+		dnfItems := expression.FlattenDNFConditions(scalarCond)
+		dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+		// If the conditions only contain a single column, we won't handle them.
+		if len(dnfItems) <= 1 {
+			continue
+		}
+
+		selectivity := 0.0
+		for _, cond := range dnfItems {
+			// In selectivity calculation, we don't handle CorrelatedColumn, so we directly skip over it.
+			// Other kinds of `Expression`, i.e., Constant, Column and ScalarFunction all can possibly be built into
+			// ranges and used to calculation selectivity, so we accept them all.
+			_, ok := cond.(*expression.CorrelatedColumn)
+			if ok {
+				continue
+			}
+
+			var cnfItems []expression.Expression
+			if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
+				cnfItems = expression.FlattenCNFConditions(scalar)
+			} else {
+				cnfItems = append(cnfItems, cond)
+			}
+
+			curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+				curSelectivity = selectionFactor
+			}
+
+			selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+			if sc.EnableOptimizerCETrace {
+				// Tracing for the expression estimation results of this DNF.
+				CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.Count))
+			}
+		}
+
+		if selectivity != 0 {
+			ret *= selectivity
+			mask &^= 1 << uint64(i)
+			delete(notCoveredDNF, i)
+		}
+		if sc.EnableOptimizerCETrace {
+			// Tracing for the expression estimation results after applying the DNF estimation result.
+			curExpr = append(curExpr, remainedExprs[i])
+			expr := expression.ComposeCNFCondition(ctx, curExpr...)
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+		}
+	}
+
+	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
+	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
+		for i, scalarCond := range notCoveredStrMatch {
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			if err != nil {
+				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+			}
+			if !ok {
+				continue
+			}
+			ret *= sel
+			mask &^= 1 << uint64(i)
+			delete(notCoveredStrMatch, i)
+		}
+		for i, scalarCond := range notCoveredNegateStrMatch {
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			if err != nil {
+				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+			}
+			if !ok {
+				continue
+			}
+			ret *= sel
+			mask &^= 1 << uint64(i)
+			delete(notCoveredNegateStrMatch, i)
+		}
+	}
+
+	// At last, if there are still conditions which cannot be estimated, we multiply the selectivity with
+	// the minimal default selectivity of the remaining conditions.
+	// Currently, only string matching functions (like and regexp) may have a different default selectivity,
+	// other expressions' default selectivity is selectionFactor.
 	if mask > 0 {
-		ret *= selectionFactor
+		minSelectivity := 1.0
+		if len(notCoveredConstants) > 0 || len(notCoveredDNF) > 0 || len(notCoveredOtherExpr) > 0 {
+			minSelectivity = math.Min(minSelectivity, selectionFactor)
+		}
+		if len(notCoveredStrMatch) > 0 {
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
+		}
+		if len(notCoveredNegateStrMatch) > 0 {
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
+		}
+		ret *= minSelectivity
+	}
+
+	if sc.EnableOptimizerCETrace {
+		// Tracing for the expression estimation results after applying the default selectivity.
+		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
+		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.Count))
 	}
 	return ret, nodes, nil
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType, lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
-		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}
@@ -403,11 +534,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	sort.Slice(nodes, func(i int, j int) bool {
-		if r := compareType(nodes[i].Tp, nodes[j].Tp); r != 0 {
+	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+		if r := compareType(i.Tp, j.Tp); r != 0 {
 			return r < 0
 		}
-		return nodes[i].ID < nodes[j].ID
+		return i.ID < j.ID
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
@@ -478,4 +609,84 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 		return retCols
 	}
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
+}
+
+// CETraceExpr appends an expression and related information into CE trace
+func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
+	exprStr, err := ExprToString(expr)
+	if err != nil {
+		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of an expression",
+			zap.Any("expression", expr))
+		return
+	}
+	rec := tracing.CETraceRecord{
+		TableID:  tableID,
+		Type:     tp,
+		Expr:     exprStr,
+		RowCount: uint64(rowCount),
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &rec)
+}
+
+// ExprToString prints an Expression into a string which can appear in a SQL.
+//
+// It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
+// For example, you can write `eq`(a, 1), which is the same as a = 1.
+// We should have implemented this by first implementing a method to turn an expression to an AST
+//
+//	then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
+//
+// It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
+//
+//	and it may not be general enough to handle all possible expressions. So we put it here for now.
+func ExprToString(e expression.Expression) (string, error) {
+	switch expr := e.(type) {
+	case *expression.ScalarFunction:
+		var buffer bytes.Buffer
+		buffer.WriteString("`" + expr.FuncName.L + "`(")
+		switch expr.FuncName.L {
+		case ast.Cast:
+			for _, arg := range expr.GetArgs() {
+				argStr, err := ExprToString(arg)
+				if err != nil {
+					return "", err
+				}
+				buffer.WriteString(argStr)
+				buffer.WriteString(", ")
+				buffer.WriteString(expr.RetType.String())
+			}
+		default:
+			for i, arg := range expr.GetArgs() {
+				argStr, err := ExprToString(arg)
+				if err != nil {
+					return "", err
+				}
+				buffer.WriteString(argStr)
+				if i+1 != len(expr.GetArgs()) {
+					buffer.WriteString(", ")
+				}
+			}
+		}
+		buffer.WriteString(")")
+		return buffer.String(), nil
+	case *expression.Column:
+		return expr.String(), nil
+	case *expression.CorrelatedColumn:
+		return "", errors.New("tracing for correlated columns not supported now")
+	case *expression.Constant:
+		value, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			return "", err
+		}
+		valueExpr := driver.ValueExpr{Datum: value}
+		var buffer bytes.Buffer
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buffer)
+		err = valueExpr.Restore(restoreCtx)
+		if err != nil {
+			return "", err
+		}
+		return buffer.String(), nil
+	}
+	return "", errors.New("unexpected type of Expression")
 }

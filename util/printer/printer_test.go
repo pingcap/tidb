@@ -21,7 +21,6 @@ import (
 )
 
 func TestPrintResult(t *testing.T) {
-	t.Parallel()
 	cols := []string{"col1", "col2", "col3"}
 	datas := [][]string{{"11"}, {"21", "22", "23"}}
 	result, ok := GetPrintResult(cols, datas)

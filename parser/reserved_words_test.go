@@ -11,7 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//+build reserved_words_test
+//go:build reserved_words_test
+// +build reserved_words_test
 
 // This file ensures that the set of reserved keywords is the same as that of
 // MySQL. To run:
@@ -27,10 +28,8 @@ import (
 	// needed to connect to MySQL
 
 	dbsql "database/sql"
-	"io/ioutil"
+	gio "io"
 	"os"
-	"path"
-	"runtime"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -39,11 +38,10 @@ import (
 )
 
 func TestCompareReservedWordsWithMySQL(t *testing.T) {
-	_, filename, _, _ := runtime.Caller(0)
-	parserFilename := path.Join(path.Dir(filename), "parser.y")
+	parserFilename := "parser.y"
 	parserFile, err := os.Open(parserFilename)
 	requires.NoError(t, err)
-	data, err := ioutil.ReadAll(parserFile)
+	data, err := gio.ReadAll(parserFile)
 	requires.NoError(t, err)
 	content := string(data)
 

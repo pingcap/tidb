@@ -29,8 +29,6 @@ import (
 )
 
 func TestGroupStringer(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
@@ -50,7 +48,7 @@ func TestGroupStringer(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	stringerSuiteData.GetTestCases(t, &input, &output)
+	stringerSuiteData.LoadTestCases(t, &input, &output)
 
 	p := parser.New()
 	ctx := plannercore.MockContext()

@@ -16,6 +16,9 @@ package expression
 
 import (
 	"strings"
+	"unsafe"
+
+	"github.com/pingcap/tidb/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -28,6 +31,15 @@ func (ki KeyInfo) Clone() KeyInfo {
 		result = append(result, col.Clone().(*Column))
 	}
 	return result
+}
+
+// String implements fmt.Stringer interface.
+func (ki KeyInfo) String() string {
+	ukColStrs := make([]string, 0, len(ki))
+	for _, col := range ki {
+		ukColStrs = append(ukColStrs, col.String())
+	}
+	return "[" + strings.Join(ukColStrs, ",") + "]"
 }
 
 // Schema stands for the row schema and unique key information get from input.
@@ -47,11 +59,7 @@ func (s *Schema) String() string {
 	}
 	ukStrs := make([]string, 0, len(s.Keys))
 	for _, key := range s.Keys {
-		ukColStrs := make([]string, 0, len(key))
-		for _, col := range key {
-			ukColStrs = append(ukColStrs, col.String())
-		}
-		ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+		ukStrs = append(ukStrs, key.String())
 	}
 	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
@@ -200,6 +208,34 @@ func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
 		}
 	}
 	return extracted, offsets
+}
+
+const emptySchemaSize = int64(unsafe.Sizeof(Schema{}))
+
+// MemoryUsage return the memory usage of Schema
+func (s *Schema) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
+
+	for _, col := range s.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, cols := range s.Keys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, cols := range s.UniqueKeys {
+		sum += int64(cap(cols)) * size.SizeOfPointer
+		for _, col := range cols {
+			sum += col.MemoryUsage()
+		}
+	}
+	return
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "summary",
+    srcs = [
+        "collector.go",
+        "summary.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/summary",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "summary_test",
+    timeout = "short",
+    srcs = [
+        "collector_test.go",
+        "main_test.go",
+    ],
+    embed = [":summary"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -88,7 +89,7 @@ func withTiKVConnection(ctx context.Context, tls *common.TLS, tikvAddr string, a
 	// Connect to the ImportSST service on the given TiKV node.
 	// The connection is needed for executing `action` and will be tear down
 	// when this function exits.
-	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption(), config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -172,7 +173,8 @@ var fetchModeRegexp = regexp.MustCompile(`\btikv_config_rocksdb\{cf="default",na
 
 // FetchMode obtains the import mode status of the TiKV node.
 func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_sstpb.SwitchMode, error) {
-	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption(),
+		config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +188,7 @@ func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_ss
 	return FetchModeFromMetrics(resp.Prometheus)
 }
 
-// FetchMode obtains the import mode status from the Prometheus metrics of a TiKV node.
+// FetchModeFromMetrics obtains the import mode status from the Prometheus metrics of a TiKV node.
 func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
 	m := fetchModeRegexp.FindStringSubmatch(metrics)
 	switch {
@@ -197,6 +199,16 @@ func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
 	default:
 		return import_sstpb.SwitchMode_Normal, nil
 	}
+}
+
+// FetchRemoteDBModelsFromTLS obtains the remote DB models from the given TLS.
+func FetchRemoteDBModelsFromTLS(ctx context.Context, tls *common.TLS) ([]*model.DBInfo, error) {
+	var dbs []*model.DBInfo
+	err := tls.GetJSON(ctx, "/schema", &dbs)
+	if err != nil {
+		return nil, errors.Annotatef(err, "cannot read db schemas from remote")
+	}
+	return dbs, nil
 }
 
 func FetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {

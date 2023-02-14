@@ -12,58 +12,103 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !codes
+//go:build !codes
 
 package testkit
 
 import (
+	"flag"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
+	"go.opencensus.io/stats/view"
 )
 
+// WithTiKV flag is only used for debugging locally with real tikv cluster.
+var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
+
 // CreateMockStore return a new mock kv.Storage.
-func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
-	store, _, clean = CreateMockStoreAndDomain(t, opts...)
-	return
+func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+	if *WithTiKV != "" {
+		var d driver.TiKVDriver
+		var err error
+		store, err := d.Open("tikv://" + *WithTiKV)
+		require.NoError(t, err)
+
+		var dom *domain.Domain
+		dom, err = session.BootstrapSession(store)
+		t.Cleanup(func() {
+			dom.Close()
+			err := store.Close()
+			require.NoError(t, err)
+			view.Stop()
+		})
+		require.NoError(t, err)
+		return store
+	}
+	t.Cleanup(func() {
+		view.Stop()
+	})
+	gctuner.GlobalMemoryLimitTuner.Stop()
+	store, _ := CreateMockStoreAndDomain(t, opts...)
+	return store
 }
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
-func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	dom, clean := bootstrap(t, store)
-	return store, dom, clean
+	dom := bootstrap(t, store, 500*time.Millisecond)
+	sm := MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		view.Stop()
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
+	return schematracker.UnwrapStorage(store), dom
 }
 
-func bootstrap(t testing.TB, store kv.Storage) (*domain.Domain, func()) {
-	session.SetSchemaLease(0)
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
+	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
-	}
-	return dom, clean
+		view.Stop()
+		resourcemanager.InstanceResourceManager.Reset()
+	})
+	return dom
 }
 
-// CreateMockStoreWithOracle returns a new mock kv.Storage and *domain.Domain, providing the oracle for the store.
-func CreateMockStoreWithOracle(t testing.TB, oracle oracle.Oracle, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+// CreateMockStoreWithSchemaLease return a new mock kv.Storage.
+func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+	store, _ := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
+	return schematracker.UnwrapStorage(store)
+}
+
+// CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
-	store.GetOracle().Close()
-	store.(tikv.Storage).SetOracle(oracle)
-	dom, clean := bootstrap(t, store)
-	return store, dom, clean
+	dom := bootstrap(t, store, lease)
+	sm := MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	return schematracker.UnwrapStorage(store), dom
 }

@@ -21,14 +21,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUnary(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -69,7 +68,6 @@ func TestUnary(t *testing.T) {
 }
 
 func TestLogicAnd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -133,7 +131,6 @@ func TestLogicAnd(t *testing.T) {
 }
 
 func TestLeftShift(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -166,7 +163,6 @@ func TestLeftShift(t *testing.T) {
 }
 
 func TestRightShift(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -206,7 +202,6 @@ func TestRightShift(t *testing.T) {
 }
 
 func TestBitXor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -246,7 +241,6 @@ func TestBitXor(t *testing.T) {
 }
 
 func TestBitOr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -293,7 +287,6 @@ func TestBitOr(t *testing.T) {
 }
 
 func TestLogicOr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -361,7 +354,6 @@ func TestLogicOr(t *testing.T) {
 }
 
 func TestBitAnd(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -401,7 +393,6 @@ func TestBitAnd(t *testing.T) {
 }
 
 func TestBitNeg(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -448,7 +439,6 @@ func TestBitNeg(t *testing.T) {
 }
 
 func TestUnaryNot(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -472,6 +462,8 @@ func TestUnaryNot(t *testing.T) {
 		{[]interface{}{"0.3"}, 0, false, false},
 		{[]interface{}{types.NewDecFromFloatForTest(0.3)}, 0, false, false},
 		{[]interface{}{nil}, 0, true, false},
+		{[]interface{}{types.CreateBinaryJSON(int64(0))}, 1, false, false},
+		{[]interface{}{types.CreateBinaryJSON(map[string]interface{}{"test": "test"})}, 0, false, false},
 
 		{[]interface{}{errors.New("must error")}, 0, false, true},
 	}
@@ -501,7 +493,6 @@ func TestUnaryNot(t *testing.T) {
 }
 
 func TestIsTrueOrFalse(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
@@ -594,7 +585,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 
 		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
+		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
 
 	for _, tc := range testCases {
@@ -604,12 +595,11 @@ func TestIsTrueOrFalse(t *testing.T) {
 
 		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
+		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}
 }
 
 func TestLogicXor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate

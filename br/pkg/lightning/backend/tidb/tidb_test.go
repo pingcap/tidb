@@ -22,10 +22,10 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -36,14 +36,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
-
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&mysqlSuite{})
 
 type mysqlSuite struct {
 	dbHandle *sql.DB
@@ -52,9 +47,9 @@ type mysqlSuite struct {
 	tbl      table.Table
 }
 
-func (s *mysqlSuite) SetUpTest(c *C) {
+func createMysqlSuite(t *testing.T) *mysqlSuite {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tys := []byte{
 		mysql.TypeLong, mysql.TypeLong, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeFloat, mysql.TypeDouble,
@@ -67,29 +62,28 @@ func (s *mysqlSuite) SetUpTest(c *C) {
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
-
-	s.dbHandle = db
-	s.mockDB = mock
-	s.backend = tidb.NewTiDBBackend(db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig()))
-	s.tbl = tbl
+	require.NoError(t, err)
+	backend := tidb.NewTiDBBackend(context.Background(), db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
+	return &mysqlSuite{dbHandle: db, mockDB: mock, backend: backend, tbl: tbl}
 }
 
-func (s *mysqlSuite) TearDownTest(c *C) {
+func (s *mysqlSuite) TearDownTest(t *testing.T) {
 	s.backend.Close()
-	c.Assert(s.mockDB.ExpectationsWereMet(), IsNil)
+	require.NoError(t, s.mockDB.ExpectationsWereMet())
 }
 
-func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
+func TestWriteRowsReplaceOnDup(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.
-		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
+		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`b`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(-9223372036854775808,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
 	logger := log.L()
 
 	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataRows := s.backend.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
@@ -102,8 +96,11 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
-	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
-	c.Assert(err, IsNil)
+	// skip column a,c due to ignore-columns
+	perms[0] = -1
+	perms[2] = -1
+	encoder, err := s.backend.NewEncoder(context.Background(), s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
+	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
 		types.NewIntDatum(-9223372036854775808),
@@ -121,19 +118,21 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		types.NewDecimalDatum(types.NewDecFromFloatForTest(12.5)),
 		types.NewMysqlEnumDatum(types.Enum{Name: "ENUM_NAME", Value: 51}),
 	}, 1, perms, "0.csv", 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
-	c.Assert(err, IsNil)
-	err = writer.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	require.NoError(t, err)
 	st, err := writer.Close(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(st, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, st)
 }
 
-func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
+func TestWriteRowsIgnoreOnDup(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.
 		ExpectExec("\\QINSERT IGNORE INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -141,43 +140,45 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig()))
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataRows := ignoreBackend.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
-	c.Assert(err, IsNil)
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "1.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "1.csv", 0)
+	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = writer.Close(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// test encode rows with _tidb_rowid
-	encoder, err = ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
-	c.Assert(err, IsNil)
+	encoder, err = ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	require.NoError(t, err)
 	rowWithID, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
 		types.NewIntDatum(1), // _tidb_rowid field
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1}, "2.csv", 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// tidbRow is stringer.
-	c.Assert(fmt.Sprint(rowWithID), Equals, "(1,1)")
+	require.Equal(t, "(1,1)", fmt.Sprint(rowWithID))
 }
 
-func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
+func TestWriteRowsErrorOnDup(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -185,190 +186,207 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), logger))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	dataRows := ignoreBackend.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
-	c.Assert(err, IsNil)
+	encoder, err := ignoreBackend.NewEncoder(ctx, s.tbl, &kv.SessionOptions{})
+	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "3.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "3.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	st, err := writer.Close(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(st, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, st)
 }
 
 // TODO: temporarily disable this test before we fix strict mode
-//nolint:unused
-func (s *mysqlSuite) testStrictMode(c *C) {
+//
+//nolint:unused,deadcode
+func testStrictMode(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset = charset.CharsetUTF8MB4
+	ft.SetCharset(charset.CharsetUTF8MB4)
 	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
-	ft.Charset = charset.CharsetASCII
+	ft.SetCharset(charset.CharsetASCII)
 	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
-	encoder, err := bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
-	c.Assert(err, IsNil)
+	ctx := context.Background()
+
+	bk := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
+	encoder, err := bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	require.NoError(t, err)
 
 	logger := log.L()
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("test"),
 	}, 1, []int{0, -1, -1}, "4.csv", 0)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
 	}, 1, []int{0, -1, -1}, "5.csv", 0)
-	c.Assert(err, ErrorMatches, `.*incorrect utf8 value .* for column s0`)
+	require.Error(t, err)
+	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
-	encoder, err = bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
-	c.Assert(err, IsNil)
+	encoder, err = bk.NewEncoder(ctx, tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	require.NoError(t, err)
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum(""),
 		types.NewStringDatum("非 ASCII 字符串"),
 	}, 1, []int{0, 1, -1}, "6.csv", 0)
-	c.Assert(err, ErrorMatches, ".*incorrect ascii value .* for column s1")
+	require.Error(t, err)
+	require.Regexp(t, "incorrect ascii value .* for column s1$", err.Error())
 }
 
-func (s *mysqlSuite) TestFetchRemoteTableModels_3_x(c *C) {
+func TestFetchRemoteTableModels_3_x(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v3.0.18"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "int(10)", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
-	c.Assert(err, IsNil)
-	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
+	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
-	})
+	}, tableInfos)
 }
 
-func (s *mysqlSuite) TestFetchRemoteTableModels_4_0(c *C) {
+func TestFetchRemoteTableModels_4_0(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.0"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20) unsigned", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
 			AddRow("test", "t", "id", int64(1)))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
-	c.Assert(err, IsNil)
-	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
+	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag | mysql.UnsignedFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
-	})
+	}, tableInfos)
 }
 
-func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_increment(c *C) {
+func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
-	c.Assert(err, IsNil)
-	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.AutoIncrementFlag)
+	require.Equal(t, []*model.TableInfo{
 		{
 			Name:       model.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.AutoIncrementFlag,
-					},
+					Name:      model.NewCIStr("id"),
+					Offset:    0,
+					State:     model.StatePublic,
+					FieldType: ft,
 				},
 			},
 		},
-	})
+	}, tableInfos)
 }
 
-func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
+func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "1 + 2", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
+	bk := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
-	c.Assert(err, IsNil)
-	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+	require.NoError(t, err)
+	ft := types.FieldType{}
+	ft.SetFlag(mysql.PriKeyFlag)
+	require.Equal(t, []*model.TableInfo{
 		{
 			Name:           model.NewCIStr("t"),
 			State:          model.StatePublic,
@@ -376,21 +394,46 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					State:  model.StatePublic,
-					FieldType: types.FieldType{
-						Flag: mysql.PriKeyFlag,
-					},
+					Name:                model.NewCIStr("id"),
+					Offset:              0,
+					State:               model.StatePublic,
+					FieldType:           ft,
+					GeneratedExprString: "1 + 2",
 				},
 			},
 		},
-	})
+	}, tableInfos)
 }
 
-func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
+func TestWriteRowsErrorNoRetry(t *testing.T) {
 	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 
+	// batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(nonRetryableError)
+
+	// disable error record, should not expect retry statements one by one.
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{}, log.L()),
+	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	ctx := context.Background()
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.Error(t, err)
+	require.False(t, common.IsRetryableError(err), "err: %v", err)
+}
+
+func TestWriteRowsErrorDowngradingAll(t *testing.T) {
+	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
 	// First, batch insert, fail and rollback.
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
@@ -424,11 +467,71 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
 		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "11.csv", int64(0), nonRetryableError.Error(), "(5)").
+		WillReturnResult(driver.ResultNoRows)
 
+	// disable error record, should not expect retry statements one by one.
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{
+			App: config.Lightning{
+				TaskInfoSchemaName: "tidb_lightning_errors",
+				MaxError: config.MaxError{
+					Type: *atomic.NewInt64(10),
+				},
+			},
+		}, log.L()),
+	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
 	ctx := context.Background()
-	logger := log.L()
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.NoError(t, err)
+}
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
+	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	// First, batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(nonRetryableError)
+	// Then, insert row-by-row due to the non-retryable error.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
+		WillReturnResult(driver.ResultNoRows)
+	// the forth row will exceed the error threshold, won't record this error
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
+		WillReturnError(nonRetryableError)
+
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, config.ErrorOnDup,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
 				TaskInfoSchemaName: "tidb_lightning_errors",
@@ -436,58 +539,92 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 					Type: *atomic.NewInt64(3),
 				},
 			},
-		}),
+		}, log.L()),
 	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	ctx := context.Background()
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.Error(t, err)
+	st, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
 
-	dataRows := ignoreBackend.MakeEmptyRows()
+func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
+	dataRows := b.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := ignoreBackend.MakeEmptyRows()
+	indexRows := b.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+	logger := log.L()
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
-	c.Assert(err, IsNil)
+	encoder, err := b.NewEncoder(context.Background(), tbl, &kv.SessionOptions{})
+	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "7.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "7.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(2),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "8.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "8.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(3),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "9.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "9.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(4),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "10.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "10.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(5),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "11.csv", 0)
-	c.Assert(err, IsNil)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "11.csv", 0)
+	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, nil)
-	c.Assert(err, IsNil)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
-	c.Assert(err, NotNil)
-	st, err := writer.Close(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(st, IsNil)
+	rawRow := make([]types.Datum, 0)
+	for i := 0; i < 15; i++ {
+		rawRow = append(rawRow, types.NewIntDatum(0))
+	}
+	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "12.csv", 0)
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "column count mismatch, at most")
+	return dataRows
+}
+
+func TestEncodeRowForRecord(t *testing.T) {
+	s := createMysqlSuite(t)
+
+	// for a correct row, the will encode a correct result
+	row := tidb.EncodeRowForRecord(context.Background(), s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+		types.NewIntDatum(5),
+		types.NewStringDatum("test test"),
+		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
+	}, []int{0, -1, -1, -1, -1, -1, -1, -1, 1, 2, -1, -1, -1, -1})
+	require.Equal(t, row, "(5,'test test',x'000000abcdef')")
+
+	// the following row will result in column count mismatch error, there for encode
+	// result will fallback to a "," separated string list.
+	row = tidb.EncodeRowForRecord(context.Background(), s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+		types.NewIntDatum(5),
+		types.NewStringDatum("test test"),
+		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
+	}, []int{0, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, -1, -1, -1})
+	require.Equal(t, row, "(5, \"test test\", \x00\x00\x00\xab\xcd\xef)")
 }

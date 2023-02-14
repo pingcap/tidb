@@ -107,4 +107,14 @@ var (
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary     = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 	ErrViewSelectTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrViewSelectTmptable)
+	ErrSubqueryMoreThan1Row     = dbterror.ClassOptimizer.NewStd(mysql.ErrSubqueryNo1Row)
+	ErrKeyPart0                 = dbterror.ClassOptimizer.NewStd(mysql.ErrKeyPart0)
+	ErrGettingNoopVariable      = dbterror.ClassOptimizer.NewStd(mysql.ErrGettingNoopVariable)
+
+	ErrPrepareMulti     = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
+	ErrUnsupportedPs    = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
+	ErrPsManyParam      = dbterror.ClassExecutor.NewStd(mysql.ErrPsManyParam)
+	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
+	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
+	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
 )

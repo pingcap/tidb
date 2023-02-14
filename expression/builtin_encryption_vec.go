@@ -30,13 +30,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
+//revive:disable:defer
 func (b *builtinAesDecryptSig) vectorized() bool {
 	return true
 }
@@ -424,20 +424,14 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 	}
 	result.ReserveString(n)
 
-	var dBytes []byte
 	digest := md5.New() // #nosec G401
-	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		cryptBytes := buf.GetBytes(i)
-		dBytes, err := enc.Encode(dBytes, cryptBytes)
-		if err != nil {
-			return err
-		}
-		_, err = digest.Write(dBytes)
+		_, err = digest.Write(cryptBytes)
 		if err != nil {
 			return err
 		}
@@ -524,6 +518,39 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
+func (b *builtinSM3Sig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals Sm3Hash(str).
+func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return errors.Trace(err)
+	}
+	result.ReserveString(n)
+	hasher := auth.NewSM3()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetBytes(i)
+		_, err = hasher.Write(str)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
+		hasher.Reset()
+	}
+	return nil
+}
+
 func (b *builtinCompressSig) vectorized() bool {
 	return true
 }
@@ -570,14 +597,15 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		str := buf.GetString(i)
+		strBytes := buf.GetBytes(i)
 
 		// According to doc: Empty strings are stored as empty strings.
-		if len(str) == 0 {
+		if len(strBytes) == 0 {
 			result.AppendString("")
+			continue
 		}
 
-		compressed, err := deflate(hack.Slice(str))
+		compressed, err := deflate(strBytes)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -592,10 +620,11 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 
 		buffer := allocByteSlice(resultLength)
+		//nolint: revive
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 
-		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		binary.LittleEndian.PutUint32(buffer, uint32(len(strBytes)))
 		copy(buffer[4:], compressed)
 
 		if shouldAppendSuffix {
@@ -694,16 +723,18 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 			continue
 		}
-		pass := buf.GetString(i)
-		if len(pass) == 0 {
+
+		passBytes := buf.GetBytes(i)
+		if len(passBytes) == 0 {
 			result.AppendString("")
 			continue
 		}
+
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-		result.AppendString(auth.EncodePassword(pass))
+		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}
 	return nil
 }
@@ -830,6 +861,48 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *ch
 			continue
 		}
 		i64s[i] = int64(binary.LittleEndian.Uint32([]byte(str)[0:4]))
+	}
+	return nil
+}
+
+func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinValidatePasswordStrengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	enableValidation := false
+	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	if err != nil {
+		return err
+	}
+	enableValidation = variable.TiDBOptOn(validation)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if !enableValidation {
+			i64s[i] = 0
+		} else if score, isNull, err := b.validateStr(buf.GetString(i), &globalVars); err != nil {
+			return err
+		} else if !isNull {
+			i64s[i] = score
+		} else {
+			result.SetNull(i, true)
+		}
 	}
 	return nil
 }

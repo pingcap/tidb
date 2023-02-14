@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "resourcegroup",
+    srcs = [
+        "errors.go",
+        "group.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/resourcegroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/model",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+    ],
+)
+
+go_test(
+    name = "resourcegroup_test",
+    timeout = "short",
+    srcs = ["group_test.go"],
+    embed = [":resourcegroup"],
+    flaky = True,
+    deps = [
+        "//parser/model",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_stretchr_testify//require",
+    ],
+)

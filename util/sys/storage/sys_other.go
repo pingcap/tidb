@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !linux,!windows,!darwin
+//go:build !linux && !windows && !darwin
 
 package storage
 

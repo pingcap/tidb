@@ -15,7 +15,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -32,10 +34,11 @@ type aggregationPushDownSolver struct {
 // isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
 // if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
+// For example, Max(S_1 union S_2) = Max(Max(S_1) union Max(S_2)), thus we think Max is decomposable.
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
-func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
+func (*aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
 	if len(fun.OrderByItems) > 0 {
 		return false
 	}
@@ -68,15 +71,17 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 	}
 }
 
-// getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
-func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) int {
+// getAggFuncChildIdx gets which children it belongs to.
+// 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
+func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
 	for _, col := range cols {
-		if schema.Contains(col) {
+		if lSchema.Contains(col) {
 			fromLeft = true
-		} else {
+		}
+		if rSchema.Contains(col) {
 			fromRight = true
 		}
 	}
@@ -84,8 +89,10 @@ func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggF
 		return -1
 	} else if fromLeft {
 		return 0
+	} else if fromRight {
+		return 1
 	}
-	return 1
+	return 2
 }
 
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
@@ -94,16 +101,34 @@ func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggF
 func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
 	leftChild := join.children[0]
+	rightChild := join.children[1]
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithJoin(aggFunc) {
 			return false, nil, nil
 		}
-		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema())
+		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema(), rightChild.Schema())
 		switch index {
 		case 0:
+			if join.JoinType == RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+				return false, nil, nil
+			}
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
+			if join.JoinType == LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+				return false, nil, nil
+			}
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
+		case 2:
+			// arguments are constant
+			switch join.JoinType {
+			case LeftOuterJoin:
+				leftAggFuncs = append(leftAggFuncs, aggFunc)
+			case RightOuterJoin:
+				rightAggFuncs = append(rightAggFuncs, aggFunc)
+			default:
+				// either left or right is fine, ideally we'd better put this to the hash build side
+				rightAggFuncs = append(rightAggFuncs, aggFunc)
+			}
 		default:
 			return false, nil, nil
 		}
@@ -167,7 +192,7 @@ func (a *aggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregat
 }
 
 // addGbyCol adds a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
-func (a *aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+func (*aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
@@ -184,13 +209,14 @@ func (a *aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []
 }
 
 // checkValidJoin checks if this join should be pushed across.
-func (a *aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
+func (*aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) ([]*aggregation.AggFuncDesc, *expression.Schema) {
+func (*aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc,
+	schema *expression.Schema, nullGenerating bool) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
@@ -199,7 +225,21 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 			RetType:  aggFunc.RetTp,
 		})
 	}
-	aggFunc.Args = expression.Column2Exprs(schema.Columns[schema.Len()-len(result):])
+	cols := schema.Columns[schema.Len()-len(result):]
+	aggFunc.Args = make([]expression.Expression, 0, len(cols))
+	// if the partial aggregation is on the null generating side, we have to clear the NOT NULL flag
+	// for the final aggregate functions' arguments
+	for _, col := range cols {
+		if nullGenerating {
+			arg := *col
+			newFieldType := *arg.RetType
+			newFieldType.DelFlag(mysql.NotNullFlag)
+			arg.RetType = &newFieldType
+			aggFunc.Args = append(aggFunc.Args, &arg)
+		} else {
+			aggFunc.Args = append(aggFunc.Args, col)
+		}
+	}
 	aggFunc.Mode = aggregation.FinalMode
 	return result, schema
 }
@@ -207,7 +247,8 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
+	join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -222,7 +263,9 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 			return child, nil
 		}
 	}
-	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset)
+	nullGenerating := (join.JoinType == LeftOuterJoin && childIdx == 1) ||
+		(join.JoinType == RightOuterJoin && childIdx == 0)
+	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +284,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 			return child, nil
 		}
 	}
+	appendAggPushDownAcrossJoinTraceStep(oldAgg, agg, aggFuncs, join, childIdx, opt)
 	return agg, nil
 }
 
@@ -265,10 +309,23 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 	return false
 }
 
+// checkAllArgsColumn checks whether the args in function are dedicated columns
+// eg: count(*) or sum(a+1) will return false while count(a) or sum(a) will return true
+func (a *aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDesc) bool {
+	for _, arg := range fun.Args {
+		_, ok := arg.(*expression.Column)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
-func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int) (*LogicalAggregation, error) {
+//  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//  2. remove this method and use splitPartialAgg instead for clean code.
+func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
+	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		aggHints:     aggHints,
@@ -278,7 +335,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []*aggregation.AggFuncDesc
-		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
+		newFuncs, schema = a.decompose(ctx, aggFunc, schema, nullGenerating)
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
@@ -348,6 +405,12 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 		if err != nil {
 			return nil, err
 		}
+		// Update mode of new generated firstRow as other agg funcs.
+		if len(agg.AggFuncs) != 0 {
+			firstRow.Mode = agg.AggFuncs[0].Mode
+		} else {
+			firstRow.Mode = aggregation.Partial1Mode
+		}
 		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	tmpSchema := expression.NewSchema(newAgg.GetGroupByCols()...)
@@ -367,11 +430,11 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	return newAgg, nil
 }
 
-func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
-	return a.aggPushDown(p)
+func (a *aggregationPushDownSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	return a.aggPushDown(p, opt)
 }
 
-func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation) error {
+func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) error {
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithUnion(aggFunc) {
 			return nil
@@ -381,6 +444,16 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	if pushedAgg == nil {
 		return nil
 	}
+
+	// Update the agg mode for the pushed down aggregation.
+	for _, aggFunc := range pushedAgg.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			aggFunc.Mode = aggregation.Partial1Mode
+		} else if aggFunc.Mode == aggregation.FinalMode {
+			aggFunc.Mode = aggregation.Partial2Mode
+		}
+	}
+
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
@@ -391,17 +464,21 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	}
 	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Clone().Columns...))
 	union.SetChildren(newChildren...)
+	appendAggPushDownAcrossUnionTraceStep(union, agg, opt)
 	return nil
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
-func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	if agg, ok := p.(*LogicalAggregation); ok {
-		proj := a.tryToEliminateAggregation(agg)
+		proj := a.tryToEliminateAggregation(agg, opt)
 		if proj != nil {
 			p = proj
 		} else {
 			child := agg.children[0]
+			// For example, we can optimize 'select sum(a.id) from t as a,t as b where a.id = b.id;' as
+			// 'select sum(agg) from (select sum(id) as agg,id from t group by id) as a, t as b where a.id = b.id;'
+			// by pushing down sum aggregation functions.
 			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) && p.SCtx().GetSessionVars().AllowAggPushDown {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild LogicalPlan
@@ -412,7 +489,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset)
+						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
 							return nil, err
 						}
@@ -420,20 +497,26 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset)
+						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
 							return nil, err
 						}
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+					if join.JoinType == LeftOuterJoin {
+						resetNotNullFlag(join.schema, lChild.Schema().Len(), join.schema.Len())
+					} else if join.JoinType == RightOuterJoin {
+						resetNotNullFlag(join.schema, 0, lChild.Schema().Len())
+					}
 					buildKeyInfo(join)
-					proj := a.tryToEliminateAggregation(agg)
+					proj := a.tryToEliminateAggregation(agg, opt)
 					if proj != nil {
 						p = proj
 					}
 				}
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+				// push aggregation across projection
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				noSideEffects := true
@@ -445,9 +528,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 						break
 					}
 				}
+				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				if noSideEffects {
 					for _, aggFunc := range agg.AggFuncs {
+						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
 							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
@@ -470,15 +555,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					// And then push the new 'Aggregation' below the 'Union All' .
 					// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
 					child = projChild
+					appendAggPushDownAcrossProjTraceStep(agg, proj, opt)
 				}
 			}
 			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
-				err := a.tryAggPushDownForUnion(union, agg)
+				err := a.tryAggPushDownForUnion(union, agg, opt)
 				if err != nil {
 					return nil, err
 				}
 			} else if union, ok1 := child.(*LogicalPartitionUnionAll); ok1 {
-				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg)
+				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg, opt)
 				if err != nil {
 					return nil, err
 				}
@@ -487,7 +573,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.aggPushDown(child)
+		newChild, err := a.aggPushDown(child, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -499,4 +585,74 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 
 func (*aggregationPushDownSolver) name() string {
 	return "aggregation_push_down"
+}
+
+func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
+	childIdx int, opt *logicalOptimizeOp) {
+	reason := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's functions[", oldAgg.TP(), oldAgg.ID()))
+		for i, aggFunc := range aggFuncs {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString("] are decomposable with join")
+		return buffer.String()
+	}
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v pushed down across %v_%v, ", oldAgg.TP(), oldAgg.ID(), join.TP(), join.ID()))
+		buffer.WriteString(fmt.Sprintf("and %v_%v %v path becomes %v_%v", join.TP(), join.ID(), func() string {
+			if childIdx == 0 {
+				return "left"
+			}
+			return "right"
+		}(), newAgg.TP(), newAgg.ID()))
+		return buffer.String()
+	}
+	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
+}
+
+func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
+		for i, aggFunc := range agg.AggFuncs {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString("]")
+		return buffer.String()
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v is directly below an %v_%v and has no side effects", proj.TP(), proj.ID(), agg.TP(), agg.ID())
+	}
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+}
+
+func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) {
+	reason := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))
+		for i, aggFunc := range agg.AggFuncs {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString(fmt.Sprintf("] are decomposable with %v_%v", union.TP(), union.ID()))
+		return buffer.String()
+	}
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v pushed down, and %v_%v's children changed into[", agg.TP(), agg.ID(), union.TP(), union.ID()))
+		for i, child := range union.Children() {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(fmt.Sprintf("%v_%v", child.TP(), child.ID()))
+		}
+		buffer.WriteString("]")
+		return buffer.String()
+	}
+	opt.appendStepToCurrent(union.ID(), union.TP(), reason, action)
 }

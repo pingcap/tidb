@@ -2,9 +2,11 @@
 
 package export
 
-import "fmt"
+import (
+	"fmt"
+)
 
-// Task is a file dump task for dumpling, it could either be dumping database/table/view metadata, table data
+// Task is a file dump task for dumpling, it could either be dumping database/table/view/policy metadata, table data
 type Task interface {
 	// Brief is the brief for a dumping task
 	Brief() string
@@ -32,6 +34,21 @@ type TaskViewMeta struct {
 	ViewName       string
 	CreateTableSQL string
 	CreateViewSQL  string
+}
+
+// TaskSequenceMeta is a dumping sequence metadata task
+type TaskSequenceMeta struct {
+	Task
+	DatabaseName      string
+	SequenceName      string
+	CreateSequenceSQL string
+}
+
+// TaskPolicyMeta is a dumping view metadata task
+type TaskPolicyMeta struct {
+	Task
+	PolicyName      string
+	CreatePolicySQL string
 }
 
 // TaskTableData is a dumping table data task
@@ -70,6 +87,23 @@ func NewTaskViewMeta(dbName, tblName, createTableSQL, createViewSQL string) *Tas
 	}
 }
 
+// NewTaskSequenceMeta returns a new dumping sequence metadata task
+func NewTaskSequenceMeta(dbName, tblName, createSequenceSQL string) *TaskSequenceMeta {
+	return &TaskSequenceMeta{
+		DatabaseName:      dbName,
+		SequenceName:      tblName,
+		CreateSequenceSQL: createSequenceSQL,
+	}
+}
+
+// NewTaskPolicyMeta returns a new dumping placement policy metadata task
+func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
+	return &TaskPolicyMeta{
+		PolicyName:      policyName,
+		CreatePolicySQL: createPolicySQL,
+	}
+}
+
 // NewTaskTableData returns a new dumping table data task
 func NewTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	return &TaskTableData{
@@ -93,6 +127,16 @@ func (t *TaskTableMeta) Brief() string {
 // Brief implements task.Brief
 func (t *TaskViewMeta) Brief() string {
 	return fmt.Sprintf("meta of view '%s'.'%s'", t.DatabaseName, t.ViewName)
+}
+
+// Brief implements task.Brief
+func (t *TaskSequenceMeta) Brief() string {
+	return fmt.Sprintf("meta of sequence '%s'.'%s'", t.DatabaseName, t.SequenceName)
+}
+
+// Brief implements task.Brief
+func (t *TaskPolicyMeta) Brief() string {
+	return fmt.Sprintf("meta of placement policy '%s'", t.PolicyName)
 }
 
 // Brief implements task.Brief

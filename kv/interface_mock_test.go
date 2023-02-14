@@ -30,6 +30,10 @@ type mockTxn struct {
 	valid bool
 }
 
+func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
+	return nil
+}
+
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrTxnRetryable
@@ -48,6 +52,13 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
+func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, fn func(), _ ...Key) error {
+	if fn != nil {
+		fn()
+	}
+	return nil
+}
+
 func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
@@ -63,6 +74,7 @@ func (t *mockTxn) IsReadOnly() bool {
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
+
 func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
@@ -82,6 +94,7 @@ func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
+
 func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
@@ -115,7 +128,6 @@ func (t *mockTxn) Flush() (int, error) {
 }
 
 func (t *mockTxn) Discard() {
-
 }
 
 func (t *mockTxn) Reset() {
@@ -123,7 +135,6 @@ func (t *mockTxn) Reset() {
 }
 
 func (t *mockTxn) SetVars(vars interface{}) {
-
 }
 
 func (t *mockTxn) GetVars() interface{} {
@@ -131,7 +142,6 @@ func (t *mockTxn) GetVars() interface{} {
 }
 
 func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
-
 }
 
 func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -139,12 +149,38 @@ func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 }
 
 func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	//TODO nothing
+	// TODO nothing
+}
+
+func (t *mockTxn) GetMemDBCheckpoint() *tikv.MemDBCheckpoint {
+	return nil
+}
+
+func (t *mockTxn) RollbackMemDBToCheckpoint(_ *tikv.MemDBCheckpoint) {
+	// TODO nothing
 }
 
 func (t *mockTxn) ClearDiskFullOpt() {
-	//TODO nothing
+	// TODO nothing
 }
+
+func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
+
+}
+
+func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
+
+}
+
+func (t *mockTxn) Mem() uint64 {
+	return 0
+}
+
+func (t *mockTxn) StartAggressiveLocking() error                   { return nil }
+func (t *mockTxn) RetryAggressiveLocking(_ context.Context) error  { return nil }
+func (t *mockTxn) CancelAggressiveLocking(_ context.Context) error { return nil }
+func (t *mockTxn) DoneAggressiveLocking(_ context.Context) error   { return nil }
+func (t *mockTxn) IsInAggressiveLockingMode() bool                 { return false }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
@@ -155,14 +191,13 @@ func newMockTxn() Transaction {
 }
 
 // mockStorage is used to start a must commit-failed txn.
-type mockStorage struct {
+type mockStorage struct{}
+
+func (s *mockStorage) GetCodec() tikv.Codec {
+	return nil
 }
 
-func (s *mockStorage) Begin() (Transaction, error) {
-	return newMockTxn(), nil
-}
-
-func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
+func (s *mockStorage) Begin(opts ...tikv.TxnOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -243,7 +278,6 @@ func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {
-
 }
 
 func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {

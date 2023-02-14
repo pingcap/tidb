@@ -21,8 +21,6 @@ import (
 )
 
 func TestFastSlowFastReverse(t *testing.T) {
-	t.Parallel()
-
 	if !supportsUnaligned {
 		return
 	}
@@ -35,8 +33,6 @@ func TestFastSlowFastReverse(t *testing.T) {
 }
 
 func TestBytesCodec(t *testing.T) {
-	t.Parallel()
-
 	inputs := []struct {
 		enc  []byte
 		dec  []byte
@@ -61,7 +57,7 @@ func TestBytesCodec(t *testing.T) {
 	}
 
 	for _, input := range inputs {
-		require.Equal(t, len(input.dec), EncodedBytesLength(len(input.enc)))
+		require.Len(t, input.dec, EncodedBytesLength(len(input.enc)))
 
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)
@@ -96,5 +92,29 @@ func TestBytesCodec(t *testing.T) {
 	for _, input := range errInputs {
 		_, _, err := DecodeBytes(input, nil)
 		require.Error(t, err)
+	}
+}
+
+func TestBytesCodecExt(t *testing.T) {
+	inputs := []struct {
+		enc []byte
+		dec []byte
+	}{
+		{[]byte{}, []byte{0, 0, 0, 0, 0, 0, 0, 0, 247}},
+		{[]byte{1, 2, 3}, []byte{1, 2, 3, 0, 0, 0, 0, 0, 250}},
+		{[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 255, 9, 0, 0, 0, 0, 0, 0, 0, 248}},
+	}
+
+	// `assertEqual` is to deal with test case for `[]byte{}` & `[]byte(nil)`.
+	assertEqual := func(expected []byte, acutal []byte) {
+		require.Equal(t, len(expected), len(acutal))
+		for i := range expected {
+			require.Equal(t, expected[i], acutal[i])
+		}
+	}
+
+	for _, input := range inputs {
+		assertEqual(input.enc, EncodeBytesExt(nil, input.enc, true))
+		assertEqual(input.dec, EncodeBytesExt(nil, input.enc, false))
 	}
 }

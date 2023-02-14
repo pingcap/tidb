@@ -116,17 +116,6 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 	return nil
 }
 
-func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
-	s := NewFMSketch(maxSize)
-	for _, value := range values {
-		err := s.InsertValue(sc, value)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-	}
-	return s, s.NDV(), nil
-}
-
 // MergeFMSketch merges two FM Sketch.
 func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	if s == nil || rs == nil {

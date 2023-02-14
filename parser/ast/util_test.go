@@ -26,7 +26,6 @@ import (
 )
 
 func TestCacheable(t *testing.T) {
-	t.Parallel()
 	// test non-SelectStmt
 	var stmt Node = &DeleteStmt{}
 	require.False(t, IsReadOnly(stmt))
@@ -76,7 +75,6 @@ func TestCacheable(t *testing.T) {
 }
 
 func TestUnionReadOnly(t *testing.T) {
-	t.Parallel()
 	selectReadOnly := &SelectStmt{}
 	selectForUpdate := &SelectStmt{
 		LockInfo: &SelectLockInfo{LockType: SelectLockForUpdate},
@@ -122,7 +120,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *Constraint:
@@ -149,6 +147,8 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 		}
 	case *Join:
 		node.ExplicitParens = false
+	case *ColumnDef:
+		node.Tp.CleanElemIsBinaryLit()
 	}
 	return in, false
 }
@@ -192,7 +192,7 @@ func runNodeRestoreTestWithFlags(t *testing.T, nodeTestCases []NodeRestoreTestCa
 
 // runNodeRestoreTestWithFlagsStmtChange likes runNodeRestoreTestWithFlags but not check if the ASTs are same.
 // Sometimes the AST are different and it's expected.
-func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node) {
+func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node, flags RestoreFlags) {
 	p := parser.New()
 	p.EnableWindowFunc(true)
 	for _, testCase := range nodeTestCases {
@@ -202,7 +202,7 @@ func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRes
 		comment := fmt.Sprintf("source %#v", testCase)
 		require.NoError(t, err, comment)
 		var sb strings.Builder
-		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(flags, &sb))
 		require.NoError(t, err, comment)
 		restoreSql := fmt.Sprintf(template, sb.String())
 		comment = fmt.Sprintf("source %#v; restore %v", testCase, restoreSql)

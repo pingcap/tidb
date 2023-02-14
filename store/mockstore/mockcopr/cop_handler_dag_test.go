@@ -22,8 +22,6 @@ import (
 )
 
 func TestConstructTimezone(t *testing.T) {
-	t.Parallel()
-
 	secondsEastOfUTC := int((8 * time.Hour).Seconds())
 	loc, err := constructTimeZone("", secondsEastOfUTC)
 	require.NoError(t, err)

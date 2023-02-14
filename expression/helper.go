@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"time"
@@ -24,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 )
@@ -38,7 +37,7 @@ func boolToInt64(v bool) int64 {
 }
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
-// Here `valid` means it is consistent with the given fieldType's Decimal.
+// Here `valid` means it is consistent with the given fieldType's decimal.
 func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
 	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
 	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
@@ -47,41 +46,60 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 
 	containsArg := len(fn.Args) > 0
 	// Fsp represents fractional seconds precision.
-	containsFsp := fieldType != nil && fieldType.Decimal > 0
+	containsFsp := fieldType != nil && fieldType.GetDecimal() > 0
 	var isConsistent bool
 	if containsArg {
 		v, ok := fn.Args[0].(*driver.ValueExpr)
-		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.Decimal)
+		isConsistent = ok && fieldType != nil && v.Datum.GetInt64() == int64(fieldType.GetDecimal())
 	}
 
 	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
-// GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
+// GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
+func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int) (d types.Datum, err error) {
+	var t types.Time
+	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
+	if err != nil {
+		return d, err
+	}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
+func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.Time, err error) {
 	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
+	defaultTime, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return value, err
+	}
+	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)))
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
+		err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
+		if err != nil {
+			return value, err
+		}
+	}
+	return value, nil
+}
+
+// GetTimeValue gets the time value with type tp.
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
+	var value types.Time
 
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
-		upperX := strings.ToUpper(x)
-		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			defaultTime, err := getStmtTimestamp(ctx)
-			if err != nil {
+		lowerX := strings.ToLower(x)
+		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
-			value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
-			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
-				if err != nil {
-					return d, err
-				}
-			}
-		} else if upperX == types.ZeroDatetimeStr {
+		} else if lowerX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, fsp)
+			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
 			if err != nil {
 				return d, err
 			}
@@ -89,7 +107,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
+			value, err = types.ParseTime(sc, x.GetString(), tp, fsp, nil)
 			if err != nil {
 				return d, err
 			}
@@ -104,8 +122,8 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 			return d, errDefaultValue
 		}
 	case *ast.FuncCallExpr:
-		if x.FnName.L == ast.CurrentTimestamp {
-			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName)
+		if x.FnName.L == ast.CurrentTimestamp || x.FnName.L == ast.CurrentDate {
+			d.SetString(strings.ToUpper(x.FnName.L), mysql.DefaultCollationName)
 			return d, nil
 		}
 		return d, errDefaultValue
@@ -147,21 +165,15 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := variable.GetSessionOrGlobalSystemVar(sessionVars, "timestamp")
+	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
 	if err != nil {
 		return now, err
 	}
 
-	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if timestamp <= 0 {
-			return now, nil
-		}
-		return time.Unix(timestamp, 0), nil
+	timestamp, err := types.StrToFloat(sessionVars.StmtCtx, timestampStr, false)
+	if err != nil {
+		return time.Time{}, err
 	}
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	return stmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time), nil
+	seconds, fractionalSeconds := math.Modf(timestamp)
+	return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
 }

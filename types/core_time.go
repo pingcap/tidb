@@ -142,7 +142,7 @@ func (t CoreTime) Weekday() gotime.Weekday {
 }
 
 // YearWeek returns year and week.
-func (t CoreTime) YearWeek(mode int) (int, int) {
+func (t CoreTime) YearWeek(mode int) (year int, week int) {
 	behavior := weekMode(mode) | weekBehaviourYear
 	return calcWeek(t, behavior)
 }
@@ -182,6 +182,30 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
 	}
 	return tm, nil
+}
+
+// AdjustedGoTime converts Time to GoTime and adjust for invalid DST times
+// like during the DST change with increased offset,
+// normally moving to Daylight Saving Time.
+// see https://github.com/pingcap/tidb/issues/28739
+func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
+	tm, err := t.GoTime(loc)
+	if err == nil {
+		return tm, nil
+	}
+
+	// The converted go time did not map back to the same time, probably it was between a
+	// daylight saving transition, adjust the time to the closest Zone bound.
+	start, end := tm.ZoneBounds()
+	// time zone transitions are normally 1 hour, allow up to 4 hours before returning error
+	if start.Sub(tm).Abs().Hours() > 4.0 && end.Sub(tm).Abs().Hours() > 4.0 {
+		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tm))
+	}
+	// use the closest transition time
+	if tm.Sub(start).Abs() <= tm.Sub(end).Abs() {
+		return start, nil
+	}
+	return end, nil
 }
 
 // IsLeapYear returns if it's leap year.
@@ -224,8 +248,10 @@ func getFixDays(year, month, day int, ot gotime.Time) int {
 
 // compareTime compare two Time.
 // return:
-//  0: if a == b
-//  1: if a > b
+//
+//	0: if a == b
+//	1: if a > b
+//
 // -1: if a < b
 func compareTime(a, b CoreTime) int {
 	ta := datetimeToUint64(a)

@@ -15,16 +15,14 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/disjointset"
 )
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhysicalPlan itself
+func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 	for i, expr := range p.Exprs {
 		p.Exprs[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
@@ -37,6 +35,15 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 	}
 	refine4NeighbourProj(p, childProj)
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalProjection) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // refine4NeighbourProj refines the index for p.Exprs whose type is *Column when
@@ -72,12 +79,8 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 	}
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhyicalPlan itself
+func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i, fun := range p.EqualConditions {
@@ -92,6 +95,19 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+	}
+	for i, fun := range p.NAEqualConditions {
+		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
+		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
@@ -112,6 +128,15 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 		}
 	}
 	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalHashJoin) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.
@@ -365,12 +390,8 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
+// ResolveIndicesItself resolve indices for PhyicalPlan itself
+func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
 	for i, col := range p.HashCols {
 		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
 		if err1 != nil {
@@ -378,7 +399,16 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 		}
 		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
 	}
-	return err
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	return p.ResolveIndicesItself()
 }
 
 // ResolveIndices implements Plan interface.
@@ -410,19 +440,38 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalSort) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
+func resolveIndicesForSort(p basePhysicalPlan) (err error) {
+	err = p.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	for _, item := range p.ByItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.children[0].Schema())
+
+	var byItems []*util.ByItems
+	switch x := p.self.(type) {
+	case *PhysicalSort:
+		byItems = x.ByItems
+	case *NominalSort:
+		byItems = x.ByItems
+	default:
+		return errors.Errorf("expect PhysicalSort or NominalSort, but got %s", p.TP())
+	}
+	for _, item := range byItems {
+		item.Expr, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 	}
 	return err
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalSort) ResolveIndices() (err error) {
+	return resolveIndicesForSort(p.basePhysicalPlan)
+}
+
+// ResolveIndices implements Plan interface.
+func (p *NominalSort) ResolveIndices() (err error) {
+	return resolveIndicesForSort(p.basePhysicalPlan)
 }
 
 // ResolveIndices implements Plan interface.
@@ -546,6 +595,13 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 		}
 		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
 	}
+	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
+		newSf, err := cond.ResolveIndices(joinedSchema)
+		if err != nil {
+			return err
+		}
+		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
+	}
 	return
 }
 
@@ -600,9 +656,12 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-		if err != nil {
-			return err
+		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
+		if asgn.Expr != nil {
+			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, set := range p.SetList {

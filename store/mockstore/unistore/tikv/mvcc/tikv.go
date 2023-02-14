@@ -70,8 +70,8 @@ const (
 // EncodeWriteCFValue accepts a write cf parameters and return the encoded bytes data.
 // Just like the tikv encoding form. See tikv/src/storage/mvcc/write.rs for more detail.
 func EncodeWriteCFValue(t WriteType, startTs uint64, shortVal []byte) []byte {
-	data := make([]byte, 1)
-	data[0] = t
+	data := make([]byte, 0)
+	data = append(data, t)
 	data = codec.EncodeUvarint(data, startTs)
 	if len(shortVal) != 0 {
 		data = append(data, byte(shortValuePrefix), byte(len(shortVal)))
@@ -82,16 +82,16 @@ func EncodeWriteCFValue(t WriteType, startTs uint64, shortVal []byte) []byte {
 
 // EncodeLockCFValue encodes the mvcc lock and returns putLock value and putDefault value if exists.
 func EncodeLockCFValue(lock *Lock) ([]byte, []byte) {
-	data := make([]byte, 1)
+	data := make([]byte, 0)
 	switch lock.Op {
 	case byte(kvrpcpb.Op_Put):
-		data[0] = LockTypePut
+		data = append(data, LockTypePut)
 	case byte(kvrpcpb.Op_Del):
-		data[0] = LockTypeDelete
+		data = append(data, LockTypeDelete)
 	case byte(kvrpcpb.Op_Lock):
-		data[0] = LockTypeLock
+		data = append(data, LockTypeLock)
 	case byte(kvrpcpb.Op_PessimisticLock):
-		data[0] = LockTypePessimistic
+		data = append(data, LockTypePessimistic)
 	default:
 		panic("invalid lock op")
 	}

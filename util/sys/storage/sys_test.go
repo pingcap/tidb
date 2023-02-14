@@ -22,7 +22,6 @@ import (
 )
 
 func TestGetTargetDirectoryCapacity(t *testing.T) {
-	t.Parallel()
 	r, err := storage.GetTargetDirectoryCapacity(".")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, r, uint64(1), "couldn't get capacity")

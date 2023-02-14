@@ -3,7 +3,10 @@
 package utils
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -106,4 +109,24 @@ func (pool *WorkerPool) RecycleWorker(worker *Worker) {
 // HasWorker checks if the pool has unallocated workers.
 func (pool *WorkerPool) HasWorker() bool {
 	return pool.IdleCount() > 0
+}
+
+// PanicToErr recovers when the execution get panicked, and set the error provided by the arg.
+// generally, this would be used with named return value and `defer`, like:
+//
+//	func foo() (err error) {
+//	  defer utils.PanicToErr(&err)
+//	  return maybePanic()
+//	}
+//
+// Before using this, there are some hints for reducing resource leakage or bugs:
+//   - If any of clean work (by `defer`) relies on the error (say, when error happens, rollback some operations.), please
+//     place `defer this` AFTER that.
+//   - All resources allocated should be freed by the `defer` syntax, or when panicking, they may not be recycled.
+func PanicToErr(err *error) {
+	item := recover()
+	if item != nil {
+		*err = errors.Annotatef(berrors.ErrUnknown, "panicked when executing, message: %v", item)
+		log.Warn("PanicToErr: panicked, recovering and returning error", zap.StackSkip("stack", 1), logutil.ShortError(*err))
+	}
 }

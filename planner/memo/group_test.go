@@ -25,12 +25,11 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewGroup(t *testing.T) {
-	t.Parallel()
-
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
@@ -42,7 +41,6 @@ func TestNewGroup(t *testing.T) {
 }
 
 func TestGroupInsert(t *testing.T) {
-	t.Parallel()
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
@@ -52,8 +50,6 @@ func TestGroupInsert(t *testing.T) {
 }
 
 func TestGroupDelete(t *testing.T) {
-	t.Parallel()
-
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
@@ -67,8 +63,6 @@ func TestGroupDelete(t *testing.T) {
 }
 
 func TestGroupDeleteAll(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0))
 	g := NewGroupWithSchema(expr, expression.NewSchema())
@@ -85,8 +79,6 @@ func TestGroupDeleteAll(t *testing.T) {
 }
 
 func TestGroupExists(t *testing.T) {
-	t.Parallel()
-
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, expression.NewSchema())
@@ -97,8 +89,7 @@ func TestGroupExists(t *testing.T) {
 }
 
 func TestGroupFingerPrint(t *testing.T) {
-	t.Parallel()
-
+	variable.EnableMDL.Store(false)
 	p := parser.New()
 	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	require.NoError(t, err)
@@ -154,8 +145,6 @@ func TestGroupFingerPrint(t *testing.T) {
 }
 
 func TestGroupGetFirstElem(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))
@@ -186,8 +175,6 @@ func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return 
 func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
 
 func TestGetInsertGroupImpl(t *testing.T) {
-	t.Parallel()
-
 	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(plannercore.MockContext(), 0)), expression.NewSchema())
 	emptyProp := &property.PhysicalProperty{}
 	require.Nil(t, g.GetImpl(emptyProp))
@@ -201,8 +188,6 @@ func TestGetInsertGroupImpl(t *testing.T) {
 }
 
 func TestEngineTypeSet(t *testing.T) {
-	t.Parallel()
-
 	require.True(t, EngineAll.Contains(EngineTiDB))
 	require.True(t, EngineAll.Contains(EngineTiKV))
 	require.True(t, EngineAll.Contains(EngineTiFlash))
@@ -225,8 +210,6 @@ func TestEngineTypeSet(t *testing.T) {
 }
 
 func TestFirstElemAfterDelete(t *testing.T) {
-	t.Parallel()
-
 	ctx := plannercore.MockContext()
 	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(ctx, 0))
 	g := NewGroupWithSchema(oldExpr, expression.NewSchema())
@@ -242,8 +225,7 @@ func TestFirstElemAfterDelete(t *testing.T) {
 }
 
 func TestBuildKeyInfo(t *testing.T) {
-	t.Parallel()
-
+	variable.EnableMDL.Store(false)
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
@@ -291,8 +273,6 @@ func TestBuildKeyInfo(t *testing.T) {
 }
 
 func TestExploreMark(t *testing.T) {
-	t.Parallel()
-
 	mark := ExploreMark(0)
 	require.False(t, mark.Explored(0))
 	require.False(t, mark.Explored(1))

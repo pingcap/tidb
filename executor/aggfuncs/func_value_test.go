@@ -25,7 +25,7 @@ import (
 )
 
 func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta int64) {
-	switch dataType.Tp {
+	switch dataType.GetType() {
 	case mysql.TypeString:
 		memDelta = int64(len(row.GetString(0)))
 	case mysql.TypeJSON:
@@ -61,8 +61,6 @@ func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
 }
 
 func TestMemValue(t *testing.T) {
-	t.Parallel()
-
 	firstMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(1)
 	secondMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(2)
 	fifthMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(5)

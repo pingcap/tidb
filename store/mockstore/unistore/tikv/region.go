@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"strconv"
 	"sync"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 // InternalKey
@@ -248,7 +248,13 @@ func (ri *regionCtx) AcquireLatches(hashVals []uint64) {
 	dur := time.Since(start)
 	metrics.LatchWait.Observe(dur.Seconds())
 	if dur > time.Millisecond*50 {
-		log.S().Warnf("region %d acquire %d locks takes %v, waitCnt %d", ri.meta.Id, len(hashVals), dur, waitCnt)
+		var id string
+		if ri.meta == nil {
+			id = "unknown"
+		} else {
+			id = strconv.FormatUint(ri.meta.Id, 10)
+		}
+		log.S().Warnf("region %s acquire %d locks takes %v, waitCnt %d", id, len(hashVals), dur, waitCnt)
 	}
 }
 

@@ -53,8 +53,8 @@ func testKeyTable(t *testing.T, collations []string, tests []keyTable) {
 }
 
 func TestUTF8CollatorCompare(t *testing.T) {
-	SetCharsetFeatEnabledForTest(true)
-	defer SetCharsetFeatEnabledForTest(false)
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "gbk_bin", "gbk_chinese_ci"}
 	tests := []compareTable{
 		{"a", "b", []int{-1, -1, -1, -1, -1, -1}},
@@ -75,8 +75,8 @@ func TestUTF8CollatorCompare(t *testing.T) {
 }
 
 func TestUTF8CollatorKey(t *testing.T) {
-	SetCharsetFeatEnabledForTest(true)
-	defer SetCharsetFeatEnabledForTest(false)
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "gbk_bin", "gbk_chinese_ci"}
 	tests := []keyTable{
 		{"a", [][]byte{{0x61}, {0x61}, {0x0, 0x41}, {0x0E, 0x33}, {0x61}, {0x41}}},
@@ -135,7 +135,6 @@ func TestGetCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
-	require.IsType(t, &binPaddingCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
@@ -145,7 +144,6 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
-	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(87))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(45))
@@ -175,8 +173,8 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollatorByID(2048))
 	require.IsType(t, &binCollator{}, GetCollatorByID(9999))
 
-	SetCharsetFeatEnabledForTest(true)
-	defer SetCharsetFeatEnabledForTest(false)
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
 }

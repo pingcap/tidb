@@ -41,12 +41,9 @@ func (e *CTETableReaderExec) Open(ctx context.Context) error {
 func (e *CTETableReaderExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 
-	// Wait until iterInTbl can be read. This is controlled by corresponding CTEExec.
-	<-e.iterInTbl.GetBegCh()
-
 	// We should read `iterInTbl` from the beginning when the next iteration starts.
 	// Can not directly judge whether to start the next iteration based on e.chkIdx,
-	// because some operators(Selection) may use forloop to read all data in `iterInTbl`.
+	// because some operators(Selection) may use for loop to read all data in `iterInTbl`.
 	if e.curIter != e.iterInTbl.GetIter() {
 		if e.curIter > e.iterInTbl.GetIter() {
 			return errors.Errorf("invalid iteration for CTETableReaderExec (e.curIter: %d, e.iterInTbl.GetIter(): %d)",

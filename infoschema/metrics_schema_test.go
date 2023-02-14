@@ -15,17 +15,24 @@
 package infoschema_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMetricSchemaDef(t *testing.T) {
-	t.Parallel()
+func mockGenPromQL(promQL string) string {
+	promQL = strings.Replace(promQL, "$QUANTILE", strconv.FormatFloat(0.5, 'f', -1, 64), -1)
+	promQL = strings.Replace(promQL, "$LABEL_CONDITIONS", "", -1)
+	promQL = strings.Replace(promQL, "$RANGE_DURATION", "1s", -1)
+	return promQL
+}
 
+func TestMetricSchemaDef(t *testing.T) {
 	for name, def := range infoschema.MetricTableMap {
 		if strings.Contains(def.PromQL, "$QUANTILE") || strings.Contains(def.PromQL, "histogram_quantile") {
 			require.Greaterf(t, def.Quantile, float64(0), "the quantile of metric table %v should > 0", name)
@@ -55,5 +62,8 @@ func TestMetricSchemaDef(t *testing.T) {
 		if set.NewStringSet(def.Labels...).Exist("instance") {
 			require.Equalf(t, "instance", def.Labels[0], "metrics table %v: expect `instance`is the first label but got %v", name, def.Labels)
 		}
+
+		_, err := promql.ParseExpr(mockGenPromQL(def.PromQL))
+		require.NoError(t, err, "fail to parser PromQL %s", def.PromQL)
 	}
 }

@@ -52,3 +52,8 @@ func (s StringSet) Intersection(rhs StringSet) StringSet {
 func (s StringSet) Count() int {
 	return len(s)
 }
+
+// Empty returns whether s is empty.
+func (s StringSet) Empty() bool {
+	return len(s) == 0
+}

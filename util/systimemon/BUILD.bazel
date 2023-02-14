@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "systimemon",
+    srcs = ["systime_mon.go"],
+    importpath = "github.com/pingcap/tidb/util/systimemon",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "systimemon_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "systime_mon_test.go",
+    ],
+    embed = [":systimemon"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

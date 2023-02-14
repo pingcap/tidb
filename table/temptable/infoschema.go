@@ -21,16 +21,18 @@ import (
 
 // AttachLocalTemporaryTableInfoSchema attach local temporary table information schema to is
 func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return is
-	}
-
 	localTemporaryTables := getLocalTemporaryTables(sctx)
 	if localTemporaryTables == nil {
 		return is
 	}
+	if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		se.LocalTemporaryTablesOnce.Do(func() {
+			se.LocalTemporaryTables = localTemporaryTables
+		})
+		return is
+	}
 
-	return &infoschema.TemporaryTableAttachedInfoSchema{
+	return &infoschema.SessionExtendedInfoSchema{
 		InfoSchema:           is,
 		LocalTemporaryTables: localTemporaryTables,
 	}
@@ -38,29 +40,31 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 
 // DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
-	if attachedInfoSchema, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return attachedInfoSchema.InfoSchema
+	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		newIs := attachedInfoSchema
+		newIs.LocalTemporaryTables = nil
+		return newIs
 	}
 
 	return is
 }
 
-func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
+func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.SessionTables {
 	localTemporaryTables := sctx.GetSessionVars().LocalTemporaryTables
 	if localTemporaryTables == nil {
 		return nil
 	}
 
-	return localTemporaryTables.(*infoschema.LocalTemporaryTables)
+	return localTemporaryTables.(*infoschema.SessionTables)
 }
 
-func ensureLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
+func ensureLocalTemporaryTables(sctx sessionctx.Context) *infoschema.SessionTables {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.LocalTemporaryTables == nil {
-		localTempTables := infoschema.NewLocalTemporaryTables()
+		localTempTables := infoschema.NewSessionTables()
 		sessVars.LocalTemporaryTables = localTempTables
 		return localTempTables
 	}
 
-	return sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	return sessVars.LocalTemporaryTables.(*infoschema.SessionTables)
 }

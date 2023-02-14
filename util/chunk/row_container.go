@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"golang.org/x/sys/cpu"
 )
 
 type rowContainerRecord struct {
@@ -36,6 +37,8 @@ type rowContainerRecord struct {
 }
 
 type mutexForRowContainer struct {
+	// Add cache padding to avoid false sharing issue.
+	_ cpu.CacheLinePad
 	// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
 	// `rLock` and `wLocks` is introduced to reduce the contention when multiple
 	// goroutine touch the same rowContainer concurrently. If there are multiple
@@ -44,9 +47,10 @@ type mutexForRowContainer struct {
 	// each goroutine. Thus each goroutine holds its own rLock but share the same
 	// underlying data, which can reduce the contention on m.rLock remarkably and
 	// get better performance.
-	rLock   *sync.RWMutex
+	rLock   sync.RWMutex
 	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
+	_       cpu.CacheLinePad
 }
 
 // Lock locks rw for writing.
@@ -78,10 +82,6 @@ func (m *mutexForRowContainer) RUnlock() {
 type RowContainer struct {
 	m *mutexForRowContainer
 
-	fieldType []*types.FieldType
-	chunkSize int
-	numRow    int
-
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 	actionSpill *SpillDiskAction
@@ -90,18 +90,17 @@ type RowContainer struct {
 // NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
-	rLock := new(sync.RWMutex)
 	rc := &RowContainer{
 		m: &mutexForRowContainer{
 			records: &rowContainerRecord{inMemory: li},
-			rLock:   rLock,
-			wLocks:  []*sync.RWMutex{rLock},
+			rLock:   sync.RWMutex{},
+			wLocks:  []*sync.RWMutex{},
 		},
-		fieldType:   fieldType,
-		chunkSize:   chunkSize,
-		memTracker:  li.memTracker,
+		memTracker:  memory.NewTracker(memory.LabelForRowContainer, -1),
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	rc.m.wLocks = append(rc.m.wLocks, &rc.m.rLock)
+	li.GetMemTracker().AttachTo(rc.GetMemTracker())
 	return rc
 }
 
@@ -110,9 +109,12 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 // holds an individual rLock.
 func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	newRC := *c
-	rLock := new(sync.RWMutex)
-	c.m.wLocks = append(c.m.wLocks, rLock)
-	newRC.m.rLock = rLock
+	newRC.m = &mutexForRowContainer{
+		records: c.m.records,
+		rLock:   sync.RWMutex{},
+		wLocks:  []*sync.RWMutex{},
+	}
+	c.m.wLocks = append(c.m.wLocks, &newRC.m.rLock)
 	return &newRC
 }
 
@@ -134,10 +136,11 @@ func (c *RowContainer) SpillToDisk() {
 		defer c.actionSpill.setStatus(spilledYet)
 	}
 	var err error
-	N := c.m.records.inMemory.NumChunks()
+	memory.QueryForceDisk.Add(1)
+	n := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
-	for i := 0; i < N; i++ {
+	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
@@ -247,16 +250,22 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // GetRow returns the row the ptr pointed to.
-func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
+func (c *RowContainer) GetRow(ptr RowPtr) (row Row, err error) {
+	row, _, err = c.GetRowAndAppendToChunk(ptr, nil)
+	return row, err
+}
+
+// GetRowAndAppendToChunk gets a Row from the RowContainer by RowPtr.
+func (c *RowContainer) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
-			return Row{}, err
+			return Row{}, nil, err
 		}
-		return c.m.records.inDisk.GetRow(ptr)
+		return c.m.records.inDisk.GetRowAndAppendToChunk(ptr, chk)
 	}
-	return c.m.records.inMemory.GetRow(ptr), nil
+	return c.m.records.inMemory.GetRow(ptr), nil, nil
 }
 
 // GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.
@@ -277,6 +286,7 @@ func (c *RowContainer) Close() (err error) {
 		// Set status to spilledYet to avoid spilling.
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
+		c.actionSpill.SetFinished()
 	}
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
@@ -402,11 +412,8 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
-
 // GetPriority get the priority of the Action.
-func (a *SpillDiskAction) GetPriority() int64 {
+func (*SpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
@@ -436,20 +443,28 @@ type SortedRowContainer struct {
 	keyCmpFuncs []CompareFunc
 
 	actionSpill *SortAndSpillDiskAction
+	memTracker  *memory.Tracker
+
+	// Sort is a time-consuming operation, we need to set a checkpoint to detect
+	// the outside signal periodically.
+	timesOfRowCompare uint
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
-func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsDesc []bool,
+func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, byItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []CompareFunc) *SortedRowContainer {
-	return &SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
-		ByItemsDesc: ByItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+	src := SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
+		ByItemsDesc: byItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+	src.memTracker = memory.NewTracker(memory.LabelForRowContainer, -1)
+	src.RowContainer.GetMemTracker().AttachTo(src.GetMemTracker())
+	return &src
 }
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
+	c.GetMemTracker().Consume(int64(-8 * c.NumRow()))
 	c.ptrM.rowPtrs = nil
 	return c.RowContainer.Close()
 }
@@ -457,21 +472,37 @@ func (c *SortedRowContainer) Close() error {
 func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	for i, colIdx := range c.keyColumns {
 		cmpFunc := c.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if c.ByItemsDesc[i] {
-			cmp = -cmp
-		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if c.ByItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
 		}
 	}
 	return false
 }
 
+// SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
+const SignalCheckpointForSort uint = 10240
+
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+	if c.timesOfRowCompare >= SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		c.memTracker.Consume(1)
+		c.timesOfRowCompare = 0
+	}
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			c.timesOfRowCompare += 1024
+		}
+	})
+	c.timesOfRowCompare++
 	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
 	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
@@ -484,7 +515,7 @@ func (c *SortedRowContainer) Sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -496,7 +527,6 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
-	c.GetMemTracker().Consume(int64(8 * c.numRow))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
@@ -511,6 +541,8 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	if c.ptrM.rowPtrs != nil {
 		return ErrCannotAddBecauseSorted
 	}
+	// Consume the memory usage of rowPtrs in advance
+	c.GetMemTracker().Consume(int64(chk.NumRows() * 8))
 	return c.RowContainer.Add(chk)
 }
 
@@ -540,6 +572,11 @@ func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
 	}
 	return c.actionSpill
+}
+
+// GetMemTracker return the memory tracker for the sortedRowContainer
+func (c *SortedRowContainer) GetMemTracker() *memory.Tracker {
+	return c.memTracker
 }
 
 // SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
@@ -587,9 +624,6 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		fallback.Action(t)
 	}
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {

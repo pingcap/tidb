@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testdata
@@ -30,7 +31,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,31 +62,27 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if err != nil {
 		return res, err
 	}
-	if record {
-		res.output = make([]testCases, len(res.input))
-		for i := range res.input {
-			res.output[i].Name = res.input[i].Name
-		}
-	} else {
-		res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
-		if err != nil {
-			return res, err
-		}
-		if len(res.input) != len(res.output) {
-			return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
-		}
+
+	// Load all test cases result in order to keep the unrelated test results.
+	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
+	if err != nil {
+		return res, err
+	}
+	if len(res.input) != len(res.output) {
+		return res, fmt.Errorf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output))
 	}
 	res.funcMap = make(map[string]int, len(res.input))
 	for i, test := range res.input {
 		res.funcMap[test.Name] = i
 		if test.Name != res.output[i].Name {
-			return res, errors.New(fmt.Sprintf("Input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name))
+			return res, fmt.Errorf("Input name of the %d-case %s does not match output %s", i, test.Name, res.output[i].Name)
 		}
 	}
 	return res, nil
 }
 
 func loadTestSuiteCases(filePath string) (res []testCases, err error) {
+	//nolint: gosec
 	jsonFile, err := os.Open(filePath)
 	if err != nil {
 		return res, err
@@ -123,8 +120,16 @@ func ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 	return rs
 }
 
-// GetTestCases gets the test cases for a test function.
-func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) {
+// ConvertSQLWarnToStrings converts []SQLWarn to []string.
+func ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
+	for _, warn := range warns {
+		rs = append(rs, fmt.Sprint(warn.Err.Error()))
+	}
+	return rs
+}
+
+// LoadTestCases Loads the test cases for a test function.
+func (td *TestData) LoadTestCases(t *testing.T, in interface{}, out interface{}) {
 	// Extract caller's name.
 	pc, _, _, ok := runtime.Caller(1)
 	require.True(t, ok)
@@ -150,6 +155,25 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 	td.output[casesIdx].decodedOut = out
 }
 
+// LoadTestCasesByName loads the test cases for a test function by its name.
+func (td *TestData) LoadTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
+	casesIdx, ok := td.funcMap[caseName]
+	require.Truef(t, ok, "Case name: %s", caseName)
+	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
+
+	if Record() {
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	} else {
+		require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+	}
+
+	td.output[casesIdx].decodedOut = out
+}
+
 func (td *TestData) generateOutputIfNeeded() error {
 	if !record {
 		return nil
@@ -159,16 +183,25 @@ func (td *TestData) generateOutputIfNeeded() error {
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
+	isRecord4ThisSuite := false
 	for i, test := range td.output {
-		err := enc.Encode(test.decodedOut)
-		if err != nil {
-			return err
+		if test.decodedOut != nil {
+			// Only update the results for the related test cases.
+			isRecord4ThisSuite = true
+			err := enc.Encode(test.decodedOut)
+			if err != nil {
+				return err
+			}
+			res := make([]byte, len(buf.Bytes()))
+			copy(res, buf.Bytes())
+			buf.Reset()
+			rm := json.RawMessage(res)
+			td.output[i].Cases = &rm
 		}
-		res := make([]byte, len(buf.Bytes()))
-		copy(res, buf.Bytes())
-		buf.Reset()
-		rm := json.RawMessage(res)
-		td.output[i].Cases = &rm
+	}
+	// Skip the record for the unrelated test files.
+	if !isRecord4ThisSuite {
+		return nil
 	}
 	err := enc.Encode(td.output)
 	if err != nil {

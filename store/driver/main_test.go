@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -37,23 +37,25 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testsetup.SetupForCommonTest()
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createTestStore(t *testing.T) (kv.Storage, *domain.Domain) {
 	if *withTiKV {
 		return createTiKVStore(t)
 	}
 	return createUnistore(t)
 }
 
-func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 	var d TiKVDriver
 	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 	require.NoError(t, err)
@@ -74,15 +76,15 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return store, dom, clean
+	return store, dom
 }
 
-func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 	client, pdClient, cluster, err := unistore.New("")
 	require.NoError(t, err)
 
@@ -97,12 +99,12 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	clean := func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 
-	return store, dom, clean
+	return store, dom
 }
 
 func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {

@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tiflashtest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "tiflash_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 28,
+    deps = [
+        "//config",
+        "//domain",
+        "//executor",
+        "//kv",
+        "//meta/autoid",
+        "//parser/terror",
+        "//planner/core",
+        "//store/mockstore",
+        "//store/mockstore/unistore",
+        "//testkit",
+        "//testkit/external",
+        "//util/israce",
+        "//util/tiflashcompute",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

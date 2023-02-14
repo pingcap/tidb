@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "byitem.go",
+        "misc.go",
+        "path.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//expression",
+        "//kv",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//types",
+        "//util/collate",
+        "//util/ranger",
+        "//util/size",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "path_test.go",
+    ],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//parser/model",
+        "//planner/core",
+        "//testkit/testsetup",
+        "//types",
+        "//util/collate",
+        "//util/ranger",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

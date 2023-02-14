@@ -189,7 +189,7 @@ func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGE(result.Int64s())
 	return nil
@@ -309,7 +309,7 @@ func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfEQ(result.Int64s())
 	return nil
@@ -341,7 +341,7 @@ func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfNE(result.Int64s())
 	return nil
@@ -373,7 +373,7 @@ func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGT(result.Int64s())
 	return nil
@@ -402,7 +402,7 @@ func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
@@ -436,9 +436,9 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		if b.hasNullable {
-			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
 		} else {
-			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
 		}
 		if err != nil {
 			return err
@@ -511,7 +511,7 @@ func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLE(result.Int64s())
 	return nil
@@ -543,7 +543,7 @@ func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLT(result.Int64s())
 	return nil
@@ -629,11 +629,11 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinGreatestTimeSig) vectorized() bool {
+func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -652,14 +652,10 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
 				dstStrings[i] = argTimeStr
@@ -714,11 +710,11 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinLeastTimeSig) vectorized() bool {
+func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -737,14 +733,10 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
 				dstStrings[i] = argTimeStr
@@ -812,6 +804,152 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	}
 	if len(b.args)%2 == 0 {
 		src.CopyConstruct(result)
+	}
+	return nil
+}
+
+func (b *builtinGreatestTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) > 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) < 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] > resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] < resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
 	}
 	return nil
 }

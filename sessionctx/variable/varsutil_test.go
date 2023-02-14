@@ -15,7 +15,7 @@
 package variable
 
 import (
-	"encoding/json"
+	"context"
 	"reflect"
 	"strconv"
 	"testing"
@@ -50,7 +50,7 @@ func TestTiDBOptOn(t *testing.T) {
 }
 
 func TestNewSessionVars(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, DefIndexLookupSize, vars.IndexLookupSize)
@@ -63,7 +63,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, DefTiDBAllowBatchCop, vars.AllowBatchCop)
-	require.Equal(t, DefOptBCJ, vars.AllowBCJ)
 	require.Equal(t, ConcurrencyUnset, vars.projectionConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggPartialConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggFinalConcurrency)
@@ -75,19 +74,13 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggPartialConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggFinalConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, DefExecutorConcurrency, vars.IndexMergeIntersectionConcurrency())
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
 	require.Equal(t, DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
-	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
-	require.Equal(t, int64(DefTiDBMemQuotaHashJoin), vars.MemQuotaHashJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaMergeJoin), vars.MemQuotaMergeJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaSort), vars.MemQuotaSort)
-	require.Equal(t, int64(DefTiDBMemQuotaTopn), vars.MemQuotaTopn)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupReader), vars.MemQuotaIndexLookupReader)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupJoin), vars.MemQuotaIndexLookupJoin)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -112,49 +105,48 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 }
 
 func TestVarsutil(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
-	err := SetSessionSystemVar(v, "autocommit", "1")
+	err := v.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)
-	val, err := GetSessionOrGlobalSystemVar(v, "autocommit")
+	val, err := v.GetSessionOrGlobalSystemVar(context.Background(), "autocommit")
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
-	require.NotNil(t, SetSessionSystemVar(v, "autocommit", ""))
+	require.NotNil(t, v.SetSystemVar("autocommit", ""))
 
 	// 0 converts to OFF
-	err = SetSessionSystemVar(v, "foreign_key_checks", "0")
+	err = v.SetSystemVar("foreign_key_checks", "0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, "foreign_key_checks")
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-
-	// 1/ON is not supported (generates a warning and sets to OFF)
-	err = SetSessionSystemVar(v, "foreign_key_checks", "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, "foreign_key_checks")
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "foreign_key_checks")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 
-	err = SetSessionSystemVar(v, "sql_mode", "strict_trans_tables")
+	err = v.SetSystemVar("foreign_key_checks", "1")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, "sql_mode")
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "foreign_key_checks")
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+
+	err = v.SetSystemVar("sql_mode", "strict_trans_tables")
+	require.NoError(t, err)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "sql_mode")
 	require.NoError(t, err)
 	require.Equal(t, "STRICT_TRANS_TABLES", val)
 	require.True(t, v.StrictSQLMode)
-	err = SetSessionSystemVar(v, "sql_mode", "")
+	err = v.SetSystemVar("sql_mode", "")
 	require.NoError(t, err)
 	require.False(t, v.StrictSQLMode)
 
-	err = SetSessionSystemVar(v, "character_set_connection", "utf8")
+	err = v.SetSystemVar("character_set_connection", "utf8")
 	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "collation_connection", "utf8_general_ci")
+	err = v.SetSystemVar("collation_connection", "utf8_general_ci")
 	require.NoError(t, err)
 	charset, collation := v.GetCharsetInfo()
 	require.Equal(t, "utf8", charset)
 	require.Equal(t, "utf8_general_ci", collation)
 
-	require.Nil(t, SetSessionSystemVar(v, "character_set_results", ""))
+	require.Nil(t, v.SetSystemVar("character_set_results", ""))
 
 	// Test case for time_zone session variable.
 	testCases := []struct {
@@ -176,7 +168,7 @@ func TestVarsutil(t *testing.T) {
 		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tc := range testCases {
-		err = SetSessionSystemVar(v, TimeZone, tc.input)
+		err = v.SetSystemVar(TimeZone, tc.input)
 		if tc.err != nil {
 			require.Error(t, err)
 			continue
@@ -185,20 +177,20 @@ func TestVarsutil(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.expect, v.TimeZone.String())
 		if tc.compareValue {
-			err = SetSessionSystemVar(v, TimeZone, tc.input)
+			err = v.SetSystemVar(TimeZone, tc.input)
 			require.NoError(t, err)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 			require.Equal(t, tc.diff, t2.Sub(t1))
 		}
 	}
-	err = SetSessionSystemVar(v, TimeZone, "6:00")
+	err = v.SetSystemVar(TimeZone, "6:00")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, ErrUnknownTimeZone))
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
-		err = SetSessionSystemVar(v, "sql_mode", str)
+		err = v.SetSystemVar("sql_mode", str)
 		require.NoError(t, err)
 		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
 			for _, part := range modeParts {
@@ -208,296 +200,266 @@ func TestVarsutil(t *testing.T) {
 		require.Equal(t, mode, v.SQLMode)
 	}
 
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-
 	// Combined sql_mode
-	err = SetSessionSystemVar(v, "sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
+	err = v.SetSystemVar("sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
 	require.NoError(t, err)
 	require.Equal(t, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes, v.SQLMode)
 
 	// Test case for tidb_index_serial_scan_concurrency.
 	require.Equal(t, DefIndexSerialScanConcurrency, v.IndexSerialScanConcurrency())
-	err = SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, "4")
+	err = v.SetSystemVar(TiDBIndexSerialScanConcurrency, "4")
 	require.NoError(t, err)
 	require.Equal(t, 4, v.IndexSerialScanConcurrency())
 
 	// Test case for tidb_batch_insert.
 	require.False(t, v.BatchInsert)
-	err = SetSessionSystemVar(v, TiDBBatchInsert, "1")
+	err = v.SetSystemVar(TiDBBatchInsert, "1")
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
-	err = SetSessionSystemVar(v, TiDBMaxChunkSize, "2")
+	err = v.SetSystemVar(TiDBMaxChunkSize, "2")
 	require.NoError(t, err) // converts to min value
-	err = SetSessionSystemVar(v, TiDBInitChunkSize, "1024")
+	err = v.SetSystemVar(TiDBInitChunkSize, "1024")
 	require.NoError(t, err) // converts to max value
 
 	// Test case for TiDBConfig session variable.
-	err = SetSessionSystemVar(v, TiDBConfig, "abc")
+	err = v.SetSystemVar(TiDBConfig, "abc")
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
-
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, v.EnableStreaming)
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, v.EnableStreaming)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
-	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
+	err = v.SetSystemVar(TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
-	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "4") // wrong scope global only
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
+	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.EnableOuterJoinReorder)
+
+	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
+	err = v.SetSystemVar(TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
+	require.NoError(t, err)
+	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
+
+	err = v.SetSystemVar(TiDBDDLReorgWorkerCount, "4") // wrong scope global only
 	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
 
-	err = SetSessionSystemVar(v, TiDBRetryLimit, "3")
+	err = v.SetSystemVar(TiDBRetryLimit, "3")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBRetryLimit)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRetryLimit)
 	require.NoError(t, err)
 	require.Equal(t, "3", val)
 	require.Equal(t, int64(3), v.RetryLimit)
 
 	require.Equal(t, "", v.EnableTablePartition)
-	err = SetSessionSystemVar(v, TiDBEnableTablePartition, "on")
+	err = v.SetSystemVar(TiDBEnableTablePartition, "on")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableTablePartition)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableTablePartition)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.Equal(t, "ON", v.EnableTablePartition)
 
 	require.False(t, v.EnableListTablePartition)
-	err = SetSessionSystemVar(v, TiDBEnableListTablePartition, "on")
+	err = v.SetSystemVar(TiDBEnableListTablePartition, "on")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableListTablePartition)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableListTablePartition)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.True(t, v.EnableListTablePartition)
 
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, v.TiDBOptJoinReorderThreshold)
-	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, "5")
+	err = v.SetSystemVar(TiDBOptJoinReorderThreshold, "5")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptJoinReorderThreshold)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptJoinReorderThreshold)
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
 
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "1")
+	err = v.SetSystemVar(TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8)
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8)
-
-	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBLowResolutionTSO)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.True(t, v.LowResolutionTSO)
-	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "0")
+	err = v.SetSystemVar(TiDBLowResolutionTSO, "0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBLowResolutionTSO)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 	require.False(t, v.LowResolutionTSO)
 
 	require.Equal(t, 0.9, v.CorrelationThreshold)
-	err = SetSessionSystemVar(v, TiDBOptCorrelationThreshold, "0")
+	err = v.SetSystemVar(TiDBOptCorrelationThreshold, "0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCorrelationThreshold)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCorrelationThreshold)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
 	require.Equal(t, float64(0), v.CorrelationThreshold)
 
-	require.Equal(t, 3.0, v.CPUFactor)
-	err = SetSessionSystemVar(v, TiDBOptCPUFactor, "5.0")
+	require.Equal(t, 3.0, v.GetCPUFactor())
+	err = v.SetSystemVar(TiDBOptCPUFactor, "5.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCPUFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CPUFactor)
+	require.Equal(t, 5.0, v.GetCPUFactor())
 
-	require.Equal(t, 3.0, v.CopCPUFactor)
-	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, "5.0")
+	require.Equal(t, 3.0, v.GetCopCPUFactor())
+	err = v.SetSystemVar(TiDBOptCopCPUFactor, "5.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCopCPUFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCopCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 24.0, v.CopTiFlashConcurrencyFactor)
-	err = SetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor, "5.0")
+	err = v.SetSystemVar(TiDBOptTiFlashConcurrencyFactor, "5.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptTiFlashConcurrencyFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptTiFlashConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 1.0, v.GetNetworkFactor(nil))
-	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, "3.0")
+	err = v.SetSystemVar(TiDBOptNetworkFactor, "3.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptNetworkFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptNetworkFactor)
 	require.NoError(t, err)
 	require.Equal(t, "3.0", val)
 	require.Equal(t, 3.0, v.GetNetworkFactor(nil))
 
 	require.Equal(t, 1.5, v.GetScanFactor(nil))
-	err = SetSessionSystemVar(v, TiDBOptScanFactor, "3.0")
+	err = v.SetSystemVar(TiDBOptScanFactor, "3.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptScanFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptScanFactor)
 	require.NoError(t, err)
 	require.Equal(t, "3.0", val)
 	require.Equal(t, 3.0, v.GetScanFactor(nil))
 
 	require.Equal(t, 3.0, v.GetDescScanFactor(nil))
-	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, "5.0")
+	err = v.SetSystemVar(TiDBOptDescScanFactor, "5.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptDescScanFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptDescScanFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetDescScanFactor(nil))
 
 	require.Equal(t, 20.0, v.GetSeekFactor(nil))
-	err = SetSessionSystemVar(v, TiDBOptSeekFactor, "50.0")
+	err = v.SetSystemVar(TiDBOptSeekFactor, "50.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptSeekFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptSeekFactor)
 	require.NoError(t, err)
 	require.Equal(t, "50.0", val)
 	require.Equal(t, 50.0, v.GetSeekFactor(nil))
 
-	require.Equal(t, 0.001, v.MemoryFactor)
-	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, "1.0")
+	require.Equal(t, 0.001, v.GetMemoryFactor())
+	err = v.SetSystemVar(TiDBOptMemoryFactor, "1.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptMemoryFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptMemoryFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.0", val)
-	require.Equal(t, 1.0, v.MemoryFactor)
+	require.Equal(t, 1.0, v.GetMemoryFactor())
 
-	require.Equal(t, 1.5, v.DiskFactor)
-	err = SetSessionSystemVar(v, TiDBOptDiskFactor, "1.1")
+	require.Equal(t, 1.5, v.GetDiskFactor())
+	err = v.SetSystemVar(TiDBOptDiskFactor, "1.1")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptDiskFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptDiskFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.1", val)
-	require.Equal(t, 1.1, v.DiskFactor)
+	require.Equal(t, 1.1, v.GetDiskFactor())
 
-	require.Equal(t, 3.0, v.ConcurrencyFactor)
-	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, "5.0")
+	require.Equal(t, 3.0, v.GetConcurrencyFactor())
+	err = v.SetSystemVar(TiDBOptConcurrencyFactor, "5.0")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptConcurrencyFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.ConcurrencyFactor)
+	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
-	err = SetSessionSystemVar(v, TiDBReplicaRead, "follower")
+	err = v.SetSystemVar(TiDBReplicaRead, "follower")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "follower", val)
 	require.Equal(t, kv.ReplicaReadFollower, v.GetReplicaRead())
-	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader")
+	err = v.SetSystemVar(TiDBReplicaRead, "leader")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader", val)
 	require.Equal(t, kv.ReplicaReadLeader, v.GetReplicaRead())
-	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader-and-follower")
+	err = v.SetSystemVar(TiDBReplicaRead, "leader-and-follower")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
-	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, "ON")
+	err = v.SetSystemVar(TiDBRedactLog, "ON")
 	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStmtSummary)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-
-	err = SetSessionSystemVar(v, TiDBRedactLog, "ON")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBRedactLog)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 
-	err = SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryRefreshInterval)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
+	err = v.SetSystemVar(TiDBFoundInPlanCache, "1")
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_cache' is a read only variable$", err.Error())
 
-	err = SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryHistorySize)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
+	err = v.SetSystemVar(TiDBFoundInBinding, "1")
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_binding' is a read only variable$", err.Error())
 
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryMaxStmtCount)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'", err)
-
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryMaxSQLLength)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'", err.Error())
-
-	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_cache' is a read only variable", err.Error())
-
-	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_binding' is a read only variable", err.Error())
-
-	err = SetSessionSystemVar(v, "UnknownVariable", "on")
-	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err.Error())
+	err = v.SetSystemVar("UnknownVariable", "on")
+	require.Error(t, err)
+	require.Regexp(t, "]Unknown system variable 'UnknownVariable'$", err.Error())
 
 	// reset warnings
 	v.StmtCtx.TruncateWarnings(0)
 	require.Len(t, v.StmtCtx.GetWarnings(), 0)
 
-	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
+	err = v.SetSystemVar(TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
-	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
+	require.Error(t, warn.Err)
+	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
+
+	err = v.SetSystemVar(TiDBTableCacheLease, "123")
+	require.Error(t, err)
+	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBMinPagingSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(DefMinPagingSize), val)
+
+	err = v.SetSystemVar(TiDBMinPagingSize, "123")
+	require.NoError(t, err)
+	require.Equal(t, v.MinPagingSize, 123)
+
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBMaxPagingSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(DefMaxPagingSize), val)
+
+	err = v.SetSystemVar(TiDBMaxPagingSize, "456")
+	require.NoError(t, err)
+	require.Equal(t, v.MaxPagingSize, 456)
+
+	err = v.SetSystemVar(TiDBMaxPagingSize, "45678")
+	require.NoError(t, err)
+	require.Equal(t, v.MaxPagingSize, 45678)
 }
 
 func TestValidate(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -574,9 +536,6 @@ func TestValidate(t *testing.T) {
 		{TiDBShardAllocateStep, "ad", true},
 		{TiDBShardAllocateStep, "-123", false},
 		{TiDBShardAllocateStep, "128", false},
-		{TiDBEnableAmendPessimisticTxn, "0", false},
-		{TiDBEnableAmendPessimisticTxn, "1", false},
-		{TiDBEnableAmendPessimisticTxn, "256", true},
 		{TiDBAllowFallbackToTiKV, "", false},
 		{TiDBAllowFallbackToTiKV, "tiflash", false},
 		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},
@@ -587,7 +546,6 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -616,7 +574,6 @@ func TestValidate(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -625,11 +582,10 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestValidateStmtSummary(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -637,46 +593,30 @@ func TestValidateStmtSummary(t *testing.T) {
 		key   string
 		value string
 		error bool
-		scope ScopeFlag
 	}{
-		{TiDBEnableStmtSummary, "a", true, ScopeSession},
-		{TiDBEnableStmtSummary, "-1", true, ScopeSession},
-		{TiDBEnableStmtSummary, "", false, ScopeSession},
-		{TiDBEnableStmtSummary, "", true, ScopeGlobal},
-		{TiDBStmtSummaryInternalQuery, "a", true, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "-1", true, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "", false, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "a", true, ScopeSession},
-		{TiDBStmtSummaryRefreshInterval, "", false, ScopeSession},
-		{TiDBStmtSummaryRefreshInterval, "", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "99999999999", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "a", true, ScopeSession},
-		{TiDBStmtSummaryHistorySize, "", false, ScopeSession},
-		{TiDBStmtSummaryHistorySize, "", true, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "-1", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "99999999", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "a", true, ScopeSession},
-		{TiDBStmtSummaryMaxStmtCount, "", false, ScopeSession},
-		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "99999999", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
-		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
-		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "-1", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "99999999999", false, ScopeGlobal},
+		{TiDBEnableStmtSummary, "", true},
+		{TiDBStmtSummaryInternalQuery, "", true},
+		{TiDBStmtSummaryRefreshInterval, "", true},
+		{TiDBStmtSummaryRefreshInterval, "0", false},
+		{TiDBStmtSummaryRefreshInterval, "99999999999", false},
+		{TiDBStmtSummaryHistorySize, "", true},
+		{TiDBStmtSummaryHistorySize, "0", false},
+		{TiDBStmtSummaryHistorySize, "-1", false},
+		{TiDBStmtSummaryHistorySize, "99999999", false},
+		{TiDBStmtSummaryMaxStmtCount, "", true},
+		{TiDBStmtSummaryMaxStmtCount, "0", false},
+		{TiDBStmtSummaryMaxStmtCount, "99999999", false},
+		{TiDBStmtSummaryMaxSQLLength, "", true},
+		{TiDBStmtSummaryMaxSQLLength, "0", false},
+		{TiDBStmtSummaryMaxSQLLength, "-1", false},
+		{TiDBStmtSummaryMaxSQLLength, "99999999999", false},
 	}
 
 	for _, tc := range testCases {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
-			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
+			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
 			} else {
@@ -687,13 +627,13 @@ func TestValidateStmtSummary(t *testing.T) {
 }
 
 func TestConcurrencyVariables(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	wdConcurrency := 2
 	require.Equal(t, ConcurrencyUnset, vars.windowConcurrency)
 	require.Equal(t, DefExecutorConcurrency, vars.WindowConcurrency())
-	err := SetSessionSystemVar(vars, TiDBWindowConcurrency, strconv.Itoa(wdConcurrency))
+	err := vars.SetSystemVar(TiDBWindowConcurrency, strconv.Itoa(wdConcurrency))
 	require.NoError(t, err)
 	require.Equal(t, wdConcurrency, vars.windowConcurrency)
 	require.Equal(t, wdConcurrency, vars.WindowConcurrency())
@@ -701,7 +641,7 @@ func TestConcurrencyVariables(t *testing.T) {
 	mjConcurrency := 2
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.mergeJoinConcurrency)
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.MergeJoinConcurrency())
-	err = SetSessionSystemVar(vars, TiDBMergeJoinConcurrency, strconv.Itoa(mjConcurrency))
+	err = vars.SetSystemVar(TiDBMergeJoinConcurrency, strconv.Itoa(mjConcurrency))
 	require.NoError(t, err)
 	require.Equal(t, mjConcurrency, vars.mergeJoinConcurrency)
 	require.Equal(t, mjConcurrency, vars.MergeJoinConcurrency())
@@ -709,7 +649,7 @@ func TestConcurrencyVariables(t *testing.T) {
 	saConcurrency := 2
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.streamAggConcurrency)
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
-	err = SetSessionSystemVar(vars, TiDBStreamAggConcurrency, strconv.Itoa(saConcurrency))
+	err = vars.SetSystemVar(TiDBStreamAggConcurrency, strconv.Itoa(saConcurrency))
 	require.NoError(t, err)
 	require.Equal(t, saConcurrency, vars.streamAggConcurrency)
 	require.Equal(t, saConcurrency, vars.StreamAggConcurrency())
@@ -717,14 +657,13 @@ func TestConcurrencyVariables(t *testing.T) {
 	require.Equal(t, ConcurrencyUnset, vars.indexLookupConcurrency)
 	require.Equal(t, DefExecutorConcurrency, vars.IndexLookupConcurrency())
 	exeConcurrency := DefExecutorConcurrency + 1
-	err = SetSessionSystemVar(vars, TiDBExecutorConcurrency, strconv.Itoa(exeConcurrency))
+	err = vars.SetSystemVar(TiDBExecutorConcurrency, strconv.Itoa(exeConcurrency))
 	require.NoError(t, err)
 	require.Equal(t, ConcurrencyUnset, vars.indexLookupConcurrency)
 	require.Equal(t, exeConcurrency, vars.IndexLookupConcurrency())
 	require.Equal(t, wdConcurrency, vars.WindowConcurrency())
 	require.Equal(t, mjConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, saConcurrency, vars.StreamAggConcurrency())
-
 }
 
 func TestHelperFuncs(t *testing.T) {
@@ -739,17 +678,60 @@ func TestHelperFuncs(t *testing.T) {
 	require.Equal(t, 5, tidbOptPositiveInt32("-1234", 5))
 	require.Equal(t, 5, tidbOptPositiveInt32("bogus", 5))
 
-	require.Equal(t, 1234, tidbOptInt("1234", 5))
-	require.Equal(t, -1234, tidbOptInt("-1234", 5))
-	require.Equal(t, 5, tidbOptInt("bogus", 5))
+	require.Equal(t, 1234, TidbOptInt("1234", 5))
+	require.Equal(t, -1234, TidbOptInt("-1234", 5))
+	require.Equal(t, 5, TidbOptInt("bogus", 5))
 }
 
 func TestStmtVars(t *testing.T) {
-	vars := NewSessionVars()
-	err := SetStmtVar(vars, "bogussysvar", "1")
+	vars := NewSessionVars(nil)
+	err := vars.SetStmtVar("bogussysvar", "1")
 	require.Equal(t, "[variable:1193]Unknown system variable 'bogussysvar'", err.Error())
-	err = SetStmtVar(vars, MaxExecutionTime, "ACDC")
+	err = vars.SetStmtVar(MaxExecutionTime, "ACDC")
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'max_execution_time'", err.Error())
-	err = SetStmtVar(vars, MaxExecutionTime, "100")
+	err = vars.SetStmtVar(MaxExecutionTime, "100")
 	require.NoError(t, err)
+}
+
+func TestSessionStatesSystemVar(t *testing.T) {
+	vars := NewSessionVars(nil)
+	err := vars.SetSystemVar("autocommit", "1")
+	require.NoError(t, err)
+	val, keep, err := vars.GetSessionStatesSystemVar("autocommit")
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Equal(t, true, keep)
+	_, keep, err = vars.GetSessionStatesSystemVar(Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, false, keep)
+	err = vars.SetSystemVar(MaxAllowedPacket, "1024")
+	require.NoError(t, err)
+	val, keep, err = vars.GetSessionStatesSystemVar(MaxAllowedPacket)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val)
+	require.Equal(t, true, keep)
+}
+
+func TestOnOffHelpers(t *testing.T) {
+	require.Equal(t, "ON", trueFalseToOnOff("TRUE"))
+	require.Equal(t, "ON", trueFalseToOnOff("TRue"))
+	require.Equal(t, "ON", trueFalseToOnOff("true"))
+	require.Equal(t, "OFF", trueFalseToOnOff("FALSE"))
+	require.Equal(t, "OFF", trueFalseToOnOff("False"))
+	require.Equal(t, "OFF", trueFalseToOnOff("false"))
+	require.Equal(t, "other", trueFalseToOnOff("other"))
+	require.Equal(t, "true", OnOffToTrueFalse("ON"))
+	require.Equal(t, "true", OnOffToTrueFalse("on"))
+	require.Equal(t, "true", OnOffToTrueFalse("On"))
+	require.Equal(t, "false", OnOffToTrueFalse("OFF"))
+	require.Equal(t, "false", OnOffToTrueFalse("Off"))
+	require.Equal(t, "false", OnOffToTrueFalse("off"))
+	require.Equal(t, "other", OnOffToTrueFalse("other"))
+}
+
+func TestAssertionLevel(t *testing.T) {
+	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(AssertionStrictStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(AssertionOffStr))
+	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(AssertionFastStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }

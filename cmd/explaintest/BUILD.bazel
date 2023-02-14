@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "explaintest_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/cmd/explaintest",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//parser/ast",
+        "//session",
+        "//sessionctx",
+        "//util/logutil",
+        "//util/mock",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "explaintest",
+    embed = [":explaintest_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "explaintest_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":explaintest_lib"],
+    flaky = True,
+)

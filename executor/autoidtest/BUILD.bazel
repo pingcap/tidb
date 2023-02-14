@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "autoidtest_test",
+    timeout = "short",
+    srcs = [
+        "autoid_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 5,
+    deps = [
+        "//autoid_service",
+        "//config",
+        "//ddl/testutil",
+        "//meta/autoid",
+        "//parser/mysql",
+        "//session",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

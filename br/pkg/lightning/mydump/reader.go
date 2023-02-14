@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
+	// ErrInsertStatementNotFound is the error that cannot find the insert statement.
 	ErrInsertStatementNotFound = errors.New("insert statement not found")
 	errInvalidSchemaEncoding   = errors.New("invalid schema encoding")
 )
@@ -67,14 +69,22 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	return data, nil
 }
 
+// ExportStatement exports the SQL statement in the schema file.
 func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+	if sqlFile.FileMeta.Compression != CompressionNone {
+		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		store = storage.WithCompression(store, compressType)
+	}
 	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer fd.Close()
 
-	br := bufio.NewReader(fd)
+	br := bufio.NewReader(bom.NewReader(fd))
 
 	data := make([]byte, 0, sqlFile.FileMeta.FileSize+1)
 	buffer := make([]byte, 0, sqlFile.FileMeta.FileSize+1)
@@ -107,7 +117,7 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.L().Error("cannot decode input file, please convert to target encoding manually",
+		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)
@@ -132,7 +142,7 @@ func NewStringReader(s string) StringReader {
 }
 
 // Close implements io.Closer
-func (sr StringReader) Close() error {
+func (StringReader) Close() error {
 	return nil
 }
 

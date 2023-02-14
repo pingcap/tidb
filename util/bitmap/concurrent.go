@@ -37,6 +37,16 @@ type ConcurrentBitmap struct {
 	bitLen   int
 }
 
+// Clone clones a new bitmap with the old bit set.
+func (cb *ConcurrentBitmap) Clone() *ConcurrentBitmap {
+	cp := NewConcurrentBitmap(cb.bitLen)
+	needLen := len(cp.segments)
+	for i := 0; i < needLen; i++ {
+		cp.segments[i] = cb.segments[i]
+	}
+	return cp
+}
+
 // NewConcurrentBitmap initializes a ConcurrentBitmap which can store
 // bitLen of bits.
 func NewConcurrentBitmap(bitLen int) *ConcurrentBitmap {
@@ -44,6 +54,20 @@ func NewConcurrentBitmap(bitLen int) *ConcurrentBitmap {
 	return &ConcurrentBitmap{
 		segments: make([]uint32, segmentLen),
 		bitLen:   bitLen,
+	}
+}
+
+// Reset clean the bitmap if the length is suitable, otherwise renewing one.
+func (cb *ConcurrentBitmap) Reset(bitLen int) {
+	segmentLen := (bitLen + segmentWidth - 1) >> segmentWidthPower
+	if segmentLen <= len(cb.segments) {
+		for i := range cb.segments {
+			cb.segments[i] = 0
+		}
+		cb.bitLen = bitLen
+	} else {
+		cb.segments = make([]uint32, segmentLen)
+		cb.bitLen = bitLen
 	}
 }
 
@@ -79,6 +103,19 @@ func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
 			return
 		}
 	}
+}
+
+// UnsafeSet sets the bit on bitIndex to be 1 (bitIndex starts from 0).
+// isSetter indicates whether the function call this time triggers the bit from 0 to 1.
+// bitIndex bigger than bitLen initialized will be ignored.
+// (this version is concurrent unsafe if the caller can make sure write is in single thread)
+func (cb *ConcurrentBitmap) UnsafeSet(bitIndex int) {
+	if bitIndex < 0 || bitIndex >= cb.bitLen {
+		return
+	}
+
+	mask := bitMask >> uint32(bitIndex%segmentWidth)
+	cb.segments[bitIndex>>segmentWidthPower] = cb.segments[bitIndex>>segmentWidthPower] | mask
 }
 
 // UnsafeIsSet returns if a bit on bitIndex is set (bitIndex starts from 0).

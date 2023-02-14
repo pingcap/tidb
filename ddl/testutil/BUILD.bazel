@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = ["testutil.go"],
+    importpath = "github.com/pingcap/tidb/ddl/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//domain",
+        "//kv",
+        "//parser/model",
+        "//session",
+        "//sessiontxn",
+        "//table",
+        "//table/tables",
+        "//types",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

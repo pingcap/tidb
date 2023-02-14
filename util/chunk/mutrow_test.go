@@ -21,13 +21,12 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMutRow(t *testing.T) {
-	t.Parallel()
-
+	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	sc := new(stmtctx.StatementContext)
@@ -35,8 +34,8 @@ func TestMutRow(t *testing.T) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.CompareDatum(sc, &d2)
-		require.Nil(t, err)
+		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].GetCollate()))
+		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
 
@@ -70,7 +69,7 @@ func TestMutRow(t *testing.T) {
 	require.True(t, row.IsNull(0))
 	require.False(t, row.IsNull(1))
 
-	j, err := json.ParseBinaryFromString("true")
+	j, err := types.ParseBinaryJSONFromString("true")
 	time := types.NewTime(types.FromDate(2000, 1, 1, 1, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp)
 	require.NoError(t, err)
 	mutRow = MutRowFromValues(j, time)
@@ -80,7 +79,7 @@ func TestMutRow(t *testing.T) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	dur, err := types.ParseDuration(sc, "01:23:45", 0)
+	dur, _, err := types.ParseDuration(sc, "01:23:45", 0)
 	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
@@ -88,6 +87,28 @@ func TestMutRow(t *testing.T) {
 	require.Equal(t, mutRow.c.columns[0].data, chk.columns[0].data)
 	mutRow.SetDatum(0, types.NewDurationDatum(dur))
 	require.Equal(t, mutRow.c.columns[0].data, chk.columns[0].data)
+}
+
+func TestIssue29947(t *testing.T) {
+	allTypes := newAllTypes()
+	mutRow := MutRowFromTypes(allTypes)
+	nilDatum := types.NewDatum(nil)
+
+	dataBefore := make([][]byte, 0, len(mutRow.c.columns))
+	elemBufBefore := make([][]byte, 0, len(mutRow.c.columns))
+	for _, col := range mutRow.c.columns {
+		dataBefore = append(dataBefore, col.data)
+		elemBufBefore = append(elemBufBefore, col.elemBuf)
+	}
+	for i, col := range mutRow.c.columns {
+		mutRow.SetDatum(i, nilDatum)
+		require.Equal(t, col.IsNull(0), true)
+		for _, off := range col.offsets {
+			require.Equal(t, off, int64(0))
+		}
+		require.Equal(t, col.data, dataBefore[i])
+		require.Equal(t, col.elemBuf, elemBufBefore[i])
+	}
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
@@ -147,12 +168,10 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 }
 
 func TestMutRowShallowCopyPartialRow(t *testing.T) {
-	t.Parallel()
-
 	colTypes := make([]*types.FieldType, 0, 3)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeTimestamp})
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeTimestamp))
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
@@ -180,11 +199,11 @@ var rowsNum = 1024
 func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	b.ReportAllocs()
 	colTypes := make([]*types.FieldType, 0, 8)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeDatetime))
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()

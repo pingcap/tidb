@@ -17,9 +17,10 @@ import (
 )
 
 const (
+	// importSSTRetryTimes specifies the retry time. Its longest time is about 90s-100s.
 	importSSTRetryTimes      = 16
-	importSSTWaitInterval    = 10 * time.Millisecond
-	importSSTMaxWaitInterval = 1 * time.Second
+	importSSTWaitInterval    = 40 * time.Millisecond
+	importSSTMaxWaitInterval = 10 * time.Second
 
 	downloadSSTRetryTimes      = 8
 	downloadSSTWaitInterval    = 1 * time.Second
@@ -28,7 +29,69 @@ const (
 	resetTSRetryTime       = 16
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 500 * time.Millisecond
+
+	resetTSRetryTimeExt       = 600
+	resetTSWaitIntervalExt    = 500 * time.Millisecond
+	resetTSMaxWaitIntervalExt = 300 * time.Second
+
+	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
+	flashbackRetryTime       = 3
+	flashbackWaitInterval    = 3000 * time.Millisecond
+	flashbackMaxWaitInterval = 15 * time.Second
 )
+
+// RetryState is the mutable state needed for retrying.
+// It likes the `utils.Backoffer`, but more fundamental:
+// this only control the backoff time and knows nothing about what error happens.
+// NOTE: Maybe also implement the backoffer via this.
+type RetryState struct {
+	maxRetry   int
+	retryTimes int
+
+	maxBackoff  time.Duration
+	nextBackoff time.Duration
+}
+
+// Whether in the current state we can retry.
+func (rs *RetryState) ShouldRetry() bool {
+	return rs.retryTimes < rs.maxRetry
+}
+
+// Get the exponential backoff durion and transform the state.
+func (rs *RetryState) ExponentialBackoff() time.Duration {
+	rs.retryTimes++
+	backoff := rs.nextBackoff
+	rs.nextBackoff *= 2
+	if rs.nextBackoff > rs.maxBackoff {
+		rs.nextBackoff = rs.maxBackoff
+	}
+	return backoff
+}
+
+// InitialRetryState make the initial state for retrying.
+func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
+	return RetryState{
+		maxRetry:    maxRetryTimes,
+		maxBackoff:  maxBackoff,
+		nextBackoff: initialBackoff,
+	}
+}
+
+// RecordRetry simply record retry times, and no backoff
+func (rs *RetryState) RecordRetry() {
+	rs.retryTimes++
+}
+
+// Attempt implements the `Backoffer`.
+// TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
+func (rs *RetryState) Attempt() int {
+	return rs.maxRetry - rs.retryTimes
+}
+
+// NextBackoff implements the `Backoffer`.
+func (rs *RetryState) NextBackoff(error) time.Duration {
+	return rs.ExponentialBackoff()
+}
 
 type importerBackoffer struct {
 	attempt      int
@@ -60,7 +123,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	} else {
 		e := errors.Cause(err)
 		switch e { // nolint:errorlint
-		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed:
+		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
@@ -104,6 +167,14 @@ func NewPDReqBackoffer() Backoffer {
 	}
 }
 
+func NewPDReqBackofferExt() Backoffer {
+	return &pdReqBackoffer{
+		attempt:      resetTSRetryTimeExt,
+		delayTime:    resetTSWaitIntervalExt,
+		maxDelayTime: resetTSMaxWaitIntervalExt,
+	}
+}
+
 func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 	// bo.delayTime = 2 * bo.delayTime
 	// bo.attempt--
@@ -113,6 +184,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		// Excepted error, finish the operation
 		bo.delayTime = 0
 		bo.attempt = 0
+	case berrors.ErrRestoreTotalKVMismatch:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
 	default:
 		switch status.Code(e) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
@@ -133,5 +207,36 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type flashbackBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+// NewBackoffer creates a new controller regulating a truncated exponential backoff.
+func NewFlashBackBackoffer() Backoffer {
+	return &flashbackBackoffer{
+		attempt:      flashbackRetryTime,
+		delayTime:    flashbackWaitInterval,
+		maxDelayTime: flashbackMaxWaitInterval,
+	}
+}
+
+// retry 3 times when prepare flashback failure.
+func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
+	bo.delayTime = 2 * bo.delayTime
+	bo.attempt--
+	log.Warn("region may not ready to serve, retry it...", zap.Error(err))
+
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *flashbackBackoffer) Attempt() int {
 	return bo.attempt
 }

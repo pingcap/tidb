@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists t1, t2, t3;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
@@ -55,13 +56,14 @@ HashJoin	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t1	handle:1
+└─Point_Get	1.00	root	table:t1	handle:1, lock
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─IndexLookUp	0.00	root		
-  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
-  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t1	keep order:false
+└─SelectLock	0.00	root		for update 0
+  └─IndexLookUp	0.00	root		
+    ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+    └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
@@ -106,12 +108,11 @@ Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
-  └─Limit(Probe)	1.00	root		offset:0, count:1
-    └─Projection	1.00	root		test.t2.c1, test.t2.c2
-      └─IndexLookUp	1.00	root		
-        ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-        │ └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-        └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false
+  └─TopN(Probe)	1999.00	root		test.t2.c1, offset:0, count:1
+    └─IndexLookUp	1999.00	root		
+      ├─TopN(Build)	1999.00	cop[tikv]		test.t2.c1, offset:0, count:1
+      │ └─IndexRangeScan	4960.02	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:false
+      └─TableRowIDScan(Probe)	1999.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1

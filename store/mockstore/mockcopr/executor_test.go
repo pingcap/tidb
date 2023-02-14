@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -37,7 +38,11 @@ import (
 // This test checks the resolve lock functionality. When a txn meets the lock of a large transaction,
 // it should not block by the lock.
 func TestResolvedLargeTxnLocks(t *testing.T) {
-	t.Parallel()
+	// This is required since mock tikv does not support paging.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
 
 	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
 	require.NoError(t, err)
@@ -105,10 +110,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 }
 
 func TestIssue15662(t *testing.T) {
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")

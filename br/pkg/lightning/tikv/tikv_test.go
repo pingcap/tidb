@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tikv_test
 
 import (
@@ -9,17 +23,14 @@ import (
 	"net/url"
 	"sort"
 	"sync"
+	"testing"
 
 	"github.com/coreos/go-semver/semver"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/stretchr/testify/require"
 )
-
-type tikvSuite struct{}
-
-var _ = Suite(&tikvSuite{})
 
 var (
 	// Samples from importer backend for testing the Check***Version functions.
@@ -30,7 +41,7 @@ var (
 	requiredMaxTiKVVersion = *semver.New("6.0.0")
 )
 
-func (s *tikvSuite) TestForAllStores(c *C) {
+func TestForAllStores(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_, err := w.Write([]byte(`
 			{
@@ -84,7 +95,7 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 				]
 			}
 		`))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -100,11 +111,10 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 		allStoresLock.Unlock()
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	sort.Slice(allStores, func(i, j int) bool { return allStores[i].Address < allStores[j].Address })
-
-	c.Assert(allStores, DeepEquals, []*kv.Store{
+	require.Equal(t, []*kv.Store{
 		{
 			Address: "127.0.0.1:20160",
 			Version: "3.0.0-beta.1",
@@ -125,10 +135,10 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 			Version: "3.0.1",
 			State:   kv.StoreStateOffline,
 		},
-	})
+	}, allStores)
 }
 
-func (s *tikvSuite) TestFetchModeFromMetrics(c *C) {
+func TestFetchModeFromMetrics(t *testing.T) {
 	testCases := []struct {
 		metrics string
 		mode    import_sstpb.SwitchMode
@@ -149,69 +159,77 @@ func (s *tikvSuite) TestFetchModeFromMetrics(c *C) {
 	}
 
 	for _, tc := range testCases {
-		comment := Commentf("test case '%s'", tc.metrics)
+		comment := fmt.Sprintf("test case '%s'", tc.metrics)
 		mode, err := kv.FetchModeFromMetrics(tc.metrics)
 		if tc.isErr {
-			c.Assert(err, NotNil, comment)
+			require.Error(t, err, comment)
 		} else {
-			c.Assert(err, IsNil, comment)
-			c.Assert(mode, Equals, tc.mode, comment)
+			require.NoError(t, err, comment)
+			require.Equal(t, tc.mode, mode, comment)
 		}
 	}
 }
 
-func (s *tikvSuite) TestCheckPDVersion(c *C) {
+func TestCheckPDVersion(t *testing.T) {
 	var version string
 	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		c.Assert(req.URL.Path, Equals, "/pd/api/v1/version")
+		require.Equal(t, "/pd/api/v1/version", req.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(version))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}))
 	mockURL, err := url.Parse(mockServer.URL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = `{
     "version": "v4.0.0-rc.2-451-g760fb650"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), IsNil)
+	require.NoError(t, kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion))
 
 	version = `{
     "version": "v4.0.0"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), IsNil)
+	require.NoError(t, kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion))
 
 	version = `{
     "version": "v9999.0.0"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), ErrorMatches, "PD version too new.*")
+	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, "PD version too new.*", err.Error())
 
 	version = `{
     "version": "v6.0.0"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), ErrorMatches, "PD version too new.*")
+	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, "PD version too new.*", err.Error())
 
 	version = `{
     "version": "v6.0.0-beta"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), ErrorMatches, "PD version too new.*")
+	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, "PD version too new.*", err.Error())
 
 	version = `{
     "version": "v1.0.0"
 }`
-	c.Assert(kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion), ErrorMatches, "PD version too old.*")
+	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, "PD version too old.*", err.Error())
 }
 
-func (s *tikvSuite) TestCheckTiKVVersion(c *C) {
+func TestCheckTiKVVersion(t *testing.T) {
 	var versions []string
 	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		c.Assert(req.URL.Path, Equals, "/pd/api/v1/stores")
+		require.Equal(t, "/pd/api/v1/stores", req.URL.Path)
 		w.WriteHeader(http.StatusOK)
 
 		stores := make([]map[string]interface{}, 0, len(versions))
@@ -227,25 +245,33 @@ func (s *tikvSuite) TestCheckTiKVVersion(c *C) {
 			"count":  len(versions),
 			"stores": stores,
 		})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}))
 	mockURL, err := url.Parse(mockServer.URL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	versions = []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
-	c.Assert(kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion), IsNil)
+	require.NoError(t, kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion))
 
 	versions = []string{"9999.0.0", "4.0.0"}
-	c.Assert(kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion), ErrorMatches, `TiKV \(at tikv0\.test:20160\) version too new.*`)
+	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 
 	versions = []string{"4.0.0", "1.0.0"}
-	c.Assert(kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
+	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, `TiKV \(at tikv1\.test:20160\) version too old.*`, err.Error())
 
 	versions = []string{"6.0.0"}
-	c.Assert(kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion), ErrorMatches, `TiKV \(at tikv0\.test:20160\) version too new.*`)
+	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 
 	versions = []string{"6.0.0-beta"}
-	c.Assert(kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion), ErrorMatches, `TiKV \(at tikv0\.test:20160\) version too new.*`)
+	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	require.Error(t, err)
+	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 }

@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "txninfo",
+    srcs = [
+        "summary.go",
+        "txn_info.go",
+    ],
+    importpath = "github.com/pingcap/tidb/session/txninfo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//metrics",
+        "//parser/mysql",
+        "//types",
+        "//util/logutil",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)

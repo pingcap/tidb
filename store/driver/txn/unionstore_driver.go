@@ -43,9 +43,17 @@ func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }
 
+func (m *memBuffer) RemoveFromBuffer(k kv.Key) {
+	m.MemDB.RemoveFromBuffer(k)
+}
+
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
 	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
+	m.MemDB.UpdateFlags(k, getTiKVFlagsOps(ops)...)
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
@@ -146,6 +154,19 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	if flag.HasNeedLocked() {
 		v = kv.ApplyFlagsOps(v, kv.SetNeedLocked)
 	}
+
+	if flag.HasAssertExist() {
+		v = kv.ApplyFlagsOps(v, kv.SetAssertExist)
+	} else if flag.HasAssertNotExist() {
+		v = kv.ApplyFlagsOps(v, kv.SetAssertNotExist)
+	} else if flag.HasAssertUnknown() {
+		v = kv.ApplyFlagsOps(v, kv.SetAssertUnknown)
+	}
+
+	if flag.HasNeedConstraintCheckInPrewrite() {
+		v = kv.ApplyFlagsOps(v, kv.SetNeedConstraintCheckInPrewrite)
+	}
+
 	return v
 }
 
@@ -155,6 +176,18 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetPresumeKeyNotExists
 	case kv.SetNeedLocked:
 		return tikvstore.SetNeedLocked
+	case kv.SetAssertExist:
+		return tikvstore.SetAssertExist
+	case kv.SetAssertNotExist:
+		return tikvstore.SetAssertNotExist
+	case kv.SetAssertUnknown:
+		return tikvstore.SetAssertUnknown
+	case kv.SetAssertNone:
+		return tikvstore.SetAssertNone
+	case kv.SetNeedConstraintCheckInPrewrite:
+		return tikvstore.SetNeedConstraintCheckInPrewrite
+	case kv.SetPreviousPresumeKeyNotExists:
+		return tikvstore.SetPreviousPresumeKNE
 	}
 	return 0
 }

@@ -20,57 +20,66 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetTimeValue(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
-	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
+	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue := v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
 	sessionVars := ctx.GetSessionVars()
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
+	err = sessionVars.SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
-	require.NoError(t, err)
-
-	require.Equal(t, types.KindMysqlTime, v.Kind())
-	timeValue = v.GetMysqlTime()
-	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
-
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
-	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
+	err = sessionVars.SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue = v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
+	err = sessionVars.SetSystemVar("timestamp", "")
+	require.Error(t, err, "Incorrect argument type to variable 'timestamp'")
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, types.KindMysqlTime, v.Kind())
+	timeValue = v.GetMysqlTime()
+	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
+	// trigger the stmt context cache.
+	err = sessionVars.SetSystemVar("timestamp", "0")
+	require.NoError(t, err)
+
+	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, v1, v2)
+
+	err = sessionVars.SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
 
 	tbls := []struct {
@@ -89,7 +98,7 @@ func TestGetTimeValue(t *testing.T) {
 
 	for i, tbl := range tbls {
 		comment := fmt.Sprintf("expr: %d", i)
-		v, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp)
+		v, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
 		require.NoError(t, err)
 
 		switch v.Kind() {
@@ -111,14 +120,12 @@ func TestGetTimeValue(t *testing.T) {
 	}
 
 	for _, tbl := range errTbl {
-		_, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp)
+		_, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
 		require.Error(t, err)
 	}
 }
 
 func TestIsCurrentTimestampExpr(t *testing.T) {
-	t.Parallel()
-
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -131,29 +138,32 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
+	ft := &types.FieldType{}
+	ft.SetDecimal(3)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
+
+	ft1 := &types.FieldType{}
+	ft1.SetDecimal(0)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	require.False(t, v)
 }
 
 func TestCurrentTimestampTimeZone(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 
-	err := variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
+	err := sessionVars.SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
-	err = variable.SetSessionSystemVar(sessionVars, "time_zone", "+00:00")
+	err = sessionVars.SetSystemVar("time_zone", "+00:00")
 	require.NoError(t, err)
-	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 0, 20, 34, 0),
@@ -162,9 +172,9 @@ func TestCurrentTimestampTimeZone(t *testing.T) {
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
-	err = variable.SetSessionSystemVar(sessionVars, "time_zone", "+08:00")
+	err = sessionVars.SetSystemVar("time_zone", "+08:00")
 	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 8, 20, 34, 0),

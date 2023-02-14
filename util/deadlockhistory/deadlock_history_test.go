@@ -46,7 +46,6 @@ func getAllDatum(d *DeadlockHistory, columns []*model.ColumnInfo) [][]types.Datu
 	}
 
 	return rows
-
 }
 
 func TestDeadlockHistoryCollection(t *testing.T) {

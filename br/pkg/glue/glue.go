@@ -5,9 +5,11 @@ package glue
 import (
 	"context"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -28,14 +30,29 @@ type Glue interface {
 
 	// GetVersion gets BR package version to run backup/restore job
 	GetVersion() string
+
+	// UseOneShotSession temporary creates session from store when run backup job.
+	// because we don't have to own domain/session during the whole backup.
+	// we can close domain as soon as possible.
+	// and we must reuse the exists session and don't close it in SQL backup job.
+	UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se Session) error) error
 }
 
 // Session is an abstraction of the session.Session interface.
 type Session interface {
 	Execute(ctx context.Context, sql string) error
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
-	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
+	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error
+	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
+	GetGlobalVariable(name string) (string, error)
+	GetSessionCtx() sessionctx.Context
+}
+
+// BatchCreateTableSession is an interface to batch create table parallelly
+type BatchCreateTableSession interface {
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error
 }
 
 // Progress is an interface recording the current execution progress.
@@ -43,6 +60,11 @@ type Progress interface {
 	// Inc increases the progress. This method must be goroutine-safe, and can
 	// be called from any goroutine.
 	Inc()
+	// IncBy increases the progress by cnt. This method must be goroutine-safe, and can
+	// be called from any goroutine.
+	IncBy(cnt int64)
+	// GetCurrent reports the progress.
+	GetCurrent() int64
 	// Close marks the progress as 100% complete and that Inc() can no longer be
 	// called.
 	Close()

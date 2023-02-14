@@ -29,7 +29,6 @@ type encodeTaskTypeCase struct {
 }
 
 func TestEncodeTaskType(t *testing.T) {
-	t.Parallel()
 	cases := []encodeTaskTypeCase{
 		{true, kv.UnSpecified, "0", "root"},
 		{false, kv.TiKV, "1_0", "cop[tikv]"},
@@ -52,8 +51,6 @@ func TestEncodeTaskType(t *testing.T) {
 }
 
 func TestDecodeDiscardPlan(t *testing.T) {
-	t.Parallel()
-
 	plan, err := DecodePlan(PlanDiscardedEncoded)
 	require.NoError(t, err)
 	require.Equal(t, planDiscardedDecoded, plan)

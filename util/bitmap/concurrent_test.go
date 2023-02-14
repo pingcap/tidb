@@ -23,8 +23,6 @@ import (
 )
 
 func TestConcurrentBitmapSet(t *testing.T) {
-	t.Parallel()
-
 	const loopCount = 1000
 	const interval = 2
 
@@ -51,8 +49,6 @@ func TestConcurrentBitmapSet(t *testing.T) {
 // TestConcurrentBitmapUniqueSetter checks if isSetter is unique everytime
 // when a bit is set.
 func TestConcurrentBitmapUniqueSetter(t *testing.T) {
-	t.Parallel()
-
 	const loopCount = 10000
 	const competitorsPerSet = 50
 
@@ -80,4 +76,18 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 	wg.Wait()
 	assert.Less(t, clearCounter, uint64(loopCount))
 	assert.Equal(t, setterCounter, clearCounter+1)
+}
+
+// TestResetConcurrentBitmap test the reset of concurrentBitmap.
+func TestResetConcurrentBitmap(t *testing.T) {
+	bm := NewConcurrentBitmap(32)
+	bm.Set(1)
+	bm.Set(3)
+	bm.Set(7)
+	bm.Set(16)
+	bm.Reset(8)
+	assert.Equal(t, bm.bitLen, 8)
+	assert.Equal(t, bm.UnsafeIsSet(1), false)
+	assert.Equal(t, bm.UnsafeIsSet(3), false)
+	assert.Equal(t, bm.UnsafeIsSet(7), false)
 }

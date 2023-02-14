@@ -24,8 +24,6 @@ import (
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tblDate := []struct {
@@ -71,7 +69,7 @@ func TestTimeFormatMethod(t *testing.T) {
 		},
 	}
 	for i, tt := range tblDate {
-		tm, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, 6)
+		tm, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, 6, nil)
 		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
 		str, err := tm.DateFormat(tt.Format)
@@ -81,8 +79,6 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {

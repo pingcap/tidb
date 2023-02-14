@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -33,7 +32,6 @@ import (
 )
 
 func TestBaseBuiltin(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
@@ -54,7 +52,6 @@ func TestBaseBuiltin(t *testing.T) {
 }
 
 func TestClone(t *testing.T) {
-	t.Parallel()
 	builtinFuncs := []builtinFunc{
 		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
 		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
@@ -93,7 +90,7 @@ func TestClone(t *testing.T) {
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
 		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinLikeSig{}, &builtinRegexpLikeFuncSig{}, &builtinRegexpSubstrFuncSig{}, &builtinRegexpInStrFuncSig{}, &builtinRegexpReplaceFuncSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
@@ -147,12 +144,8 @@ func TestClone(t *testing.T) {
 		&builtinQuarterSig{}, &builtinSecToTimeSig{}, &builtinTimeToSecSig{}, &builtinTimestampAddSig{}, &builtinToDaysSig{},
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
-		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddDateStringStringSig{},
-		&builtinAddDateStringIntSig{}, &builtinAddDateStringRealSig{}, &builtinAddDateStringDecimalSig{}, &builtinAddDateIntStringSig{}, &builtinAddDateIntIntSig{},
-		&builtinAddDateIntRealSig{}, &builtinAddDateIntDecimalSig{}, &builtinAddDateDatetimeStringSig{}, &builtinAddDateDatetimeIntSig{}, &builtinAddDateDatetimeRealSig{},
-		&builtinAddDateDatetimeDecimalSig{}, &builtinSubDateStringStringSig{}, &builtinSubDateStringIntSig{}, &builtinSubDateStringRealSig{}, &builtinSubDateStringDecimalSig{},
-		&builtinSubDateIntStringSig{}, &builtinSubDateIntIntSig{}, &builtinSubDateIntRealSig{}, &builtinSubDateIntDecimalSig{}, &builtinSubDateDatetimeStringSig{},
-		&builtinSubDateDatetimeIntSig{}, &builtinSubDateDatetimeRealSig{}, &builtinSubDateDatetimeDecimalSig{},
+		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
@@ -161,7 +154,6 @@ func TestClone(t *testing.T) {
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
-	t.Parallel()
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
@@ -199,19 +191,17 @@ func TestGetUint64FromConstant(t *testing.T) {
 }
 
 func TestSetExprColumnInOperand(t *testing.T) {
-	t.Parallel()
 	col := &Column{RetType: newIntFieldType()}
-	require.True(t, setExprColumnInOperand(col).(*Column).InOperand)
+	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
-	setExprColumnInOperand(fun)
+	SetExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
 func TestPopRowFirstArg(t *testing.T) {
-	t.Parallel()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
 	require.NoError(t, err)
@@ -222,12 +212,11 @@ func TestPopRowFirstArg(t *testing.T) {
 }
 
 func TestGetStrIntFromConstant(t *testing.T) {
-	t.Parallel()
 	col := &Column{}
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
 	require.Error(t, err)
 
-	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con := &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
 	require.NoError(t, err)
 	require.True(t, isNull)
@@ -236,7 +225,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
 	require.Equal(t, "1", ret)
 
-	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con = &Constant{RetType: types.NewFieldType(mysql.TypeNull)}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
 	require.True(t, isNull)
 
@@ -250,7 +239,6 @@ func TestGetStrIntFromConstant(t *testing.T) {
 }
 
 func TestSubstituteCorCol2Constant(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -276,7 +264,6 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 }
 
 func TestPushDownNot(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
@@ -322,7 +309,6 @@ func TestPushDownNot(t *testing.T) {
 }
 
 func TestFilter(t *testing.T) {
-	t.Parallel()
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -334,7 +320,6 @@ func TestFilter(t *testing.T) {
 }
 
 func TestFilterOutInPlace(t *testing.T) {
-	t.Parallel()
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -349,7 +334,6 @@ func TestFilterOutInPlace(t *testing.T) {
 }
 
 func TestHashGroupKey(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -357,7 +341,7 @@ func TestHashGroupKey(t *testing.T) {
 	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		if eTypes[i] == types.ETDecimal {
-			ft.Flen = 0
+			ft.SetFlen(0)
 		}
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
@@ -392,28 +376,26 @@ func isLogicOrFunction(e Expression) bool {
 }
 
 func TestDisableParseJSONFlag4Expr(t *testing.T) {
-	t.Parallel()
 	var expr Expression
 	expr = &Column{RetType: newIntFieldType()}
 	ft := expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
 	ft = expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
 	ft = expr.GetType()
-	ft.Flag |= mysql.ParseToJSONFlag
+	ft.AddFlag(mysql.ParseToJSONFlag)
 	DisableParseJSONFlag4Expr(expr)
-	require.False(t, mysql.HasParseToJSONFlag(ft.Flag))
+	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
-	t.Parallel()
 	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
 
 	r := NewSQLDigestTextRetriever()
@@ -578,11 +560,11 @@ func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
-	if x, ok := m.i.(json.BinaryJSON); ok {
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(types.BinaryJSON); ok {
 		return x, false, m.err
 	}
-	return json.BinaryJSON{}, m.i == nil, m.err
+	return types.BinaryJSON{}, m.i == nil, m.err
 }
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
@@ -597,6 +579,7 @@ func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)           
 func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
 func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
 func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
+func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
@@ -608,7 +591,11 @@ func (m *MockExpr) SetCoercibility(Coercibility)                                
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
+
+func (m *MockExpr) MemoryUsage() (sum int64) {
+	return
+}

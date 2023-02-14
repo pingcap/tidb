@@ -19,6 +19,8 @@ import (
 )
 
 const (
+	// TiFlashRuleGroupID is the rule group id of tiflash
+	TiFlashRuleGroupID = "tiflash"
 	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
@@ -31,16 +33,12 @@ func GroupID(id int64) string {
 }
 
 const (
-	// RuleIndexDefault is the default index for a rule, check Rule.Index.
-	RuleIndexDefault int = iota
-	// RuleIndexDatabase is the index for a rule of database.
-	RuleIndexDatabase
 	// RuleIndexTable is the index for a rule of table.
-	RuleIndexTable
+	RuleIndexTable = 40
 	// RuleIndexPartition is the index for a rule of partition.
-	RuleIndexPartition
-	// RuleIndexIndex is the index for a rule of index.
-	RuleIndexIndex
+	RuleIndexPartition = 80
+	// RuleIndexTiFlash is the index for a rule of TiFlash.
+	RuleIndexTiFlash = 120
 )
 
 const (
@@ -56,4 +54,8 @@ const (
 	// EngineLabelTiKV is the label value used in some tests. And possibly TiKV will
 	// set the engine label with a value of EngineLabelTiKV.
 	EngineLabelTiKV = "tikv"
+
+	// EngineLabelTiFlashCompute is for disaggregated tiflash mode,
+	// it's the lable of tiflash_compute nodes.
+	EngineLabelTiFlashCompute = "tiflash_compute"
 )

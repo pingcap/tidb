@@ -41,7 +41,7 @@ load() {
 
 check() {
     run_sql 'drop database if exists '$TEST_NAME';'
-    run_br restore full -s local://"$backup_dir" 
+    run_br restore full -s local://"$backup_dir"
     count=$(run_sql 'select count(*) from '$TEST_NAME'.usertable;' | tail -n 1 | awk '{print $2}')
     [ "$count" -eq 20000 ]
 }

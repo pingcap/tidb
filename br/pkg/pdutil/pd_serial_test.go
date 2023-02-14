@@ -12,17 +12,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/pkg/typeutil"
-	"github.com/tikv/pd/server/api"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/statistics"
 )
 
 func TestScheduler(t *testing.T) {
@@ -55,7 +55,7 @@ func TestScheduler(t *testing.T) {
 	}
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{}, cfg, mock)
 	require.Error(t, err)
-	require.Regexp(t, "^failed to update PD.*", err.Error())
+	require.Regexp(t, "^failed to update PD", err.Error())
 	go func() {
 		<-schedulerPauseCh
 	}()
@@ -106,26 +106,26 @@ func TestGetClusterVersion(t *testing.T) {
 }
 
 func TestRegionCount(t *testing.T) {
-	regions := core.NewRegionsInfo()
-	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
+	regions := &pdtypes.RegionTree{}
+	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
 		Id:          1,
 		StartKey:    codec.EncodeBytes(nil, []byte{1, 1}),
 		EndKey:      codec.EncodeBytes(nil, []byte{1, 3}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
+	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
 		Id:          2,
 		StartKey:    codec.EncodeBytes(nil, []byte{1, 3}),
 		EndKey:      codec.EncodeBytes(nil, []byte{1, 5}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
+	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
 		Id:          3,
 		StartKey:    codec.EncodeBytes(nil, []byte{2, 3}),
 		EndKey:      codec.EncodeBytes(nil, []byte{3, 4}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	require.Equal(t, 3, regions.Len())
+	require.Equal(t, 3, len(regions.Regions))
 
 	mock := func(
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
@@ -138,7 +138,7 @@ func TestRegionCount(t *testing.T) {
 		t.Log(hex.EncodeToString([]byte(start)))
 		t.Log(hex.EncodeToString([]byte(end)))
 		scanRegions := regions.ScanRange([]byte(start), []byte(end), 0)
-		stats := statistics.RegionStats{Count: len(scanRegions)}
+		stats := pdtypes.RegionStats{Count: len(scanRegions)}
 		ret, err := json.Marshal(stats)
 		require.NoError(t, err)
 		return ret, nil
@@ -205,13 +205,32 @@ func TestPDRequestRetry(t *testing.T) {
 	require.Error(t, reqErr)
 }
 
+func TestPDResetTSCompatibility(t *testing.T) {
+	ctx := context.Background()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+	pd := PdController{addrs: []string{ts.URL}, cli: http.DefaultClient}
+	reqErr := pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts2.Close()
+	pd = PdController{addrs: []string{ts2.URL}, cli: http.DefaultClient}
+	reqErr = pd.ResetTS(ctx, 123)
+	require.NoError(t, reqErr)
+}
+
 func TestStoreInfo(t *testing.T) {
-	storeInfo := api.StoreInfo{
-		Status: &api.StoreStatus{
-			Capacity:  typeutil.ByteSize(1024),
-			Available: typeutil.ByteSize(1024),
+	storeInfo := pdtypes.StoreInfo{
+		Status: &pdtypes.StoreStatus{
+			Capacity:  pdtypes.ByteSize(1024),
+			Available: pdtypes.ByteSize(1024),
 		},
-		Store: &api.MetaStore{
+		Store: &pdtypes.MetaStore{
 			StateName: "Tombstone",
 		},
 	}
@@ -233,4 +252,58 @@ func TestStoreInfo(t *testing.T) {
 	require.NotNil(t, resp.Status)
 	require.Equal(t, "Tombstone", resp.Store.StateName)
 	require.Equal(t, uint64(1024), uint64(resp.Status.Available))
+}
+
+func TestPauseSchedulersByKeyRange(t *testing.T) {
+	const ttl = time.Second
+
+	labelExpires := make(map[string]time.Time)
+
+	var (
+		mu      sync.Mutex
+		deleted bool
+	)
+
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if deleted {
+			return
+		}
+		if r.Method == http.MethodDelete {
+			ruleID := strings.TrimPrefix(r.URL.Path, "/"+regionLabelPrefix+"/")
+			delete(labelExpires, ruleID)
+			deleted = true
+			return
+		}
+		var labelRule LabelRule
+		err := json.NewDecoder(r.Body).Decode(&labelRule)
+		require.NoError(t, err)
+		require.Len(t, labelRule.Labels, 1)
+		regionLabel := labelRule.Labels[0]
+		require.Equal(t, "schedule", regionLabel.Key)
+		require.Equal(t, "deny", regionLabel.Value)
+		reqTTL, err := time.ParseDuration(regionLabel.TTL)
+		require.NoError(t, err)
+		if reqTTL == 0 {
+			delete(labelExpires, labelRule.ID)
+		} else {
+			require.Equal(t, ttl, reqTTL)
+			if expire, ok := labelExpires[labelRule.ID]; ok {
+				require.True(t, expire.After(time.Now()), "should not expire before now")
+			}
+			labelExpires[labelRule.ID] = time.Now().Add(ttl)
+		}
+	}))
+	defer httpSrv.Close()
+
+	pdController := &PdController{addrs: []string{httpSrv.URL}, cli: http.DefaultClient}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done, err := pdController.pauseSchedulerByKeyRangeWithTTL(ctx, []byte{0, 0, 0, 0}, []byte{0xff, 0xff, 0xff, 0xff}, ttl)
+	require.NoError(t, err)
+	time.Sleep(ttl * 3)
+	cancel()
+	<-done
+	require.Len(t, labelExpires, 0)
 }

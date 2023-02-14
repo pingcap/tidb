@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package error
+package error //nolint: predeclared
 
 import (
 	stderrs "errors"
@@ -102,9 +102,6 @@ func ToTiDBErr(err error) error {
 
 	var pdServerTimeout *tikverr.ErrPDServerTimeout
 	if stderrs.As(err, &pdServerTimeout) {
-		if len(pdServerTimeout.Error()) == 0 {
-			return ErrPDServerTimeout
-		}
 		return ErrPDServerTimeout.GenWithStackByArgs(pdServerTimeout.Error())
 	}
 

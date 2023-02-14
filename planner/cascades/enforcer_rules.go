@@ -41,7 +41,7 @@ func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers
 	if g.EngineType != memo.EngineTiDB {
 		return
 	}
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		enforcers = append(enforcers, orderEnforcer)
 	}
 	return
@@ -54,14 +54,14 @@ type OrderEnforcer struct {
 var orderEnforcer = &OrderEnforcer{}
 
 // NewProperty removes order property from required physical property.
-func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *property.PhysicalProperty) {
+func (*OrderEnforcer) NewProperty(_ *property.PhysicalProperty) (newProp *property.PhysicalProperty) {
 	// Order property cannot be empty now.
 	newProp = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	return
 }
 
 // OnEnforce adds sort operator to satisfy required order property.
-func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
+func (*OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
 	childPlan := child.GetPlan()
 	sort := plannercore.PhysicalSort{
 		ByItems: make([]*util.ByItems, 0, len(reqProp.SortItems)),
@@ -78,7 +78,7 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo
 }
 
 // GetEnforceCost calculates cost of sort operator.
-func (e *OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
+func (*OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
 	// We need a SessionCtx to calculate the cost of a sort.
 	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
 	sort := plannercore.PhysicalSort{}.Init(sctx, g.Prop.Stats, 0, nil)

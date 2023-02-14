@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +48,8 @@ func TestSignedAutoid(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
@@ -68,7 +71,6 @@ func TestSignedAutoid(t *testing.T) {
 	alloc := autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
-	ctx := context.Background()
 	globalAutoID, err := alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
@@ -251,7 +253,8 @@ func TestUnsignedAutoid(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
@@ -272,7 +275,6 @@ func TestUnsignedAutoid(t *testing.T) {
 	alloc := autoid.NewAllocator(store, 1, 1, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
-	ctx := context.Background()
 	globalAutoID, err := alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
@@ -415,7 +417,8 @@ func TestConcurrentAlloc(t *testing.T) {
 
 	dbID := int64(2)
 	tblID := int64(100)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
@@ -426,7 +429,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	require.NoError(t, err)
 
 	var mu sync.Mutex
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	m := map[int64]struct{}{}
 	count := 10
 	errCh := make(chan error, count)
@@ -476,12 +479,11 @@ func TestConcurrentAlloc(t *testing.T) {
 		}
 	}
 	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(num int) {
-			defer wg.Done()
+		num := 1
+		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			allocIDs()
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -501,7 +503,8 @@ func TestRollbackAlloc(t *testing.T) {
 	}()
 	dbID := int64(1)
 	tblID := int64(2)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
@@ -511,7 +514,6 @@ func TestRollbackAlloc(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ctx := context.Background()
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
@@ -529,7 +531,6 @@ func TestRollbackAlloc(t *testing.T) {
 
 // TestNextStep tests generate next auto id step.
 func TestNextStep(t *testing.T) {
-	t.Parallel()
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
 	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)
@@ -552,7 +553,8 @@ func TestAllocComputationIssue(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
@@ -583,7 +585,6 @@ func TestAllocComputationIssue(t *testing.T) {
 	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
 	autoid.TestModifyBaseAndEndInjection(signedAlloc1, 4, 6)
 
-	ctx := context.Background()
 	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
 	min, max, err := unsignedAlloc1.Alloc(ctx, 2, 3, 1)
 	require.NoError(t, err)
@@ -593,4 +594,58 @@ func TestAllocComputationIssue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(7), min)
 	require.Equal(t, int64(13), max)
+}
+
+func TestIssue40584(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		require.NoError(t, err)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+
+	alloc := autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
+	require.NotNil(t, alloc)
+
+	finishAlloc := make(chan bool)
+	finishBase := make(chan bool)
+	var done int32 = 0
+
+	// call allocator.Alloc and allocator.Base in parallel for 3 seconds to detect data race
+	go func() {
+		for {
+			alloc.Alloc(ctx, 1, 1, 1)
+			if atomic.LoadInt32(&done) > 0 {
+				break
+			}
+		}
+		finishAlloc <- true
+	}()
+
+	go func() {
+		for {
+			alloc.Base()
+			if atomic.LoadInt32(&done) > 0 {
+				break
+			}
+		}
+		finishBase <- true
+	}()
+
+	runTime := time.NewTimer(time.Second * 3)
+	<-runTime.C
+	atomic.AddInt32(&done, 1)
+	<-finishAlloc
+	<-finishBase
 }

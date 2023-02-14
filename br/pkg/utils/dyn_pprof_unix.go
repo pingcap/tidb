@@ -1,4 +1,5 @@
-// +build linux darwin freebsd unix
+//go:build linux || darwin || freebsd || unix
+
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
 package utils
@@ -9,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
+	tidbutils "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 

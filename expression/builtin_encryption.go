@@ -31,13 +31,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -74,6 +74,7 @@ var (
 	_ builtinFunc = &builtinSHA2Sig{}
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
+	_ builtinFunc = &builtinValidatePasswordStrengthSig{}
 )
 
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
@@ -118,7 +119,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = args[0].GetType().Flen // At most.
+	bf.tp.SetFlen(args[0].GetType().GetFlen()) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
@@ -252,7 +253,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
+	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1)) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
@@ -384,7 +385,7 @@ func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf.tp.Flen = args[0].GetType().Flen
+	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	sig := &builtinDecodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
@@ -447,7 +448,7 @@ func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf.tp.Flen = args[0].GetType().Flen
+	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
@@ -508,7 +509,7 @@ func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.PWDHashLen + 1
+	bf.tp.SetFlen(mysql.PWDHashLen + 1)
 	sig := &builtinPasswordSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Password)
 	return sig, nil
@@ -529,7 +530,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, err
+		return "", isNull, err
 	}
 
 	if len(pass) == 0 {
@@ -555,7 +556,7 @@ func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1024 // Max allowed random bytes
+	bf.tp.SetFlen(1024) // Max allowed random bytes
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinRandomBytesSig{bf}
 	return sig, nil
@@ -574,17 +575,18 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 // evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
 func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) {
-	len, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if len < 1 || len > 1024 {
+	if val < 1 || val > 1024 {
 		return "", false, types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
 	}
-	buf := make([]byte, len)
+	buf := make([]byte, val)
+	//nolint: gosec
 	if n, err := rand.Read(buf); err != nil {
 		return "", true, err
-	} else if int64(n) != len {
+	} else if int64(n) != val {
 		return "", false, errors.New("fail to generate random bytes")
 	}
 	return string(buf), false, nil
@@ -602,8 +604,10 @@ func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 32
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(32)
 	sig := &builtinMD5Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MD5)
 	return sig, nil
@@ -626,12 +630,7 @@ func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	var sum [16]byte
-	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(arg))
-	if err != nil {
-		return "", false, err
-	}
-	sum = md5.Sum(dBytes) // #nosec G401
+	sum := md5.Sum([]byte(arg)) // #nosec G401
 	hexStr := fmt.Sprintf("%x", sum)
 	return hexStr, false, nil
 }
@@ -648,8 +647,10 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 40
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(40)
 	sig := &builtinSHA1Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA1)
 	return sig, nil
@@ -693,8 +694,10 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 128 // sha512
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(128) // sha512
 	sig := &builtinSHA2Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA2)
 	return sig, nil
@@ -708,6 +711,51 @@ func (b *builtinSHA2Sig) Clone() builtinFunc {
 	newSig := &builtinSHA2Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+type sm3FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *sm3FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(40)
+	sig := &builtinSM3Sig{bf}
+	return sig, nil
+}
+
+type builtinSM3Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSM3Sig) Clone() builtinFunc {
+	newSig := &builtinSM3Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals Sm3Hash(str).
+// The value is returned as a string of 70 hexadecimal digits, or NULL if the argument was NULL.
+func (b *builtinSM3Sig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	hasher := auth.NewSM3()
+	_, err = hasher.Write([]byte(str))
+	if err != nil {
+		return "", true, err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
 // Supported hash length of SHA-2 family
@@ -730,6 +778,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
@@ -793,12 +842,12 @@ func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	srcLen := args[0].GetType().Flen
+	srcLen := args[0].GetType().GetFlen()
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
 		compressBound = mysql.MaxBlobWidth
 	}
-	bf.tp.Flen = compressBound
+	bf.tp.SetFlen(compressBound)
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Compress)
@@ -864,7 +913,7 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUncompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
@@ -922,7 +971,7 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, ar
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 10
+	bf.tp.SetFlen(10)
 	sig := &builtinUncompressedLengthSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UncompressedLength)
 	return sig, nil
@@ -954,8 +1003,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, erro
 		sc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
-	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])
-	return int64(len), false, nil
+	return int64(binary.LittleEndian.Uint32([]byte(payload)[0:4])), false, nil
 }
 
 type validatePasswordStrengthFunctionClass struct {
@@ -963,5 +1011,66 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(21)
+	sig := &builtinValidatePasswordStrengthSig{bf}
+	return sig, nil
+}
+
+type builtinValidatePasswordStrengthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
+	newSig := &builtinValidatePasswordStrengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
+func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
+	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, true, err
+	} else if len([]rune(str)) < 4 {
+		return 0, false, nil
+	}
+	if validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable); err != nil {
+		return 0, true, err
+	} else if !variable.TiDBOptOn(validation) {
+		return 0, false, nil
+	}
+	return b.validateStr(str, &globalVars)
+}
+
+func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+	if warn, err := pwdValidator.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 0, false, nil
+	}
+	if warn, err := pwdValidator.ValidatePasswordLowPolicy(str, globalVars); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 25, false, nil
+	}
+	if warn, err := pwdValidator.ValidatePasswordMediumPolicy(str, globalVars); err != nil {
+		return 0, true, err
+	} else if len(warn) > 0 {
+		return 50, false, nil
+	}
+	if ok, err := pwdValidator.ValidateDictionaryPassword(str, globalVars); err != nil {
+		return 0, true, err
+	} else if !ok {
+		return 75, false, nil
+	}
+	return 100, false, nil
 }

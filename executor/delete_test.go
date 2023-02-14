@@ -24,10 +24,7 @@ import (
 )
 
 func TestDeleteLockKey(t *testing.T) {
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -111,10 +108,7 @@ func TestDeleteLockKey(t *testing.T) {
 }
 
 func TestIssue21200(t *testing.T) {
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TEST1")

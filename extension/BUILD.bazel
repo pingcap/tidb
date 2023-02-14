@@ -1,0 +1,62 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extension",
+    srcs = [
+        "extensions.go",
+        "function.go",
+        "manifest.go",
+        "registry.go",
+        "session.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/extension",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//parser/auth",
+        "//parser/mysql",
+        "//sessionctx/stmtctx",
+        "//sessionctx/variable",
+        "//types",
+        "//util/chunk",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+    ],
+)
+
+go_test(
+    name = "extension_test",
+    timeout = "short",
+    srcs = [
+        "bootstrap_test.go",
+        "event_listener_test.go",
+        "function_test.go",
+        "main_test.go",
+        "registry_test.go",
+    ],
+    embed = [":extension"],
+    flaky = True,
+    deps = [
+        "//expression",
+        "//parser/ast",
+        "//parser/auth",
+        "//parser/mysql",
+        "//privilege/privileges",
+        "//server",
+        "//sessionctx",
+        "//sessionctx/sessionstates",
+        "//sessionctx/stmtctx",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testsetup",
+        "//types",
+        "//util/chunk",
+        "//util/sem",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

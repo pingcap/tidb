@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -94,6 +95,21 @@ func Files(fs []*backuppb.File) zap.Field {
 	return zap.Object("files", zapFilesMarshaler(fs))
 }
 
+type zapStreamBackupTaskInfo struct{ *backuppb.StreamBackupTaskInfo }
+
+func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("taskName", t.Name)
+	enc.AddUint64("startTs", t.StartTs)
+	enc.AddUint64("endTS", t.EndTs)
+	enc.AddString("tableFilter", strings.Join(t.TableFilter, ","))
+	return nil
+}
+
+// StreamBackupTaskInfo makes the zap fields for a stream backup task info.
+func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
+	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
+}
+
 type zapRewriteRuleMarshaler struct{ *import_sstpb.RewriteRule }
 
 func (rewriteRule zapRewriteRuleMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
@@ -106,6 +122,11 @@ func (rewriteRule zapRewriteRuleMarshaler) MarshalLogObject(enc zapcore.ObjectEn
 // RewriteRule make the zap fields for a rewrite rule.
 func RewriteRule(rewriteRule *import_sstpb.RewriteRule) zap.Field {
 	return zap.Object("rewriteRule", zapRewriteRuleMarshaler{rewriteRule})
+}
+
+// RewriteRuleObject make zap object marshaler for a rewrite rule.
+func RewriteRuleObject(rewriteRule *import_sstpb.RewriteRule) zapcore.ObjectMarshaler {
+	return zapRewriteRuleMarshaler{rewriteRule}
 }
 
 type zapMarshalRegionMarshaler struct{ *metapb.Region }
@@ -209,8 +230,19 @@ func Keys(keys [][]byte) zap.Field {
 	return zap.Object("keys", zapKeysMarshaler(keys))
 }
 
+// AShortError make the zap field with key to display error without verbose representation (e.g. the stack trace).
+func AShortError(key string, err error) zap.Field {
+	if err == nil {
+		return zap.Skip()
+	}
+	return zap.String(key, err.Error())
+}
+
 // ShortError make the zap field to display error without verbose representation (e.g. the stack trace).
 func ShortError(err error) zap.Field {
+	if err == nil {
+		return zap.Skip()
+	}
 	return zap.String("error", err.Error())
 }
 
@@ -238,4 +270,49 @@ func Redact(field zap.Field) zap.Field {
 		return zap.String(field.Key, "?")
 	}
 	return field
+}
+
+// StringifyKeys wraps the key range into a stringer.
+type StringifyKeys []kv.KeyRange
+
+func (kr StringifyKeys) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("{")
+	for i, rng := range kr {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(StringifyRange(rng).String())
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// StringifyRange is the wrapper for displaying a key range.
+type StringifyRange kv.KeyRange
+
+func (rng StringifyRange) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("[")
+	sb.WriteString(redact.Key(rng.StartKey))
+	sb.WriteString(", ")
+	var endKey string
+	if len(rng.EndKey) == 0 {
+		endKey = "inf"
+	} else {
+		endKey = redact.Key(rng.EndKey)
+	}
+	sb.WriteString(redact.String(endKey))
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// StringifyMany returns an array marshaler for a slice of stringers.
+func StringifyMany[T fmt.Stringer](items []T) zapcore.ArrayMarshaler {
+	return zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		for _, item := range items {
+			ae.AppendString(item.String())
+		}
+		return nil
+	})
 }

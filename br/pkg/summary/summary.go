@@ -2,7 +2,11 @@
 
 package summary
 
-import "time"
+import (
+	"time"
+
+	"go.uber.org/zap"
+)
 
 // SetUnit set unit "backup/restore" for summary log.
 func SetUnit(unit string) {
@@ -39,7 +43,21 @@ func SetSuccessStatus(success bool) {
 	collector.SetSuccessStatus(success)
 }
 
+// NowDureTime returns the duration between start time and current time
+func NowDureTime() time.Duration {
+	return collector.NowDureTime()
+}
+
+func AdjustStartTimeToEarlierTime(t time.Duration) {
+	collector.AdjustStartTimeToEarlierTime(t)
+}
+
 // Summary outputs summary log.
 func Summary(name string) {
 	collector.Summary(name)
+}
+
+// Log outputs log.
+func Log(msg string, fields ...zap.Field) {
+	collector.Log(msg, fields...)
 }

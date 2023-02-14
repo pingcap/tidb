@@ -17,6 +17,7 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,7 +35,6 @@ import (
 
 func TestRunWithRetry(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -48,7 +48,6 @@ func TestRunWithRetry(t *testing.T) {
 	})
 
 	t.Run("retry exceeds", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -62,7 +61,6 @@ func TestRunWithRetry(t *testing.T) {
 	})
 
 	t.Run("failed result", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -77,8 +75,6 @@ func TestRunWithRetry(t *testing.T) {
 }
 
 func TestX509NameParseMatch(t *testing.T) {
-	t.Parallel()
-
 	assert.Equal(t, "", X509NameOnline(pkix.Name{}))
 
 	check := pkix.Name{
@@ -96,14 +92,7 @@ func TestX509NameParseMatch(t *testing.T) {
 	assert.Equal(t, result, X509NameOnline(check))
 }
 
-func TestBasicFuncGetStack(t *testing.T) {
-	t.Parallel()
-	b := GetStack()
-	assert.Less(t, len(b), 4096)
-}
-
 func TestBasicFuncWithRecovery(t *testing.T) {
-	t.Parallel()
 	var recovery interface{}
 	WithRecovery(func() {
 		panic("test")
@@ -114,20 +103,17 @@ func TestBasicFuncWithRecovery(t *testing.T) {
 }
 
 func TestBasicFuncSyntaxError(t *testing.T) {
-	t.Parallel()
 	assert.Nil(t, SyntaxError(nil))
 	assert.True(t, terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse))
 	assert.True(t, terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax))
 }
 
 func TestBasicFuncSyntaxWarn(t *testing.T) {
-	t.Parallel()
 	assert.Nil(t, SyntaxWarn(nil))
 	assert.True(t, terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse))
 }
 
 func TestBasicFuncProcessInfo(t *testing.T) {
-	t.Parallel()
 	pi := ProcessInfo{
 		ID:      1,
 		User:    "test",
@@ -161,7 +147,6 @@ func TestBasicFuncProcessInfo(t *testing.T) {
 }
 
 func TestBasicFuncRandomBuf(t *testing.T) {
-	t.Parallel()
 	buf := fastrand.Buf(5)
 	assert.Len(t, buf, 5)
 	assert.False(t, bytes.Contains(buf, []byte("$")))
@@ -169,7 +154,6 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 }
 
 func TestToPB(t *testing.T) {
-	t.Parallel()
 	column := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("c"),
@@ -178,7 +162,7 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.Collate = "utf8mb4_general_ci"
+	column.SetCollate("utf8mb4_general_ci")
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
@@ -188,14 +172,13 @@ func TestToPB(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column2.Collate = "utf8mb4_bin"
+	column2.SetCollate("utf8mb4_bin")
 
-	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
-	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())
 }
 
 func TestComposeURL(t *testing.T) {
-	t.Parallel()
 	// TODO Setup config for TLS and verify https protocol output
 	assert.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
 	assert.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
@@ -203,4 +186,30 @@ func TestComposeURL(t *testing.T) {
 	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
 	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
 	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
+}
+
+func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
+	for i, item := range items {
+		assert.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
+	}
+	select {
+	case item, ok := <-ch:
+		assert.False(t, ok, "channel not closed: more item %v", item)
+	default:
+		t.Fatal("channel not closed: blocked")
+	}
+}
+
+func TestChannelMap(t *testing.T) {
+	ch := make(chan int, 4)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+
+	tableCh := ChanMap(ch, func(i int) string {
+		return fmt.Sprintf("table%d", i)
+	})
+	close(ch)
+
+	assertChannel(t, tableCh, "table1", "table2", "table3")
 }

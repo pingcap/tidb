@@ -34,7 +34,7 @@ func startHTTPServer(tctx *tcontext.Context, lis net.Listener) {
 	err := httpServer.Serve(lis)
 	err = errors.Cause(err)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
-		tctx.L().Warn("dumpling http handler return with error", log.ShortError(err))
+		tctx.L().Info("dumpling http handler return with error", log.ShortError(err))
 	}
 }
 

@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "globalkilltest_test",
+    timeout = "short",
+    srcs = [
+        "global_kill_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "//util/logutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)

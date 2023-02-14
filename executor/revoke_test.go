@@ -17,19 +17,21 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite1) TestRevokeGlobal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRevokeGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON *.* FROM 'nonexistuser'@'host'`)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobalRevoke'@'localhost' IDENTIFIED BY '123';`
@@ -53,14 +55,15 @@ func (s *testSuite1) TestRevokeGlobal(c *C) {
 	}
 }
 
-func (s *testSuite1) TestRevokeDBScope(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRevokeDBScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testDBRevoke'@'localhost' IDENTIFIED BY '123';`)
 	tk.MustExec(`GRANT ALL ON test.* TO 'testDBRevoke'@'localhost';`)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON nonexistdb.* FROM 'testDBRevoke'@'localhost'`)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllDBPrivs {
@@ -69,51 +72,66 @@ func (s *testSuite1) TestRevokeDBScope(c *C) {
 
 		tk.MustQuery(check).Check(testkit.Rows("Y"))
 		tk.MustExec(sql)
-		tk.MustQuery(check).Check(testkit.Rows("N"))
+		if v == mysql.AllDBPrivs[len(mysql.AllDBPrivs)-1] {
+			// When all privileges are set to 'N', then the record should be removed as well.
+			// https://github.com/pingcap/tidb/issues/38363
+			tk.MustQuery(check).Check(testkit.Rows())
+		} else {
+			tk.MustQuery(check).Check(testkit.Rows("N"))
+		}
 	}
 }
 
-func (s *testSuite1) TestRevokeTableScope(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRevokeTableScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testTblRevoke'@'localhost' IDENTIFIED BY '123';`)
 	tk.MustExec(`CREATE TABLE test.test1(c1 int);`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON test.test1 TO 'testTblRevoke'@'localhost';`)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON test.nonexisttable FROM 'testTblRevoke'@'localhost'`)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View,References"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View,Trigger,References"))
 
 	// Revoke each priv from the user.
-	for _, v := range mysql.AllTablePrivs {
+	for index, v := range mysql.AllTablePrivs {
 		sql := fmt.Sprintf("REVOKE %s ON test.test1 FROM 'testTblRevoke'@'localhost';", mysql.Priv2Str[v])
 		tk.MustExec(sql)
 		rows := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1";`).Rows()
-		c.Assert(rows, HasLen, 1)
-		row := rows[0]
-		c.Assert(row, HasLen, 1)
-
-		op := v.SetString()
-		found := false
-		for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
-			if op == p {
-				found = true
-				break
+		if index < len(mysql.AllTablePrivs)-1 {
+			require.Len(t, rows, 1)
+			row := rows[0]
+			require.Len(t, row, 1)
+			op := v.SetString()
+			found := false
+			for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
+				if op == p {
+					found = true
+					break
+				}
 			}
+			require.False(t, found, "%s", mysql.Priv2SetStr[v])
+		} else {
+			//delete row when last prv , updated by issue #38421
+			require.Len(t, rows, 0)
 		}
-		c.Assert(found, IsFalse, Commentf("%s", mysql.Priv2SetStr[v]))
 	}
 
 	// Revoke all table scope privs.
+	tk.MustExec(`GRANT ALL PRIVILEGES ON test.test1 TO 'testTblRevoke'@'localhost';`)
 	tk.MustExec("REVOKE ALL ON test.test1 FROM 'testTblRevoke'@'localhost';")
-	tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Check(testkit.Rows(""))
+	//delete row when last prv , updated by issue #38421
+	rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Rows()
+	require.Len(t, rows, 0)
 }
 
-func (s *testSuite1) TestRevokeColumnScope(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestRevokeColumnScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testColRevoke'@'localhost' IDENTIFIED BY '123';`)
 	tk.MustExec(`CREATE TABLE test.test3(c1 int, c2 int);`)
@@ -127,14 +145,16 @@ func (s *testSuite1) TestRevokeColumnScope(c *C) {
 
 		tk.MustExec(grantSQL)
 		rows := tk.MustQuery(checkSQL).Rows()
-		c.Assert(rows, HasLen, 1)
+		require.Len(t, rows, 1)
 		row := rows[0]
-		c.Assert(row, HasLen, 1)
+		require.Len(t, row, 1)
 		p := fmt.Sprintf("%v", row[0])
-		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
+		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 
 		tk.MustExec(revokeSQL)
-		tk.MustQuery(checkSQL).Check(testkit.Rows(""))
+		//delete row when last prv , updated by issue #38421
+		rows = tk.MustQuery(checkSQL).Rows()
+		require.Len(t, rows, 0)
 	}
 
 	// Create a new user.
@@ -145,18 +165,52 @@ func (s *testSuite1) TestRevokeColumnScope(c *C) {
 	// Make sure all the column privs for granted user are in the Column_priv set.
 	for _, v := range mysql.AllColumnPrivs {
 		rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3" and Column_name="c2";`).Rows()
-		c.Assert(rows, HasLen, 1)
+		require.Len(t, rows, 1)
 		row := rows[0]
-		c.Assert(row, HasLen, 1)
+		require.Len(t, row, 1)
 		p := fmt.Sprintf("%v", row[0])
-		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
+		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 	tk.MustExec("REVOKE ALL(c2) ON test3 FROM 'testCol1Revoke'@'localhost'")
-	tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Check(testkit.Rows(""))
+	//delete row when last prv , updated by issue #38421
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Rows()
+	require.Len(t, rows, 0)
 }
 
-func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+// ref issue #38421
+func TestRevokeTableSingle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Create a new user.
+	tk.MustExec(`CREATE USER test;`)
+	tk.MustExec(`CREATE TABLE test.test1(c1 int);`)
+	tk.MustExec(`GRANT SELECT  ON test.test1 TO test;`)
+
+	tk.MustExec(`REVOKE SELECT  ON test.test1 from test;`)
+
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.tables_priv WHERE User="test" `).Rows()
+	require.Len(t, rows, 0)
+}
+
+// ref issue #38421(column fix)
+func TestRevokeTableSingleColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Create a new user.
+	tk.MustExec(`CREATE USER test;`)
+	tk.MustExec(`GRANT SELECT(Host) ON mysql.db TO test`)
+	tk.MustExec(`GRANT SELECT(DB) ON mysql.db TO test`)
+	tk.MustExec(`REVOKE SELECT(Host) ON mysql.db FROM test`)
+
+	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" and Column_name ='Host' `).Rows()
+	require.Len(t, rows, 0)
+	rows = tk.MustQuery(`SELECT Column_priv FROM mysql.columns_priv WHERE User="test" and Column_name ='DB' `).Rows()
+	require.Len(t, rows, 1)
+}
+
+func TestRevokeDynamicPrivs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("DROP USER if exists dyn")
 	tk.MustExec("create user dyn")
@@ -166,7 +220,7 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 
 	// try revoking only on test.* - should fail:
 	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
-	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
+	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
 
 	// privs should still be intact:
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
@@ -195,9 +249,10 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % SYSTEM_VARIABLES_ADMIN Y"))
 }
 
-func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
+func TestRevokeOnNonExistTable(t *testing.T) {
 	// issue #28533
-	tk := testkit.NewTestKit(c, s.store)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("CREATE DATABASE d1;")
 	defer tk.MustExec("DROP DATABASE IF EXISTS d1;")

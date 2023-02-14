@@ -25,9 +25,9 @@ import (
 )
 
 type readAtTestCase struct {
-	name      string
 	newWriter func(f *os.File) io.WriteCloser
 	newReader func(f *os.File) io.ReaderAt
+	name      string
 }
 
 func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
@@ -73,7 +73,6 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 }
 
 func TestReadAt(t *testing.T) {
-	t.Parallel()
 	ctrCipher1, err := NewCtrCipher()
 	require.NoError(t, err)
 	ctrCipher2, err := NewCtrCipher()

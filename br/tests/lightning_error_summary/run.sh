@@ -16,8 +16,6 @@
 
 set -eux
 
-# skip for temporary due to checksum for table a,c succeed, but expect to fail.
-exit 0
 # Check that error summary are written at the bottom of import.
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_error_summary;'
 
@@ -48,9 +46,9 @@ check_contains 'sum(k): 32'
 # Verify the log contains the expected messages at the last few lines
 tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
 grep -Fq '["tables failed to be imported"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`a`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
-! grep -Fq '[-] [table=`error_summary`.`b`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '[-] [table=`error_summary`.`a`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+! grep -Fq '[-] [table=`error_summary`.`b`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 
 # Now check the error log when the checkpoint is not cleaned.
 

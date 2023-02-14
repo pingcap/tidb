@@ -25,8 +25,6 @@ import (
 )
 
 func TestLeadLag(t *testing.T) {
-	t.Parallel()
-
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -116,12 +114,9 @@ func TestLeadLag(t *testing.T) {
 	for _, test := range tests {
 		testWindowFunc(t, test)
 	}
-
 }
 
 func TestMemLeadLag(t *testing.T) {
-	t.Parallel()
-
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -167,5 +162,4 @@ func TestMemLeadLag(t *testing.T) {
 	for _, test := range tests {
 		testWindowAggMemFunc(t, test)
 	}
-
 }

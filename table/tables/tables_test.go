@@ -16,27 +16,30 @@ package tables_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -82,13 +85,11 @@ func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 }
 
 func TestBasic(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
@@ -183,10 +184,8 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 }
 
 func TestTypes(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.NoError(t, err)
@@ -237,10 +236,8 @@ func TestTypes(t *testing.T) {
 }
 
 func TestUniqueIndexMultipleNullEntries(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(ctx, "drop table if exists test.t")
 	require.NoError(t, err)
@@ -266,7 +263,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	require.Greater(t, autoid, int64(0))
 
 	sctx := tk.Session()
-	require.Nil(t, sctx.NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, sctx))
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
@@ -279,7 +276,6 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 }
 
 func TestRowKeyCodec(t *testing.T) {
-	t.Parallel()
 	tableVal := []struct {
 		tableID int64
 		h       int64
@@ -321,9 +317,7 @@ func TestRowKeyCodec(t *testing.T) {
 }
 
 func TestUnsignedPK(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	require.NoError(t, err)
@@ -331,7 +325,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	pt := tb.(table.PhysicalTable)
@@ -339,16 +333,14 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestIterRecords(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	require.NoError(t, err)
@@ -356,7 +348,7 @@ func TestIterRecords(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	require.NoError(t, err)
 	totalCount := 0
@@ -373,13 +365,11 @@ func TestIterRecords(t *testing.T) {
 }
 
 func TestTableFromMeta(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
@@ -388,18 +378,18 @@ func TestTableFromMeta(t *testing.T) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.NoError(t, err)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Error(t, err)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 
@@ -427,9 +417,7 @@ func TestTableFromMeta(t *testing.T) {
 }
 
 func TestShardRowIDBitsStep(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
@@ -447,9 +435,7 @@ func TestShardRowIDBitsStep(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
@@ -505,11 +491,11 @@ func TestHiddenColumn(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
-	tk.MustQuery("show columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"c|int(11)|YES||<nil>|",
 		"e|int(11)|YES||<nil>|"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -605,7 +591,7 @@ func TestHiddenColumn(t *testing.T) {
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -615,9 +601,7 @@ func TestHiddenColumn(t *testing.T) {
 }
 
 func TestAddRecordWithCtx(t *testing.T) {
-	t.Parallel()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
 	require.NoError(t, err)
@@ -630,7 +614,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err = tk.Session().Txn(true)
 	require.NoError(t, err)
 	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
@@ -655,15 +639,14 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(records), i)
 
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
@@ -673,7 +656,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into ttt(k,c) values(1, 'tidb')")
 	tk.MustExec("insert into ttt(k,c) values(2, 'tidb')")
 	_, err := tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// no auto-commit
@@ -681,13 +664,13 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
@@ -703,10 +686,9 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err := tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.Error(t, err)
 		ch <- 2
-		clean()
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
@@ -715,14 +697,15 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	require.NoError(t, err)
 	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
 	require.Equal(t, 1, <-ch)
+
+	// Unrelated to the test logic, just wait for the goroutine to exit to avoid leak in test
+	require.Equal(t, 2, <-ch)
 }
 
 func TestViewColumns(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
@@ -738,13 +721,225 @@ func TestViewColumns(t *testing.T) {
 		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
 	}
 	for _, testCase := range testCases {
-		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
+}
+
+func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_optimistic_untouched_flag;")
+	tk.MustExec(`create table test_optimistic_untouched_flag(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, null, 'green');`)
+
+	// Insert a row with duplicated entry on the unique key, the commit should fail.
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec(`delete from test_optimistic_untouched_flag where c1 is null;`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
+}
+
+func TestTxnAssertion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	se, err := session.CreateSession4Test(store)
+	se.SetConnectionID(1)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk := testkit.NewTestKit(t, store)
+	tk.SetSession(se)
+
+	fpAdd := "github.com/pingcap/tidb/table/tables/addRecordForceAssertExist"
+	fpUpdate := "github.com/pingcap/tidb/table/tables/updateRecordForceAssertNotExist"
+	fpRemove := "github.com/pingcap/tidb/table/tables/removeRecordForceAssertNotExist"
+
+	runStmtInTxn := func(pessimistic bool, stmts ...string) error {
+		if pessimistic {
+			tk.MustExec("begin pessimistic")
+		} else {
+			tk.MustExec("begin optimistic")
+		}
+		for _, stmt := range stmts {
+			tk.MustExec(stmt)
+		}
+		return tk.ExecToErr("commit")
+	}
+
+	withFailpoint := func(fp string, f func()) {
+		require.NoError(t, failpoint.Enable(fp, "return"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fp))
+		}()
+		f()
+	}
+
+	expectAssertionErr := func(assertionLevel string, err error) {
+		if assertionLevel == "STRICT" {
+			require.NotNil(t, err)
+			require.Contains(t, err.Error(), "assertion failed")
+		} else {
+			require.NoError(t, err)
+		}
+	}
+
+	testAssertionBasicImpl := func(level string, lock bool, lockIdx bool, useCommonHandle bool) {
+		tk.MustExec("set @@tidb_txn_assertion_level = " + level)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		if useCommonHandle {
+			tk.MustExec("create table t(id varchar(64) primary key clustered, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
+		} else {
+			tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
+		}
+
+		var id1, id2, id3 interface{}
+		if useCommonHandle {
+			id1, id2, id3 = "1", "2", "3"
+		} else {
+			id1, id2, id3 = 1, 2, 3
+		}
+
+		// Auto commit
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id1)
+		tk.MustExec("delete from t where id = 1")
+
+		// Optimistic
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
+		tk.MustExec("begin optimistic")
+		if lock {
+			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1, id2, id3)
+		}
+		if lockIdx {
+			tk.MustExec("select * from t where v3 in (1000, 2000, 3000) for update")
+		}
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id2)
+		tk.MustExec("delete from t where id = ?", id3)
+		tk.MustExec("commit")
+
+		// Pessimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
+		tk.MustExec("begin pessimistic")
+		if lock {
+			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1, id2, id3)
+		}
+		if lockIdx {
+			tk.MustExec("select * from t where v3 in (1000, 2000, 3000) for update")
+		}
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id2)
+		tk.MustExec("delete from t where id = ?", id3)
+		tk.MustExec("commit")
+
+		// Inject incorrect assertion so that it must fail.
+
+		// Auto commit
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
+		withFailpoint(fpAdd, func() {
+			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = tk.ExecToErr("delete from t where id = ?", id3)
+			expectAssertionErr(level, err)
+		})
+
+		var lockStmts []string = nil
+		if lock {
+			lockStmts = append(lockStmts, fmt.Sprintf("select * from t where id in (%#v, %#v, %#v) for update", id1, id2, id3))
+		}
+		if lockIdx {
+			lockStmts = append(lockStmts, "select * from t where v3 in (1000, 2000, 3000) for update")
+		}
+
+		// Optimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
+		withFailpoint(fpAdd, func() {
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("insert into t values (%#v, 10, 100, 1000, '10000')", id1))...)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("update t set v = v + 1 where id = %#v", id2))...)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("delete from t where id = %#v", id3))...)
+			expectAssertionErr(level, err)
+		})
+
+		// Pessimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
+		withFailpoint(fpAdd, func() {
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("insert into t values (%#v, 10, 100, 1000, '10000')", id1))...)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("update t set v = v + 1 where id = %#v", id2))...)
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("delete from t where id = %#v", id3))...)
+			expectAssertionErr(level, err)
+		})
+	}
+
+	for _, level := range []string{"STRICT", "OFF"} {
+		for _, lock := range []bool{false, true} {
+			for _, lockIdx := range []bool{false, true} {
+				for _, useCommonHandle := range []bool{false, true} {
+					t.Logf("testing testAssertionBasicImpl level: %v, lock: %v, lockIdx: %v, useCommonHandle: %v...", level, lock, lockIdx, useCommonHandle)
+					testAssertionBasicImpl(level, lock, lockIdx, useCommonHandle)
+				}
+			}
+		}
+	}
+
+	testUntouchedIndexImpl := func(level string, pessimistic bool) {
+		tk.MustExec("set @@tidb_txn_assertion_level = " + level)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, index(v2), unique index(v3))")
+		tk.MustExec("insert into t values (1, 10, 100, 1000)")
+
+		if pessimistic {
+			tk.MustExec("begin pessimistic")
+		} else {
+			tk.MustExec("begin optimistic")
+		}
+		tk.MustExec("update t set v = v + 1 where id = 1")
+		tk.MustExec("delete from t where id = 1")
+		tk.MustExec("insert into t values (1, 11, 101, 1001)")
+		tk.MustExec("commit")
+	}
+
+	testUntouchedIndexImpl("STRICT", false)
+	testUntouchedIndexImpl("STRICT", true)
+	testUntouchedIndexImpl("OFF", false)
+	testUntouchedIndexImpl("OFF", true)
 }

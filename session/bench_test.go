@@ -24,13 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -44,7 +45,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog = false
+		cfg.Instance.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -322,10 +323,11 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	params := expression.Args2Expressions4Test(64)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -445,6 +447,7 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
 	b.ResetTimer()
@@ -486,6 +489,26 @@ func BenchmarkSort(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(ctx, rs[0], 50)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkSort2(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	prepareSortBenchData(se, "int", "%v", 1000000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t order by col")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(ctx, rs[0], 1000000)
 	}
 	b.StopTimer()
 }
@@ -1567,6 +1590,10 @@ partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
 
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1602,6 +1629,10 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
 	alloc := chunk.NewAllocator()
+	_, err := se.Execute(ctx, "analyze table t")
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
@@ -1692,7 +1723,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
@@ -1711,7 +1742,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+func BenchmarkCompileStmt(b *testing.B) {
 	// See issue https://github.com/pingcap/tidb/issues/27633
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1806,13 +1837,18 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
 
-	args := []types.Datum{types.NewDatum(3401544)}
-	is := se.GetInfoSchema()
+	args := expression.Args2Expressions4Test(3401544)
 
 	b.ResetTimer()
+	stmtExec := &ast.ExecuteStmt{PrepStmt: prepStmt, BinaryArgs: args}
+	compiler := executor.Compiler{Ctx: se}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		_, err := compiler.Compile(context.Background(), stmtExec)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1820,10 +1856,27 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkAutoIncrement(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table auto_inc (id int unsigned key nonclustered auto_increment) shard_row_id_bits=4 auto_id_cache 1;")
+	mustExecute(se, "set @@tidb_enable_mutation_checker = false")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into auto_inc values ()")
+	}
+	b.StopTimer()
+}
+
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
-// 	make bench-daily TO=xxx.json
+//
+//	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,
@@ -1850,6 +1903,7 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
-		BenchmarkCompileExecutePreparedStmt,
+		BenchmarkCompileStmt,
+		BenchmarkAutoIncrement,
 	)
 }

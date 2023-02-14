@@ -16,7 +16,7 @@
 
 set -eux
 
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(50);github.com/pingcap/tidb/br/pkg/lightning/restore/SetMinDeliverBytes=return(1)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(100);github.com/pingcap/tidb/br/pkg/lightning/restore/SetMinDeliverBytes=return(1)'
 
 for CFG in chunk engine; do
   rm -f "$TEST_DIR/lightning-tidb.log"
@@ -25,7 +25,7 @@ for CFG in chunk engine; do
   ! run_lightning --backend tidb --enable-checkpoint=0 --log-file "$TEST_DIR/lightning-tidb.log" --config "tests/$TEST_NAME/$CFG.toml"
   [ $? -eq 0 ]
 
-  tail -n 10 $TEST_DIR/lightning-tidb.log | grep "ERROR" | tail -n 1 | grep -Fq "Error 1062: Duplicate entry '1-1' for key 'uq'"
+  tail -n 10 $TEST_DIR/lightning-tidb.log | grep "ERROR" | tail -n 1 | grep -Fq "Error 1062 (23000): Duplicate entry '1-1' for key 'tb.uq'"
 
   ! grep -Fq "restore file completed" $TEST_DIR/lightning-tidb.log
   [ $? -eq 0 ]

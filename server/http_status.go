@@ -38,15 +38,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	pb "github.com/pingcap/kvproto/pkg/autoid"
+	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -80,7 +83,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
+	if s.cfg.Status.StatusPort == 0 && !RunInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -102,7 +105,7 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
-	} else if runInGoTest && s.cfg.Status.StatusPort == 0 {
+	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
@@ -203,6 +206,8 @@ func (s *Server) startHTTPServer() {
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 
+	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
+
 	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
@@ -223,6 +228,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
 	}))
+	router.Handle("/labels", labelHandler{}).Name("Labels")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
@@ -230,7 +236,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
 	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica", flashReplicaHandler{tikvHandlerTool})
+	router.Handle("/tiflash/replica-deprecated", flashReplicaHandler{tikvHandlerTool})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
@@ -276,7 +282,7 @@ func (s *Server) startHTTPServer() {
 
 	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
 	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
+	serverMux.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
@@ -353,7 +359,8 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
 			return
 		}
-		if err := tracecpu.StartCPUProfile(fw); err != nil {
+		pc := cpuprofile.NewCollector()
+		if err := pc.StartCPUProfile(fw); err != nil {
 			serveError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
@@ -363,9 +370,10 @@ func (s *Server) startHTTPServer() {
 			sec = 10
 		}
 		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
-		err = tracecpu.StopCPUProfile()
+		err = pc.StopCPUProfile()
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			serveError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
 		}
 
@@ -449,17 +457,51 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
-	service.RegisterChannelzServiceToServer(s.grpcServer)
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	grpcServer := NewRPCServer(s.cfg, s.dom, s)
+	service.RegisterChannelzServiceToServer(grpcServer)
+	if s.cfg.Store == "tikv" {
+		keyspaceName := config.GetGlobalKeyspaceName()
+		for {
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
+			store, err := store.New(fullPath)
+			if err != nil {
+				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				break
+			}
+			ebd, ok := store.(kv.EtcdBackend)
+			if !ok {
+				break
+			}
+			etcdAddr, err := ebd.EtcdAddrs()
+			if err != nil {
+				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				break
+			}
+			selfAddr := fmt.Sprintf("%s:%d", s.cfg.AdvertiseAddress, s.cfg.Status.StatusPort)
+			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			s.autoIDService = service
+			break
+		}
+	}
+
+	s.statusServer = statusServer
+	s.grpcServer = grpcServer
 
 	go util.WithRecovery(func() {
-		err := s.grpcServer.Serve(grpcL)
+		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
-		err := s.statusServer.Serve(httpL)
+		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Error("http server error", zap.Error(err))
 	}, nil)
 

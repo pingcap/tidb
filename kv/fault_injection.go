@@ -58,17 +58,8 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 }
 
 // Begin creates an injected Transaction.
-func (s *InjectedStore) Begin() (Transaction, error) {
-	txn, err := s.Storage.Begin()
-	return &InjectedTransaction{
-		Transaction: txn,
-		cfg:         s.cfg,
-	}, err
-}
-
-// BeginWithOption creates an injected Transaction with given option.
-func (s *InjectedStore) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
-	txn, err := s.Storage.BeginWithOption(option)
+func (s *InjectedStore) Begin(opts ...tikv.TxnOption) (Transaction, error) {
+	txn, err := s.Storage.Begin(opts...)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

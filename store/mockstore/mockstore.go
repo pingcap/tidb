@@ -90,10 +90,20 @@ type mockOptions struct {
 	path             string
 	txnLocalLatches  uint
 	storeType        StoreType
+	ddlCheckerHijack bool
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
 type MockTiKVStoreOption func(*mockOptions)
+
+// WithMultipleOptions merges multiple options into one option.
+func WithMultipleOptions(opts ...MockTiKVStoreOption) MockTiKVStoreOption {
+	return func(args *mockOptions) {
+		for _, opt := range opts {
+			opt(args)
+		}
+	}
+}
 
 // WithClientHijacker hijacks KV client's behavior, makes it easy to simulate the network
 // problem between TiDB and TiKV.
@@ -139,6 +149,17 @@ func WithTxnLocalLatches(capacity uint) MockTiKVStoreOption {
 	}
 }
 
+// WithDDLChecker prepare injected DDL implementation for the domain of this store. It must be done before bootstrap to
+// avoid data race with dom.ddl.
+func WithDDLChecker() MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.ddlCheckerHijack = true
+	}
+}
+
+// DDLCheckerInjector is used to break import cycle.
+var DDLCheckerInjector func(kv.Storage) kv.Storage
+
 // NewMockStore creates a mocked tikv store, the path is the file path to store the data.
 // If path is an empty string, a memory storage will be created.
 func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
@@ -152,14 +173,27 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		f(&opt)
 	}
 
+	var (
+		store kv.Storage
+		err   error
+	)
+
 	switch opt.storeType {
 	case MockTiKV:
-		return newMockTikvStore(&opt)
+		store, err = newMockTikvStore(&opt)
 	case EmbedUnistore:
-		return newUnistore(&opt)
+		store, err = newUnistore(&opt)
 	default:
 		panic("unsupported mockstore")
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if opt.ddlCheckerHijack {
+		store = DDLCheckerInjector(store)
+	}
+	return store, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

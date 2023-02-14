@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tablecodec",
+    srcs = ["tablecodec.go"],
+    importpath = "github.com/pingcap/tidb/tablecodec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//kv",
+        "//parser/charset",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+        "//structure",
+        "//types",
+        "//util/codec",
+        "//util/collate",
+        "//util/dbterror",
+        "//util/rowcodec",
+        "//util/stringutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)
+
+go_test(
+    name = "tablecodec_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "main_test.go",
+        "tablecodec_test.go",
+    ],
+    embed = [":tablecodec"],
+    flaky = True,
+    shard_count = 30,
+    deps = [
+        "//kv",
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx/stmtctx",
+        "//testkit/testsetup",
+        "//types",
+        "//util/benchdaily",
+        "//util/codec",
+        "//util/collate",
+        "//util/rowcodec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

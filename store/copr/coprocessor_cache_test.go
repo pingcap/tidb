@@ -25,7 +25,6 @@ import (
 )
 
 func TestBuildCacheKey(t *testing.T) {
-	t.Parallel()
 	req := coprocessor.Request{
 		Tp:      0xAB,
 		StartTs: 0xAABBCC,
@@ -70,7 +69,6 @@ func TestBuildCacheKey(t *testing.T) {
 }
 
 func TestDisable(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{CapacityMB: 0})
 	require.NoError(t, err)
 	require.Nil(t, cache)
@@ -81,7 +79,7 @@ func TestDisable(t *testing.T) {
 	v2 := cache.Get([]byte("foo"))
 	require.Nil(t, v2)
 
-	v = cache.CheckResponseAdmission(1024, time.Second*5)
+	v = cache.CheckResponseAdmission(1024, time.Second*5, 0)
 	require.False(t, v)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
@@ -95,7 +93,6 @@ func TestDisable(t *testing.T) {
 }
 
 func TestAdmission(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	require.NoError(t, err)
 	require.NotNil(t, cache)
@@ -107,34 +104,40 @@ func TestAdmission(t *testing.T) {
 	v = cache.CheckRequestAdmission(1000)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(0, 0)
+	v = cache.CheckResponseAdmission(0, 0, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(0, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 4*time.Millisecond, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(0, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 5*time.Millisecond, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 0)
+	v = cache.CheckResponseAdmission(1, 0, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(1, 4*time.Millisecond, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1, 5*time.Millisecond, 0)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond, 0)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond, 0)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond, 0)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond, 0)
+	require.False(t, v)
+
+	v = cache.CheckResponseAdmission(1024, 4*time.Millisecond, 1)
+	require.True(t, v)
+
+	v = cache.CheckResponseAdmission(1024, 4*time.Millisecond, 51)
 	require.False(t, v)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
@@ -153,14 +156,13 @@ func TestAdmission(t *testing.T) {
 }
 
 func TestCacheValueLen(t *testing.T) {
-	t.Parallel()
 	v := coprCacheValue{
 		TimeStamp:         0x123,
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	// 72 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 2 + 8 byte * 3
-	require.Equal(t, 72, v.Len())
+	// 120 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 4 + 8 byte * 3
+	require.Equal(t, 120, v.Len())
 
 	v = coprCacheValue{
 		Key:               []byte("foobar"),
@@ -169,11 +171,20 @@ func TestCacheValueLen(t *testing.T) {
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	require.Equal(t, 72+len(v.Key)+len(v.Data), v.Len())
+	require.Equal(t, 120+len(v.Key)+len(v.Data), v.Len())
+
+	v = coprCacheValue{
+		Key:               []byte("foobar"),
+		Data:              []byte("12345678"),
+		TimeStamp:         0x123,
+		RegionID:          0x1,
+		RegionDataVersion: 0x3,
+		PageEnd:           []byte("3235"),
+	}
+	require.Equal(t, 120+len(v.Key)+len(v.Data)+len(v.PageEnd), v.Len())
 }
 
 func TestGetSet(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	require.NoError(t, err)
 	require.NotNil(t, cache)
@@ -200,7 +211,6 @@ func TestGetSet(t *testing.T) {
 }
 
 func TestIssue24118(t *testing.T) {
-	t.Parallel()
 	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
 	require.EqualError(t, err, "Capacity must be > 0 to enable the cache")
 }

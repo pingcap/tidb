@@ -43,7 +43,6 @@ func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func TestMiscVisitorCover(t *testing.T) {
-	t.Parallel()
 	valueExpr := ast.NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []ast.Node{
 		&ast.AdminStmt{},
@@ -51,6 +50,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.BeginStmt{},
 		&ast.BinlogStmt{},
 		&ast.CommitStmt{},
+		&ast.CompactTableStmt{Table: &ast.TableName{}},
 		&ast.CreateUserStmt{},
 		&ast.DeallocateStmt{},
 		&ast.DoStmt{},
@@ -75,7 +75,11 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.PrivElem{},
 		&ast.VariableAssignment{Value: valueExpr},
 		&ast.KillStmt{},
-		&ast.DropStatsStmt{Table: &ast.TableName{}},
+		&ast.DropStatsStmt{
+			Tables: []*ast.TableName{
+				{},
+			},
+		},
 		&ast.ShutdownStmt{},
 	}
 
@@ -86,7 +90,6 @@ func TestMiscVisitorCover(t *testing.T) {
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
-	t.Parallel()
 	sql := `
 create table t (c1 smallint unsigned, c2 int unsigned);
 alter table t add column a smallint unsigned after b;
@@ -112,7 +115,6 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 }
 
 func TestDMLVistorCover(t *testing.T) {
-	t.Parallel()
 	sql := `delete from somelog where user = 'jcole' order by timestamp_column limit 1;
 delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
 select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
@@ -133,7 +135,6 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 
 // test Change Pump or drainer status sql parser
 func TestChangeStmt(t *testing.T) {
-	t.Parallel()
 	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
 change drainer to node_state='paused' for node_id '127.0.0.1:8249';
 shutdown;`
@@ -148,7 +149,6 @@ shutdown;`
 }
 
 func TestSensitiveStatement(t *testing.T) {
-	t.Parallel()
 	positive := []ast.StmtNode{
 		&ast.SetPwdStmt{},
 		&ast.CreateUserStmt{},
@@ -180,7 +180,6 @@ func TestSensitiveStatement(t *testing.T) {
 }
 
 func TestUserSpec(t *testing.T) {
-	t.Parallel()
 	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
 	u := ast.UserSpec{
 		User: &auth.UserIdentity{
@@ -212,7 +211,6 @@ func TestUserSpec(t *testing.T) {
 }
 
 func TestTableOptimizerHintRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"USE_INDEX(t1 c1)", "USE_INDEX(`t1` `c1`)"},
 		{"USE_INDEX(test.t1 c1)", "USE_INDEX(`test`.`t1` `c1`)"},
@@ -230,6 +228,18 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"IGNORE_INDEX(@sel_1 t1 c1)", "IGNORE_INDEX(@`sel_1` `t1` `c1`)"},
 		{"IGNORE_INDEX(t1@sel_1 c1)", "IGNORE_INDEX(`t1`@`sel_1` `c1`)"},
 		{"IGNORE_INDEX(t1@sel_1 partition(p0, p1) c1)", "IGNORE_INDEX(`t1`@`sel_1` PARTITION(`p0`, `p1`) `c1`)"},
+		{"ORDER_INDEX(t1 c1)", "ORDER_INDEX(`t1` `c1`)"},
+		{"ORDER_INDEX(test.t1 c1)", "ORDER_INDEX(`test`.`t1` `c1`)"},
+		{"ORDER_INDEX(@sel_1 t1 c1)", "ORDER_INDEX(@`sel_1` `t1` `c1`)"},
+		{"ORDER_INDEX(t1@sel_1 c1)", "ORDER_INDEX(`t1`@`sel_1` `c1`)"},
+		{"ORDER_INDEX(test.t1@sel_1 c1)", "ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
+		{"ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"NO_ORDER_INDEX(t1 c1)", "NO_ORDER_INDEX(`t1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1 c1)", "NO_ORDER_INDEX(`test`.`t1` `c1`)"},
+		{"NO_ORDER_INDEX(@sel_1 t1 c1)", "NO_ORDER_INDEX(@`sel_1` `t1` `c1`)"},
+		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -247,6 +257,17 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_MERGE_JOIN(t1,t2)", "INL_MERGE_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
+		{"HASH_JOIN_BUILD(t1)", "HASH_JOIN_BUILD(`t1`)"},
+		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
+		{"LEADING(t1)", "LEADING(`t1`)"},
+		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
+		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
+		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
+		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
+		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
+		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
+		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
+		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -272,6 +293,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"AGG_TO_COP()", "AGG_TO_COP()"},
 		{"AGG_TO_COP(@sel_1)", "AGG_TO_COP(@`sel_1`)"},
 		{"LIMIT_TO_COP()", "LIMIT_TO_COP()"},
+		{"MERGE()", "MERGE()"},
+		{"STRAIGHT_JOIN()", "STRAIGHT_JOIN()"},
 		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
 		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
 		{"READ_CONSISTENT_REPLICA()", "READ_CONSISTENT_REPLICA()"},
@@ -288,7 +311,6 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 }
 
 func TestChangeStmtRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
 		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
@@ -300,7 +322,6 @@ func TestChangeStmtRestore(t *testing.T) {
 }
 
 func TestBRIESecureText(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		input   string
 		secured string
@@ -334,6 +355,17 @@ func TestBRIESecureText(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
-
 	}
+}
+
+func TestCompactTableStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},
+		{"alter table abc compact", "ALTER TABLE `abc` COMPACT"},
+		{"alter table test.abc compact", "ALTER TABLE `test`.`abc` COMPACT"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.CompactTableStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }

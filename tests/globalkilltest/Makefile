@@ -32,8 +32,8 @@ buildsucc:
 	@echo "Build TiDB Server (Global Kill Test) successfully! Setup a cluster with PD & TiKV, then Run ./run-tests.sh --pd=<pd client path>."
 
 clean:
-	rm *.log*
-	rm tikv-*/ pd-*/ -rf
+	rm -f *.log*
+	rm -rf tikv-*/ pd-*/
 
 server:
 ifeq ($(TARGET), "")

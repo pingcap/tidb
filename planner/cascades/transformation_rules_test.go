@@ -62,8 +62,6 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 }
 
 func TestAggPushDownGather(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandAggregation: {
@@ -82,7 +80,7 @@ func TestAggPushDownGather(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 
 	p := parser.New()
 	ctx := plannercore.MockContext()
@@ -116,8 +114,6 @@ func TestAggPushDownGather(t *testing.T) {
 }
 
 func TestPredicatePushDown(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(
 		TransformationRuleBatch{ // TiDB layer
@@ -154,13 +150,11 @@ func TestPredicatePushDown(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestTopNRules(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(
 		TransformationRuleBatch{ // TiDB layer
@@ -195,13 +189,11 @@ func TestTopNRules(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestProjectionElimination(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandProjection: {
@@ -217,13 +209,11 @@ func TestProjectionElimination(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestEliminateMaxMin(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
@@ -238,13 +228,11 @@ func TestEliminateMaxMin(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestMergeAggregationProjection(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
@@ -259,13 +247,11 @@ func TestMergeAggregationProjection(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestMergeAdjacentTopN(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
@@ -287,13 +273,11 @@ func TestMergeAdjacentTopN(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestMergeAdjacentLimit(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
@@ -309,13 +293,11 @@ func TestMergeAdjacentLimit(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestTransformLimitToTableDual(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
@@ -330,13 +312,11 @@ func TestTransformLimitToTableDual(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestPostTransformationRules(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
@@ -351,13 +331,11 @@ func TestPostTransformationRules(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestPushLimitDownTiKVSingleGather(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
@@ -378,13 +356,11 @@ func TestPushLimitDownTiKVSingleGather(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestEliminateOuterJoin(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
@@ -402,13 +378,11 @@ func TestEliminateOuterJoin(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestTransformAggregateCaseToSelection(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
@@ -423,13 +397,11 @@ func TestTransformAggregateCaseToSelection(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestTransformAggToProj(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
@@ -447,13 +419,11 @@ func TestTransformAggToProj(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestDecorrelate(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandApply: {
@@ -469,13 +439,11 @@ func TestDecorrelate(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
 func TestInjectProj(t *testing.T) {
-	t.Parallel()
-
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
@@ -497,7 +465,7 @@ func TestInjectProj(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
 
@@ -520,6 +488,6 @@ func TestMergeAdjacentWindow(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }

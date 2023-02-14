@@ -49,7 +49,7 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
-func (t *TxStructure) hashFieldIntegerVal(val int64) []byte {
+func (*TxStructure) hashFieldIntegerVal(val int64) []byte {
 	return []byte(strconv.FormatInt(val, 10))
 }
 
@@ -166,6 +166,17 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
+// HGetLen gets the length of hash.
+func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
+	hashLen := 0
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		hashLen++
+		return nil
+	})
+
+	return uint64(hashLen), errors.Trace(err)
+}
+
 // HGetLastN gets latest N fields and values in hash.
 func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)
@@ -273,13 +284,28 @@ func (i *ReverseHashIterator) Value() []byte {
 }
 
 // Close Implements the Iterator Close.
-func (i *ReverseHashIterator) Close() {
-}
+func (*ReverseHashIterator) Close() {}
 
 // NewHashReverseIter creates a reverse hash iterator.
 func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {
+	return newHashReverseIter(t, key, nil)
+}
+
+// NewHashReverseIterBeginWithField creates a reverse hash iterator, begin with field.
+func NewHashReverseIterBeginWithField(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
+	return newHashReverseIter(t, key, field)
+}
+
+func newHashReverseIter(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
+	var iterStart kv.Key
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
+	if len(field) == 0 {
+		iterStart = dataPrefix.PrefixNext()
+	} else {
+		iterStart = t.encodeHashDataKey(key, field).PrefixNext()
+	}
+
+	it, err := t.reader.IterReverse(iterStart)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

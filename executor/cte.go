@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
@@ -41,22 +41,24 @@ var _ Executor = &CTEExec{}
 // which will be the input for new iteration.
 // At the end of each iteration, data in `iterOutTbl` will also be added into `resTbl`.
 // `resTbl` stores data of all iteration.
-//                                   +----------+
-//                     write         |iterOutTbl|
-//       CTEExec ------------------->|          |
-//          |                        +----+-----+
-//    -------------                       | write
-//    |           |                       v
-// other op     other op             +----------+
-// (seed)       (recursive)          |  resTbl  |
-//                  ^                |          |
-//                  |                +----------+
-//            CTETableReaderExec
-//                   ^
-//                   |  read         +----------+
-//                   +---------------+iterInTbl |
-//                                   |          |
-//                                   +----------+
+/*
+                                   +----------+
+                     write         |iterOutTbl|
+       CTEExec ------------------->|          |
+          |                        +----+-----+
+    -------------                       | write
+    |           |                       v
+ other op     other op             +----------+
+ (seed)       (recursive)          |  resTbl  |
+                  ^                |          |
+                  |                +----------+
+            CTETableReaderExec
+                   ^
+                   |  read         +----------+
+                   +---------------+iterInTbl |
+                                   |          |
+                                   +----------+
+*/
 type CTEExec struct {
 	baseExecutor
 
@@ -89,6 +91,11 @@ type CTEExec struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
+
+	// isInApply indicates whether CTE is in inner side of Apply
+	// and should resTbl/iterInTbl be reset for each outer row of Apply.
+	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
+	isInApply bool
 }
 
 // Open implements the Executor interface.
@@ -114,6 +121,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
 		}
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
 		recursiveTypes := e.recursiveExec.base().retFieldTypes
 		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
@@ -141,6 +151,9 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
+		if e.resTbl.Error() != nil {
+			return e.resTbl.Error()
+		}
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
@@ -149,7 +162,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
+			if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
 				if iterOutAction != nil {
@@ -159,17 +172,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
-			// Don't put it in defer.
-			// Because it should be called only when the filling process is not completed.
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		if err = e.computeRecursivePart(ctx); err != nil {
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		e.resTbl.SetDone()
@@ -204,7 +211,14 @@ func (e *CTEExec) Close() (err error) {
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
-		if err = e.iterOutTbl.DerefAndClose(); err != nil {
+		if e.iterOutTbl != nil {
+			if err = e.iterOutTbl.DerefAndClose(); err != nil {
+				return err
+			}
+		}
+	}
+	if e.isInApply {
+		if err = e.reopenTbls(); err != nil {
 			return err
 		}
 	}
@@ -215,14 +229,12 @@ func (e *CTEExec) Close() (err error) {
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
-	// This means iterInTbl's can be read.
-	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
 		if e.limitDone(e.iterInTbl) {
 			break
 		}
-		chk := newFirstChunk(e.seedExec)
+		chk := tryNewCacheChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
 			return err
 		}
@@ -261,7 +273,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	for {
-		chk := newFirstChunk(e.recursiveExec)
+		chk := tryNewCacheChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
 			return err
 		}
@@ -369,7 +381,6 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 	if err = e.iterInTbl.Reopen(); err != nil {
 		return err
 	}
-	defer close(e.iterInTbl.GetBegCh())
 	if e.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
@@ -396,7 +407,9 @@ func (e *CTEExec) reset() {
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
-	e.hashTbl = newConcurrentMapHashTable()
+	if e.isDistinct {
+		e.hashTbl = newConcurrentMapHashTable()
+	}
 	if err := e.resTbl.Reopen(); err != nil {
 		return err
 	}
@@ -418,14 +431,14 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
 	diskTracker.AttachTo(parentDiskTracker)
 
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) {
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
 		})
-		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill
 }

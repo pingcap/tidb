@@ -17,18 +17,20 @@ go mod init colx && touch main.go
 
 ## Import Dependencies
 
-First of all, you need to use `go get` to fetch the dependencies through git hash. The git hashes are available in [release page](https://github.com/pingcap/parser/releases). Take `v4.0.2` as an example:
+First, you need to use `go get` to fetch the dependencies through git hash. The git hashes are available in [release page](https://github.com/pingcap/tidb/releases). Take `v5.3.0` as an example:
 
 ```bash
-go get -v github.com/pingcap/parser@3a18f1e
+go get -v github.com/pingcap/tidb/parser@4a1b2e9
 ```
 
 > **NOTE**
+> 
+> The parser was merged into TiDB repo since v5.3.0. So you can only choose version v5.3.0 or higher in this TiDB repo.
 >
-> You may want to use advanced API on expressions (a kind of AST node), such as numbers, string literals, booleans, nulls, etc. It is strongly recommended to use the `types` package in TiDB repo with the following command:
+> You may want to use advanced API on expressions (a kind of AST node), such as numbers, string literals, booleans, nulls, etc. It is strongly recommended using the `types` package in TiDB repo with the following command:
 >
 > ```bash
-> go get -v github.com/pingcap/tidb/types/parser_driver@328b6d0
+> go get -v github.com/pingcap/tidb/types/parser_driver@4a1b2e9
 > ```
 > and import it in your golang source code:
 > ```go
@@ -48,17 +50,18 @@ Now, open `main.go` with your favorite editor, and start coding!
 ## Parse SQL text
 
 To convert a SQL text to an AST tree, you need to:
-1. Use the [`parser.New()`](https://pkg.go.dev/github.com/pingcap/parser?tab=doc#New) function to instantiate a parser, and
-2. Invoke the method [`Parse(sql, charset, collation)`](https://pkg.go.dev/github.com/pingcap/parser?tab=doc#Parser.Parse) on the parser.
+1. Use the [`parser.New()`](https://pkg.go.dev/github.com/pingcap/tidb/parser?tab=doc#New) function to instantiate a parser, and
+2. Invoke the method [`Parse(sql, charset, collation)`](https://pkg.go.dev/github.com/pingcap/tidb/parser?tab=doc#Parser.Parse) on the parser.
 
 ```go
 package main
 
 import (
 	"fmt"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	_ "github.com/pingcap/parser/test_driver"
+
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	_ "github.com/pingcap/tidb/parser/test_driver"
 )
 
 func parse(sql string) (*ast.StmtNode, error) {
@@ -80,6 +83,7 @@ func main() {
 	}
 	fmt.Printf("%v\n", *astNode)
 }
+
 ```
 
 Test the parser by running the following command:
@@ -99,19 +103,19 @@ If the parser runs properly, you should get a result like this:
 > Here are a few things you might want to know:
 > - To use a parser, a `parser_driver` is required. It decides how to parse the basic data types in SQL.
 >
->   You can use [`github.com/pingcap/parser/test_driver`](https://pkg.go.dev/github.com/pingcap/parser/test_driver) as the `parser_driver` for test. Again, if you need advanced features, please use the `parser_driver` in TiDB (run `go get -v github.com/pingcap/tidb/types/parser_driver@328b6d0` and import it).
+>   You can use [`github.com/pingcap/tidb/parser/test_driver`](https://pkg.go.dev/github.com/pingcap/tidb/parser/test_driver) as the `parser_driver` for test. Again, if you need advanced features, please use the `parser_driver` in TiDB (run `go get -v github.com/pingcap/tidb/types/parser_driver@4a1b2e9` and import it).
 > - The instantiated parser object is not goroutine safe. It is better to keep it in a single goroutine.
 > - The instantiated parser object is not lightweight. It is better to reuse it if possible.
-> - The 2nd and 3rd arguments of [`parser.Parse()`](https://pkg.go.dev/github.com/pingcap/parser?tab=doc#Parser.Parse) are charset and collation respectively. If you pass an empty string into it, a default value is chosen.
+> - The 2nd and 3rd arguments of [`parser.Parse()`](https://pkg.go.dev/github.com/pingcap/tidb/parser?tab=doc#Parser.Parse) are charset and collation respectively. If you pass an empty string into it, a default value is chosen.
 
 
 ## Traverse AST Nodes
 
 Now you get the AST tree root of a SQL statement. It is time to extract the column names by traverse.
 
-Parser implements the interface [`ast.Node`](https://pkg.go.dev/github.com/pingcap/parser/ast?tab=doc#Node) for each kind of AST node, such as SelectStmt, TableName, ColumnName. [`ast.Node`](https://pkg.go.dev/github.com/pingcap/parser/ast?tab=doc#Node) provides a method `Accept(v Visitor) (node Node, ok bool)` to allow any struct that has implemented [`ast.Visitor`](https://pkg.go.dev/github.com/pingcap/parser/ast?tab=doc#Visitor) to traverse itself.
+Parser implements the interface [`ast.Node`](https://pkg.go.dev/github.com/pingcap/tidb/parser/ast?tab=doc#Node) for each kind of AST node, such as SelectStmt, TableName, ColumnName. [`ast.Node`](https://pkg.go.dev/github.com/pingcap/tidb/parser/ast?tab=doc#Node) provides a method `Accept(v Visitor) (node Node, ok bool)` to allow any struct that has implemented [`ast.Visitor`](https://pkg.go.dev/github.com/pingcap/tidb/parser/ast?tab=doc#Visitor) to traverse itself.
 
-[`ast.Visitor`](https://pkg.go.dev/github.com/pingcap/parser/ast?tab=doc#Visitor) is defined as follows:
+[`ast.Visitor`](https://pkg.go.dev/github.com/pingcap/tidb/parser/ast?tab=doc#Visitor) is defined as follows:
 ```go
 type Visitor interface {
 	Enter(n Node) (node Node, skipChildren bool)

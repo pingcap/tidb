@@ -21,9 +21,36 @@ package variable
 // This helps ensure some compatibility for applications while being
 // careful not to return dummy data.
 
+const (
+	tiDBEnableAlterPlacement       = "tidb_enable_alter_placement"
+	tiDBMemQuotaHashJoin           = "tidb_mem_quota_hashjoin"
+	tiDBMemQuotaMergeJoin          = "tidb_mem_quota_mergejoin"
+	tiDBMemQuotaSort               = "tidb_mem_quota_sort"
+	tiDBMemQuotaTopn               = "tidb_mem_quota_topn"
+	tiDBMemQuotaIndexLookupReader  = "tidb_mem_quota_indexlookupreader"
+	tiDBMemQuotaIndexLookupJoin    = "tidb_mem_quota_indexlookupjoin"
+	tiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+	tiDBSlowLogMasking             = "tidb_slow_log_masking"
+	placementChecks                = "placement_checks"
+	tiDBEnableStreaming            = "tidb_enable_streaming"
+	tiDBOptBCJ                     = "tidb_opt_broadcast_join"
+	tidbEnableChangeMultiSchema    = "tidb_enable_change_multi_schema"
+)
+
 var removedSysVars = map[string]string{
-	TiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
-	TiDBSlowLogMasking:             "use tidb_redact_log instead",
+	tiDBEnableAlterPlacement:       "alter placement is now always enabled",
+	tiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
+	tiDBSlowLogMasking:             "use tidb_redact_log instead",
+	placementChecks:                "placement_checks is removed and use tidb_placement_mode instead",
+	tiDBMemQuotaHashJoin:           "use tidb_mem_quota_query instead",
+	tiDBMemQuotaMergeJoin:          "use tidb_mem_quota_query instead",
+	tiDBMemQuotaSort:               "use tidb_mem_quota_query instead",
+	tiDBMemQuotaTopn:               "use tidb_mem_quota_query instead",
+	tiDBMemQuotaIndexLookupReader:  "use tidb_mem_quota_query instead",
+	tiDBMemQuotaIndexLookupJoin:    "use tidb_mem_quota_query instead",
+	tiDBEnableStreaming:            "streaming is no longer supported",
+	tiDBOptBCJ:                     "tidb_opt_broadcast_join is removed and use tidb_allow_mpp instead",
+	tidbEnableChangeMultiSchema:    "alter multiple schema objects in a table is now always enabled",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed

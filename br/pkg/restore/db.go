@@ -5,21 +5,29 @@ package restore
 import (
 	"context"
 	"fmt"
-	"sort"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // DB is a TiDB instance, not thread-safe.
 type DB struct {
-	se glue.Session
+	se            glue.Session
+	preallocedIDs *prealloctableid.PreallocIDs
 }
 
 type UniqueTableName struct {
@@ -27,24 +35,54 @@ type UniqueTableName struct {
 	Table string
 }
 
+type DDLJobFilterRule func(ddlJob *model.Job) bool
+
+var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
+	model.ActionSetTiFlashReplica:          {},
+	model.ActionUpdateTiFlashReplicaStatus: {},
+	model.ActionLockTable:                  {},
+	model.ActionUnlockTable:                {},
+}
+
 // NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
+func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	// The session may be nil in raw kv mode
 	if se == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	// Set SQL mode to None for avoiding SQL compatibility problem
 	err = se.Execute(context.Background(), "set @@sql_mode=''")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
+	}
+
+	supportPolicy := false
+	if len(policyMode) != 0 {
+		// Set placement mode for handle placement policy.
+		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
+		if err != nil {
+			if variable.ErrUnknownSystemVar.Equal(err) {
+				// not support placement policy, just ignore it
+				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
+			} else {
+				return nil, false, errors.Trace(err)
+			}
+		} else {
+			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
+			supportPolicy = true
+		}
 	}
 	return &DB{
 		se: se,
-	}, nil
+	}, supportPolicy, nil
+}
+
+func (db *DB) registerPreallocatedIDs(ids *prealloctableid.PreallocIDs) {
+	db.preallocedIDs = ids
 }
 
 // ExecDDL executes the query of a ddl job.
@@ -70,6 +108,13 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		return errors.Trace(err)
 	}
 
+	if ddlJob.Query == "" {
+		log.Warn("query of ddl job is empty, ignore it",
+			zap.Stringer("type", ddlJob.Type),
+			zap.String("db", ddlJob.SchemaName))
+		return nil
+	}
+
 	if tableInfo != nil {
 		switchDBSQL := fmt.Sprintf("use %s;", utils.EncloseName(ddlJob.SchemaName))
 		err = db.se.Execute(ctx, switchDBSQL)
@@ -92,6 +137,38 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	return errors.Trace(err)
 }
 
+// UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
+func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint64, count uint64) error {
+	sysDB := mysql.SystemDB
+	statsMetaTbl := "stats_meta"
+
+	// set restoreTS to snapshot and version which is used to update stats_meta
+	err := db.se.ExecuteInternal(
+		ctx,
+		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
+		sysDB,
+		statsMetaTbl,
+		restoreTS,
+		restoreTS,
+		count,
+		tableID,
+	)
+	if err != nil {
+		log.Error("execute update sql failed", zap.Error(err))
+	}
+	return nil
+}
+
+// CreatePlacementPolicy check whether cluster support policy and create the policy.
+func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+	err := db.se.CreatePlacementPolicy(ctx, policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("create placement policy succeed", zap.Stringer("name", policy.Name))
+	return nil
+}
+
 // CreateDatabase executes a CREATE DATABASE SQL.
 func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	err := db.se.CreateDatabase(ctx, schema)
@@ -101,22 +178,10 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(err)
 }
 
-// CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
-	if err != nil {
-		log.Error("create table failed",
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
+func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
 	var restoreMetaSQL string
-	switch {
-	case table.Info.IsView():
-		return nil
-	case table.Info.IsSequence():
+	var err error
+	if table.Info.IsSequence() {
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O))
@@ -145,7 +210,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 					zap.Error(err))
 				return errors.Trace(err)
 			}
-
 			// trigger cycle round > 0
 			err = db.se.Execute(ctx, nextSeqSQL)
 			if err != nil {
@@ -159,16 +223,31 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 		}
 		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
 		err = db.se.Execute(ctx, restoreMetaSQL)
+	}
+	if err != nil {
+		log.Error("restore meta sql failed",
+			zap.String("query", restoreMetaSQL),
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	return errors.Trace(err)
+}
+
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
+	var restoreMetaSQL string
+	var err error
+	switch {
+	case table.Info.IsView():
+		return nil
+	case table.Info.IsSequence():
+		err = db.restoreSequence(ctx, table)
 		if err != nil {
-			log.Error("restore meta sql failed",
-				zap.String("query", restoreMetaSQL),
-				zap.Stringer("db", table.DB.Name),
-				zap.Stringer("table", table.Info.Name),
-				zap.Error(err))
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
@@ -197,7 +276,89 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(err)
+	return nil
+}
+
+func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
+	return func(ti *model.TableInfo) bool {
+		if db.preallocedIDs == nil {
+			return true
+		}
+		prealloced := db.preallocedIDs.PreallocedFor(ti)
+		if prealloced {
+			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
+		}
+		return !prealloced
+	}
+}
+
+// CreateTables execute a internal CREATE TABLES.
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
+	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
+		m := map[string][]*model.TableInfo{}
+		for _, table := range tables {
+			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+			if !supportPolicy {
+				log.Info("set placementPolicyRef to nil when target tidb not support policy",
+					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+				table.Info.ClearPlacement()
+			} else {
+				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+				ttlInfo.Enable = false
+			}
+		}
+		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
+			return err
+		}
+
+		for _, table := range tables {
+			err := db.CreateTablePostRestore(ctx, table, ddlTables)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// CreateTable executes a CREATE TABLE SQL.
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
+	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	if !supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+		table.Info.ClearPlacement()
+	} else {
+		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+		ttlInfo.Enable = false
+	}
+
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())
+	if err != nil {
+		log.Error("create table failed",
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	err = db.CreateTablePostRestore(ctx, table, ddlTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return err
 }
 
 // Close closes the connection.
@@ -205,11 +366,46 @@ func (db *DB) Close() {
 	db.se.Close()
 }
 
+func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr, policies *sync.Map) error {
+	if policies == nil {
+		return nil
+	}
+
+	if policy, ok := policies.LoadAndDelete(policyName.L); ok {
+		return db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
+	}
+
+	// This means policy already created
+	return nil
+}
+
+func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model.TableInfo, policies *sync.Map) error {
+	if tableInfo.PlacementPolicyRef != nil {
+		if err := db.ensurePlacementPolicy(ctx, tableInfo.PlacementPolicyRef.Name, policies); err != nil {
+			return err
+		}
+	}
+
+	if tableInfo.Partition != nil {
+		for _, def := range tableInfo.Partition.Definitions {
+			if def.PlacementPolicyRef == nil {
+				continue
+			}
+
+			if err := db.ensurePlacementPolicy(ctx, def.PlacementPolicyRef.Name, policies); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 // FilterDDLJobs filters ddl jobs.
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
-	sort.Slice(allDDLJobs, func(i, j int) bool {
-		return allDDLJobs[i].BinlogInfo.SchemaVersion > allDDLJobs[j].BinlogInfo.SchemaVersion
+	slices.SortFunc(allDDLJobs, func(i, j *model.Job) bool {
+		return i.BinlogInfo.SchemaVersion > j.BinlogInfo.SchemaVersion
 	})
 	dbs := getDatabases(tables)
 	for _, db := range dbs {
@@ -257,6 +453,51 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
+	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
+	for _, ddlJob := range srcDDLJobs {
+		passed := true
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				passed = false
+				break
+			}
+		}
+
+		if passed {
+			dstDDLJobs = append(dstDDLJobs, ddlJob)
+		}
+	}
+
+	return
+}
+
+// DDLJobBlockListRule rule for filter ddl job with type in block list.
+func DDLJobBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+// GetExistedUserDBs get dbs created or modified by users
+func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
+	databases := dom.InfoSchema().AllSchemas()
+	existedDatabases := make([]*model.DBInfo, 0, 16)
+	for _, db := range databases {
+		dbName := db.Name.L
+		if tidbutil.IsMemOrSysDB(dbName) {
+			continue
+		} else if dbName == "test" && len(db.Tables) == 0 {
+			// tidb create test db on fresh cluster
+			// if it's empty we don't take it as user db
+			continue
+		} else {
+			existedDatabases = append(existedDatabases, db)
+		}
+	}
+
+	return existedDatabases
+}
+
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 	dbIDs := make(map[int64]bool)
 	for _, table := range tables {
@@ -266,4 +507,9 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 		}
 	}
 	return
+}
+
+func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
+	_, ok := actions[action]
+	return ok
 }

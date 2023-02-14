@@ -18,34 +18,23 @@ import (
 	"encoding/json"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/stretchr/testify/require"
 )
-
-type testKVChcksumSuite struct{}
-
-func (s *testKVChcksumSuite) SetUpSuite(c *C)    {}
-func (s *testKVChcksumSuite) TearDownSuite(c *C) {}
-
-var _ = Suite(&testKVChcksumSuite{})
-
-func TestKVChcksum(t *testing.T) {
-	TestingT(t)
-}
 
 func uint64NotEqual(a uint64, b uint64) bool { return a != b }
 
-func (s *testKVChcksumSuite) TestChcksum(c *C) {
+func TestChcksum(t *testing.T) {
 	checksum := verification.NewKVChecksum(0)
-	c.Assert(checksum.Sum(), Equals, uint64(0))
+	require.Equal(t, uint64(0), checksum.Sum())
 
 	// checksum on nothing
 	checksum.Update([]common.KvPair{})
-	c.Assert(checksum.Sum(), Equals, uint64(0))
+	require.Equal(t, uint64(0), checksum.Sum())
 
 	checksum.Update(nil)
-	c.Assert(checksum.Sum(), Equals, uint64(0))
+	require.Equal(t, uint64(0), checksum.Sum())
 
 	// checksum on real data
 	excpectChecksum := uint64(4850203904608948940)
@@ -67,18 +56,18 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	for _, kv := range kvs {
 		kvBytes += uint64(len(kv.Key) + len(kv.Val))
 	}
-	c.Assert(checksum.SumSize(), Equals, kvBytes)
-	c.Assert(checksum.SumKVS(), Equals, uint64(len(kvs)))
-	c.Assert(checksum.Sum(), Equals, excpectChecksum)
+	require.Equal(t, kvBytes, checksum.SumSize())
+	require.Equal(t, uint64(len(kvs)), checksum.SumKVS())
+	require.Equal(t, excpectChecksum, checksum.Sum())
 
 	// recompute on same key-value
 	checksum.Update(kvs)
-	c.Assert(checksum.SumSize(), Equals, kvBytes<<1)
-	c.Assert(checksum.SumKVS(), Equals, uint64(len(kvs))<<1)
-	c.Assert(uint64NotEqual(checksum.Sum(), excpectChecksum), IsTrue)
+	require.Equal(t, kvBytes<<1, checksum.SumSize())
+	require.Equal(t, uint64(len(kvs))<<1, checksum.SumKVS())
+	require.True(t, uint64NotEqual(checksum.Sum(), excpectChecksum))
 }
 
-func (s *testKVChcksumSuite) TestChecksumJSON(c *C) {
+func TestChecksumJSON(t *testing.T) {
 	testStruct := &struct {
 		Checksum verification.KVChecksum
 	}{
@@ -87,6 +76,6 @@ func (s *testKVChcksumSuite) TestChecksumJSON(c *C) {
 
 	res, err := json.Marshal(testStruct)
 
-	c.Assert(err, IsNil)
-	c.Assert(res, BytesEquals, []byte(`{"Checksum":{"checksum":7890,"size":123,"kvs":456}}`))
+	require.NoError(t, err)
+	require.Equal(t, []byte(`{"Checksum":{"checksum":7890,"size":123,"kvs":456}}`), res)
 }

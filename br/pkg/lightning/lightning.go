@@ -17,30 +17,34 @@ package lightning
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
@@ -49,12 +53,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-
-	"github.com/google/uuid"
+	_ "github.com/pingcap/tidb/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
+	_ "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 type Lightning struct {
@@ -68,6 +78,10 @@ type Lightning struct {
 	serverAddr net.Addr
 	serverLock sync.Mutex
 	status     restore.LightningStatus
+
+	promFactory  promutil.Factory
+	promRegistry promutil.Registry
+	metrics      *metric.Metrics
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -87,19 +101,31 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
-	tls, err := common.NewTLS(globalCfg.Security.CAPath, globalCfg.Security.CertPath, globalCfg.Security.KeyPath, globalCfg.App.StatusAddr)
+	tls, err := common.NewTLS(
+		globalCfg.Security.CAPath,
+		globalCfg.Security.CertPath,
+		globalCfg.Security.KeyPath,
+		globalCfg.App.StatusAddr,
+		globalCfg.Security.CABytes,
+		globalCfg.Security.CertBytes,
+		globalCfg.Security.KeyBytes,
+	)
 	if err != nil {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
 
 	redact.InitRedact(globalCfg.Security.RedactInfoLog)
 
+	promFactory := promutil.NewDefaultFactory()
+	promRegistry := promutil.NewDefaultRegistry()
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
-		globalCfg: globalCfg,
-		globalTLS: tls,
-		ctx:       ctx,
-		shutdown:  shutdown,
+		globalCfg:    globalCfg,
+		globalTLS:    tls,
+		ctx:          ctx,
+		shutdown:     shutdown,
+		promFactory:  promFactory,
+		promRegistry: promRegistry,
 	}
 }
 
@@ -134,10 +160,63 @@ func (l *Lightning) GoServe() error {
 	return l.goServe(statusAddr, io.Discard)
 }
 
+// TODO: maybe handle http request using gin
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       string
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
+	// keep first part of the response for logging, max 1K
+	if lrw.body == "" && len(d) > 0 {
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
+		lrw.body = string(d[:length])
+	}
+	return lrw.ResponseWriter.Write(d)
+}
+
+func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.L().With(zap.String("method", r.Method), zap.Stringer("url", r.URL)).
+			Begin(zapcore.InfoLevel, "process http request")
+
+		newWriter := newLoggingResponseWriter(w)
+		h.ServeHTTP(newWriter, r)
+
+		bodyField := zap.Skip()
+		if newWriter.Header().Get("Content-Encoding") != "gzip" {
+			bodyField = zap.String("body", newWriter.body)
+		}
+		logger.End(zapcore.InfoLevel, nil, zap.Int("status", newWriter.statusCode), bodyField)
+	}
+}
+
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
-	mux.Handle("/metrics", promhttp.Handler())
+
+	registry := l.promRegistry
+	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector())
+	if gatherer, ok := registry.(prometheus.Gatherer); ok {
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}),
+		)
+		mux.Handle("/metrics", handler)
+	}
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -145,14 +224,22 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
+	// Enable failpoint http API for testing.
+	failpoint.Inject("EnableTestAPI", func() {
+		mux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
-	mux.Handle("/tasks", handleTasks)
-	mux.Handle("/tasks/", handleTasks)
-	mux.HandleFunc("/progress/task", handleProgressTask)
-	mux.HandleFunc("/progress/table", handleProgressTable)
-	mux.HandleFunc("/pause", handlePause)
-	mux.HandleFunc("/resume", handleResume)
-	mux.HandleFunc("/loglevel", handleLogLevel)
+	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
+	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
+	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -183,11 +270,13 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 }
 
 // RunOnce is used by binary lightning and host when using lightning as a library.
-// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
-//   use a default glue later.
-// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
-//   caller implemented glue.
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
+//     use a default glue later.
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
+//     caller implemented glue.
+//
+// deprecated: use RunOnceWithOptions instead.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
@@ -197,12 +286,19 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
-
-	return l.run(taskCtx, taskCfg, glue)
+	o := &options{
+		glue:         glue,
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+		logger:       log.L(),
+	}
+	return l.run(taskCtx, taskCfg, o)
 }
 
 func (l *Lightning) RunServer() error {
+	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
+	l.serverLock.Unlock()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
 		zap.Stringer("address", l.serverAddr),
@@ -213,12 +309,102 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(context.Background(), task, nil)
-		if err != nil {
+		o := &options{
+			promFactory:  l.promFactory,
+			promRegistry: l.promRegistry,
+			logger:       log.L(),
+		}
+		err = l.run(context.Background(), task, o)
+		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
 	}
+}
+
+// RunOnceWithOptions is used by binary lightning and host when using lightning as a library.
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
+//     be used:
+//   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
+//   - WithDumpFileStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
+//     storage by config
+//   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
+//     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
+func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
+	o := &options{
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+		logger:       log.L(),
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
+		path := val.(string)
+		b, err := storage.ParseBackend(path, nil)
+		if err != nil {
+			panic(err)
+		}
+		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		if err != nil {
+			panic(err)
+		}
+		o.dumpFileStorage = s
+		o.checkpointStorage = s
+	})
+	failpoint.Inject("setCheckpointName", func(val failpoint.Value) {
+		file := val.(string)
+		o.checkpointName = file
+	})
+
+	if o.dumpFileStorage != nil {
+		// we don't use it, set a value to pass Adjust
+		taskCfg.Mydumper.SourceDir = "noop://"
+	}
+
+	if err := taskCfg.Adjust(taskCtx); err != nil {
+		return err
+	}
+
+	taskCfg.TaskID = time.Now().UnixNano()
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
+		taskCfg.TaskID = int64(val.(int))
+	})
+
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
+		o.logger.Info("set io total bytes")
+		taskCfg.TiDB.IOTotalBytes = atomic.NewUint64(0)
+		taskCfg.TiDB.UUID = uuid.New().String()
+		go func() {
+			for {
+				time.Sleep(time.Millisecond * 10)
+				log.L().Info("IOTotalBytes", zap.Uint64("IOTotalBytes", taskCfg.TiDB.IOTotalBytes.Load()))
+			}
+		}()
+	})
+	if taskCfg.TiDB.IOTotalBytes != nil {
+		o.logger.Info("found IO total bytes counter")
+		mysql.RegisterDialContext(taskCfg.TiDB.UUID, func(ctx context.Context, addr string) (net.Conn, error) {
+			o.logger.Debug("connection with IO bytes counter")
+			d := &net.Dialer{}
+			conn, err := d.DialContext(ctx, "tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			tcpConn := conn.(*net.TCPConn)
+			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
+			err = tcpConn.SetKeepAlive(true)
+			if err != nil {
+				o.logger.Warn("set TCP keep alive failed", zap.Error(err))
+			}
+			return util.NewTCPConnWithIOCounter(tcpConn, taskCfg.TiDB.IOTotalBytes), nil
+		})
+	}
+
+	return l.run(taskCtx, taskCfg, o)
 }
 
 var (
@@ -226,13 +412,54 @@ var (
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
-func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
+func getKeyspaceName(g glue.Glue) (string, error) {
+	db, err := g.GetDB()
+	if err != nil {
+		return "", err
+	}
+	if db == nil {
+		return "", nil
+	}
+
+	rows, err := db.Query("show config where Type = 'tidb' and name = 'keyspace-name'")
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer rows.Close()
+
+	var (
+		_type     string
+		_instance string
+		_name     string
+		value     string
+	)
+	if rows.Next() {
+		err = rows.Scan(&_type, &_instance, &_name, &value)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return value, rows.Err()
+}
+
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
 
-	ctx, cancel := context.WithCancel(taskCtx)
+	metrics := metric.NewMetrics(o.promFactory)
+	metrics.RegisterTo(o.promRegistry)
+	defer func() {
+		metrics.UnregisterFrom(o.promRegistry)
+	}()
+	l.metrics = metrics
+
+	ctx := metric.NewContext(taskCtx, metrics)
+	ctx = log.NewContext(ctx, o.logger)
+	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
@@ -264,40 +491,67 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		failpoint.Return(nil)
 	})
 
-	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-		return err
-	}
-	defer func() {
-		// deregister TLS config with name "cluster"
-		if taskCfg.TiDB.Security == nil {
-			return
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
+		rootKeyPath := val.(string)
+		rootCaPath := taskCfg.Security.CAPath
+		keyPath := taskCfg.Security.KeyPath
+		certPath := taskCfg.Security.CertPath
+		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
+			panic(err)
 		}
-		taskCfg.TiDB.Security.CAPath = ""
-		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-			log.L().Warn("failed to deregister TLS config", log.ShortError(err))
-		}
-	}()
+	})
 
-	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
+	failpoint.Inject("PrintStatus", func() {
+		defer func() {
+			finished, total := l.Status()
+			o.logger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total),
+				zap.Bool("equal", finished == total))
+		}()
+	})
+
+	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
+		return common.ErrInvalidTLSConfig.Wrap(err)
+	}
+
+	// initiation of default glue should be after BuildTLSConfig, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
+	g := o.glue
 	if g == nil {
 		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
-			return err
+			return common.ErrDBConnect.Wrap(err)
 		}
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
 	}
 
-	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
-	if err != nil {
-		return errors.Annotate(err, "parse backend failed")
-	}
-	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
-	if err != nil {
-		return errors.Annotate(err, "create storage failed")
+	s := o.dumpFileStorage
+	if s == nil {
+		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
+		if err != nil {
+			return common.NormalizeError(err)
+		}
+		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
+		if err != nil {
+			return common.NormalizeError(err)
+		}
 	}
 
-	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
+	// return expectedErr means at least meet one file
+	expectedErr := errors.New("Stop Iter")
+	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+		// return an error when meet the first regular file to break the walk loop
+		return expectedErr
+	})
+	if !errors.ErrorEqual(walkErr, expectedErr) {
+		if walkErr == nil {
+			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+		}
+		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
+	}
+
+	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
 	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
@@ -306,26 +560,49 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	}
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("check system requirements failed", zap.Error(err))
-		return errors.Trace(err)
+		o.logger.Error("check system requirements failed", zap.Error(err))
+		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("checkpoint schema conflicts with data files", zap.Error(err))
+		o.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	var procedure *restore.Controller
-
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
+	keyspaceName, err := getKeyspaceName(g)
 	if err != nil {
-		log.L().Error("restore failed", log.ShortError(err))
+		o.logger.Error("fail to get keyspace name", zap.Error(err))
 		return errors.Trace(err)
 	}
+	o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
+
+	param := &restore.ControllerParam{
+		DBMetas:           dbMetas,
+		Status:            &l.status,
+		DumpFileStorage:   s,
+		OwnExtStorage:     o.dumpFileStorage == nil,
+		Glue:              g,
+		CheckpointStorage: o.checkpointStorage,
+		CheckpointName:    o.checkpointName,
+		DupIndicator:      o.dupIndicator,
+		KeyspaceName:      keyspaceName,
+	}
+
+	var procedure *restore.Controller
+	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
+	if err != nil {
+		o.logger.Error("restore failed", log.ShortError(err))
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		// don't exit too quickly to expose panic
+		defer time.Sleep(time.Second * 10)
+	})
 	defer procedure.Close()
 
 	err = procedure.Run(ctx)
@@ -349,6 +626,12 @@ func (l *Lightning) Status() (finished int64, total int64) {
 	finished = l.status.FinishedFileSize.Load()
 	total = l.status.TotalFileSize.Load()
 	return
+}
+
+// Metrics returns the metrics of lightning.
+// it's inited during `run`, so might return nil.
+func (l *Lightning) Metrics() *metric.Metrics {
+	return l.metrics
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
@@ -416,12 +699,13 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 		Current   *int64  `json:"current"`
 		QueuedIDs []int64 `json:"queue"`
 	}
-
+	l.serverLock.Lock()
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
 	} else {
 		response.QueuedIDs = []int64{}
 	}
+	l.serverLock.Unlock()
 
 	l.cancelLock.Lock()
 	if l.cancel != nil && l.curTask != nil {
@@ -463,7 +747,8 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 
 func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-
+	l.serverLock.Lock()
+	defer l.serverLock.Unlock()
 	if l.taskCfgs == nil {
 		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
 		// Without the server mode this pointer is default to be nil.
@@ -480,7 +765,8 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Debug("received task config", zap.ByteString("content", data))
+	filteredData := utils.HideSensitive(string(data))
+	log.L().Info("received task config", zap.String("content", filteredData))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
@@ -663,7 +949,9 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		oldLevel := log.SetLevel(zapcore.InfoLevel)
-		log.L().Info("changed log level", zap.Stringer("old", oldLevel), zap.Stringer("new", logLevel.Level))
+		log.L().Info("changed log level. No effects if task has specified its logger",
+			zap.Stringer("old", oldLevel),
+			zap.Stringer("new", logLevel.Level))
 		log.SetLevel(logLevel.Level)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
@@ -684,8 +972,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		sort.Slice(tableTotalSizes, func(i, j int) bool {
-			return tableTotalSizes[i] > tableTotalSizes[j]
+		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
+			return i > j
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
@@ -713,7 +1001,7 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 			if db.Name == cfg.Checkpoint.Schema {
 				for _, tb := range db.Tables {
 					if checkpoints.IsCheckpointTable(tb.Name) {
-						return errors.Errorf("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
+						return common.ErrCheckpointSchemaConflict.GenWithStack("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
 					}
 				}
 			}
@@ -726,6 +1014,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	// try to remove the metadata first.
@@ -769,41 +1058,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
-}
-
-func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
-func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := UnsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
+	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
@@ -825,4 +1080,58 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
+}
+
+func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry time.Duration) error {
+	rootKey, err := parsePrivateKey(rootKeyPath)
+	if err != nil {
+		return err
+	}
+	rootCaPem, err := os.ReadFile(rootCaPath)
+	if err != nil {
+		return err
+	}
+	rootCaDer, _ := pem.Decode(rootCaPem)
+	rootCa, err := x509.ParseCertificate(rootCaDer.Bytes)
+	if err != nil {
+		return err
+	}
+	key, err := parsePrivateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	certPem, err := os.ReadFile(certPath)
+	if err != nil {
+		panic(err)
+	}
+	certDer, _ := pem.Decode(certPem)
+	cert, err := x509.ParseCertificate(certDer.Bytes)
+	if err != nil {
+		return err
+	}
+	cert.NotBefore = time.Now()
+	cert.NotAfter = time.Now().Add(expiry)
+	derBytes, err := x509.CreateCertificate(rand.Reader, cert, rootCa, &key.PublicKey, rootKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600)
+}
+
+func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
+	keyPemBlock, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	var keyDERBlock *pem.Block
+	for {
+		keyDERBlock, keyPemBlock = pem.Decode(keyPemBlock)
+		if keyDERBlock == nil {
+			return nil, errors.New("failed to find PEM block with type ending in \"PRIVATE KEY\"")
+		}
+		if keyDERBlock.Type == "PRIVATE KEY" || strings.HasSuffix(keyDERBlock.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }

@@ -18,10 +18,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -217,7 +218,7 @@ type partialResult4MaxMinString struct {
 }
 
 type partialResult4MaxMinJSON struct {
-	val    json.BinaryJSON
+	val    types.BinaryJSON
 	isNull bool
 }
 
@@ -233,7 +234,8 @@ type partialResult4MaxMinSet struct {
 
 type baseMaxMinAggFunc struct {
 	baseAggFunc
-	isMax bool
+	isMax    bool
+	collator collate.Collator
 }
 
 type maxMin4Int struct {
@@ -812,7 +814,14 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of max or min should not be nil")
+	}
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -992,7 +1001,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			p.isNull = false
 			continue
 		}
-		cmp := types.CompareString(input, p.val, tp.Collate)
+		cmp := types.CompareString(input, p.val, tp.GetCollate())
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			oldMem := len(p.val)
 			newMem := len(input)
@@ -1013,7 +1022,7 @@ func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		return 0, nil
 	}
 	tp := e.args[0].GetType()
-	cmp := types.CompareString(p1.val, p2.val, tp.Collate)
+	cmp := types.CompareString(p1.val, p2.val, tp.GetCollate())
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
@@ -1029,7 +1038,7 @@ func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta 
 	p, memDelta := e.maxMin4String.AllocPartialResult()
 	tp := e.args[0].GetType()
 	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareString(i.(string), j.(string), tp.Collate)
+		return types.CompareString(i.(string), j.(string), tp.GetCollate())
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -1416,7 +1425,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			p.isNull = false
 			continue
 		}
-		cmp := json.CompareBinary(input, p.val)
+		cmp := types.CompareBinaryJSON(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			oldMem := len(p.val.Value)
 			newMem := len(input.Value)
@@ -1436,7 +1445,7 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return 0, nil
 	}
-	cmp := json.CompareBinary(p1.val, p2.val)
+	cmp := types.CompareBinaryJSON(p1.val, p2.val)
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val = p1.val
 		p2.isNull = false
@@ -1486,7 +1495,7 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		en := d.GetMysqlEnum()
-		if e.isMax && en.Name > p.val.Name || !e.isMax && en.Name < p.val.Name {
+		if e.isMax && e.collator.Compare(en.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(en.Name, p.val.Name) < 0 {
 			oldMem := len(p.val.Name)
 			newMem := len(en.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1505,7 +1514,7 @@ func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
@@ -1553,7 +1562,7 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		s := d.GetMysqlSet()
-		if e.isMax && s.Name > p.val.Name || !e.isMax && s.Name < p.val.Name {
+		if e.isMax && e.collator.Compare(s.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(s.Name, p.val.Name) < 0 {
 			oldMem := len(p.val.Name)
 			newMem := len(s.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1572,7 +1581,7 @@ func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil

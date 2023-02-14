@@ -70,6 +70,36 @@ var type2Str = map[byte]string{
 	mysql.TypeYear:        "year",
 }
 
+var str2Type = map[string]byte{
+	"bit":         mysql.TypeBit,
+	"text":        mysql.TypeBlob,
+	"date":        mysql.TypeDate,
+	"datetime":    mysql.TypeDatetime,
+	"unspecified": mysql.TypeUnspecified,
+	"decimal":     mysql.TypeNewDecimal,
+	"double":      mysql.TypeDouble,
+	"enum":        mysql.TypeEnum,
+	"float":       mysql.TypeFloat,
+	"geometry":    mysql.TypeGeometry,
+	"mediumint":   mysql.TypeInt24,
+	"json":        mysql.TypeJSON,
+	"int":         mysql.TypeLong,
+	"bigint":      mysql.TypeLonglong,
+	"longtext":    mysql.TypeLongBlob,
+	"mediumtext":  mysql.TypeMediumBlob,
+	"null":        mysql.TypeNull,
+	"set":         mysql.TypeSet,
+	"smallint":    mysql.TypeShort,
+	"char":        mysql.TypeString,
+	"time":        mysql.TypeDuration,
+	"timestamp":   mysql.TypeTimestamp,
+	"tinyint":     mysql.TypeTiny,
+	"tinytext":    mysql.TypeTinyBlob,
+	"varchar":     mysql.TypeVarchar,
+	"var_string":  mysql.TypeVarString,
+	"year":        mysql.TypeYear,
+}
+
 // TypeStr converts tp to a string.
 func TypeStr(tp byte) (r string) {
 	return type2Str[tp]
@@ -79,6 +109,7 @@ func TypeStr(tp byte) (r string) {
 // It is used for converting Text to Blob,
 // or converting Char to Binary.
 // Args:
+//
 //	tp: type enum
 //	cs: charset
 func TypeToStr(tp byte, cs string) (r string) {
@@ -90,8 +121,24 @@ func TypeToStr(tp byte, cs string) (r string) {
 		ts = strings.Replace(ts, "text", "blob", 1)
 	} else if IsTypeChar(tp) {
 		ts = strings.Replace(ts, "char", "binary", 1)
+	} else if tp == mysql.TypeNull {
+		ts = "binary"
 	}
 	return ts
+}
+
+// StrToType convert a string to type enum.
+// Args:
+//
+//	ts: type string
+func StrToType(ts string) (tp byte) {
+	ts = strings.Replace(ts, "blob", "text", 1)
+	ts = strings.Replace(ts, "binary", "char", 1)
+	if tp, ok := str2Type[ts]; ok {
+		return tp
+	}
+
+	return mysql.TypeUnspecified
 }
 
 var (
@@ -104,5 +151,13 @@ const (
 	wordSize      = 4 // A word is 4 bytes int32.
 )
 
-// ErrInvalidDefault is returned when meet a invalid default value.
-var ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+var (
+	// ErrInvalidDefault is returned when meet a invalid default value.
+	ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+	// ErrDataOutOfRange is returned when meet a value out of range.
+	ErrDataOutOfRange = terror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
+	// ErrTruncatedWrongValue is returned when meet a value bigger than 99999999999999999999999999999999999999999999999999999999999999999 during parsing.
+	ErrTruncatedWrongValue = terror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
+	// ErrIllegalValueForType is returned when strconv.ParseFloat meet strconv.ErrRange during parsing.
+	ErrIllegalValueForType = terror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)
+)

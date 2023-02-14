@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -229,6 +230,7 @@ var builtinIfNullVec = template.Must(template.New("builtinIfNullVec").Parse(`
 func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
+	result.Resize{{ .TypeNameInColumn }}(n, false)
 	x := result.{{ .TypeNameInColumn }}s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.eval{{ .TypeName }}(input.GetRow(i))
@@ -344,6 +346,7 @@ var builtinIfVec = template.Must(template.New("builtinIfVec").Parse(`
 func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
+	result.Resize{{ .TypeNameInColumn }}(n, false)
 	x := result.{{ .TypeNameInColumn }}s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.eval{{ .TypeName }}(input.GetRow(i))

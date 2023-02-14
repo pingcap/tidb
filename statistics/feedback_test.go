@@ -55,7 +55,6 @@ func genHistogram() *Histogram {
 }
 
 func TestUpdateHistogram(t *testing.T) {
-	t.Parallel()
 	feedbacks := []Feedback{
 		newFeedback(0, 1, 10000, 1),
 		newFeedback(1, 2, 1, 1),
@@ -80,7 +79,6 @@ func TestUpdateHistogram(t *testing.T) {
 }
 
 func TestSplitBuckets(t *testing.T) {
-	t.Parallel()
 	// test bucket split
 	feedbacks := []Feedback{newFeedback(0, 1, 1, 1)}
 	for i := 0; i < 100; i++ {
@@ -190,7 +188,6 @@ func TestSplitBuckets(t *testing.T) {
 }
 
 func TestMergeBuckets(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		points       []int64
 		counts       []int64
@@ -252,7 +249,6 @@ func encodeInt(v int64) *types.Datum {
 }
 
 func TestFeedbackEncoding(t *testing.T) {
-	t.Parallel()
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
 	q := &QueryFeedback{Hist: hist, Tp: PkType}
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(3), 1, 0, 1})

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
@@ -21,12 +22,12 @@ Projection	5.00	root		Column#22
 └─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	1.00	root		funcs:count(1)->Column#21
-    └─IndexJoin	0.22	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-      ├─IndexReader(Build)	0.45	root		index:IndexRangeScan
-      │ └─IndexRangeScan	0.45	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
+  └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#21
+    └─IndexJoin	1.12	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+      ├─IndexReader(Build)	2.24	root		index:IndexRangeScan
+      │ └─IndexRangeScan	2.24	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
+      └─TableReader(Probe)	2.24	root		data:TableRangeScan
+        └─TableRangeScan	2.24	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
 drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'brief' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
@@ -46,3 +47,29 @@ create table t1(a int(11));
 create table t2(a decimal(40,20) unsigned, b decimal(40,20));
 select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b);
 x
+drop table if exists stu;
+drop table if exists exam;
+create table stu(id int, name varchar(100));
+insert into stu values(1, null);
+create table exam(stu_id int, course varchar(100), grade int);
+insert into exam values(1, 'math', 100);
+set names utf8 collate utf8_general_ci;
+explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		anti semi join, equal:[eq(test.stu.id, test.exam.stu_id)], other cond:eq(test.stu.name, "guo")
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
+select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	name
+set names utf8mb4;
+explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		anti semi join, equal:[eq(test.stu.id, test.exam.stu_id)], other cond:eq(test.stu.name, "guo")
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
+select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	name

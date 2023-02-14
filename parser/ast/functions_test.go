@@ -24,7 +24,6 @@ import (
 )
 
 func TestFunctionsVisitorCover(t *testing.T) {
-	t.Parallel()
 	valueExpr := NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []Node{
 		&AggregateFuncExpr{Args: []ExprNode{valueExpr}},
@@ -40,7 +39,6 @@ func TestFunctionsVisitorCover(t *testing.T) {
 }
 
 func TestFuncCallExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"JSON_ARRAYAGG(attribute)", "JSON_ARRAYAGG(`attribute`)"},
 		{"JSON_OBJECTAGG(attribute, value)", "JSON_OBJECTAGG(`attribute`, `value`)"},
@@ -155,7 +153,6 @@ func TestAggregateFuncExprRestore(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	t.Parallel()
 	// Test case for CONVERT(expr USING transcoding_name).
 	cases := []struct {
 		SQL          string
@@ -185,7 +182,6 @@ func TestConvert(t *testing.T) {
 }
 
 func TestChar(t *testing.T) {
-	t.Parallel()
 	// Test case for CHAR(N USING charset_name)
 	cases := []struct {
 		SQL          string
@@ -215,7 +211,6 @@ func TestChar(t *testing.T) {
 }
 
 func TestWindowFuncExprRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"RANK() OVER w", "RANK() OVER `w`"},
 		{"RANK() OVER (PARTITION BY a)", "RANK() OVER (PARTITION BY `a`)"},
@@ -235,7 +230,6 @@ func TestWindowFuncExprRestore(t *testing.T) {
 }
 
 func TestGenericFuncRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"s.a()", "`s`.`a`()"},
 		{"`s`.`a`()", "`s`.`a`()"},

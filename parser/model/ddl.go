@@ -67,34 +67,50 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37
-	ActionDropColumns                   ActionType = 38
-	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
 	ActionAddCheckConstraint            ActionType = 43
 	ActionDropCheckConstraint           ActionType = 44
 	ActionAlterCheckConstraint          ActionType = 45
-	ActionAlterTableAlterPartition      ActionType = 46
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
+
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48
+	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
 	ActionAlterPlacementPolicy          ActionType = 52
 	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPolicy     ActionType = 54
+	ActionAlterTablePartitionPlacement  ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	ActionAlterTableStatsOptions        ActionType = 58
+	ActionAlterNoCacheTable             ActionType = 59
+	ActionCreateTables                  ActionType = 60
+	ActionMultiSchemaChange             ActionType = 61
+	ActionFlashbackCluster              ActionType = 62
+	ActionRecoverSchema                 ActionType = 63
+	ActionReorganizePartition           ActionType = 64
+	ActionAlterTTLInfo                  ActionType = 65
+	ActionAlterTTLRemove                ActionType = 67
+	ActionCreateResourceGroup           ActionType = 68
+	ActionAlterResourceGroup            ActionType = 69
+	ActionDropResourceGroup             ActionType = 70
 )
 
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
+	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",
 	ActionDropColumn:                    "drop column",
@@ -106,6 +122,7 @@ var actionMap = map[ActionType]string{
 	ActionModifyColumn:                  "modify column",
 	ActionRebaseAutoID:                  "rebase auto_increment ID",
 	ActionRenameTable:                   "rename table",
+	ActionRenameTables:                  "rename tables",
 	ActionSetDefaultValue:               "set default value",
 	ActionShardRowID:                    "shard row ID",
 	ActionModifyTableComment:            "modify table comment",
@@ -128,8 +145,6 @@ var actionMap = map[ActionType]string{
 	ActionCreateSequence:                "create sequence",
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
-	ActionAddColumns:                    "add multi-columns",
-	ActionDropColumns:                   "drop multi-columns",
 	ActionModifyTableAutoIdCache:        "modify auto id cache",
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
@@ -137,16 +152,30 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionAlterTableAlterPartition:      "alter partition",
-	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
+	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
 	ActionCreatePlacementPolicy:         "create placement policy",
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
-	ActionAlterCacheTable:               "alter cache table",
+	ActionAlterTablePlacement:           "alter table placement",
+	ActionAlterCacheTable:               "alter table cache",
+	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+	ActionMultiSchemaChange:             "alter table multi-schema change",
+	ActionFlashbackCluster:              "flashback cluster",
+	ActionRecoverSchema:                 "flashback schema",
+	ActionReorganizePartition:           "alter table reorganize partition",
+	ActionAlterTTLInfo:                  "alter table ttl",
+	ActionAlterTTLRemove:                "alter table no_ttl",
+	ActionCreateResourceGroup:           "create resource group",
+	ActionAlterResourceGroup:            "alter resource group",
+	ActionDropResourceGroup:             "drop resource group",
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
 // String return current ddl action in string
@@ -163,6 +192,9 @@ type HistoryInfo struct {
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
 	FinishedTS    uint64
+
+	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
+	MultipleTableInfos []*TableInfo
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
@@ -179,11 +211,19 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.TableInfo = tblInfo
 }
 
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	copy(h.MultipleTableInfos, tblInfos)
+}
+
 // Clean cleans history information.
 func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
 	h.DBInfo = nil
 	h.TableInfo = nil
+	h.MultipleTableInfos = nil
 }
 
 // DDLReorgMeta is meta info of DDL reorganization.
@@ -195,6 +235,71 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+	IsDistReorg   bool                             `json:"is_dist_reorg"`
+}
+
+// ReorgType indicates which process is used for the data reorganization.
+type ReorgType int8
+
+const (
+	// ReorgTypeNone means the backfill task is not started yet.
+	ReorgTypeNone ReorgType = iota
+	// ReorgTypeTxn means the index records are backfill with transactions.
+	// All the index KVs are written through the transaction interface.
+	// This is the original backfill implementation.
+	ReorgTypeTxn
+	// ReorgTypeLitMerge means the index records are backfill with lightning.
+	// The index KVs are encoded to SST files and imported to the storage directly.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeLitMerge
+	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
+	// The backfill index KVs are written through the transaction interface.
+	// The incremental index KVs written by DML are redirected to a temporary index.
+	// After the backfill is finished, the temporary index records are merged back to the original index.
+	ReorgTypeTxnMerge
+)
+
+// NeedMergeProcess means the incremental changes need to be merged.
+func (tp ReorgType) NeedMergeProcess() bool {
+	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
+}
+
+// String implements fmt.Stringer interface.
+func (tp ReorgType) String() string {
+	switch tp {
+	case ReorgTypeTxn:
+		return "txn"
+	case ReorgTypeLitMerge:
+		return "ingest"
+	case ReorgTypeTxnMerge:
+		return "txn-merge"
+	}
+	return ""
+}
+
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+// GetLocation gets the timezone location.
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -206,7 +311,158 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
+
+	AddColumns    []CIStr `json:"-"`
+	DropColumns   []CIStr `json:"-"`
+	ModifyColumns []CIStr `json:"-"`
+	AddIndexes    []CIStr `json:"-"`
+	DropIndexes   []CIStr `json:"-"`
+	AlterIndexes  []CIStr `json:"-"`
+
+	AddForeignKeys []AddForeignKeyInfo `json:"-"`
+
+	RelativeColumns []CIStr `json:"-"`
+	PositionColumns []CIStr `json:"-"`
+}
+
+// AddForeignKeyInfo contains foreign key information.
+type AddForeignKeyInfo struct {
+	Name CIStr
+	Cols []CIStr
+}
+
+// NewMultiSchemaInfo new a MultiSchemaInfo.
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []interface{}   `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []interface{}   `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
+}
+
+// IsNormal returns true if the sub-job is normally running.
+func (sub *SubJob) IsNormal() bool {
+	switch sub.State {
+	case JobStateCancelling, JobStateCancelled,
+		JobStateRollingback, JobStateRollbackDone:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsFinished returns true if the job is done.
+func (sub *SubJob) IsFinished() bool {
+	return sub.State == JobStateDone ||
+		sub.State == JobStateRollbackDone ||
+		sub.State == JobStateCancelled
+}
+
+// ToProxyJob converts a sub-job to a proxy job.
+func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
+	return Job{
+		ID:              parentJob.ID,
+		Type:            sub.Type,
+		SchemaID:        parentJob.SchemaID,
+		TableID:         parentJob.TableID,
+		SchemaName:      parentJob.SchemaName,
+		State:           sub.State,
+		Warning:         sub.Warning,
+		Error:           nil,
+		ErrorCount:      0,
+		RowCount:        sub.RowCount,
+		Mu:              sync.Mutex{},
+		CtxVars:         sub.CtxVars,
+		Args:            sub.Args,
+		RawArgs:         sub.RawArgs,
+		SchemaState:     sub.SchemaState,
+		SnapshotVer:     sub.SnapshotVer,
+		RealStartTS:     parentJob.RealStartTS,
+		StartTS:         parentJob.StartTS,
+		DependencyID:    parentJob.DependencyID,
+		Query:           parentJob.Query,
+		BinlogInfo:      parentJob.BinlogInfo,
+		Version:         parentJob.Version,
+		ReorgMeta:       parentJob.ReorgMeta,
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
+		Priority:        parentJob.Priority,
+		SeqNum:          parentJob.SeqNum,
+	}
+}
+
+// FromProxyJob converts a proxy job to a sub-job.
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
+	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
+	sub.SchemaState = proxyJob.SchemaState
+	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.Args = proxyJob.Args
+	sub.State = proxyJob.State
+	sub.Warning = proxyJob.Warning
+	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
+	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+}
+
+// JobMeta is meta info of Job.
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Type is the DDL job's type.
+	Type ActionType `json:"job_type"`
+	// Query is the DDL job's SQL string.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
+}
+
+// BackfillMeta is meta info of the backfill job.
+type BackfillMeta struct {
+	IsUnique   bool          `json:"is_unique"`
+	EndInclude bool          `json:"end_include"`
+	Error      *terror.Error `json:"err"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+	RowCount      int64                            `json:"row_count"`
+	StartKey      []byte                           `json:"start_key"`
+	EndKey        []byte                           `json:"end_key"`
+	CurrKey       []byte                           `json:"curr_key"`
+	*JobMeta      `json:"job_meta"`
+}
+
+// Encode encodes BackfillMeta with json format.
+func (bm *BackfillMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(bm)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes BackfillMeta from the json buffer.
+func (bm *BackfillMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.
@@ -216,7 +472,9 @@ type Job struct {
 	SchemaID   int64         `json:"schema_id"`
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
+	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
+	Warning    *terror.Error `json:"warning"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
 	ErrorCount int64 `json:"err_count"`
@@ -248,7 +506,6 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
-	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.
@@ -256,6 +513,9 @@ type Job struct {
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
+
+	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -266,6 +526,16 @@ func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver i
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 }
 
+// FinishMultipleTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfos to the binlog.
+func (job *Job) FinishMultipleTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfos []*TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.SchemaVersion = ver
+	job.BinlogInfo.MultipleTableInfos = tblInfos
+	job.BinlogInfo.TableInfo = tblInfos[len(tblInfos)-1]
+}
+
 // FinishDBJob is called when a job is finished.
 // It updates the job's state information and adds dbInfo the binlog.
 func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
@@ -274,10 +544,42 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
+// MarkNonRevertible mark the current job to be non-revertible.
+// It means the job cannot be cancelled or rollbacked.
+func (job *Job) MarkNonRevertible() {
+	if job.MultiSchemaInfo != nil {
+		job.MultiSchemaInfo.Revertible = false
+	}
+}
+
+// Clone returns a copy of the job.
+func (job *Job) Clone() *Job {
+	encode, err := job.Encode(true)
+	if err != nil {
+		return nil
+	}
+	var clone Job
+	err = clone.Decode(encode)
+	if err != nil {
+		return nil
+	}
+	if len(job.Args) > 0 {
+		clone.Args = make([]interface{}, len(job.Args))
+		copy(clone.Args, job.Args)
+	}
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+		}
+	}
+	return &clone
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
+	return time.UnixMilli(t)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -298,13 +600,18 @@ func (job *Job) GetRowCount() int64 {
 
 // SetWarnings sets the warnings of rows handled.
 func (job *Job) SetWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	job.Mu.Lock()
 	job.ReorgMeta.Warnings = warnings
 	job.ReorgMeta.WarningsCount = warningsCount
+	job.Mu.Unlock()
 }
 
 // GetWarnings gets the warnings of the rows handled.
 func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
-	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Lock()
+	w, wc := job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Unlock()
+	return w, wc
 }
 
 // Encode encodes job with json format.
@@ -315,6 +622,18 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		job.RawArgs, err = json.Marshal(job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
+				}
+				sub.RawArgs, err = json.Marshal(sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
 		}
 	}
 
@@ -357,8 +676,16 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	if job.ReorgMeta != nil {
+		warnings, _ := job.GetWarnings()
+		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
+	}
+	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
+	}
+	return ret
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {
@@ -375,6 +702,63 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
+		if job.Type == ActionExchangeTablePartition {
+			var (
+				defID          int64
+				ptSchemaID     int64
+				ptID           int64
+				partName       string
+				withValidation bool
+			)
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == ptSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
+	if job.Type == ActionExchangeTablePartition {
+		var (
+			defID          int64
+			ptSchemaID     int64
+			ptID           int64
+			partName       string
+			withValidation bool
+		)
+
+		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			return false, errors.Trace(err)
+		}
+		if ptID == other.TableID || defID == other.TableID {
+			return true, nil
+		}
+
+		if other.Type == ActionExchangeTablePartition {
+			var (
+				otherDefID          int64
+				otherPtSchemaID     int64
+				otherPtID           int64
+				otherPartName       string
+				otherWithValidation bool
+			)
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+				return true, nil
+			}
+			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+				return true, nil
+			}
+			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -383,7 +767,12 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 // How to check the job depends on "other"?
 // 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
 // 2. Or the two jobs handle the same table.
+// 3. Or other job is flashback cluster.
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	if other.Type == ActionFlashbackCluster {
+		return true, nil
+	}
+
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)
@@ -396,6 +785,14 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
+	}
+	isDependent, err = job.hasDependentTableForExchangePartition(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentTableForExchangePartition(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
 	return false, nil
 }
@@ -441,6 +838,76 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// IsQueueing returns whether job is queuing or not.
+func (job *Job) IsQueueing() bool {
+	return job.State == JobStateQueueing
+}
+
+// NotStarted returns true if the job is never run by a worker.
+func (job *Job) NotStarted() bool {
+	return job.State == JobStateNone || job.State == JobStateQueueing
+}
+
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func (job *Job) MayNeedReorg() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	case ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			if proxyJob.MayNeedReorg() {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// IsRollbackable checks whether the job can be rollback.
+func (job *Job) IsRollbackable() bool {
+	switch job.Type {
+	case ActionDropIndex, ActionDropPrimaryKey:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
+		if job.SchemaState == StateDeleteOnly ||
+			job.SchemaState == StateDeleteReorganization ||
+			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionAddTablePartition:
+		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
+	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropForeignKey, ActionDropTablePartition:
+		return job.SchemaState == StatePublic
+	case ActionRebaseAutoID, ActionShardRowID,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
+		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		return job.SchemaState == StateNone
+	case ActionMultiSchemaChange:
+		return job.MultiSchemaInfo.Revertible
+	case ActionFlashbackCluster:
+		if job.SchemaState == StateWriteReorganization ||
+			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	}
+	return true
+}
+
 // JobState is for job state.
 type JobState byte
 
@@ -460,6 +927,8 @@ const (
 	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
 	JobStateCancelling JobState = 7
+	// JobStateQueueing means the job has not yet been started.
+	JobStateQueueing JobState = 8
 )
 
 // String implements fmt.Stringer interface.
@@ -479,8 +948,34 @@ func (s JobState) String() string {
 		return "cancelling"
 	case JobStateSynced:
 		return "synced"
+	case JobStateQueueing:
+		return "queueing"
 	default:
 		return "none"
+	}
+}
+
+// StrToJobState converts string to JobState.
+func StrToJobState(s string) JobState {
+	switch s {
+	case "running":
+		return JobStateRunning
+	case "rollingback":
+		return JobStateRollingback
+	case "rollback done":
+		return JobStateRollbackDone
+	case "done":
+		return JobStateDone
+	case "cancelled":
+		return JobStateCancelled
+	case "cancelling":
+		return JobStateCancelling
+	case "synced":
+		return JobStateSynced
+	case "queueing":
+		return JobStateQueueing
+	default:
+		return JobStateNone
 	}
 }
 
@@ -496,6 +991,8 @@ type SchemaDiff struct {
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
 	OldSchemaID int64 `json:"old_schema_id"`
+	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
+	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

@@ -23,8 +23,6 @@ import (
 )
 
 func TestSystimeMonitor(t *testing.T) {
-	t.Parallel()
-
 	errTriggered := atomic.NewBool(false)
 	nowTriggered := atomic.NewBool(false)
 	go StartMonitor(
@@ -37,7 +35,7 @@ func TestSystimeMonitor(t *testing.T) {
 			return time.Now().Add(-2 * time.Second)
 		}, func() {
 			errTriggered.Store(true)
-		}, func() {})
+		})
 
 	require.Eventually(t, errTriggered.Load, time.Second, 10*time.Millisecond)
 }

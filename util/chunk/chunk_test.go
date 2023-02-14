@@ -23,17 +23,14 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAppendRow(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
@@ -45,7 +42,7 @@ func TestAppendRow(t *testing.T) {
 		chk.AppendString(2, str)
 		chk.AppendBytes(3, []byte(str))
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateBinary(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	require.Equal(t, numCols, chk.NumCols())
 	require.Equal(t, numRows, chk.NumRows())
@@ -142,14 +139,12 @@ func TestAppendRow(t *testing.T) {
 }
 
 func TestAppendChunk(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 3)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
 
-	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := types.ParseBinaryJSONFromString("{\"k1\":\"v1\"}")
 	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
@@ -197,19 +192,17 @@ func TestAppendChunk(t *testing.T) {
 	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
-		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, types.CompareBinaryJSON(jsonElem, jsonObj))
 	}
 }
 
 func TestTruncateTo(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 3)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
 
-	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := types.ParseBinaryJSONFromString("{\"k1\":\"v1\"}")
 	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
@@ -260,7 +253,7 @@ func TestTruncateTo(t *testing.T) {
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)
 		jsonElem := row.GetJSON(2)
-		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, types.CompareBinaryJSON(jsonElem, jsonObj))
 	}
 
 	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
@@ -339,74 +332,83 @@ func newChunk(elemLen ...int) *Chunk {
 	return chk
 }
 
-func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+func newChunkWithInitCap(capacity int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
+			chk.columns = append(chk.columns, newFixedLenColumn(l, capacity))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap))
+			chk.columns = append(chk.columns, newVarLenColumn(capacity))
 		}
 	}
 	return chk
 }
 
-var allTypes = []*types.FieldType{
-	types.NewFieldType(mysql.TypeTiny),
-	types.NewFieldType(mysql.TypeShort),
-	types.NewFieldType(mysql.TypeInt24),
-	types.NewFieldType(mysql.TypeLong),
-	types.NewFieldType(mysql.TypeLonglong),
-	{
-		Tp:      mysql.TypeLonglong,
-		Flen:    types.UnspecifiedLength,
-		Decimal: types.UnspecifiedLength,
-		Flag:    mysql.UnsignedFlag,
-	},
-	types.NewFieldType(mysql.TypeYear),
-	types.NewFieldType(mysql.TypeFloat),
-	types.NewFieldType(mysql.TypeDouble),
-	types.NewFieldType(mysql.TypeString),
-	types.NewFieldType(mysql.TypeVarString),
-	types.NewFieldType(mysql.TypeVarchar),
-	types.NewFieldType(mysql.TypeBlob),
-	types.NewFieldType(mysql.TypeTinyBlob),
-	types.NewFieldType(mysql.TypeMediumBlob),
-	types.NewFieldType(mysql.TypeLongBlob),
-	types.NewFieldType(mysql.TypeDate),
-	types.NewFieldType(mysql.TypeDatetime),
-	types.NewFieldType(mysql.TypeTimestamp),
-	types.NewFieldType(mysql.TypeDuration),
-	types.NewFieldType(mysql.TypeNewDecimal),
-	{
-		Tp:      mysql.TypeSet,
-		Flen:    types.UnspecifiedLength,
-		Decimal: types.UnspecifiedLength,
-		Flag:    mysql.UnsignedFlag,
-		Elems:   []string{"a", "b"},
-	},
-	{
-		Tp:      mysql.TypeEnum,
-		Flen:    types.UnspecifiedLength,
-		Decimal: types.UnspecifiedLength,
-		Flag:    mysql.UnsignedFlag,
-		Elems:   []string{"a", "b"},
-	},
-	types.NewFieldType(mysql.TypeBit),
-	types.NewFieldType(mysql.TypeJSON),
+func newAllTypes() []*types.FieldType {
+	ret := []*types.FieldType{
+		types.NewFieldType(mysql.TypeTiny),
+		types.NewFieldType(mysql.TypeShort),
+		types.NewFieldType(mysql.TypeInt24),
+		types.NewFieldType(mysql.TypeLong),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetDecimal(types.UnspecifiedLength)
+	tp.SetFlag(mysql.UnsignedFlag)
+	ret = append(ret, tp)
+
+	ret = append(ret,
+		types.NewFieldType(mysql.TypeYear),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeBlob),
+		types.NewFieldType(mysql.TypeTinyBlob),
+		types.NewFieldType(mysql.TypeMediumBlob),
+		types.NewFieldType(mysql.TypeLongBlob),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDuration),
+		types.NewFieldType(mysql.TypeNewDecimal),
+	)
+
+	tp = types.NewFieldType(mysql.TypeSet)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetDecimal(types.UnspecifiedLength)
+	tp.SetFlag(mysql.UnsignedFlag)
+	tp.SetElems([]string{"a", "b"})
+	ret = append(ret, tp)
+
+	tp = types.NewFieldType(mysql.TypeEnum)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetDecimal(types.UnspecifiedLength)
+	tp.SetFlag(mysql.UnsignedFlag)
+	tp.SetElems([]string{"a", "b"})
+	ret = append(ret, tp)
+
+	ret = append(ret,
+		types.NewFieldType(mysql.TypeBit),
+		types.NewFieldType(mysql.TypeJSON),
+	)
+
+	return ret
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
-
+	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 32)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
 	}
 	for i := 0; i < len(allTypes); i++ {
-		switch allTypes[i].Tp {
+		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
 				chunk.AppendUint64(i, 0)
 			} else {
 				chunk.AppendInt64(i, -1)
@@ -431,15 +433,15 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{0})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
+			chunk.AppendJSON(i, types.CreateBinaryJSON(int64(0)))
 		default:
-			require.FailNow(t, "type not handled", allTypes[i].Tp)
+			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
 	}
 	for i := 0; i < len(allTypes); i++ {
-		switch allTypes[i].Tp {
+		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
 				chunk.AppendUint64(i, math.MaxUint64)
 			} else {
 				chunk.AppendInt64(i, 1)
@@ -464,9 +466,9 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{1})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
+			chunk.AppendJSON(i, types.CreateBinaryJSON(int64(1)))
 		default:
-			require.FailNow(t, "type not handled", allTypes[i].Tp)
+			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
 	}
 	rowNull := chunk.GetRow(0)
@@ -485,17 +487,16 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCopyTo(t *testing.T) {
-	t.Parallel()
-
+	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 101)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
 	}
 	for k := 0; k < 100; k++ {
 		for i := 0; i < len(allTypes); i++ {
-			switch allTypes[i].Tp {
+			switch allTypes[i].GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-				if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
 					chunk.AppendUint64(i, uint64(k))
 				} else {
 					chunk.AppendInt64(i, int64(k))
@@ -520,9 +521,9 @@ func TestCopyTo(t *testing.T) {
 			case mysql.TypeBit:
 				chunk.AppendBytes(i, []byte{byte(k)})
 			case mysql.TypeJSON:
-				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
+				chunk.AppendJSON(i, types.CreateBinaryJSON(int64(k)))
 			default:
-				require.FailNow(t, "type not handled", allTypes[i].Tp)
+				require.FailNow(t, "type not handled", allTypes[i].GetType())
 			}
 		}
 	}
@@ -536,17 +537,14 @@ func TestCopyTo(t *testing.T) {
 			cmpFunc := GetCompareFunc(allTypes[i])
 			require.Zero(t, cmpFunc(row, i, r1, i))
 		}
-
 	}
 }
 
 func TestGetDecimalDatum(t *testing.T) {
-	t.Parallel()
-
 	datum := types.NewDatum(1.01)
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
-	decType.Flen = 4
-	decType.Decimal = 2
+	decType.SetFlen(4)
+	decType.SetDecimal(2)
 	sc := new(stmtctx.StatementContext)
 	decDatum, err := datum.ConvertTo(sc, decType)
 	require.NoError(t, err)
@@ -559,14 +557,12 @@ func TestGetDecimalDatum(t *testing.T) {
 }
 
 func TestChunkMemoryUsage(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 5)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
@@ -586,7 +582,7 @@ func TestChunkMemoryUsage(t *testing.T) {
 	// empty chunk with initial capactiy
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
-	jsonObj, err := json.ParseBinaryFromString("1")
+	jsonObj, err := types.ParseBinaryJSONFromString("1")
 	require.NoError(t, err)
 
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
@@ -617,12 +613,10 @@ func TestChunkMemoryUsage(t *testing.T) {
 }
 
 func TestSwapColumn(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 2)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
 
 	// chk1: column1 refers to column0
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
@@ -671,9 +665,7 @@ func TestSwapColumn(t *testing.T) {
 }
 
 func TestAppendSel(t *testing.T) {
-	t.Parallel()
-
-	tll := &types.FieldType{Tp: mysql.TypeLonglong}
+	tll := types.NewFieldType(mysql.TypeLonglong)
 	chk := NewChunkWithCapacity([]*types.FieldType{tll}, 1024)
 	sel := make([]int, 0, 1024/2)
 	for i := 0; i < 1024/2; i++ {
@@ -691,11 +683,9 @@ func TestAppendSel(t *testing.T) {
 }
 
 func TestMakeRefTo(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 2)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
 
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
 	chk1.AppendFloat32(0, 1)
@@ -713,14 +703,12 @@ func TestMakeRefTo(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
-	t.Parallel()
-
 	fieldTypes := make([]*types.FieldType, 0, 4)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDouble})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeString})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDate})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDouble))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeString))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDate))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeLonglong))
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
 	chk.AppendFloat32(0, float32(1))
@@ -902,10 +890,10 @@ func BenchmarkAccess(b *testing.B) {
 
 func BenchmarkChunkMemoryUsage(b *testing.B) {
 	fieldTypes := make([]*types.FieldType, 0, 4)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
@@ -991,7 +979,7 @@ func BenchmarkChunkGrowSuit(b *testing.B) {
 func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 	return func(b *testing.B) {
 		b.ReportAllocs()
-		chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+		chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, t.initCap, t.maxCap)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			e := &seqNumberGenerateExec{genCountSize: t.cntPerCall}
@@ -1004,7 +992,7 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 					if t.newReset {
 						chk = Renew(chk, t.maxCap)
 					} else {
-						chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+						chk = New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, t.initCap, t.maxCap)
 					}
 				}
 			}
@@ -1013,8 +1001,6 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 }
 
 func TestAppendRows(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
@@ -1026,7 +1012,7 @@ func TestAppendRows(t *testing.T) {
 		chk.AppendString(2, str)
 		chk.AppendBytes(3, []byte(str))
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateBinary(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	require.Equal(t, numCols, chk.NumCols())
 	require.Equal(t, numRows, chk.NumRows())

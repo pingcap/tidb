@@ -3,8 +3,11 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -24,37 +27,58 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if task.IsStreamRestore(cmdName) {
+		if err := cfg.ParseStreamRestoreFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if cfg.Prepare {
+			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+				log.Error("failed to restore EBS meta", zap.Error(err))
+				return errors.Trace(err)
+			}
+		} else {
+			if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+				log.Error("failed to restore data", zap.Error(err))
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
+		printWorkaroundOnFullRestoreError(command, err)
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func runLogRestoreCommand(command *cobra.Command) error {
-	cfg := task.LogRestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
-		command.SilenceUsage = false
-		return errors.Trace(err)
+// print workaround when we met not fresh or incompatible cluster error on full cluster restore
+func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
+	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
+		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
+		return
 	}
-
-	ctx := GetDefaultContext()
-	if cfg.EnableOpenTracing {
-		var store *appdash.MemoryStore
-		ctx, store = trace.TracerStartSpan(ctx)
-		defer trace.TracerFinishSpan(ctx, store)
+	fmt.Println("#######################################################################")
+	switch {
+	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
+		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
+		fmt.Println("# the target cluster is not compatible with the backup data,")
+		fmt.Println("# br cannot restore system tables.")
 	}
-	if err := task.RunLogRestore(GetDefaultContext(), tidbGlue, &cfg); err != nil {
-		log.Error("failed to restore", zap.Error(err))
-		return errors.Trace(err)
-	}
-	return nil
+	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
+	fmt.Println("#######################################################################")
 }
 
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
@@ -102,8 +126,8 @@ func NewRestoreCommand() *cobra.Command {
 		newFullRestoreCommand(),
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
-		newLogRestoreCommand(),
 		newRawRestoreCommand(),
+		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -116,10 +140,11 @@ func newFullRestoreCommand() *cobra.Command {
 		Short: "restore all tables",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Full restore")
+			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
 
@@ -129,7 +154,7 @@ func newDBRestoreCommand() *cobra.Command {
 		Short: "restore tables in a database from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Database restore")
+			return runRestoreCommand(cmd, task.DBRestoreCmd)
 		},
 	}
 	task.DefineDatabaseFlags(command)
@@ -142,24 +167,10 @@ func newTableRestoreCommand() *cobra.Command {
 		Short: "restore a table from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, "Table restore")
+			return runRestoreCommand(cmd, task.TableRestoreCmd)
 		},
 	}
 	task.DefineTableFlags(command)
-	return command
-}
-
-func newLogRestoreCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "cdclog",
-		Short: "(experimental) restore data from cdc log backup",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runLogRestoreCommand(cmd)
-		},
-	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables)
-	task.DefineLogRestoreFlags(command)
 	return command
 }
 
@@ -169,10 +180,24 @@ func newRawRestoreCommand() *cobra.Command {
 		Short: "(experimental) restore a raw kv range to TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreRawCommand(cmd, "Raw restore")
+			return runRestoreRawCommand(cmd, task.RawRestoreCmd)
 		},
 	}
 
 	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "point",
+		Short: "restore data from log until specify commit timestamp",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runRestoreCommand(command, task.PointRestoreCmd)
+		},
+	}
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineStreamRestoreFlags(command)
 	return command
 }

@@ -17,12 +17,15 @@ package kv_test
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	. "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/assert"
@@ -30,18 +33,16 @@ import (
 )
 
 func TestPartialNext(t *testing.T) {
-	t.Parallel()
-
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// We only use first column value to seek.
 	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	nextKey := Key(seekKey).Next()
 	cmp := bytes.Compare(nextKey, keyA)
@@ -57,8 +58,6 @@ func TestPartialNext(t *testing.T) {
 }
 
 func TestIsPoint(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		start   []byte
 		end     []byte
@@ -111,16 +110,12 @@ func TestIsPoint(t *testing.T) {
 }
 
 func TestBasicFunc(t *testing.T) {
-	t.Parallel()
-
 	assert.False(t, IsTxnRetryableError(nil))
 	assert.True(t, IsTxnRetryableError(ErrTxnRetryable))
 	assert.False(t, IsTxnRetryableError(errors.New("test")))
 }
 
 func TestHandle(t *testing.T) {
-	t.Parallel()
-
 	ih := IntHandle(100)
 	assert.True(t, ih.IsInt())
 
@@ -133,7 +128,7 @@ func TestHandle(t *testing.T) {
 	assert.Equal(t, -1, ih.Compare(ih2))
 	assert.Equal(t, "100", ih.String())
 
-	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	assert.False(t, ch.IsInt())
 
 	ch2 := ch.Next()
@@ -153,8 +148,6 @@ func TestHandle(t *testing.T) {
 }
 
 func TestPaddingHandle(t *testing.T) {
-	t.Parallel()
-
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
@@ -171,8 +164,6 @@ func TestPaddingHandle(t *testing.T) {
 }
 
 func TestHandleMap(t *testing.T) {
-	t.Parallel()
-
 	m := NewHandleMap()
 	h := IntHandle(1)
 
@@ -186,7 +177,7 @@ func TestHandleMap(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
-	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
@@ -198,9 +189,9 @@ func TestHandleMap(t *testing.T) {
 	assert.Nil(t, v)
 
 	m.Set(ch, "a")
-	ch2 := testkit.MustNewCommonHandle(t, 101, "abc")
+	ch2 := testutil.MustNewCommonHandle(t, 101, "abc")
 	m.Set(ch2, "b")
-	ch3 := testkit.MustNewCommonHandle(t, 99, "def")
+	ch3 := testutil.MustNewCommonHandle(t, 99, "def")
 	m.Set(ch3, "c")
 	assert.Equal(t, 3, m.Len())
 
@@ -223,6 +214,18 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 2, cnt)
 }
 
+func TestKeyRangeDefinition(t *testing.T) {
+	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
+	// This allow us to use unsafe pointer to convert them and reduce allocation.
+	var r1 KeyRange
+	var r2 coprocessor.KeyRange
+	// Same size.
+	require.Equal(t, unsafe.Sizeof(r1), unsafe.Sizeof(r2))
+	// And same default value.
+	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
+	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+}
+
 func BenchmarkIsPoint(b *testing.B) {
 	b.ReportAllocs()
 	kr := KeyRange{
@@ -231,5 +234,85 @@ func BenchmarkIsPoint(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		kr.IsPoint()
+	}
+}
+
+var result int
+
+var inputs = []struct {
+	input int
+}{
+	{input: 1},
+	{input: 100},
+	{input: 10000},
+	{input: 1000000},
+}
+
+func memAwareIntMap(size int, handles []Handle) int {
+	var x int
+	m := NewMemAwareHandleMap[int]()
+	for j := 0; j < size; j++ {
+		m.Set(handles[j], j)
+	}
+	for j := 0; j < size; j++ {
+		x, _ = m.Get(handles[j])
+	}
+	return x
+}
+
+func nativeIntMap(size int, handles []Handle) int {
+	var x int
+	m := make(map[Handle]int)
+	for j := 0; j < size; j++ {
+		m[handles[j]] = j
+	}
+
+	for j := 0; j < size; j++ {
+		x = m[handles[j]]
+	}
+	return x
+}
+
+func BenchmarkMemAwareHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("MemAwareIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = memAwareIntMap(s.input, handles)
+			}
+			result = x
+		})
+	}
+}
+
+func BenchmarkNativeHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = nativeIntMap(s.input, handles)
+			}
+			result = x
+		})
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -31,6 +31,15 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.IgnoreStats {
 		// Do not run stat worker in BR.
 		session.DisableStats4Test()
@@ -78,7 +87,7 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 
 			// Do not run ddl worker in BR.
-			ddl.RunWorker = false
+			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil
@@ -105,10 +114,11 @@ func newFullBackupCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			// empty db/table means full backup.
-			return runBackupCommand(command, "Full backup")
+			return runBackupCommand(command, task.FullBackupCmd)
 		},
 	}
-	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
 
@@ -119,7 +129,7 @@ func newDBBackupCommand() *cobra.Command {
 		Short: "backup a database",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupCommand(command, "Database backup")
+			return runBackupCommand(command, task.DBBackupCmd)
 		},
 	}
 	task.DefineDatabaseFlags(command)
@@ -133,7 +143,7 @@ func newTableBackupCommand() *cobra.Command {
 		Short: "backup a table",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupCommand(command, "Table backup")
+			return runBackupCommand(command, task.TableBackupCmd)
 		},
 	}
 	task.DefineTableFlags(command)
@@ -148,7 +158,7 @@ func newRawBackupCommand() *cobra.Command {
 		Short: "(experimental) backup a raw kv range from TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupRawCommand(command, "Raw backup")
+			return runBackupRawCommand(command, task.RawBackupCmd)
 		},
 	}
 

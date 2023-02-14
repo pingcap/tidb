@@ -16,6 +16,7 @@ package aggregation
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -42,12 +45,21 @@ type AggFuncDesc struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
+// this func cannot be called twice as the TypeInfer has changed the type of args in the first time.
 func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
 	b, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
 		return nil, err
 	}
 	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
+}
+
+// NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc may be ready.
+func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, Desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
+	if Desc.RetTp == nil { // safety check
+		return NewAggFuncDesc(ctx, Desc.Name, Desc.Args, hasDistinct)
+	}
+	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{Desc.Name, Desc.Args, Desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
 // String implements the fmt.Stringer interface.
@@ -113,8 +125,6 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
 		partialAggDesc.Mode = Partial2Mode
-	} else {
-		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Mode:        FinalMode, // We only support FinalMode now in final phase.
@@ -220,7 +230,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		var s string
 		var err error
 		var maxLen uint64
-		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -230,9 +240,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		}
 		return &concatFunction{aggFunction: aggFunc, maxLen: maxLen}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:
@@ -301,7 +311,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		}
 	// `select max(a) from empty_tbl` returns `null`, while `select max(a) from empty_tbl group by b` returns empty.
 	case ast.AggFuncMax, ast.AggFuncMin:
-		if !hasGroupBy && a.RetTp.Tp != mysql.TypeBit {
+		if !hasGroupBy && a.RetTp.GetType() != mysql.TypeBit {
 			removeNotNull = true
 		}
 	// `select distinct a from empty_tbl` returns empty
@@ -319,7 +329,20 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 	}
 	if removeNotNull {
 		a.RetTp = a.RetTp.Clone()
-		a.RetTp.Flag &^= mysql.NotNullFlag
+		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
+}
+
+// MemoryUsage the memory usage of AggFuncDesc
+func (a *AggFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
+	for _, item := range a.OrderByItems {
+		sum += item.MemoryUsage()
+	}
+	return
 }

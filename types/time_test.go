@@ -15,6 +15,7 @@
 package types_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -31,11 +32,10 @@ import (
 )
 
 func TestTimeEncoding(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		Year, Month, Day, Hour, Minute, Second, Microsecond int
 		Type                                                uint8
-		Fsp                                                 int8
+		Fsp                                                 int
 		Expect                                              uint64
 	}{
 		{2019, 9, 16, 0, 0, 0, 0, mysql.TypeDatetime, 0, 0b1111110001110011000000000000000000000000000000000000000000000},
@@ -61,7 +61,6 @@ func TestTimeEncoding(t *testing.T) {
 }
 
 func TestDateTime(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -111,6 +110,9 @@ func TestDateTime(t *testing.T) {
 		{"2020-05-28 23:59:59T T00:00:00", "2020-05-28 23:59:59"},
 		{"2020-10-22 10:31-10:12", "2020-10-22 10:31:10"},
 		{"2018.01.01 01:00:00", "2018-01-01 01:00:00"},
+
+		// For issue 35291
+		{"2020-01-01 12:00:00.123456+05:00", "2020-01-01 07:00:00.123456"},
 	}
 
 	for _, test := range table {
@@ -121,7 +123,7 @@ func TestDateTime(t *testing.T) {
 
 	fspTbl := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Expect string
 	}{
 		{"20170118.123", 6, "2017-01-18 12:03:00.000000"},
@@ -145,12 +147,12 @@ func TestDateTime(t *testing.T) {
 	}
 
 	for _, test := range fspTbl {
-		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp, nil)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, v.String())
 	}
 
-	v, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
+	v, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6, nil)
 	require.Equal(t, 46, v.Second())
 	require.Equal(t, 0, v.Microsecond())
 
@@ -182,7 +184,6 @@ func TestDateTime(t *testing.T) {
 }
 
 func TestTimestamp(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect string
@@ -208,7 +209,6 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestDate(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -304,7 +304,6 @@ func TestDate(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -338,8 +337,9 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MinFsp)
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MinFsp)
 		require.NoError(t, err)
+		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -353,8 +353,24 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
 		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
+	}
+
+	table = []struct {
+		Input  string
+		Expect string
+	}{
+		{"0x", "00:00:00.000000"},
+		{"1x", "00:00:01.000000"},
+		{"0000-00-00", "00:00:00.000000"},
+	}
+
+	for _, test := range table {
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		require.False(t, isNull)
+		require.True(t, types.ErrTruncatedWrongVal.Equal(err))
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -365,11 +381,11 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
+		_, _, err := types.ParseDuration(sc, test, types.DefaultFsp)
 		require.Error(t, err)
 	}
 
-	duration, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	duration, _, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
 	require.Error(t, err)
 	require.Equal(t, "838:59:59", duration.String())
 
@@ -399,12 +415,11 @@ func TestTime(t *testing.T) {
 }
 
 func TestDurationAdd(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input    string
-		Fsp      int8
+		Fsp      int
 		InputAdd string
-		FspAdd   int8
+		FspAdd   int
 		Expect   string
 	}{
 		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.2"},
@@ -413,15 +428,15 @@ func TestDurationAdd(t *testing.T) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(nil, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(nil, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Add(ta)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, result.String())
 	}
-	duration, err := types.ParseDuration(nil, "00:00:00", 0)
+	duration, _, err := types.ParseDuration(nil, "00:00:00", 0)
 	require.NoError(t, err)
 	ta := new(types.Duration)
 	result, err := duration.Add(*ta)
@@ -429,30 +444,29 @@ func TestDurationAdd(t *testing.T) {
 	require.Equal(t, "00:00:00", result.String())
 
 	duration = types.Duration{Duration: math.MaxInt64, Fsp: 0}
-	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
+	tatmp, _, err := types.ParseDuration(nil, "00:01:00", 0)
 	require.NoError(t, err)
 	_, err = duration.Add(tatmp)
 	require.Error(t, err)
 }
 
 func TestDurationSub(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
 		Input    string
-		Fsp      int8
+		Fsp      int
 		InputAdd string
-		FspAdd   int8
+		FspAdd   int
 		Expect   string
 	}{
 		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.0"},
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Sub(ta)
 		require.NoError(t, err)
@@ -461,12 +475,11 @@ func TestDurationSub(t *testing.T) {
 }
 
 func TestTimeFsp(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Expect string
 	}{
 		{"00:00:00.1", 0, "00:00:00"},
@@ -482,26 +495,25 @@ func TestTimeFsp(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, duration.String())
 	}
 
 	errTable := []struct {
 		Input string
-		Fsp   int8
+		Fsp   int
 	}{
 		{"00:00:00.1", -2},
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		_, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.Error(t, err)
 	}
 }
 
 func TestYear(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect int16
@@ -563,7 +575,6 @@ func TestYear(t *testing.T) {
 }
 
 func TestCodec(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
@@ -608,7 +619,7 @@ func TestCodec(t *testing.T) {
 	}
 
 	for _, test := range tbl {
-		v, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
+		v, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 
 		packed, _ = v.ToPackedUint()
@@ -621,7 +632,6 @@ func TestCodec(t *testing.T) {
 }
 
 func TestParseTimeFromNum(t *testing.T) {
-	t.Parallel()
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -695,7 +705,6 @@ func TestParseTimeFromNum(t *testing.T) {
 }
 
 func TestToNumber(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
@@ -703,7 +712,7 @@ func TestToNumber(t *testing.T) {
 	sc.TimeZone = losAngelesTz
 	tblDateTime := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Expect string
 	}{
 		{"12-12-31 11:30:45", 0, "20121231113045"},
@@ -718,7 +727,7 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDateTime {
-		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp, nil)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
@@ -726,7 +735,7 @@ func TestToNumber(t *testing.T) {
 	// Fix issue #1046
 	tblDate := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Expect string
 	}{
 		{"12-12-31 11:30:45", 0, "20121231"},
@@ -741,14 +750,14 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDate {
-		v, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 
 	tblDuration := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Expect string
 	}{
 		{"11:30:45", 0, "113045"},
@@ -764,7 +773,7 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDuration {
-		v, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		v, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		require.Equal(t, test.Expect, v.ToNumber().String())
@@ -772,12 +781,11 @@ func TestToNumber(t *testing.T) {
 }
 
 func TestParseTimeFromFloatString(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
 		Input       string
-		Fsp         int8
+		Fsp         int
 		ExpectError bool
 		Expect      string
 	}{
@@ -805,10 +813,9 @@ func TestParseTimeFromFloatString(t *testing.T) {
 }
 
 func TestParseFrac(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		S        string
-		Fsp      int8
+		Fsp      int
 		Ret      int
 		Overflow bool
 	}{
@@ -842,13 +849,12 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestRoundFrac(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
 	tbl := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Except string
 	}{
 		{"2012-12-31 11:30:45.123456", 4, "2012-12-31 11:30:45.1235"},
@@ -865,7 +871,7 @@ func TestRoundFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		nv, err := v.RoundFrac(sc, tt.Fsp)
 		require.NoError(t, err)
@@ -877,7 +883,7 @@ func TestRoundFrac(t *testing.T) {
 	sc.TimeZone = losAngelesTz
 	tbl = []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Except string
 	}{
 		{"2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"},
@@ -890,7 +896,7 @@ func TestRoundFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		nv, err := v.RoundFrac(sc, tt.Fsp)
 		require.NoError(t, err)
@@ -899,7 +905,7 @@ func TestRoundFrac(t *testing.T) {
 
 	tbl = []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Except string
 	}{
 		{"11:30:45.123456", 4, "11:30:45.1235"},
@@ -911,7 +917,7 @@ func TestRoundFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
 		require.NoError(t, err)
@@ -920,7 +926,7 @@ func TestRoundFrac(t *testing.T) {
 
 	cols := []struct {
 		input  time.Time
-		fsp    int8
+		fsp    int
 		output time.Time
 	}{
 		{time.Date(2011, 11, 11, 10, 10, 10, 888888, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 11, time.UTC)},
@@ -935,14 +941,13 @@ func TestRoundFrac(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
 	sc.TimeZone = losAngelesTz
 	tbl := []struct {
 		Input  string
-		Fsp    int8
+		Fsp    int
 		Except string
 	}{
 		{"2012-12-31 11:30:45.123456", 4, "11:30:45.1235"},
@@ -955,7 +960,7 @@ func TestConvert(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, tt.Fsp)
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, tt.Fsp, nil)
 		require.NoError(t, err)
 		nv, err := v.ConvertToDuration()
 		require.NoError(t, err)
@@ -964,7 +969,7 @@ func TestConvert(t *testing.T) {
 
 	tblDuration := []struct {
 		Input string
-		Fsp   int8
+		Fsp   int
 	}{
 		{"11:30:45.123456", 4},
 		{"11:30:45.123456", 6},
@@ -974,7 +979,7 @@ func TestConvert(t *testing.T) {
 	// test different time zone.
 	sc.TimeZone = time.UTC
 	for _, tt := range tblDuration {
-		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
 		require.NoError(t, err)
 		year, month, day := time.Now().In(sc.TimeZone).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
@@ -986,7 +991,6 @@ func TestConvert(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tbl := []struct {
 		Arg1 string
@@ -1001,7 +1005,7 @@ func TestCompare(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 
 		ret, err := v1.CompareString(nil, tt.Arg2)
@@ -1009,7 +1013,7 @@ func TestCompare(t *testing.T) {
 		require.Equal(t, tt.Ret, ret)
 	}
 
-	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
+	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp, nil)
 	require.NoError(t, err)
 	res, err := v1.CompareString(nil, "Test should error")
 	require.Error(t, err)
@@ -1026,7 +1030,7 @@ func TestCompare(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v1, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
+		v1, _, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
 		require.NoError(t, err)
 
 		ret, err := v1.CompareString(nil, tt.Arg2)
@@ -1036,7 +1040,6 @@ func TestCompare(t *testing.T) {
 }
 
 func TestDurationClock(t *testing.T) {
-	t.Parallel()
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -1051,7 +1054,7 @@ func TestDurationClock(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		d, _, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Hour, d.Hour())
 		require.Equal(t, tt.Minute, d.Minute())
@@ -1061,7 +1064,6 @@ func TestDurationClock(t *testing.T) {
 }
 
 func TestParseDateFormat(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Input  string
 		Result []string
@@ -1076,6 +1078,11 @@ func TestParseDateFormat(t *testing.T) {
 		{"T10:10:10", nil},
 		{"2011-11-11x", []string{"2011", "11", "11x"}},
 		{"xxx 10:10:10", nil},
+		{"2022-02-01\n16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
+		{"2022-02-01\f16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
+		{"2022-02-01\v16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
+		{"2022-02-01\r16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
+		{"2022-02-01\t16:33:00", []string{"2022", "02", "01", "16", "33", "00"}},
 	}
 
 	for _, tt := range tbl {
@@ -1085,7 +1092,6 @@ func TestParseDateFormat(t *testing.T) {
 }
 
 func TestTimestampDiff(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		unit   string
 		t1     types.CoreTime
@@ -1109,7 +1115,6 @@ func TestTimestampDiff(t *testing.T) {
 }
 
 func TestDateFSP(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		date   string
 		expect int
@@ -1126,7 +1131,6 @@ func TestDateFSP(t *testing.T) {
 }
 
 func TestConvertTimeZone(t *testing.T) {
-	t.Parallel()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
 		input  types.CoreTime
@@ -1148,7 +1152,6 @@ func TestConvertTimeZone(t *testing.T) {
 }
 
 func TestTimeAdd(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1166,11 +1169,11 @@ func TestTimeAdd(t *testing.T) {
 		TimeZone: time.UTC,
 	}
 	for _, tt := range tbl {
-		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
 		require.NoError(t, err)
-		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp)
+		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		v2, err := v1.Add(sc, dur)
 		require.NoError(t, err)
@@ -1179,7 +1182,6 @@ func TestTimeAdd(t *testing.T) {
 }
 
 func TestTruncateOverflowMySQLTime(t *testing.T) {
-	t.Parallel()
 	v := types.MaxTime + 1
 	res, err := types.TruncateOverflowMySQLTime(v)
 	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
@@ -1212,8 +1214,6 @@ func TestTruncateOverflowMySQLTime(t *testing.T) {
 }
 
 func TestCheckTimestamp(t *testing.T) {
-	t.Parallel()
-
 	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
 
 	tests := []struct {
@@ -1256,7 +1256,7 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1313,7 +1313,7 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1323,7 +1323,6 @@ func TestCheckTimestamp(t *testing.T) {
 }
 
 func TestExtractDurationValue(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		unit   string
 		format string
@@ -1373,7 +1372,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "MINUTE_SECOND",
 			format: "61:61",
-			ans:    "01:02:01.000000",
+			ans:    "01:02:01",
 		},
 		{
 			unit:   "HOUR_MICROSECOND",
@@ -1383,7 +1382,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "HOUR_SECOND",
 			format: "01:61:01",
-			ans:    "02:01:01.000000",
+			ans:    "02:01:01",
 		},
 		{
 			unit:   "HOUr_MINUTE",
@@ -1398,7 +1397,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "DAY_SeCOND",
 			format: "1 02:03:04",
-			ans:    "26:03:04.000000",
+			ans:    "26:03:04",
 		},
 		{
 			unit:   "DAY_MINUTE",
@@ -1464,14 +1463,12 @@ func TestExtractDurationValue(t *testing.T) {
 }
 
 func TestCurrentTime(t *testing.T) {
-	t.Parallel()
 	res := types.CurrentTime(mysql.TypeTimestamp)
 	require.Equal(t, mysql.TypeTimestamp, res.Type())
-	require.Equal(t, int8(0), res.Fsp())
+	require.Equal(t, 0, res.Fsp())
 }
 
 func TestInvalidZero(t *testing.T) {
-	t.Parallel()
 	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
@@ -1481,22 +1478,20 @@ func TestInvalidZero(t *testing.T) {
 }
 
 func TestGetFsp(t *testing.T) {
-	t.Parallel()
 	res := types.GetFsp("2019:04:12 14:00:00.123456")
-	require.Equal(t, int8(6), res)
+	require.Equal(t, 6, res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1234567890")
-	require.Equal(t, int8(6), res)
+	require.Equal(t, 6, res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1")
-	require.Equal(t, int8(1), res)
+	require.Equal(t, 1, res)
 
 	res = types.GetFsp("2019:04:12 14:00:00")
-	require.Equal(t, int8(0), res)
+	require.Equal(t, 0, res)
 }
 
 func TestExtractDatetimeNum(t *testing.T) {
-	t.Parallel()
 	in := types.NewTime(types.FromDate(2019, 04, 12, 14, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err := types.ExtractDatetimeNum(&in, "day")
@@ -1541,7 +1536,8 @@ func TestExtractDatetimeNum(t *testing.T) {
 
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
 	require.Equal(t, int64(0), res)
-	require.Regexp(t, "invalid unit.*", err)
+	require.Error(t, err)
+	require.Regexp(t, "^invalid unit", err)
 
 	in = types.NewTime(types.FromDate(0000, 00, 00, 00, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
@@ -1567,7 +1563,6 @@ func TestExtractDatetimeNum(t *testing.T) {
 }
 
 func TestExtractDurationNum(t *testing.T) {
-	t.Parallel()
 	type resultTbl struct {
 		unit   string
 		expect int64
@@ -1627,12 +1622,12 @@ func TestExtractDurationNum(t *testing.T) {
 		}
 		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
 		require.Equal(t, int64(0), res)
-		require.Regexp(t, "invalid unit.*", err)
+		require.Error(t, err)
+		require.Regexp(t, "^invalid unit", err)
 	}
 }
 
 func TestParseDurationValue(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		format string
 		unit   string
@@ -1640,56 +1635,56 @@ func TestParseDurationValue(t *testing.T) {
 		res2   int64
 		res3   int64
 		res4   int64
+		res5   int
 		err    *terror.Error
 	}{
-		{"52", "WEEK", 0, 0, 52 * 7, 0, nil},
-		{"12", "DAY", 0, 0, 12, 0, nil},
-		{"04", "MONTH", 0, 04, 0, 0, nil},
-		{"1", "QUARTER", 0, 1 * 3, 0, 0, nil},
-		{"2019", "YEAR", 2019, 0, 0, 0, nil},
-		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
-		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
-		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, nil},
-		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
-		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
-		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
-		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, nil},
-		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, nil},
-		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, nil},
-		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, nil},
-		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, nil},
-		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, nil},
-		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, nil},
-		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
-		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
-		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
-		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
-		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, nil},
-		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, nil},
-		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, nil},
-		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongVal},
-		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
+		{"52", "WEEK", 0, 0, 52 * 7, 0, 0, nil},
+		{"12", "DAY", 0, 0, 12, 0, 0, nil},
+		{"04", "MONTH", 0, 04, 0, 0, 0, nil},
+		{"1", "QUARTER", 0, 1 * 3, 0, 0, 0, nil},
+		{"2019", "YEAR", 2019, 0, 0, 0, 0, nil},
+		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, 6, nil},
+		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, 6, nil},
+		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, 6, nil},
+		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, 0, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
+		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, 0, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
+		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, 6, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
+		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, 6, nil},
+		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, 0, nil},
+		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, 0, nil},
+		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, 6, nil},
+		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, 0, nil},
+		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, 0, nil},
+		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, 0, nil},
+		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, 0, nil},
+		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, 0, nil},
+		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, 0, nil},
+		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, 0, nil},
+		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, 0, nil},
+		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, 0, nil},
+		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, 0, nil},
+		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, 6, types.ErrTruncatedWrongVal},
+		{"1.111", "DAY", 0, 0, 1, 0, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
-		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
+		res1, res2, res3, res4, res5, err := types.ParseDurationValue(col.unit, col.format)
 		require.Equalf(t, col.res1, res1, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res2, res2, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res3, res3, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res4, res4, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res5, res5, "Extract %v Unit %v", col.format, col.unit)
 		if col.err == nil {
 			require.NoErrorf(t, err, "Extract %v Unit %v", col.format, col.unit)
 		} else {
 			require.True(t, col.err.Equal(err))
 		}
 	}
-
 }
 
 func TestIsClockUnit(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		input    string
 		expected bool
@@ -1709,6 +1704,7 @@ func TestIsClockUnit(t *testing.T) {
 		{"DAY_MINUTE", true},
 		{"DAY_HOUR", true},
 		{"TEST", false},
+		{"SOME_MICROSECOND", false},
 	}
 	for _, col := range tbl {
 		output := types.IsClockUnit(col.input)
@@ -1716,8 +1712,65 @@ func TestIsClockUnit(t *testing.T) {
 	}
 }
 
+func TestIsDateUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"Day", true},
+		{"Week", true},
+		{"month", true},
+		{"quarter", true},
+		{"YEAR", true},
+		{"DAY_MICROSECOND", true},
+		{"DAY_SECOND", true},
+		{"DAY_MINUTE", true},
+		{"DAY_HOUR", true},
+		{"YEAR_MONTH", true},
+		{"MICROSECOND", false},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"TEST", false},
+		{"SOME_DAY", false},
+	}
+	for _, col := range tbl {
+		output := types.IsDateUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
+func TestIsMicrosecondUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"Microsecond", true},
+		{"Second_microsecond", true},
+		{"minute_microsecond", true},
+		{"hour_microsecond", true},
+		{"DAY_MICROSECOND", true},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"DAY_SECOND", false},
+		{"DAY_MINUTE", false},
+		{"DAY_HOUR", false},
+		{"DAY", false},
+		{"WEEK", false},
+		{"MONTH", false},
+		{"QUARTER", false},
+		{"YEAR", false},
+		{"TEST", false},
+		{"SOME_MICROSECOND", false},
+	}
+	for _, col := range tbl {
+		output := types.IsMicrosecondUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
 func TestIsDateFormat(t *testing.T) {
-	t.Parallel()
 	input := "1234:321"
 	output := types.IsDateFormat(input)
 	require.False(t, output)
@@ -1729,10 +1782,13 @@ func TestIsDateFormat(t *testing.T) {
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
 	require.True(t, output)
+
+	input = "20129"
+	output = types.IsDateFormat(input)
+	require.True(t, output)
 }
 
 func TestParseTimeFromInt64(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 
@@ -1750,8 +1806,95 @@ func TestParseTimeFromInt64(t *testing.T) {
 	require.Equal(t, 00, output.Microsecond())
 }
 
+func TestParseTimeFromFloat64(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		f   float64
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		us  int
+		err *terror.Error
+	}{
+		{20000102, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{20000102.9, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{0.0, mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{20000102030405, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{20000102030405.015625, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{2000, mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{20000000000000, mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromFloat64(sc, c.f)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
+}
+
+func TestParseTimeFromDecimal(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		d   *types.MyDecimal
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		us  int
+		err *terror.Error
+	}{
+		{types.NewDecFromStringForTest("20000102"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102.9"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("0.0"), mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405.015625"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{types.NewDecFromStringForTest("20000102030405.0078125"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{types.NewDecFromStringForTest("2000"), mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{types.NewDecFromStringForTest("20000000000000"), mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromDecimal(sc, c.d)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
+}
+
 func TestGetFormatType(t *testing.T) {
-	t.Parallel()
 	input := "TEST"
 	isDuration, isDate := types.GetFormatType(input)
 	require.False(t, isDuration)
@@ -1769,7 +1912,6 @@ func TestGetFormatType(t *testing.T) {
 }
 
 func TestGetFracIndex(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		str         string
 		expectIndex int
@@ -1785,7 +1927,6 @@ func TestGetFracIndex(t *testing.T) {
 }
 
 func TestTimeOverflow(t *testing.T) {
-	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
@@ -1819,10 +1960,9 @@ func TestTimeOverflow(t *testing.T) {
 }
 
 func TestTruncateFrac(t *testing.T) {
-	t.Parallel()
 	cols := []struct {
 		input  time.Time
-		fsp    int8
+		fsp    int
 		output time.Time
 	}{
 		{time.Date(2011, 11, 11, 10, 10, 10, 888888, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 11, time.UTC)},
@@ -1837,7 +1977,6 @@ func TestTruncateFrac(t *testing.T) {
 }
 
 func TestTimeSub(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1852,11 +1991,11 @@ func TestTimeSub(t *testing.T) {
 		TimeZone: time.UTC,
 	}
 	for _, tt := range tbl {
-		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
-		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
 		require.NoError(t, err)
 		rec := v1.Sub(sc, &v2)
 		require.Equal(t, dur, rec)
@@ -1864,7 +2003,6 @@ func TestTimeSub(t *testing.T) {
 }
 
 func TestCheckMonthDay(t *testing.T) {
-	t.Parallel()
 	dates := []struct {
 		date        types.CoreTime
 		isValidDate bool
@@ -1901,7 +2039,6 @@ func TestCheckMonthDay(t *testing.T) {
 }
 
 func TestFormatIntWidthN(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		num    int
 		width  int
@@ -1924,7 +2061,6 @@ func TestFormatIntWidthN(t *testing.T) {
 }
 
 func TestFromGoTime(t *testing.T) {
-	t.Parallel()
 	// Test rounding of nanosecond to millisecond.
 	cases := []struct {
 		input string
@@ -1950,11 +2086,9 @@ func TestFromGoTime(t *testing.T) {
 		t1 := types.FromGoTime(v)
 		require.Equalf(t, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), t1, "idx %d", ith)
 	}
-
 }
 
 func TestGetTimezone(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		input    string
 		idx      int
@@ -1983,7 +2117,6 @@ func TestGetTimezone(t *testing.T) {
 }
 
 func TestParseWithTimezone(t *testing.T) {
-	t.Parallel()
 	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
 		offset := tzHour*60*60 + tzMinue*60
 		if tzSign == "-" {
@@ -1997,7 +2130,7 @@ func TestParseWithTimezone(t *testing.T) {
 	// note that sysTZ won't affect the physical time the string literal represents.
 	cases := []struct {
 		lit   string
-		fsp   int8
+		fsp   int
 		gt    time.Time
 		sysTZ *time.Location
 	}{
@@ -2057,7 +2190,7 @@ func TestParseWithTimezone(t *testing.T) {
 		},
 	}
 	for ith, ca := range cases {
-		v, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
+		v, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp, nil)
 		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue
@@ -2066,6 +2199,17 @@ func TestParseWithTimezone(t *testing.T) {
 		require.NoErrorf(t, err, "tidb time convert failed on %d", ith)
 		require.Equalf(t, ca.gt.In(time.UTC), t1.In(time.UTC), "parsed time mismatch on %dth case", ith)
 	}
+}
+
+func TestMarshalTime(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	v1, err := types.ParseTime(sc, "2017-01-18 01:01:01.123456", mysql.TypeDatetime, types.MaxFsp, nil)
+	require.NoError(t, err)
+	j, err := json.Marshal(v1)
+	require.NoError(t, err)
+	var v2 types.Time
+	require.NoError(t, json.Unmarshal(j, &v2))
+	require.Equal(t, 0, v1.Compare(v2))
 }
 
 func BenchmarkFormat(b *testing.B) {
@@ -2082,8 +2226,8 @@ func BenchmarkTimeAdd(b *testing.B) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
-	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
+	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp, nil)
+	arg2, _, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
 	for i := 0; i < b.N; i++ {
 		_, err := arg1.Add(sc, arg2)
 		if err != nil {

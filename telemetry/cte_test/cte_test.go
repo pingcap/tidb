@@ -26,18 +26,21 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testsetup.SetupForCommonTest()
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("syscall.syscall"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)
@@ -48,8 +51,7 @@ func TestCTEPreviewAndReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-
-	t.Parallel()
+	integration.BeforeTestExternal(t)
 
 	s := newSuite(t)
 	defer s.close()
@@ -68,9 +70,9 @@ func TestCTEPreviewAndReport(t *testing.T) {
 
 	jsonParsed, err := gabs.ParseJSON([]byte(res))
 	require.NoError(t, err)
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
+	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
 	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
+	require.Equal(t, 4, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
 
 	err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
 	require.NoError(t, err)
@@ -120,6 +122,7 @@ func newSuite(t *testing.T) *testSuite {
 		suite.dom.Close()
 		err = suite.store.Close()
 		require.NoError(t, err)
+		view.Stop()
 	}
 
 	return suite

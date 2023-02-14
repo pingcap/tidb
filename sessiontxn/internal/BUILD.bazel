@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "internal",
+    srcs = ["txn.go"],
+    importpath = "github.com/pingcap/tidb/sessiontxn/internal",
+    visibility = ["//sessiontxn:__subpackages__"],
+    deps = [
+        "//kv",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//util/logutil",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@org_uber_go_zap//:zap",
+    ],
+)

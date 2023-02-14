@@ -4,15 +4,14 @@ package utils
 
 import (
 	"encoding/hex"
+	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/require"
 )
 
-type testKeySuite struct{}
-
-var _ = Suite(&testKeySuite{})
-
-func (r *testKeySuite) TestParseKey(c *C) {
+func TestParseKey(t *testing.T) {
 	// test rawKey
 	testRawKey := []struct {
 		rawKey string
@@ -28,8 +27,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testRawKey {
 		parsedKey, err := ParseKey("raw", tt.rawKey)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test EscapedKey
@@ -46,8 +45,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testEscapedKey {
 		parsedKey, err := ParseKey("escaped", tt.EscapedKey)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test hexKey
@@ -68,8 +67,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 	for _, tt := range testHexKey {
 		key := hex.EncodeToString([]byte(tt.hexKey))
 		parsedKey, err := ParseKey("hex", key)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test other
@@ -89,11 +88,12 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testNotSupportKey {
 		_, err := ParseKey("notSupport", tt.any)
-		c.Assert(err, ErrorMatches, "unknown format.*")
+		require.Error(t, err)
+		require.Regexp(t, "^unknown format", err.Error())
 	}
 }
 
-func (r *testKeySuite) TestCompareEndKey(c *C) {
+func TestCompareEndKey(t *testing.T) {
 	// test endKey
 	testCase := []struct {
 		key1 []byte
@@ -110,6 +110,69 @@ func (r *testKeySuite) TestCompareEndKey(c *C) {
 
 	for _, tt := range testCase {
 		res := CompareEndKey(tt.key1, tt.key2)
-		c.Assert(res, Equals, tt.ans)
+		require.Equal(t, tt.ans, res)
+	}
+}
+
+func TestClampKeyRanges(t *testing.T) {
+	r := func(a, b string) kv.KeyRange {
+		return kv.KeyRange{
+			StartKey: []byte(a),
+			EndKey:   []byte(b),
+		}
+	}
+	type Case struct {
+		ranges  []kv.KeyRange
+		clampIn []kv.KeyRange
+		result  []kv.KeyRange
+	}
+
+	cases := []Case{
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0005", "0008")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0006", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0006", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0009")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0005", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0200")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("", "0050")},
+			clampIn: []kv.KeyRange{r("", "")},
+			result:  []kv.KeyRange{r("", "0050")},
+		},
+	}
+	run := func(t *testing.T, c Case) {
+		require.ElementsMatch(
+			t,
+			IntersectAll(CloneSlice(c.ranges), CloneSlice(c.clampIn)),
+			c.result)
+		require.ElementsMatch(
+			t,
+			IntersectAll(c.clampIn, c.ranges),
+			c.result)
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			run(t, c)
+		})
 	}
 }

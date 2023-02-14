@@ -25,24 +25,25 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestProfiles(t *testing.T) {
-	t.Parallel()
+	defer view.Stop()
 	var err error
 	var store kv.Storage
 	var dom *domain.Domain
 
 	store, err = mockstore.NewMockStore()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	session.DisableStats4Test()
 	dom, err = session.BootstrapSession(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer dom.Close()
 
 	oldValue := profile.CPUProfileInterval

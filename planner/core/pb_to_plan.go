@@ -79,7 +79,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
-		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
+		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	return p, err
 }
@@ -250,7 +250,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	return columns, nil
 }
 
-func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	node := &ast.KillStmt{
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,

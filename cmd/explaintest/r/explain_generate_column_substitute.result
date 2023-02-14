@@ -1,3 +1,5 @@
+set tidb_cost_model_version=1;
+set names utf8mb4;
 use test;
 drop table if exists t;
 create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
@@ -135,28 +137,32 @@ b+a
 8
 desc update t set a=1 where a+1 = 3;
 id	estRows	task	access object	operator info
-Update_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Update_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
 id	estRows	task	access object	operator info
-Update_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Update_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
 id	estRows	task	access object	operator info
-Delete_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Delete_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
 id	estRows	task	access object	operator info
-Delete_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[0,0], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Delete_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[0,0], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 alter table t drop index idx_c;
 alter table t drop index idx_e;
 alter table t add index expr_idx_c((a+1));
@@ -306,28 +312,32 @@ b+a
 8
 desc update t set a=1 where a+1 = 3;
 id	estRows	task	access object	operator info
-Update_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Update_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
 id	estRows	task	access object	operator info
-Update_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Update_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
 id	estRows	task	access object	operator info
-Delete_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Delete_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
 id	estRows	task	access object	operator info
-Delete_4	N/A	root		N/A
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[0,0], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Delete_5	N/A	root		N/A
+└─SelectLock_7	10.00	root		for update 0
+  └─IndexLookUp_13	10.00	root		
+    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[0,0], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 alter table t drop index expr_idx_c;
 alter table t drop index expr_idx_e;
 truncate table t;
@@ -522,4 +532,198 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, md5, reverse, upper, vitess_hash
+json_array, json_array_append, json_array_insert, json_contains, json_contains_path, json_depth, json_extract, json_insert, json_keys, json_length, json_merge_patch, json_merge_preserve, json_object, json_pretty, json_quote, json_remove, json_replace, json_search, json_set, json_storage_size, json_type, json_unquote, json_valid, lower, md5, reverse, tidb_shard, upper, vitess_hash
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+`COL1` double NOT NULL,
+`COL2` double NOT NULL,
+`COL3` double DEFAULT NULL,
+PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, primary key(c_int, c_str(9))  clustered, key idx((reverse(c_str))));
+replace into t (c_int, c_str) values (9, "beautiful hermann");
+select reverse(c_str) from t use index(idx);
+reverse(c_str)
+nnamreh lufituaeb
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, c_datetime datetime, c_timestamp timestamp, c_double double, c_decimal decimal(12, 6), c_enum enum('blue','green','red','yellow','white','orange','purple'), primary key (c_datetime) , key(c_int)  , key(c_datetime) , key((c_int + 1)), key((c_int -1)), key((lower(c_str))), key((md5(c_str))), key((reverse(c_str))), key((upper(c_str))));
+create table t2 like t1;
+insert into t1 values(11, 'loving grothendieck', '2020-02-02 19:25:49', '2020-03-27 15:17:14',     3.269, 1.851000, 'white' );
+insert into t1 values(11, 'quirky kapitsa'     , '2020-06-21 03:55:31', '2020-02-29 17:02:48',      6.94, 1.851000, 'yellow');
+insert into t1 values( 7, 'boring bouman'      , '2020-05-10 00:01:04', '2020-02-01 20:18:00', 84.096168, 6.996000, 'white' );
+insert into t2 values( 11, 'wizardly antonelli', '2020-01-30 17:27:17', '2020-01-01 10:05:31', 6.886177, 6.332000, 'green'   );
+insert into t2 values( 2, 'angry kapitsa'       , '2020-03-30 05:09:44', '2020-02-15 00:36:52', 95.798378, 3.118000, 'blue'  );
+insert into t2 values( 7, 'dreamy shamir'       , '2020-05-28 14:13:42', '2020-06-02 07:23:22', 26.623227, 3.105000, 'orange');
+begin;
+delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_decimal limit 1;
+desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		test.t2.c_enum
+└─HashJoin	12487.50	root		inner join, equal:[eq(minus(test.t1.c_int, 1), minus(test.t2.c_int, 1))]
+  ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+  │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
+  └─Projection(Probe)	10000.00	root		test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid
+    └─UnionScan	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+      └─Selection	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+c_enum
+orange
+drop table t1, t2;
+drop table t;
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+drop table t1,t2;
+drop table if exists t1, t2;
+create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;
+create table t2 like t1;
+explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
+id	estRows	task	access object	operator info
+HashJoin	9.99	root		inner join, equal:[eq(test.t2.c_decimal, test.t1.c_decimal)]
+├─HashAgg(Build)	7.99	root		group by:test.t2.c_decimal, funcs:firstrow(test.t2.c_decimal)->test.t2.c_decimal
+│ └─IndexLookUp	7.99	root		
+│   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:expression_index(`c_int` + 1)	range:[9,9], keep order:false, stats:pseudo
+│   └─HashAgg(Probe)	7.99	cop[tikv]		group by:test.t2.c_decimal, 
+│     └─Selection	9.99	cop[tikv]		not(isnull(test.t2.c_decimal))
+│       └─TableRowIDScan	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.c_decimal))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table t1;
+drop table t2;
+set @@tidb_enable_unsafe_substitute=1;
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(2) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		test.person.id
+└─TableReader	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(test.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+    └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.id
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+drop table person;
+create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+a	b
+aaaaa	aaaaaa
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaa
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		eq(concat(test.t.a, test.t.a), "aaaaaaaaaa")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:bx(b)	range:["aaaaaaaaaa","aaaaaaaaaa"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(64) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		test.person.id
+└─TableReader	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(test.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+    └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.id
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+drop table person;
+create table t(a char(5), b char(10) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+a	b
+aaaaa	aaaaaaaaaa
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaaaaaa
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		eq(concat(test.t.a, test.t.a), "aaaaaaaaaa")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaaaaaa
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:bx(b)	range:["aaaaaaaaaa","aaaaaaaaaa"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+set @@tidb_enable_unsafe_substitute=0;

@@ -35,7 +35,7 @@ func getDecimal(value float64) *types.MyDecimal {
 }
 
 func getDuration(value string) types.Duration {
-	dur, _ := types.ParseDuration(nil, value, 0)
+	dur, _, _ := types.ParseDuration(nil, value, 0)
 	return dur
 }
 
@@ -56,13 +56,11 @@ func getBinaryLiteral(value string) types.BinaryLiteral {
 
 func getUnsignedFieldType() *types.FieldType {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flag |= mysql.UnsignedFlag
+	tp.AddFlag(mysql.UnsignedFlag)
 	return tp
 }
 
 func TestCalcFraction(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		lower    types.Datum
 		upper    types.Datum
@@ -179,8 +177,6 @@ func TestCalcFraction(t *testing.T) {
 }
 
 func TestEnumRangeValues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		low         types.Datum
 		high        types.Datum

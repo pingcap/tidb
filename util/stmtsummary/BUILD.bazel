@@ -1,0 +1,59 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stmtsummary",
+    srcs = [
+        "evicted.go",
+        "reader.go",
+        "statement_summary.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/stmtsummary",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/auth",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx/stmtctx",
+        "//types",
+        "//util/chunk",
+        "//util/execdetails",
+        "//util/hack",
+        "//util/kvcache",
+        "//util/logutil",
+        "//util/plancodec",
+        "//util/set",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//slices",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "stmtsummary_test",
+    timeout = "short",
+    srcs = [
+        "evicted_test.go",
+        "main_test.go",
+        "statement_summary_test.go",
+    ],
+    embed = [":stmtsummary"],
+    flaky = True,
+    deps = [
+        "//parser/auth",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx/stmtctx",
+        "//testkit/testsetup",
+        "//types",
+        "//util",
+        "//util/execdetails",
+        "//util/plancodec",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

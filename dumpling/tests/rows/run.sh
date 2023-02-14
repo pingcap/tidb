@@ -17,7 +17,7 @@ export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (id int not null auto_increment primary key, a varchar(24));"
 
 # insert 100 records
@@ -46,7 +46,7 @@ check_sync_diff $cur/conf/diff_config.toml
 
 # test dumpling with both rows and filesize
 rm -rf "$DUMPLING_OUTPUT_DIR"
-run_dumpling --rows 10 --filesize 100B --loglevel debug
+run_dumpling --rows 10 --filesize 140B --loglevel debug
 # the dumping result is expected to be:
 # 50 files for insertion
 file_num=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -iname "$DB_NAME.$TABLE_NAME.*.sql" | wc -l)

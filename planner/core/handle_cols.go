@@ -16,6 +16,7 @@ package core
 
 import (
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // HandleCols is the interface that holds handle columns.
@@ -48,9 +51,11 @@ type HandleCols interface {
 	// NumCols returns the number of columns.
 	NumCols() int
 	// Compare compares two datum rows by handle order.
-	Compare(a, b []types.Datum) (int, error)
-	// GetFieldTypes return field types of columns.
+	Compare(a, b []types.Datum, ctors []collate.Collator) (int, error)
+	// GetFieldsTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
+	// MemoryUsage return the memory usage
+	MemoryUsage() int64
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -116,7 +121,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) IsInt() bool {
+func (*CommonHandleCols) IsInt() bool {
 	return false
 }
 
@@ -145,11 +150,11 @@ func (cb *CommonHandleCols) String() string {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
-	for _, col := range cb.columns {
+func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+	for i, col := range cb.columns {
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
-		cmp, err := aDatum.CompareDatum(cb.sc, bDatum)
+		cmp, err := aDatum.Compare(cb.sc, bDatum, ctors[i])
 		if err != nil {
 			return 0, err
 		}
@@ -167,6 +172,21 @@ func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
 		fieldTps = append(fieldTps, col.RetType)
 	}
 	return fieldTps
+}
+
+const emptyCommonHandleColsSize = int64(unsafe.Sizeof(CommonHandleCols{}))
+
+// MemoryUsage return the memory usage of CommonHandleCols
+func (cb *CommonHandleCols) MemoryUsage() (sum int64) {
+	if cb == nil {
+		return
+	}
+
+	sum = emptyCommonHandleColsSize + int64(cap(cb.columns))*size.SizeOfPointer
+	for _, col := range cb.columns {
+		sum += col.MemoryUsage()
+	}
+	return
 }
 
 // NewCommonHandleCols creates a new CommonHandleCols.
@@ -195,7 +215,7 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 }
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
-func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+func (*IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
@@ -214,7 +234,7 @@ func (ib *IntHandleCols) ResolveIndices(schema *expression.Schema) (HandleCols, 
 }
 
 // IsInt implements the kv.HandleCols interface.
-func (ib *IntHandleCols) IsInt() bool {
+func (*IntHandleCols) IsInt() bool {
 	return true
 }
 
@@ -232,26 +252,32 @@ func (ib *IntHandleCols) GetCol(idx int) *expression.Column {
 }
 
 // NumCols implements the kv.HandleCols interface.
-func (ib *IntHandleCols) NumCols() int {
+func (*IntHandleCols) NumCols() int {
 	return 1
 }
 
 // Compare implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
-	aInt := a[ib.col.Index].GetInt64()
-	bInt := b[ib.col.Index].GetInt64()
-	if aInt == bInt {
-		return 0, nil
-	}
-	if aInt < bInt {
-		return -1, nil
-	}
-	return 1, nil
+func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+	aVal := &a[ib.col.Index]
+	bVal := &b[ib.col.Index]
+	return aVal.Compare(nil, bVal, ctors[ib.col.Index])
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.
-func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+func (*IntHandleCols) GetFieldsTypes() []*types.FieldType {
 	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+}
+
+// MemoryUsage return the memory usage of IntHandleCols
+func (ib *IntHandleCols) MemoryUsage() (sum int64) {
+	if ib == nil {
+		return
+	}
+
+	if ib.col != nil {
+		sum = ib.col.MemoryUsage()
+	}
+	return
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

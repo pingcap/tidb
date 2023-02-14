@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +46,7 @@ type plugins struct {
 }
 
 // clone deep copies plugins info.
+// nolint: unused
 func (p *plugins) clone() *plugins {
 	np := &plugins{
 		plugins:      make(map[Kind][]Plugin, len(p.plugins)),
@@ -227,6 +228,15 @@ func Init(ctx context.Context, cfg Config) (err error) {
 					plugin:   &tiPlugins.plugins[kind][i],
 				}
 				tiPlugins.plugins[kind][i].flushWatcher = watcher
+				if err = watcher.refreshPluginState(); err != nil {
+					if cfg.SkipWhenFail {
+						tiPlugins.plugins[kind][i].State = Disable
+						err = nil
+						go util.WithRecovery(watcher.watchLoop, nil)
+						continue
+					}
+					return
+				}
 				go util.WithRecovery(watcher.watchLoop, nil)
 			}
 			tiPlugins.plugins[kind][i].State = Ready
@@ -244,6 +254,25 @@ type flushWatcher struct {
 	plugin   *Plugin
 }
 
+func (w *flushWatcher) refreshPluginState() error {
+	disabled, err := w.getPluginDisabledFlag()
+	if err != nil {
+		logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
+		return err
+	}
+	if disabled {
+		atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
+	} else {
+		atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 0)
+	}
+	err = w.manifest.OnFlush(w.ctx, w.manifest)
+	if err != nil {
+		logutil.BgLogger().Error("plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 func (w *flushWatcher) watchLoop() {
 	watchChan := w.etcd.Watch(w.ctx, w.path)
 	for {
@@ -251,19 +280,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-w.ctx.Done():
 			return
 		case <-watchChan:
-			disabled, err := w.getPluginDisabledFlag()
-			if err != nil {
-				logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
-			}
-			if disabled {
-				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 1)
-			} else {
-				atomic.StoreUint32(&w.manifest.flushWatcher.plugin.Disabled, 0)
-			}
-			err = w.manifest.OnFlush(w.ctx, w.manifest)
-			if err != nil {
-				logutil.BgLogger().Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
-			}
+			_ = w.refreshPluginState()
 		}
 	}
 }

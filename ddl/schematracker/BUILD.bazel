@@ -1,0 +1,60 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "schematracker",
+    srcs = [
+        "checker.go",
+        "dm_tracker.go",
+        "info_store.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/schematracker",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ddl",
+        "//ddl/syncer",
+        "//infoschema",
+        "//kv",
+        "//meta/autoid",
+        "//owner",
+        "//parser/ast",
+        "//parser/charset",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/types",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//statistics/handle",
+        "//store/mockstore",
+        "//table",
+        "//table/tables",
+        "//tidb-binlog/pump_client",
+        "//util/collate",
+        "//util/dbterror",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "schematracker_test",
+    timeout = "short",
+    srcs = [
+        "dm_tracker_test.go",
+        "info_store_test.go",
+    ],
+    embed = [":schematracker"],
+    flaky = True,
+    deps = [
+        "//executor",
+        "//infoschema",
+        "//meta/autoid",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//util/chunk",
+        "//util/mock",
+        "//util/sqlexec",
+        "@com_github_stretchr_testify//require",
+    ],
+)

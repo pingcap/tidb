@@ -217,3 +217,10 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 	}
 	return incomplete
 }
+
+type ProgressRange struct {
+	Res        RangeTree
+	Incomplete []Range
+	Origin     Range
+	GroupKey   string
+}

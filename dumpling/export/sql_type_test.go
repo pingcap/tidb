@@ -10,8 +10,6 @@ import (
 )
 
 func TestEscape(t *testing.T) {
-	t.Parallel()
-
 	var bf bytes.Buffer
 	str := []byte(`MWQeWw""'\rNmtGxzGp`)
 	expectStrBackslash := `MWQeWw\"\"\'\\rNmtGxzGp`

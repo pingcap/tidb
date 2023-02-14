@@ -15,6 +15,7 @@
 package types
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -55,8 +56,8 @@ func ParseEnum(elems []string, name string, collation string) (Enum, error) {
 	if num, err := strconv.ParseUint(name, 0, 64); err == nil {
 		return ParseEnumValue(elems, num)
 	}
-
-	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)
+	errMsg := fmt.Sprintf("convert to MySQL enum failed: item %s is not in enum %v", name, elems)
+	return Enum{}, errors.Wrap(ErrTruncated, errMsg)
 }
 
 // ParseEnumName creates a Enum with item name.
@@ -67,14 +68,15 @@ func ParseEnumName(elems []string, name string, collation string) (Enum, error) 
 			return Enum{Name: n, Value: uint64(i) + 1}, nil
 		}
 	}
-
-	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)
+	errMsg := fmt.Sprintf("convert to MySQL enum failed: item %s is not in enum %v", name, elems)
+	return Enum{}, errors.Wrap(ErrTruncated, errMsg)
 }
 
 // ParseEnumValue creates a Enum with special number.
 func ParseEnumValue(elems []string, number uint64) (Enum, error) {
 	if number == 0 || number > uint64(len(elems)) {
-		return Enum{}, errors.Errorf("number %d overflow enum boundary [1, %d]", number, len(elems))
+		errMsg := fmt.Sprintf("convert to MySQL enum failed: number %d overflow enum boundary [1, %d]", number, len(elems))
+		return Enum{}, errors.Wrap(ErrTruncated, errMsg)
 	}
 
 	return Enum{Name: elems[number-1], Value: number}, nil

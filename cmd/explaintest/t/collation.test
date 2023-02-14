@@ -1,9 +1,0 @@
---disable_warnings
-drop table if exists t;
---enable_warnings
-create table t(a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);
-insert into t values ('啊', '撒旦');
-select coercibility(concat(a, b)) from t;
-select coercibility(convert(concat(a, b) using utf8mb4) collate utf8mb4_general_ci) from t;
-select coercibility(convert('a' using utf8mb4));
-select coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci);

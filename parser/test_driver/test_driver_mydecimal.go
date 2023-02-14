@@ -11,7 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//+build !codes
+//go:build !codes
+// +build !codes
 
 package test_driver
 
@@ -39,10 +40,10 @@ func fixWordCntError(wordsInt, wordsFrac int) (newWordsInt int, newWordsFrac int
 }
 
 /*
-  countLeadingZeroes returns the number of leading zeroes that can be removed from fraction.
+countLeadingZeroes returns the number of leading zeroes that can be removed from fraction.
 
-  @param   i    start index
-  @param   word value to compare against list of powers of 10
+@param   i    start index
+@param   word value to compare against list of powers of 10
 */
 func countLeadingZeroes(i int, word int32) int {
 	leading := 0
@@ -101,11 +102,10 @@ func (d *MyDecimal) removeLeadingZeros() (wordIdx int, digitsInt int) {
 
 // ToString converts decimal to its printable string representation without rounding.
 //
-//  RETURN VALUE
+//	RETURN VALUE
 //
-//      str       - result string
-//      errCode   - eDecOK/eDecTruncate/eDecOverflow
-//
+//	    str       - result string
+//	    errCode   - eDecOK/eDecTruncate/eDecOverflow
 func (d *MyDecimal) ToString() (str []byte) {
 	str = make([]byte, d.stringSize())
 	digitsFrac := int(d.digitsFrac)

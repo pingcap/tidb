@@ -29,6 +29,8 @@ var (
 	ErrInvalidConstraintsMapcnt = errors.New("label constraints in map syntax have invalid replicas")
 	// ErrInvalidConstraintsFormat is from rule.go.
 	ErrInvalidConstraintsFormat = errors.New("invalid label constraints format")
+	// ErrInvalidSurvivalPreferenceFormat is from rule.go.
+	ErrInvalidSurvivalPreferenceFormat = errors.New("survival preference format should be in format [xxx=yyy, ...]")
 	// ErrInvalidConstraintsRelicas is from rule.go.
 	ErrInvalidConstraintsRelicas = errors.New("label constraints with invalid REPLICAS")
 	// ErrInvalidBundleID is from bundle.go.
@@ -43,4 +45,8 @@ var (
 	ErrNoRulesToDrop = errors.New("no rule of such role to drop")
 	// ErrInvalidPlacementOptions is from bundle.go.
 	ErrInvalidPlacementOptions = errors.New("invalid placement option")
+	// ErrInvalidConstraintsMappingWrongSeparator is wrong separator in mapping.
+	ErrInvalidConstraintsMappingWrongSeparator = errors.New("mappings use a colon and space (“: ”) to mark each key/value pair")
+	// ErrInvalidConstraintsMappingNoColonFound is no colon found in mapping.
+	ErrInvalidConstraintsMappingNoColonFound = errors.New("no colon found")
 )
