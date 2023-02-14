@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Diferent policy to dispatching task to different tiflash_compute nods.
+// Different policy to dispatching task to different tiflash_compute nods.
 const (
 	// DispatchPolicyRR means dispatching by RoundRobin.
 	DispatchPolicyRR = iota
