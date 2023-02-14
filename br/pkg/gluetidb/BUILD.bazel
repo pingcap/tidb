@@ -28,8 +28,10 @@ go_library(
 
 go_test(
     name = "gluetidb_test",
+    timeout = "short",
     srcs = ["glue_test.go"],
     embed = [":gluetidb"],
+    flaky = True,
     deps = [
         "//ddl",
         "//kv",
