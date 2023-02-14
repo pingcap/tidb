@@ -838,7 +838,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+	host, port, err := cc.PeerHost(hasPassword, true)
 	if err != nil {
 		return err
 	}
@@ -881,7 +881,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+	host, _, err := cc.PeerHost(hasPassword, true)
 	if err != nil {
 		return nil, err
 	}
@@ -953,8 +953,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
-	if len(cc.peerHost) > 0 {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	if !update && len(cc.peerHost) > 0 {
 		return cc.peerHost, cc.peerPort, nil
 	}
 	host = variable.DefHostname
