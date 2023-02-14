@@ -822,6 +822,9 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	if graceful {
 		done := make(chan struct{})
 		svr.GracefulDown(context.Background(), done)
+		// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
+		// See https://github.com/pingcap/tidb/issues/40038 for details.
+		svr.KillSysProcesses()
 	} else {
 		svr.TryGracefulDown()
 	}
