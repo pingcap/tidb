@@ -675,30 +675,12 @@ func (local *local) Close() {
 	local.bufferPool.Destroy()
 
 	if local.duplicateDB != nil {
-		// Check if there are duplicates that are not collected.
-		iter := local.duplicateDB.NewIter(&pebble.IterOptions{})
-		hasDuplicates := iter.First()
-		allIsWell := true
-		if err := iter.Error(); err != nil {
-			local.logger.Warn("iterate duplicate db failed", zap.Error(err))
-			allIsWell = false
-		}
-		if err := iter.Close(); err != nil {
-			local.logger.Warn("close duplicate db iter failed", zap.Error(err))
-			allIsWell = false
-		}
-		if err := local.duplicateDB.Close(); err != nil {
-			local.logger.Warn("close duplicate db failed", zap.Error(err))
-			allIsWell = false
-		}
-		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
-		// db dir will be useless, so we clean up this dir.
-		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
-			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
-				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
-			}
-		}
+		local.tryCloseOrRemoveDupDB(local.duplicateDB, filepath.Join(local.localStoreDir, duplicateDBName))
 		local.duplicateDB = nil
+	}
+	if local.remoteDuplicateDB != nil {
+		local.tryCloseOrRemoveDupDB(local.remoteDuplicateDB, filepath.Join(local.localStoreDir, remoteDuplicateDBName))
+		local.remoteDuplicateDB = nil
 	}
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
@@ -711,6 +693,32 @@ func (local *local) Close() {
 	}
 	_ = local.tikvCli.Close()
 	local.pdCtl.Close()
+}
+
+func (local *local) tryCloseOrRemoveDupDB(dupDB *pebble.DB, dbPath string) {
+	// Check if there are duplicates that are not collected.
+	iter := dupDB.NewIter(&pebble.IterOptions{})
+	hasDuplicates := iter.First()
+	allIsWell := true
+	if err := iter.Error(); err != nil {
+		local.logger.Warn("iterate duplicate db failed", zap.Error(err))
+		allIsWell = false
+	}
+	if err := iter.Close(); err != nil {
+		local.logger.Warn("close duplicate db iter failed", zap.Error(err))
+		allIsWell = false
+	}
+	if err := dupDB.Close(); err != nil {
+		local.logger.Warn("close duplicate db failed", zap.Error(err))
+		allIsWell = false
+	}
+	// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
+	// db dir will be useless, so we clean up this dir.
+	if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
+		if err := os.RemoveAll(dbPath); err != nil {
+			local.logger.Warn("remove duplicate db file failed", zap.Error(err))
+		}
+	}
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
