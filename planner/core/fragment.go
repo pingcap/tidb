@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -415,7 +416,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl)
+	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

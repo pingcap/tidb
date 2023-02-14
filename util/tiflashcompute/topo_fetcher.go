@@ -35,6 +35,52 @@ var _ TopoFetcher = &MockTopoFetcher{}
 var _ TopoFetcher = &AWSTopoFetcher{}
 var _ TopoFetcher = &TestTopoFetcher{}
 
+// Diferent policy to dispatching task to different tiflash_compute nods.
+const (
+	// DispatchPolicyRR means dispatching by RoundRobin.
+	DispatchPolicyRR = iota
+	// DispatchPolicyConsistentHash means dispatching by ConsistentHash.
+	DispatchPolicyConsistentHash
+	// DispatchPolicyInvalid is invalid policy.
+	DispatchPolicyInvalid
+)
+
+const (
+	// DispatchPolicyRRStr is string value for DispatchPolicyRR.
+	DispatchPolicyRRStr = "round_robin"
+	// DispatchPolicyConsistentHashStr is string value for DispatchPolicyConsistentHash.
+	DispatchPolicyConsistentHashStr = "consistent_hash"
+	// DispatchPolicyInvalidStr is string value for DispatchPolicyInvalid.
+	DispatchPolicyInvalidStr = "invalid"
+)
+
+func getValidDispatchPolicy() []string {
+	return []string{DispatchPolicyConsistentHashStr, DispatchPolicyRRStr}
+}
+
+func GetDispatchPolicyByStr(str string) (int, error) {
+	switch str {
+	case DispatchPolicyConsistentHashStr:
+		return DispatchPolicyConsistentHash, nil
+	case DispatchPolicyRRStr:
+		return DispatchPolicyRR, nil
+	default:
+		return DispatchPolicyInvalid,
+			errors.Errorf("unexpected tiflash_compute dispatch policy, expect %v, got %v", getValidDispatchPolicy(), str)
+	}
+}
+
+func GetDispatchPolicy(p int) string {
+	switch p {
+	case DispatchPolicyConsistentHash:
+		return DispatchPolicyConsistentHashStr
+	case DispatchPolicyRR:
+		return DispatchPolicyRRStr
+	default:
+		return DispatchPolicyInvalidStr
+	}
+}
+
 const (
 	// MockASStr is string value for mock AutoScaler.
 	MockASStr = "mock"
