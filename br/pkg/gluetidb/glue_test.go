@@ -33,7 +33,8 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_id_resued")
+	tk.MustExec("drop table if exists table_id_resued1")
+	tk.MustExec("drop table if exists table_id_resued2")
 	tk.MustExec("drop table if exists table_id_new")
 
 	d := dom.DDL()
@@ -42,7 +43,11 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	infos1 := []*model.TableInfo{}
 	infos1 = append(infos1, &model.TableInfo{
 		ID:   124,
-		Name: model.NewCIStr("table_id_resued"),
+		Name: model.NewCIStr("table_id_resued1"),
+	})
+	infos1 = append(infos1, &model.TableInfo{
+		ID:   125,
+		Name: model.NewCIStr("table_id_resued2"),
 	})
 
 	se := &tidbSession{se: tk.Session()}
@@ -55,7 +60,8 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued'").Check(testkit.Rows("124"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").Check(testkit.Rows("124"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").Check(testkit.Rows("125"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	// allocate new table id verification
@@ -88,4 +94,13 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
 	require.Greater(t, idGenNum, id)
+
+	// a empty table info with len(info3) = 0
+	infos3 := []*model.TableInfo{}
+
+	err = se.SplitBatchCreateTable(model.NewCIStr("test"), infos3, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return false
+	}))
+	require.NoError(t, err)
+
 }
