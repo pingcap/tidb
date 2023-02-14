@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -29,7 +30,7 @@ import (
 )
 
 // batch create table with table id reused
-func TestSplitBatchCreateTable(t *testing.T) {
+func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -103,4 +104,44 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
+}
+
+// batch create table with table id reused
+func TestSplitBatchCreateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("drop table if exists table_2")
+	tk.MustExec("drop table if exists table_3")
+	tk.MustExec("drop table if exists table_4")
+	tk.MustExec("drop table if exists table_5")
+	tk.MustExec("drop table if exists table_6")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+	})
+
+	se := &tidbSession{se: tk.Session()}
+
+	// keep/reused table id verification
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/gluetidb/RestoreBatchCreateTableEntryTooLarge", "return(true)"))
+	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return true
+	}))
+
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/gluetidb/RestoreBatchCreateTableEntryTooLarge"))
 }
