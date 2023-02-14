@@ -277,7 +277,7 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 				continue
 			}
-			used = append(used, int(idx))
+			used = append(used, idx)
 		} else {
 			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
 				col := partCols[0]
@@ -318,7 +318,7 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
-						used = append(used, int(idx))
+						used = append(used, idx)
 					}
 					continue
 				}

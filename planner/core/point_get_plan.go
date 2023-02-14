@@ -1782,7 +1782,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 					if err != nil {
 						return nil, 0, 0, false
 					}
-					return &pi.Definitions[pos], i, int(pos), false
+					return &pi.Definitions[pos], i, pos, false
 				}
 			}
 		}
