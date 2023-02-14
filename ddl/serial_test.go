@@ -102,7 +102,7 @@ func TestChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	err := tk.ExecToErr(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
-	require.EqualError(t, err, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
+	require.EqualError(t, err, "[ddl:1071]Specified key was too long (12289 bytes); max key length is 12288 bytes")
 }
 
 func TestCreateTableWithLike(t *testing.T) {

@@ -1186,5 +1186,29 @@
       "select a, count(*) from t group by a -- shouldn't be rewritten",
       "select sum(a) from t -- sum shouldn't be rewritten"
     ]
+  },
+  {
+    "name": "TestHashAggPushdownToTiFlashCompute",
+    "cases": [
+        "select  /*+ agg_to_cop() hash_agg() */  avg( distinct  tbl_15.col_96 ) as r0 , min(   tbl_15.col_92 ) as r1 , sum( distinct  tbl_15.col_91 ) as r2 , max(   tbl_15.col_92 ) as r3 from tbl_15 where tbl_15.col_94 != '2033-01-09' and tbl_15.col_93 > 7623.679908049186   order by r0,r1,r2,r3 limit 79 ;",
+        "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
+        "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;"
+    ]
+  },
+  {
+    "name": "TestRemoveRedundantPredicates",
+    "cases":[
+      "select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition",
+      "select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition",
+      "select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =",
+      "select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>",
+      "select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =",
+      "select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.",
+      "select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins",
+      "select f from t use index() where f in (1,2,3) and f <> 2 -- intersection of in and <>. Not done yet see issue 39676",
+      "select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet",
+      "select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet",
+      "select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet"
+    ]
   }
 ]

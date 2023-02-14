@@ -26,7 +26,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	s.tk.MustExec("CREATE TABLE load_csv.t (i INT, s varchar(32));")
 
 	// no-new-line-at-end
-	sql := fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/no-new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/no-new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
 	s.tk.MustExec(sql)
@@ -39,7 +39,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	// new-line-at-end
-	sql = fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
 	s.tk.MustExec(sql)
@@ -52,7 +52,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	// can't read file at tidb-server
-	sql = "LOAD DATA REMOTE INFILE '/etc/passwd' INTO TABLE load_csv.t;"
+	sql = "LOAD DATA INFILE '/etc/passwd' INTO TABLE load_csv.t;"
 	s.tk.MustContainErrMsg(sql, "don't support load data from tidb-server")
 }
 

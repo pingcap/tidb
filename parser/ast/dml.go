@@ -358,8 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
-	HintKeepOrder
-	HintNoKeepOrder
+	HintOrderIndex
+	HintNoOrderIndex
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -390,10 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
-	case HintKeepOrder:
-		indexHintType = "KEEP ORDER"
-	case HintNoKeepOrder:
-		indexHintType = "NO KEEP ORDER"
+	case HintOrderIndex:
+		indexHintType = "ORDER INDEX"
+	case HintNoOrderIndex:
+		indexHintType = "NO ORDER INDEX"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
@@ -1804,14 +1804,12 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 type FileLocRefTp int
 
 const (
-	// FileLocServer is used when there's no keywords in SQL, which means the data file should be located on the tidb-server.
-	FileLocServer FileLocRefTp = iota
+	// FileLocServerOrRemote is used when there's no keywords in SQL, which means the data file should be located on the
+	// tidb-server or on remote storage (S3 for example).
+	FileLocServerOrRemote FileLocRefTp = iota
 	// FileLocClient is used when there's LOCAL keyword in SQL, which means the data file should be located on the MySQL
 	// client.
 	FileLocClient
-	// FileLocRemote is used when there's REMOTE keyword in SQL, which means the data file should be located on a remote
-	// server, such as a cloud storage.
-	FileLocRemote
 )
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
@@ -1837,11 +1835,9 @@ type LoadDataStmt struct {
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
 	switch n.FileLocRef {
-	case FileLocServer:
+	case FileLocServerOrRemote:
 	case FileLocClient:
 		ctx.WriteKeyWord("LOCAL ")
-	case FileLocRemote:
-		ctx.WriteKeyWord("REMOTE ")
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)

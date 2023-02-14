@@ -54,7 +54,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -89,6 +88,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -668,12 +668,12 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	switch resp.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
+		resp.Auth, err = cc.authSha(ctx, resp)
 		if err != nil {
 			return err
 		}
 	case mysql.AuthTiDBSM3Password:
-		resp.Auth, err = cc.authSM3(ctx)
+		resp.Auth, err = cc.authSM3(ctx, resp)
 		if err != nil {
 			return err
 		}
@@ -727,13 +727,20 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 }
 
 // authSha implements the caching_sha2_password specific part of the protocol.
-func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
+func (cc *clientConn) authSha(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
 	const (
 		shaCommand       = 1
 		requestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
 		fastAuthOk       = 3
 		fastAuthFail     = 4
 	)
+
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
 
 	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
 	// This triggers the client to send the full response.
@@ -757,8 +764,16 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 }
 
 // authSM3 implements the tidb_sm3_password specific part of the protocol.
-func (cc *clientConn) authSM3(ctx context.Context) ([]byte, error) {
-	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4})
+// tidb_sm3_password is very similar to caching_sha2_password.
+func (cc *clientConn) authSM3(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
+
+	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4}) // fastAuthFail
 	if err != nil {
 		logutil.Logger(ctx).Error("authSM3 packet write failed", zap.Error(err))
 		return nil, err
@@ -1275,10 +1290,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
-	span := opentracing.StartSpan("server.dispatch")
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
-		ctx = opentracing.ContextWithSpan(ctx, span)
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		defer r.End()
 	}
 
 	var cancelFunc context.CancelFunc
@@ -1325,7 +1341,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 
 		cc.server.releaseToken(token)
-		span.Finish()
 		cc.lastActive = time.Now()
 	}()
 
@@ -2123,14 +2138,8 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	for _, column := range columns {
-		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
-		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
-		// TODO: fill the right DefaultValues.
-		column.DefaultValueLength = 0
-		column.DefaultValue = []byte{}
-
 		data = data[0:4]
-		data = column.Dump(data, cc.rsEncoder)
+		data = column.DumpWithDefault(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}

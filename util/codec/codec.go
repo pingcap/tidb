@@ -920,6 +920,9 @@ func DecodeAsFloat32(b []byte, tp byte) (remain []byte, d types.Datum, err error
 	}
 	var v float64
 	b, v, err = DecodeFloat(b)
+	if err != nil {
+		return nil, d, err
+	}
 	d.SetFloat32FromF64(v)
 	return b, d, nil
 }

@@ -51,6 +51,7 @@ const (
 	LabelDDLOwner  = "ddl-owner"
 	LabelDDL       = "ddl"
 	LabelDDLWorker = "ddl-worker"
+	LabelDistReorg = "dist-reorg"
 	LabelDDLSyncer = "ddl-syncer"
 	LabelGCWorker  = "gcworker"
 	LabelAnalyze   = "analyze"
@@ -195,6 +196,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -210,13 +212,17 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoIDReqDuration)
 	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
+	prometheus.MustRegister(AggressiveLockingUsageCount)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
 	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
+	prometheus.MustRegister(TTLInsertRowsCount)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
 
 	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)

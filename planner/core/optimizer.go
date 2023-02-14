@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,6 +75,7 @@ const (
 	flagPartitionProcessor
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
+	flagDeriveTopNFromWindow
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -95,6 +98,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
+	&deriveTopNFromWindow{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
@@ -747,14 +751,20 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 && uint64(logicalCpus) < minLogicalCores {
-				minLogicalCores = uint64(logicalCpus)
+			if err == nil && logicalCpus > 0 {
+				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		return true, minLogicalCores / 2
+		if runtime.GOARCH == "amd64" {
+			// In most x86-64 platforms, `Thread(s) per core` is 2
+			return true, minLogicalCores / 2
+		}
+		// ARM cpus don't implement Hyper-threading.
+		return true, minLogicalCores
+		// Other platforms are too rare to consider
 	}
 
 	return false, 0

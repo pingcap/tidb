@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -59,9 +60,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -82,8 +85,9 @@ const (
 
 	batchAddingJobs = 10
 
-	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	reorgWorkerCnt    = 10
+	generalWorkerCnt  = 1
+	backfillWorkerCnt = 32
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -187,7 +191,7 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
-	CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
@@ -274,6 +278,8 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
+	backfillCtxPool      *backfillCtxPool
+	backfillWorkerPool   *spmc.Pool[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 }
@@ -329,6 +335,8 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
+	// backfillJobCh gets notification if any backfill jobs coming.
+	backfillJobCh chan struct{}
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -340,10 +348,11 @@ type ddlCtx struct {
 	// It holds the running DDL jobs ID.
 	runningJobIDs []string
 	// reorgCtx is used for reorganization.
-	reorgCtx struct {
-		sync.RWMutex
-		// reorgCtxMap maps job ID to reorg context.
-		reorgCtxMap map[int64]*reorgCtx
+	reorgCtx reorgContexts
+	// backfillCtx is used for backfill workers.
+	backfillCtx struct {
+		syncutil.RWMutex
+		jobCtxMap map[int64]*JobContext
 	}
 
 	jobCtx struct {
@@ -430,15 +439,15 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	ctx.setDDLLabelForTopSQL(jobQuery)
 }
 
-func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
+func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		ctx = NewJobContext()
-		dc.jobCtx.jobCtxMap[job.ID] = ctx
+		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForDiagnosis(job)
+	ctx.setDDLLabelForDiagnosis(jobType)
 }
 
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
@@ -466,31 +475,92 @@ func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	return NewJobContext()
 }
 
+func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
+	dc.backfillCtx.Lock()
+	delete(dc.backfillCtx.jobCtxMap, jobID)
+	dc.backfillCtx.Unlock()
+}
+
+func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
+	dc.backfillCtx.Lock()
+	defer dc.backfillCtx.Unlock()
+
+	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
+	for id := range dc.backfillCtx.jobCtxMap {
+		runningJobIDs = append(runningJobIDs, id)
+	}
+	return runningJobIDs
+}
+
+func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType model.ActionType) (*JobContext, bool) {
+	dc.backfillCtx.Lock()
+	defer dc.backfillCtx.Unlock()
+
+	jobCtx, existent := dc.backfillCtx.jobCtxMap[jobID]
+	if !existent {
+		dc.setDDLLabelForTopSQL(jobID, jobQuery)
+		dc.setDDLSourceForDiagnosis(jobID, jobType)
+		jobCtx = dc.jobContext(jobID)
+		dc.backfillCtx.jobCtxMap[jobID] = jobCtx
+	}
+	return jobCtx, existent
+}
+
+type reorgContexts struct {
+	sync.RWMutex
+	// reorgCtxMap maps job ID to reorg context.
+	reorgCtxMap map[int64]*reorgCtx
+}
+
+func getReorgCtx(reorgCtxs *reorgContexts, jobID int64) *reorgCtx {
+	reorgCtxs.RLock()
+	defer reorgCtxs.RUnlock()
+	return reorgCtxs.reorgCtxMap[jobID]
+}
+
+// TODO: Using getReorgCtx instead of dc.getReorgCtx.
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
 	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
-func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
+func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
 	rc := &reorgCtx{}
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
-	rc.setRowCount(r.Job.GetRowCount())
-	rc.setNextKey(r.StartKey)
-	rc.setCurrentElement(r.currElement)
+	rc.setRowCount(rowCount)
+	rc.setNextKey(startKey)
+	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
+	rc.references.Add(1)
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	dc.reorgCtx.reorgCtxMap[r.Job.ID] = rc
+	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
 }
 
-func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
+func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
+	rc := dc.getReorgCtx(bfJob.JobID)
+	if rc == nil {
+		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
+		dc.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, ele, bfJob.Meta.RowCount)
+	} else {
+		rc.references.Add(1)
+	}
+}
+
+func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	delete(dc.reorgCtx.reorgCtxMap, job.ID)
+	ctx, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		ctx.references.Sub(1)
+		if ctx.references.Load() == 0 {
+			delete(dc.reorgCtx.reorgCtxMap, jobID)
+		}
+	}
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
@@ -675,6 +745,24 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.wg.Run(d.startDispatchLoop)
 }
 
+func (d *ddl) prepareBackfillWorkers() error {
+	workerFactory := func() (pools.Resource, error) {
+		bk := newBackfillWorker(context.Background(), nil)
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_backfill_worker", metrics.CreateDDL)).Inc()
+		return bk, nil
+	}
+	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory, backfillWorkerCnt, backfillWorkerCnt, 0))
+	var err error
+	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
+		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
+	if err != nil {
+		return err
+	}
+	d.backfillJobCh = make(chan struct{}, 1)
+	d.wg.Run(d.startDispatchBackfillJobsLoop)
+	return nil
+}
+
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
@@ -698,10 +786,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		go d.startCleanDeadTableLock()
 	}
 
-	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL jobs. Besides, we also can do backfill jobs.
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		if err := d.EnableDDL(); err != nil {
+			return err
+		}
+
+		// TODO: Currently, it is only processed during initialization and is expected to be added to EnableDDL later.
+		if err := d.prepareBackfillWorkers(); err != nil {
 			return err
 		}
 	}
@@ -737,7 +830,7 @@ func (d *ddl) DisableDDL() error {
 			return err
 		}
 		if len(serverInfo) <= 1 {
-			return dbterror.ErrDDLSetting.GenWithStackByArgs("can not disable ddl when there is only one instance")
+			return dbterror.ErrDDLSetting.GenWithStackByArgs("disabling", "can not disable ddl owner when it is the only one tidb instance")
 		}
 		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
 	}
@@ -775,6 +868,12 @@ func (d *ddl) close() {
 	}
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()
+	}
+	if d.backfillCtxPool != nil {
+		d.backfillCtxPool.close()
+	}
+	if d.backfillWorkerPool != nil {
+		d.backfillWorkerPool.ReleaseAndWait()
 	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
@@ -882,7 +981,8 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
+		model.ActionReorganizePartition:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -891,15 +991,16 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (d *ddl) asyncNotifyWorker(job *model.Job) {
+func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
+	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
-	if d.isOwner() {
-		asyncNotify(d.ddlJobCh)
+	if dc.isOwner() {
+		asyncNotify(ch)
 	} else {
-		d.asyncNotifyByEtcd(addingDDLJobConcurrent, job)
+		dc.asyncNotifyByEtcd(etcdPath, jobID, jobType)
 	}
 }
 
@@ -968,7 +1069,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.asyncNotifyWorker(job)
+	d.asyncNotifyWorker(d.ddlJobCh, addingDDLJobConcurrent, job.ID, job.Type.String())
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
@@ -1582,6 +1683,18 @@ func (s *session) runInTxn(f func(*session) error) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("NotifyBeginTxnCh", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		v := val.(int)
+		if v == 1 {
+			mockDDLErrOnce = 1
+			TestNotifyBeginTxnCh <- struct{}{}
+		} else if v == 2 && mockDDLErrOnce == 1 {
+			<-TestNotifyBeginTxnCh
+			mockDDLErrOnce = 0
+		}
+	})
+
 	err = f(s)
 	if err != nil {
 		s.rollback()

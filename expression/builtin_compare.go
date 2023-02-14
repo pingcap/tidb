@@ -1556,6 +1556,37 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
+// Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
+// needs to decide to whether to skip the refining or skip plan-cache for safety.
+// For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
+// can be broken if the parameter changes to 1 after.
+func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (allowRefining bool) {
+	if !MaybeOverOptimized4PlanCache(ctx, args) {
+		return true // plan-cache disabled or no parameter in these args
+	}
+
+	// For these 2 cases below which may affect the index selection a lot, skip plan-cache,
+	// and for all other cases, skip the refining.
+	// 1. int-expr <cmp> string-const
+	// 2. int-expr <cmp> float/double/decimal-const
+	for conIdx := 0; conIdx < 2; conIdx++ {
+		if args[1-conIdx].GetType().EvalType() != types.ETInt {
+			continue // not a int-expr
+		}
+		if _, isCon := args[conIdx].(*Constant); !isCon {
+			continue // not a constant
+		}
+		conType := args[conIdx].GetType().EvalType()
+		if conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal {
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+	}
+
+	return false
+}
+
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
@@ -1569,13 +1600,15 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+
+	if !allowCmpArgsRefining4PlanCache(ctx, args) {
+		return args
+	}
+	// We should remove the mutable constant for correctness, because its value may be changed.
+	RemoveMutableConst(ctx, args)
+
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg1}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
@@ -1603,11 +1636,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
 			finalArg0 = arg0
@@ -1625,11 +1653,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg0.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1638,11 +1661,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg1}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg1.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)

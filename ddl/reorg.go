@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -76,6 +78,8 @@ type reorgCtx struct {
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
+
+	references atomicutil.Int32
 }
 
 // nullableKey can store <nil> kv.Key.
@@ -151,6 +155,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 // 1: add index
 // 2: alter column type
 // 3: clean global index
+// 4: reorganize partitions
 /*
  ddl goroutine >---------+
    ^                     |
@@ -204,7 +209,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo)
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.StartKey, reorgInfo.currElement, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
@@ -227,7 +232,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	case err := <-rc.doneCh:
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-			d.removeReorgCtx(job)
+			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount := rc.getRowCount()
@@ -242,7 +247,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		d.removeReorgCtx(job)
+		d.removeReorgCtx(job.ID)
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
@@ -252,7 +257,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		d.removeReorgCtx(job)
+		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
@@ -277,10 +282,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
 	partWarningsCount := rc.mu.warningsCount
-	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	rc.mu.Unlock()
+	warnings, warningsCount := job.GetWarnings()
+	warnings, warningsCount = mergeWarningsAndWarningsCount(partWarnings, warnings, partWarningsCount, warningsCount)
+	job.SetWarnings(warnings, warningsCount)
 }
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
@@ -299,6 +306,10 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
+		logutil.BgLogger().Debug("[ddl] update progress",
+			zap.Float64("progress", progress),
+			zap.Int64("addedRowCount", addedRowCount),
+			zap.Int64("totalCount", totalCount))
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
@@ -311,6 +322,8 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	case model.ActionModifyColumn:
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+	case model.ActionReorganizePartition:
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
 	}
 }
 
@@ -327,8 +340,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	rows, _, err := executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	var rows []chunk.Row
+	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
+		// if Reorganize Partition, only select number of rows from the selected partitions!
+		defs := tblInfo.Partition.DroppingDefinitions
+		partIDs := make([]string, 0, len(defs))
+		for _, def := range defs {
+			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
+		}
+		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+	} else {
+		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	}
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -338,7 +363,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
+func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
@@ -349,6 +374,10 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
 		return dbterror.ErrCancelledDDLJob
 	}
 
+	// If isDistReorg is true, we needn't check if it is owner.
+	if isDistReorg {
+		return nil
+	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))
@@ -671,7 +700,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.PartitionedTable, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -689,8 +718,9 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			return nil, errors.Trace(err)
 		}
 		pid = partitionIDs[0]
-		tb := tbl.(table.PartitionedTable).GetPartition(pid)
-		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
+		physTbl := tbl.GetPartition(pid)
+
+		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

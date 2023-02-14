@@ -45,7 +45,7 @@ const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET current_job_id = %?,
 		current_job_owner_id = %?,
 		current_job_start_time = %?,
-		current_job_status = 'waiting',
+		current_job_status = 'running',
 		current_job_status_update_time = %?,
 		current_job_ttl_expire = %?,
 		current_job_owner_hb_time = %?
@@ -153,7 +153,7 @@ func (m *JobManager) jobLoop() error {
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(getTaskManagerLoopTickerInterval())
+	taskCheckTicker := time.Tick(time.Second * 5)
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
@@ -161,6 +161,7 @@ func (m *JobManager) jobLoop() error {
 	m.taskManager.resizeWorkersWithSysVar()
 	for {
 		m.reportMetrics()
+		m.taskManager.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -534,6 +535,7 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 // It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
 func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*ttlJob, error) {
 	var expireTime time.Time
+	var jobID string
 
 	err := se.RunInTxn(ctx, func() error {
 		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
@@ -573,7 +575,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		jobID := uuid.New().String()
+		jobID = uuid.New().String()
 		jobExist := false
 		if len(tableStatus.CurrentJobID) > 0 {
 			// don't create new job if there is already one running
@@ -628,7 +630,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		return nil, err
 	}
 
-	job := m.createNewJob(expireTime, now, table)
+	job := m.createNewJob(jobID, expireTime, now, table)
 
 	// job is created, notify every scan managers to fetch new tasks
 	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
@@ -638,9 +640,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	return job, nil
 }
 
-func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
-	id := m.tableStatusCache.Tables[table.ID].CurrentJobID
-
+func (m *JobManager) createNewJob(id string, expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
 	return &ttlJob{
 		id:      id,
 		ownerID: m.id,
@@ -651,7 +651,7 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		// information from schema cache directly
 		tbl: table,
 
-		status: cache.JobStatusWaiting,
+		status: cache.JobStatusRunning,
 	}
 }
 

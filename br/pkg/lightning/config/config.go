@@ -343,32 +343,64 @@ type MaxError struct {
 	// In TiDB backend, this also includes all possible SQL errors raised from INSERT,
 	// such as unique key conflict when `on-duplicate` is set to `error`.
 	// When tolerated, the row causing the error will be skipped, and adds 1 to the counter.
+	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
-	// TODO Currently this is hard-coded to infinity.
-	Conflict atomic.Int64 `toml:"conflict" json:"-"`
+	// The default value is max int64, which means conflict errors will be recorded as much as possible.
+	// Sometime the actual number of conflict record logged will be greater than the value configured here,
+	// because conflict error data are recorded batch by batch.
+	// If the limit is reached in a single batch, the entire batch of records will be persisted before an error is reported.
+	Conflict atomic.Int64 `toml:"conflict" json:"conflict"`
 }
 
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+	defaultValMap := map[string]int64{
+		"syntax":   0,
+		"charset":  math.MaxInt64,
+		"type":     0,
+		"conflict": math.MaxInt64,
+	}
+	// set default value first
+	cfg.Syntax.Store(defaultValMap["syntax"])
+	cfg.Charset.Store(defaultValMap["charset"])
+	cfg.Type.Store(defaultValMap["type"])
+	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
-		if val < 0 {
-			val = 0
+		if val >= 0 {
+			// only set type error
+			cfg.Type.Store(val)
 		}
-		cfg.Syntax.Store(0)
-		cfg.Charset.Store(math.MaxInt64)
-		cfg.Type.Store(val)
-		cfg.Conflict.Store(math.MaxInt64)
 		return nil
 	case map[string]interface{}:
-		// TODO support stuff like `max-error = { charset = 1000, type = 1000 }` if proved useful.
+		// support stuff like `max-error = { charset = 1000, type = 1000 }`.
+		getVal := func(k string, v interface{}) int64 {
+			defaultVal, ok := defaultValMap[k]
+			if !ok {
+				return 0
+			}
+			iVal, ok := v.(int64)
+			if !ok || iVal < 0 {
+				return defaultVal
+			}
+			return iVal
+		}
+		for k, v := range val {
+			switch k {
+			case "type":
+				cfg.Type.Store(getVal(k, v))
+			case "conflict":
+				cfg.Conflict.Store(getVal(k, v))
+			}
+		}
+		return nil
 	default:
+		return errors.Errorf("invalid max-error '%v', should be an integer or a map of string:int64", v)
 	}
-	return errors.Errorf("invalid max-error '%v', should be an integer", v)
 }
 
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
@@ -436,6 +468,58 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 	}
 }
 
+// CompressionType is the config type of compression algorithm.
+type CompressionType int
+
+const (
+	// CompressionNone means no compression.
+	CompressionNone CompressionType = iota
+	// CompressionGzip means gzip compression.
+	CompressionGzip
+)
+
+func (t *CompressionType) UnmarshalTOML(v interface{}) error {
+	if val, ok := v.(string); ok {
+		return t.FromStringValue(val)
+	}
+	return errors.Errorf("invalid compression-type '%v', please choose valid option between ['gzip']", v)
+}
+
+func (t CompressionType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+func (t *CompressionType) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "":
+		*t = CompressionNone
+	case "gz", "gzip":
+		*t = CompressionGzip
+	default:
+		return errors.Errorf("invalid compression-type '%s', please choose valid option between ['gzip']", s)
+	}
+	return nil
+}
+
+func (t *CompressionType) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *CompressionType) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t CompressionType) String() string {
+	switch t {
+	case CompressionGzip:
+		return "gzip"
+	case CompressionNone:
+		return ""
+	default:
+		panic(fmt.Sprintf("invalid compression type '%d'", t))
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
 	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
@@ -445,20 +529,49 @@ type PostRestore struct {
 	Compact           bool        `toml:"compact" json:"compact"`
 }
 
+// StringOrStringSlice can unmarshal a TOML string as string slice with one element.
+type StringOrStringSlice []string
+
+func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
+	switch v := in.(type) {
+	case string:
+		*s = []string{v}
+	case []interface{}:
+		*s = make([]string, 0, len(v))
+		for _, vv := range v {
+			vs, ok := vv.(string)
+			if !ok {
+				return errors.Errorf("invalid string slice '%v'", in)
+			}
+			*s = append(*s, vs)
+		}
+	default:
+		return errors.Errorf("invalid string slice '%v'", in)
+	}
+	return nil
+}
+
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
-	Separator       string `toml:"separator" json:"separator"`
-	Delimiter       string `toml:"delimiter" json:"delimiter"`
-	Terminator      string `toml:"terminator" json:"terminator"`
-	Null            string `toml:"null" json:"null"`
-	Header          bool   `toml:"header" json:"header"`
-	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
-	NotNull         bool   `toml:"not-null" json:"not-null"`
-	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	Separator         string              `toml:"separator" json:"separator"`
+	Delimiter         string              `toml:"delimiter" json:"delimiter"`
+	Terminator        string              `toml:"terminator" json:"terminator"`
+	Null              StringOrStringSlice `toml:"null" json:"null"`
+	Header            bool                `toml:"header" json:"header"`
+	HeaderSchemaMatch bool                `toml:"header-schema-match" json:"header-schema-match"`
+	TrimLastSep       bool                `toml:"trim-last-separator" json:"trim-last-separator"`
+	NotNull           bool                `toml:"not-null" json:"not-null"`
+	// deprecated, use `escaped-by` instead.
+	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
+	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
+	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
 	StartingBy     string `toml:"-" json:"-"`
 	AllowEmptyLine bool   `toml:"-" json:"-"`
+	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
+	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
+	QuotedNullIsText bool
 }
 
 type MydumperRuntime struct {
@@ -551,6 +664,7 @@ type TikvImporter struct {
 	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	CompressKVPairs     CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
 	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
 	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
 	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
@@ -712,13 +826,15 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:       ",",
-				Delimiter:       `"`,
-				Header:          true,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
+				Separator:         ",",
+				Delimiter:         `"`,
+				Header:            true,
+				HeaderSchemaMatch: true,
+				NotNull:           false,
+				Null:              []string{`\N`},
+				BackslashEscape:   true,
+				EscapedBy:         `\`,
+				TrimLastSep:       false,
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
@@ -806,8 +922,16 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 		unusedGlobalKeyStrs[key.String()] = struct{}{}
 	}
 
+iterateUnusedKeys:
 	for _, key := range unusedConfigKeys {
 		keyStr := key.String()
+		switch keyStr {
+		// these keys are not counted as decoded by toml decoder, but actually they are decoded,
+		// because the corresponding unmarshal logic handles these key's decoding in a custom way
+		case "lightning.max-error.type",
+			"lightning.max-error.conflict":
+			continue iterateUnusedKeys
+		}
 		if _, found := unusedGlobalKeyStrs[keyStr]; found {
 			bothUnused = append(bothUnused, keyStr)
 		} else {
@@ -841,15 +965,30 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
-	if csv.BackslashEscape {
-		if csv.Separator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
+	if len(csv.EscapedBy) > 1 {
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
+	}
+	if csv.BackslashEscape && csv.EscapedBy == "" {
+		csv.EscapedBy = `\`
+	}
+	if !csv.BackslashEscape && csv.EscapedBy == `\` {
+		csv.EscapedBy = ""
+	}
+
+	// keep compatibility with old behaviour
+	if !csv.NotNull && len(csv.Null) == 0 {
+		csv.Null = []string{""}
+	}
+
+	if len(csv.EscapedBy) > 0 {
+		if csv.Separator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
-		if csv.Delimiter == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
+		if csv.Delimiter == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
-		if csv.Terminator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
+		if csv.Terminator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
 	}
 
