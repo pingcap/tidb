@@ -61,7 +61,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (s varchar(32), i INT);")
 
-	sql := fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
 	s.tk.MustExec(sql)
@@ -71,7 +71,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	))
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
-	sql = fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 		LINES TERMINATED BY '\n' IGNORE 100 LINES;`, gcsEndpoint)
 	s.tk.MustExec(sql)
@@ -80,7 +80,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
 
-	sql = fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/count-terminator-inside-quotes.csv?endpoint=%s' INTO TABLE load_csv.t
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/count-terminator-inside-quotes.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 		LINES TERMINATED BY '\n' IGNORE 2 LINES;`, gcsEndpoint)
 	s.tk.MustExec(sql)
