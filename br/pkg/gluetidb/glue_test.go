@@ -55,7 +55,6 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-
 	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos1, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
@@ -84,7 +83,6 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	})
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-
 	err = se.SplitBatchCreateTable(model.NewCIStr("test"), infos2, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return true
 	}))
@@ -114,9 +112,6 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists table_1")
 	tk.MustExec("drop table if exists table_2")
 	tk.MustExec("drop table if exists table_3")
-	tk.MustExec("drop table if exists table_4")
-	tk.MustExec("drop table if exists table_5")
-	tk.MustExec("drop table if exists table_6")
 
 	d := dom.DDL()
 	require.NotNil(t, d)
@@ -136,12 +131,34 @@ func TestSplitBatchCreateTable(t *testing.T) {
 
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/gluetidb/RestoreBatchCreateTableEntryTooLarge", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(true)"))
 	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return true
 	}))
 
 	require.NoError(t, err)
+	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
+	jobs := tk.MustQuery("admin show ddl jobs").Rows()
+	require.Greater(t, len(jobs), 3)
+	// check table_1
+	job1 := jobs[0]
+	require.Equal(t, "test", job1[1])
+	require.Equal(t, "tables_3", job1[2])
+	require.Equal(t, "create tables", job1[3])
+	require.Equal(t, "public", job1[4])
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/gluetidb/RestoreBatchCreateTableEntryTooLarge"))
+	//check table_2
+	job2 := jobs[1]
+	require.Equal(t, "test", job2[1])
+	require.Equal(t, "tables_2", job2[2])
+	require.Equal(t, "create tables", job2[3])
+	require.Equal(t, "public", job2[4])
+
+	//check table_3
+	job3 := jobs[2]
+	require.Equal(t, "test", job3[1])
+	require.Equal(t, "tables_1", job3[2])
+	require.Equal(t, "create tables", job3[3])
+	require.Equal(t, "public", job3[4])
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }

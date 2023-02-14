@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
@@ -223,15 +222,7 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.
 	var err error
 	d := domain.GetDomain(gs.se).DDL()
 
-	err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...)
-	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
-		if val.(bool) {
-			if len(infos) > 1 {
-				err = kv.ErrEntryTooLarge
-			}
-		}
-	})
-	if kv.ErrEntryTooLarge.Equal(err) {
+	if err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
 		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
 		if len(infos) == 1 {
 			return err

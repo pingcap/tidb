@@ -2556,6 +2556,13 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) error {
+	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+		if val.(bool) {
+			if len(infos) > 1 {
+				failpoint.Return(kv.ErrEntryTooLarge)
+			}
+		}
+	})
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
