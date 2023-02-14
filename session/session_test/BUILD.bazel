@@ -6,7 +6,6 @@ go_test(
     srcs = [
         "main_test.go",
         "session_test.go",
-        "temporary_table_test.go",
     ],
     flaky = True,
     shard_count = 4,
