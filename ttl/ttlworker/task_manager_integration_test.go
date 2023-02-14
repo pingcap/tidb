@@ -97,7 +97,7 @@ func TestParallelLockNewTask(t *testing.T) {
 				if err == nil {
 					successCounter.Add(1)
 				} else {
-					logutil.BgLogger().Error("lock new task with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new task with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
@@ -227,6 +227,41 @@ func TestTaskMetrics(t *testing.T) {
 
 	m.ReportMetrics()
 	out := &dto.Metric{}
-	require.NoError(t, metrics.RunningTaskCnt.Write(out))
+	require.NoError(t, metrics.DeletingTaskCnt.Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
+}
+
+func TestRescheduleWithError(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	// insert a wrong scan task with random table id
+	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", 613, 1)
+	tk.MustExec(sql)
+
+	isc := cache.NewInfoSchemaCache(time.Second)
+	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
+
+	// schedule in a task manager
+	scanWorker := ttlworker.NewMockScanWorker(t)
+	scanWorker.Start()
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
+	notify := make(chan struct{})
+	go func() {
+		m.RescheduleTasks(sessionFactory(), now)
+		notify <- struct{}{}
+	}()
+	timeout, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	select {
+	case <-timeout.Done():
+		require.Fail(t, "reschedule didn't finish in time")
+	case <-notify:
+	}
+	tk.MustQuery("select status from mysql.tidb_ttl_task").Check(testkit.Rows("waiting"))
 }

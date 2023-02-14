@@ -71,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -200,11 +201,12 @@ func main() {
 	}
 	setupLog()
 	setupExtensions()
+	setupStmtSummary()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		clusterID, err := config.GetAutoScalerClusterID()
 		terror.MustNil(err)
 
@@ -476,7 +478,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
@@ -881,4 +882,19 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func setupStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		err := stmtsummaryv2.Setup(&stmtsummaryv2.Config{
+			Filename:       instanceCfg.StmtSummaryFilename,
+			FileMaxSize:    instanceCfg.StmtSummaryFileMaxSize,
+			FileMaxDays:    instanceCfg.StmtSummaryFileMaxDays,
+			FileMaxBackups: instanceCfg.StmtSummaryFileMaxBackups,
+		})
+		if err != nil {
+			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
+		}
+	}
 }

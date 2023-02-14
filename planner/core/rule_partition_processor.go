@@ -110,7 +110,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptim
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr() (*tables.PartitionExpr, error)
+	PartitionExpr() *tables.PartitionExpr
 }
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
@@ -722,13 +722,11 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partExpr, err := tbl.(partitionTable).PartitionExpr()
-	if err != nil {
-		return nil, err
-	}
+	partExpr := tbl.(partitionTable).PartitionExpr()
 
 	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning)
 	var used map[int]struct{}
+	var err error
 	if partExpr.ForListPruning.ColPrunes == nil {
 		used, err = listPruner.findUsedListPartitions(conds)
 	} else {
@@ -955,10 +953,7 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 
 func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
 	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
-	partExpr, err := tbl.(partitionTable).PartitionExpr()
-	if err != nil {
-		return nil, err
-	}
+	partExpr := tbl.(partitionTable).PartitionExpr()
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {

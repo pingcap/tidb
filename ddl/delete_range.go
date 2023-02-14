@@ -266,7 +266,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job))
+	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
@@ -307,9 +307,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		elemID := ea.allocForPhysicalID(tableID)
 		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionReorganizePartition:
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		// partInfo is not used, but is set in ReorgPartition.
+		// Better to have an additional argument in job.DecodeArgs since it is ignored,
+		// instead of having one to few, which will remove the data from the job arguments...
+		var partInfo model.PartitionInfo
+		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
 			return errors.Trace(err)
 		}
 		for _, physicalTableID := range physicalTableIDs {

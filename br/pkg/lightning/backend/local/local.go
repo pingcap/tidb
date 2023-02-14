@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -130,18 +132,25 @@ type ImportClientFactory interface {
 }
 
 type importClientFactoryImpl struct {
-	conns          *common.GRPCConns
-	splitCli       split.SplitClient
-	tls            *common.TLS
-	tcpConcurrency int
+	conns           *common.GRPCConns
+	splitCli        split.SplitClient
+	tls             *common.TLS
+	tcpConcurrency  int
+	compressionType config.CompressionType
 }
 
-func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+func newImportClientFactoryImpl(
+	splitCli split.SplitClient,
+	tls *common.TLS,
+	tcpConcurrency int,
+	compressionType config.CompressionType,
+) *importClientFactoryImpl {
 	return &importClientFactoryImpl{
-		conns:          common.NewGRPCConns(),
-		splitCli:       splitCli,
-		tls:            tls,
-		tcpConcurrency: tcpConcurrency,
+		conns:           common.NewGRPCConns(),
+		splitCli:        splitCli,
+		tls:             tls,
+		tcpConcurrency:  tcpConcurrency,
+		compressionType: compressionType,
 	}
 }
 
@@ -150,11 +159,14 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+	var opts []grpc.DialOption
 	if f.tls.TLSConfig() != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig())))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
@@ -163,10 +175,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
-	conn, err := grpc.DialContext(
-		ctx,
-		addr,
-		opt,
+	opts = append(opts,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -174,7 +183,26 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			PermitWithoutStream: true,
 		}),
 	)
-	cancel()
+	switch f.compressionType {
+	case config.CompressionNone:
+	// do nothing
+	case config.CompressionGzip:
+		opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)))
+	default:
+		return nil, common.ErrInvalidConfig.GenWithStack("unsupported compression type %s", f.compressionType)
+	}
+
+	failpoint.Inject("LoggingImportBytes", func() {
+		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, target string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
+			if err != nil {
+				return nil, err
+			}
+			return &loggingConn{Conn: conn}, nil
+		}))
+	})
+
+	conn, err := grpc.DialContext(ctx, addr, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -198,6 +226,15 @@ func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (s
 
 func (f *importClientFactoryImpl) Close() {
 	f.conns.Close()
+}
+
+type loggingConn struct {
+	net.Conn
+}
+
+func (c loggingConn) Write(b []byte) (int, error) {
+	log.L().Debug("import write", zap.Int("bytes", len(b)))
+	return c.Conn.Write(b)
 }
 
 // Range record start and end key for localStoreDir.DB
@@ -479,7 +516,7 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
+	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency, cfg.TikvImporter.CompressKVPairs)
 	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if duplicateDetection {
@@ -1656,6 +1693,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
+		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+			needSplit = true
+		})
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -2063,7 +2103,8 @@ func nextKey(key []byte) []byte {
 
 	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
 	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
-	if tablecodec.IsRecordKey(key) {
+	// we only do this for IntHandle, which is checked by length
+	if tablecodec.IsRecordKey(key) && len(key) == tablecodec.RecordRowKeyLen {
 		tableID, handle, _ := tablecodec.DecodeRecordKey(key)
 		nextHandle := handle.Next()
 		// int handle overflow, use the next table prefix as nextKey
@@ -2073,7 +2114,7 @@ func nextKey(key []byte) []byte {
 		return tablecodec.EncodeRowKeyWithHandle(tableID, nextHandle)
 	}
 
-	// if key is an index, directly append a 0x00 to the key.
+	// for index key and CommonHandle, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)

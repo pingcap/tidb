@@ -1918,12 +1918,7 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	}
 
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := partTable.PartitionExpr()
-	if err != nil {
-		return nil
-	}
-
-	return partitionExpr
+	return partTable.PartitionExpr()
 }
 
 func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
@@ -1940,10 +1935,7 @@ func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInf
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := table.(partitionTable).PartitionExpr()
-	if err != nil {
-		return nil
-	}
+	partitionExpr := table.(partitionTable).PartitionExpr()
 	if pi.Type == model.PartitionTypeKey {
 		if len(pi.Columns) != 1 {
 			return nil

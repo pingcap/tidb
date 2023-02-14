@@ -34,8 +34,8 @@ go_library(
         "//util/logutil",
         "//util/memory",
         "//util/ranger",
+        "//util/tracing",
         "//util/trxevents",
-        "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -64,6 +64,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         "//kv",
         "//parser/charset",

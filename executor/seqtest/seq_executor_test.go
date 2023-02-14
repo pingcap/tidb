@@ -624,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
