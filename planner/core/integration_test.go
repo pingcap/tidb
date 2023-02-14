@@ -8431,6 +8431,7 @@ func TestIssue40285(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;")
 	tk.MustQuery("(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);")
 }
+
 // https://github.com/pingcap/tidb/issues/41273
 func TestIssue41273(t *testing.T) {
 	store := testkit.CreateMockStore(t)
