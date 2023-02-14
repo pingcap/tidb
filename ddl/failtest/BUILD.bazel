@@ -2,12 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "failtest_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "fail_db_test.go",
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 14,
     deps = [
         "//config",
         "//ddl",
