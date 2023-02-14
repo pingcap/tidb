@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "binary_plan_test.go",
         "cbo_test.go",
+        "enforce_mpp_test.go",
         "expression_rewriter_test.go",
         "main_test.go",
         "plan_test.go",
@@ -37,6 +38,7 @@ go_test(
         "//planner/core/internal",
         "//planner/property",
         "//session",
+        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//statistics",
@@ -46,6 +48,7 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
+        "//util/collate",
         "//util/hint",
         "//util/logutil",
         "//util/mock",
