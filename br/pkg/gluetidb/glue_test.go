@@ -118,12 +118,15 @@ func TestSplitBatchCreateTable(t *testing.T) {
 
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
+		ID:   1234,
 		Name: model.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
+		ID:   1235,
 		Name: model.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
+		ID:   1236,
 		Name: model.NewCIStr("tables_3"),
 	})
 
@@ -133,7 +136,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(true)"))
 	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
-		return true
+		return false
 	}))
 
 	require.NoError(t, err)
@@ -147,18 +150,24 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	require.Equal(t, "create tables", job1[3])
 	require.Equal(t, "public", job1[4])
 
-	//check table_2
+	// check table_2
 	job2 := jobs[1]
 	require.Equal(t, "test", job2[1])
 	require.Equal(t, "tables_2", job2[2])
 	require.Equal(t, "create tables", job2[3])
 	require.Equal(t, "public", job2[4])
 
-	//check table_3
+	// check table_3
 	job3 := jobs[2]
 	require.Equal(t, "test", job3[1])
 	require.Equal(t, "tables_1", job3[2])
 	require.Equal(t, "create tables", job3[3])
 	require.Equal(t, "public", job3[4])
+
+	// check reused table id
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").Check(testkit.Rows("1234"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").Check(testkit.Rows("1235"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").Check(testkit.Rows("1236"))
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
