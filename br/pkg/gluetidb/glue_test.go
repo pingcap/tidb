@@ -33,7 +33,8 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("drop table if exists table_id_resued")
+	tk.MustExec("drop table if exists table_id_new")
 
 	d := dom.DDL()
 	require.NotNil(t, d)
