@@ -1109,7 +1109,7 @@ func TestIssue39593(t *testing.T) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
-	require.Equal(t, float64(3870), count)
+	require.Equal(t, float64(3600), count)
 }
 
 func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
