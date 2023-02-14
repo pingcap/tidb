@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle_test
+package updatetest_test
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -144,63 +145,6 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 }
 
-func assertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
-	require.Equal(t, b.Count, a.Count)
-	require.Equal(t, b.ModifyCount, a.ModifyCount)
-	require.Len(t, a.Columns, len(b.Columns))
-	for i := range a.Columns {
-		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
-		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
-		if a.Columns[i].CMSketch == nil {
-			require.Nil(t, b.Columns[i].CMSketch)
-		} else {
-			require.True(t, a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch))
-		}
-		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		require.Truef(t, a.Columns[i].TopN.Equal(b.Columns[i].TopN), "%v, %v", a.Columns[i].TopN, b.Columns[i].TopN)
-	}
-	require.Len(t, a.Indices, len(b.Indices))
-	for i := range a.Indices {
-		require.True(t, statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false))
-		if a.Indices[i].CMSketch == nil {
-			require.Nil(t, b.Indices[i].CMSketch)
-		} else {
-			require.True(t, a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch))
-		}
-		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
-	}
-	require.True(t, isSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
-}
-
-func isSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
-	aEmpty := (a == nil) || len(a.Stats) == 0
-	bEmpty := (b == nil) || len(b.Stats) == 0
-	if (aEmpty && !bEmpty) || (!aEmpty && bEmpty) {
-		return false
-	}
-	if aEmpty && bEmpty {
-		return true
-	}
-	if len(a.Stats) != len(b.Stats) {
-		return false
-	}
-	for aKey, aItem := range a.Stats {
-		bItem, ok := b.Stats[aKey]
-		if !ok {
-			return false
-		}
-		for i, id := range aItem.ColIDs {
-			if id != bItem.ColIDs[i] {
-				return false
-			}
-		}
-		if (aItem.Tp != bItem.Tp) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
-			return false
-		}
-	}
-	return true
-}
-
 func TestStatsStoreAndLoad(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -226,7 +170,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, int64(recordCount), statsTbl2.Count)
-	assertTableEqual(t, statsTbl1, statsTbl2)
+	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
 }
 
 func TestEmptyTable(t *testing.T) {
@@ -510,7 +454,7 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	assertTableEqual(t, table0, table1)
+	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
 
@@ -540,7 +484,7 @@ func TestInitStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	assertTableEqual(t, table0, table1)
+	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
 
@@ -2484,7 +2428,7 @@ func TestFeedbackWithGlobalStats(t *testing.T) {
 		statsTblAfter := h.GetTableStats(tblInfo)
 		// assert that statistics not changed
 		// the feedback can not work for the partition table in both static and dynamic mode
-		assertTableEqual(t, statsBefore, statsTblAfter)
+		internal.AssertTableEqual(t, statsBefore, statsTblAfter)
 	}
 
 	// Case 2: Feedback wouldn't be applied on version 2 and global-level statistics.
