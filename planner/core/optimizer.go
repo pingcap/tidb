@@ -1224,24 +1224,28 @@ func init() {
 
 // checkCanUseReuseChunk Check if chunk reuse can be used.
 func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
-	if !sctx.GetSessionVars().CheckAlloc() {
+	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
 
-	if checkReadType(sctx, plan) {
+	if checkOverlongColType(sctx, plan) {
 		return
 	}
 
 	for _, child := range plan.Children() {
-		checkCanUseReuseChunk(ctx, sctx, child)
+		disableReuseChunkIfNeeded(sctx, child)
 	}
 }
 
-// checkOverlongColType Check if read field type is too long.
+// checkOverlongColType Check if read field type is long field.
 func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
 	switch plan.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGet:
-		if existsOverlongType(plan.Schema().Columns) {
+	case *PhysicalTableReader, *PhysicalIndexReader,
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true
 		}
@@ -1249,13 +1253,21 @@ func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
 	return false
 }
 
-func existsOverlongType(columns []*expression.Column) bool {
-	for _, column := range columns {
+// existsOverlongType Check if exists long type column.
+func existsOverlongType(schema *expression.Schema) bool {
+	if schema == nil {
+		return false
+	}
+	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON:
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
+			// if the column is varchar and the length of
+			// the column is defined to be more than 1000,
+			// the column is considered a large type and
+			// disable chunk_reuse.
 			if column.RetType.GetFlen() > 1000 {
 				return true
 			}

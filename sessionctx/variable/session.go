@@ -1427,7 +1427,7 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	s.ChunkPool.Alloc = alloc
 }
 
-// CheckAlloc check if alloc is enable
+// CheckAlloc check if chunk reuse is enable or ChunkPool is inused.
 func (s *SessionVars) IsAllocValid() bool {
 	if !s.EnableReuseCheck {
 		return false
