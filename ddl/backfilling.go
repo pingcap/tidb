@@ -155,6 +155,7 @@ type reorgBackfillTask struct {
 	startKey        kv.Key
 	endKey          kv.Key
 	endInclude      bool
+	source          string
 }
 
 func (r *reorgBackfillTask) excludedEndKey() kv.Key {
@@ -498,6 +499,7 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	}
 	// Build reorg tasks.
 	job := reorgInfo.Job
+	source := getDDLRequestSource(job)
 	for i, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
 		endK, err := getRangeEndKey(scheduler.jobCtx, dc.store, job.Priority, prefix, keyRange.StartKey, endKey)
@@ -515,7 +517,9 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 			startKey:        keyRange.StartKey,
 			endKey:          endKey,
 			// If the boundaries overlap, we should ignore the preceding endKey.
-			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
+			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1,
+			source:     source,
+		}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= backfillTaskChanSize {
