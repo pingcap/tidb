@@ -631,6 +631,7 @@ func buildBatchCopTasksConsistentHash(
 	storeType kv.StoreType,
 	ttl time.Duration,
 	dispatchPolicy int) (res []*batchCopTask, err error) {
+	failpointCheckWhichPolicy(dispatchPolicy)
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	cache := kvStore.GetRegionCache()
@@ -768,6 +769,17 @@ func failpointCheckForConsistentHash(tasks []*batchCopTask) {
 				err := errors.Errorf("batchCopTask send to node which is not tiflash_compute: %v(tiflash_compute nodes: %s)", batchTask.storeAddr, str)
 				panic(err)
 			}
+		}
+	})
+}
+
+func failpointCheckWhichPolicy(act int) {
+	failpoint.Inject("testWhichDispatchPolicy", func(exp failpoint.Value) {
+		expStr := exp.(string)
+		actStr := tiflashcompute.GetDispatchPolicy(act)
+		if actStr != expStr {
+			err := errors.Errorf("tiflash_compute dispatch should be %v, but got %v", expStr, actStr)
+			panic(err)
 		}
 	})
 }
@@ -1240,6 +1252,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	storeType kv.StoreType,
 	ttl time.Duration,
 	dispatchPolicy int) (res []*batchCopTask, err error) {
+	failpointCheckWhichPolicy(dispatchPolicy)
 	const cmdType = tikvrpc.CmdBatchCop
 	var (
 		retryNum        int

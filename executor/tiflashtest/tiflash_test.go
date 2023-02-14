@@ -1452,3 +1452,68 @@ func TestMPPMemoryTracker(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }
+
+func TestTiFlashComputeDispatchPolicy(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default policy is 'consistent_hash'
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
+
+	// tiflash_compute_dispatch_policy is global variable.
+	err := tk.ExecToErr("set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';")
+	require.Error(t, err)
+	require.Equal(t, "[variable:1229]Variable 'tiflash_compute_dispatch_policy' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+
+	// Invalid values.
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = 'error_dispatch_policy';")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got error_dispatch_policy", err.Error())
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = '';")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got ", err.Error())
+	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = 100;")
+	require.Error(t, err)
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got 100", err.Error())
+
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	require.NoError(t, err)
+
+	useASs := []bool{true, false}
+	// Valid values.
+	for _, useAS := range useASs {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.UseAutoScaler = useAS
+		})
+		validPolicies := tiflashcompute.GetValidDispatchPolicy()
+		for _, p := range validPolicies {
+			tk.MustExec(fmt.Sprintf("set global tiflash_compute_dispatch_policy = '%s';", p))
+			tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows(fmt.Sprintf("%s", p)))
+			failpoint.Enable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy", fmt.Sprintf(`return("%s")`, p))
+			err = tk.ExecToErr("select * from t;")
+			if useAS {
+				// Expect error, because TestAutoScaler return empty topo.
+				require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+			} else {
+				// This error message means we use PD instead of AutoScaler.
+				require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
+			}
+		}
+	}
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy")
+}

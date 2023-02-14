@@ -211,6 +211,60 @@ func TestConsistentHash(t *testing.T) {
 	}
 }
 
+func TestDispatchPolicyRR(t *testing.T) {
+	allAddrs := generateDifferentAddrs(100)
+	for i := 0; i < 100; i++ {
+		regCnt := rand.Intn(10000)
+		regIDs := make([]tikv.RegionVerID, 0, regCnt)
+		for i := 0; i < regCnt; i++ {
+			regIDs = append(regIDs, tikv.NewRegionVerID(uint64(i), 0, 0))
+		}
+
+		rpcCtxs, err := getTiFlashComputeRPCContextByRoundRobinHelper(regIDs, allAddrs)
+		require.NoError(t, err)
+		require.Equal(t, len(rpcCtxs), len(regIDs))
+		checkMap := make(map[string]int, len(rpcCtxs))
+		for _, c := range rpcCtxs {
+			if v, ok := checkMap[c.Addr]; !ok {
+				checkMap[c.Addr] = 1
+			} else {
+				checkMap[c.Addr] = v+1
+			}
+		}
+		actCnt := 0
+		for _, v := range checkMap {
+			actCnt += v
+		}
+		require.Equal(t, regCnt, actCnt)
+		if len(regIDs) < len(allAddrs) {
+			require.Equal(t, len(regIDs), len(checkMap))
+			exp := -1
+			for _, v := range checkMap {
+				if exp == -1 {
+					exp = v
+				} else {
+					require.Equal(t, exp, v)
+				}
+			}
+		} else {
+			// Using RR, it means region cnt for each tiflash_compute node should be almost same.
+			minV := regCnt
+			for _, v := range checkMap {
+				if v < minV {
+					minV = v
+				}
+			}
+			for k, v := range checkMap {
+				checkMap[k] = v - minV
+			}
+			for _, v := range checkMap {
+				require.True(t, v == 0 || v == 1)
+			}
+		}
+
+	}
+}
+
 func TestTopoFetcherBackoff(t *testing.T) {
 	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
 	expectErr := errors.New("Cannot find proper topo from AutoScaler")
