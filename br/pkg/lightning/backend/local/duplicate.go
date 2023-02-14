@@ -1095,15 +1095,15 @@ func (m *DuplicateManager) resolveDuplicateRows(ctx context.Context, tableName s
 	}
 }
 
-func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [][2][]byte) error {
+func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [][2][]byte) (retErr error) {
 	// Starts a Delete transaction.
 	txn, err := m.tikvCli.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
+		if retErr == nil {
+			retErr = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
 				m.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
