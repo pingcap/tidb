@@ -204,13 +204,11 @@ type AbstractBackend interface {
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 
-	// ResolveLocalDuplicateRows resolves local duplicate rows by deleting all corresponding data in table.
-	// This is a fast path for non-incremental import. Caller doesn't need to call CollectLocalDuplicateRows.
-	ResolveLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	// CollectRemoteDuplicateRowsToLocal collects duplicate rows from remote TiDB and writes them into local duplicate db.
+	CollectRemoteDuplicateRowsToLocal(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
 
-	// ResolveRemoteDuplicateRows resolves remote duplicate rows by deleting all corresponding data in table.
-	// This is a fast path for non-incremental import. Caller doesn't need to call CollectRemoteDuplicateRows.
-	ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	// ResolveLocalDuplicateRows resolves local duplicate rows by deleting all corresponding data in table.
+	ResolveLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
@@ -394,8 +392,8 @@ func (be Backend) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Table
 	return be.abstract.ResolveLocalDuplicateRows(ctx, tbl, tableName, opts)
 }
 
-func (be Backend) ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
-	return be.abstract.ResolveRemoteDuplicateRows(ctx, tbl, tableName, opts)
+func (be Backend) CollectRemoteDuplicateRowsToLocal(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	return be.abstract.CollectRemoteDuplicateRowsToLocal(ctx, tbl, tableName, opts)
 }
 
 func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {

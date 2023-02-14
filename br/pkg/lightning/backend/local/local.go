@@ -103,8 +103,9 @@ const (
 	// the lower threshold of max open files for pebble db.
 	openFilesLowerThreshold = 128
 
-	duplicateDBName = "duplicates"
-	scanRegionLimit = 128
+	duplicateDBName       = "duplicates"
+	remoteDuplicateDBName = "remote_duplicates"
+	scanRegionLimit       = 128
 )
 
 var (
@@ -370,6 +371,7 @@ type local struct {
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
 	duplicateDB         *pebble.DB
+	remoteDuplicateDB   *pebble.DB
 	keyAdapter          KeyAdapter
 	errorMgr            *errormanager.ErrorManager
 	importClientFactory ImportClientFactory
@@ -385,6 +387,17 @@ type local struct {
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
+	// TODO: Optimize the opts for better write.
+	opts := &pebble.Options{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+	}
+	return pebble.Open(dbPath, opts)
+}
+
+func openRemoteDuplicateDB(storeDir string) (*pebble.DB, error) {
+	dbPath := filepath.Join(storeDir, remoteDuplicateDBName)
 	// TODO: Optimize the opts for better write.
 	opts := &pebble.Options{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
@@ -437,9 +450,13 @@ func NewLocalBackend(
 		}
 	}
 
-	var duplicateDB *pebble.DB
+	var duplicateDB, remoteDuplicateDB *pebble.DB
 	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
+		if err != nil {
+			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
+		}
+		remoteDuplicateDB, err = openRemoteDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
@@ -495,6 +512,7 @@ func NewLocalBackend(
 		duplicateDetection:      duplicateDetection,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
+		remoteDuplicateDB:       remoteDuplicateDB,
 		keyAdapter:              keyAdapter,
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
@@ -1654,17 +1672,20 @@ func (local *local) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.deleteDuplicateRows)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.duplicateDB, local.keyAdapter); err != nil {
 		return false, errors.Trace(err)
 	}
+	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.remoteDuplicateDB, local.keyAdapter); err != nil {
+		return false, errors.Trace(err)
+	}
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *local) CollectRemoteDuplicateRowsToLocal(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] resolve remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1672,11 +1693,12 @@ func (local *local) ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.deleteDuplicateRows)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.ResolveRemoteDuplicateRows(ctx, local.importClientFactory); err != nil {
+
+	if err := duplicateManager.CollectRemoteDuplicateRowsToLocal(ctx, local.importClientFactory, local.remoteDuplicateDB, local.keyAdapter); err != nil {
 		return false, errors.Trace(err)
 	}
 	return atomicHasDupe.Load(), nil
@@ -1690,7 +1712,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.deleteDuplicateRows)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1708,7 +1730,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.deleteDuplicateRows)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
 	}

@@ -778,10 +778,10 @@ func (tr *TableRestore) postProcess(
 		// 4.5. do duplicate detection.
 		hasDupe := false
 
-		// For non-incremental import, we can skip collecting duplicate rows and resolve them directly.
-		resolveDirectly := !rc.cfg.TikvImporter.IncrementalImport && rc.cfg.TikvImporter.DuplicateResolution == config.DupeResAlgRemove
+		// For non-incremental import, we can skip record duplicate rows to downstream TiDB.
+		collectDupeToLocal := !rc.cfg.TikvImporter.IncrementalImport && rc.cfg.TikvImporter.DuplicateResolution == config.DupeResAlgRemove
 
-		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone && !resolveDirectly {
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone && !collectDupeToLocal {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
@@ -806,17 +806,11 @@ func (tr *TableRestore) postProcess(
 				SysVars: rc.sysVars,
 			}
 
-			if resolveDirectly {
-				hasLocalDupe, err := rc.backend.ResolveLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
-				if err != nil {
-					return false, err
-				}
-				hasDupe = hasDupe || hasLocalDupe
-
+			if collectDupeToLocal {
 				diskQuotaEnabled := rc.cfg.TikvImporter.DiskQuota != math.MaxInt64
 				hasMultipleDataEngines := len(cp.Engines) > 2
 				if diskQuotaEnabled || hasMultipleDataEngines {
-					hasRemoteDupe, err := rc.backend.ResolveRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+					hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRowsToLocal(ctx, tr.encTable, tr.tableName, opts)
 					if err != nil {
 						return false, err
 					}
@@ -824,6 +818,12 @@ func (tr *TableRestore) postProcess(
 				} else {
 					tr.logger.Info("skip remote duplicate detection, because disk quota is disabled and there is only one data engine")
 				}
+
+				hasLocalDupe, err := rc.backend.ResolveLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+				if err != nil {
+					return false, err
+				}
+				hasDupe = hasDupe || hasLocalDupe
 			} else {
 				hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 				if e != nil {

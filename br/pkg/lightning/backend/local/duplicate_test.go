@@ -53,7 +53,7 @@ func TestBuildDupTask(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, nil,
-			tc.sessOpt, 4, atomic.NewBool(false), log.FromContext(context.Background()), nil)
+			tc.sessOpt, 4, atomic.NewBool(false), log.FromContext(context.Background()))
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)

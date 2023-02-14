@@ -125,6 +125,21 @@ func (mr *MockBackendMockRecorder) CollectRemoteDuplicateRows(arg0, arg1, arg2, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectRemoteDuplicateRows", reflect.TypeOf((*MockBackend)(nil).CollectRemoteDuplicateRows), arg0, arg1, arg2, arg3)
 }
 
+// CollectRemoteDuplicateRowsToLocal mocks base method.
+func (m *MockBackend) CollectRemoteDuplicateRowsToLocal(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRowsToLocal", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CollectRemoteDuplicateRowsToLocal indicates an expected call of CollectRemoteDuplicateRowsToLocal.
+func (mr *MockBackendMockRecorder) CollectRemoteDuplicateRowsToLocal(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectRemoteDuplicateRowsToLocal", reflect.TypeOf((*MockBackend)(nil).CollectRemoteDuplicateRowsToLocal), arg0, arg1, arg2, arg3)
+}
+
 // EngineFileSizes mocks base method.
 func (m *MockBackend) EngineFileSizes() []backend.EngineFileSize {
 	m.ctrl.T.Helper()
@@ -295,21 +310,6 @@ func (m *MockBackend) ResolveLocalDuplicateRows(arg0 context.Context, arg1 table
 func (mr *MockBackendMockRecorder) ResolveLocalDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveLocalDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveLocalDuplicateRows), arg0, arg1, arg2, arg3)
-}
-
-// ResolveRemoteDuplicateRows mocks base method.
-func (m *MockBackend) ResolveRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResolveRemoteDuplicateRows", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ResolveRemoteDuplicateRows indicates an expected call of ResolveRemoteDuplicateRows.
-func (mr *MockBackendMockRecorder) ResolveRemoteDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveRemoteDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveRemoteDuplicateRows), arg0, arg1, arg2, arg3)
 }
 
 // RetryImportDelay mocks base method.
