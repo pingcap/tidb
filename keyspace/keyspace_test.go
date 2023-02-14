@@ -18,25 +18,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 )
 
-type keyspaceSuite struct {
-	suite.Suite
-}
+func TestSetKeyspaceNameInConf(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = ""
+	})
 
-func TestSetKeyspaceName(t *testing.T) {
-	suite.Run(t, new(keyspaceSuite))
-}
-
-func (k *keyspaceSuite) TearDownTest() {
-	// Clear keyspace setting
-	conf := config.GetGlobalConfig()
-	conf.KeyspaceName = ""
-	config.StoreGlobalConfig(conf)
-}
-
-func (k *keyspaceSuite) TestSetKeyspaceNameInConf() {
 	keyspaceNameInCfg := "test_keyspace_cfg"
 
 	// Set KeyspaceName in conf
@@ -47,13 +36,17 @@ func (k *keyspaceSuite) TestSetKeyspaceNameInConf() {
 
 	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals keyspaceNameInCfg which is in conf.
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
-	k.Equal(keyspaceNameInCfg, getKeyspaceName)
-	k.Equal(false, IsKeyspaceNameEmpty(getKeyspaceName))
+	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
+	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
 }
 
-func (k *keyspaceSuite) TestNoKeyspaceNameSet() {
+func TestNoKeyspaceNameSet(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = ""
+	})
+
 	getKeyspaceName := GetKeyspaceNameBySettings()
 
-	k.Equal("", getKeyspaceName)
-	k.Equal(true, IsKeyspaceNameEmpty(getKeyspaceName))
+	require.Equal(t, "", getKeyspaceName)
+	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
 }
