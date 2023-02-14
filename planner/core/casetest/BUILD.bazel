@@ -55,6 +55,7 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
+        "//util",
         "//util/collate",
         "//util/hint",
         "//util/logutil",

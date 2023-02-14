@@ -16,6 +16,7 @@ package internal
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -73,4 +74,18 @@ func WithMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
+}
+
+// GetFieldValue is to get field value.
+func GetFieldValue(prefix, row string) string {
+	if idx := strings.Index(row, prefix); idx > 0 {
+		start := idx + len(prefix)
+		end := strings.Index(row[start:], " ")
+		if end > 0 {
+			value := row[start : start+end]
+			value = strings.Trim(value, ",")
+			return value
+		}
+	}
+	return ""
 }

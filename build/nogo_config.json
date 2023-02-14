@@ -273,6 +273,7 @@
   "ineffassign": {
     "exclude_files": {
       "external/": "no need to vet third party code",
+      "cgo/": "no need to vet cgo code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
