@@ -231,8 +231,7 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		int64(config.ReadBlockSize),
 		nil,
 		false,
-		// LOAD DATA arguments can only be ASCII, no need to convert
-		// TODO: do we need to convert charset for fields?
+		// TODO: support charset conversion
 		nil)
 	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
@@ -765,21 +764,27 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataInfo.
 func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
+	var nullDef []string
+	if e.FieldsInfo.Enclosed != 0 {
+		nullDef = append(nullDef, "NULL")
+	}
+	if e.FieldsInfo.Escaped != 0 {
+		nullDef = append(nullDef, string([]byte{e.FieldsInfo.Escaped, 'N'}))
+	}
 	return &config.CSVConfig{
 		Separator: e.FieldsInfo.Terminated,
 		// ignore optionally enclosed
-		Delimiter:  string([]byte{e.FieldsInfo.Enclosed}),
-		Terminator: e.LinesInfo.Terminated,
-		NotNull:    false,
-		// TODO: If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value
-		// If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
-		Null:        `\N`,
-		Header:      false,
-		TrimLastSep: false,
-		// TODO: escaped is not \
-		BackslashEscape: e.FieldsInfo.Escaped == '\\',
-		StartingBy:      e.LinesInfo.Starting,
-		AllowEmptyLine:  true,
+		Delimiter:      string([]byte{e.FieldsInfo.Enclosed}),
+		Terminator:     e.LinesInfo.Terminated,
+		NotNull:        false,
+		Null:           nullDef,
+		Header:         false,
+		TrimLastSep:    false,
+		EscapedBy:      string([]byte{e.FieldsInfo.Escaped}),
+		StartingBy:     e.LinesInfo.Starting,
+		AllowEmptyLine: true,
+		// TODO: set it through NULL DEFINED BY OPTIONALLY ENCLOSED
+		QuotedNullIsText: true,
 	}
 }
 
@@ -815,230 +820,6 @@ func (s *SimpleSeekerOnReadCloser) Seek(offset int64, whence int) (int64, error)
 // Close implements io.Closer.
 func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
-}
-
-// TODO: remove this
-type field struct {
-	str       []byte
-	maybeNull bool
-	enclosed  bool
-}
-
-func (f *field) isNull() bool {
-	// The field with only "\N" in it is handled as NULL in the csv file.
-	// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-	return f.maybeNull && len(f.str) == 1 && f.str[0] == 'N'
-}
-
-// TODO: remove this
-type fieldWriter struct {
-	pos           int
-	ReadBuf       []byte
-	OutputBuf     []byte
-	term          string
-	enclosedChar  byte
-	fieldTermChar byte
-	escapeChar    byte
-	isEnclosed    bool
-	isLineStart   bool
-	isFieldStart  bool
-}
-
-func (w *fieldWriter) Init(enclosedChar, escapeChar, fieldTermChar byte, readBuf []byte, term string) {
-	w.isEnclosed = false
-	w.isLineStart = true
-	w.isFieldStart = true
-	w.ReadBuf = readBuf
-	w.enclosedChar = enclosedChar
-	w.escapeChar = escapeChar
-	w.fieldTermChar = fieldTermChar
-	w.term = term
-}
-
-func (w *fieldWriter) putback() {
-	w.pos--
-}
-
-func (w *fieldWriter) getChar() (bool, byte) {
-	if w.pos < len(w.ReadBuf) {
-		ret := w.ReadBuf[w.pos]
-		w.pos++
-		return true, ret
-	}
-	return false, 0
-}
-
-func (w *fieldWriter) isTerminator() bool {
-	chkpt, isterm := w.pos, true
-	for i := 1; i < len(w.term); i++ {
-		flag, ch := w.getChar()
-		if !flag || ch != w.term[i] {
-			isterm = false
-			break
-		}
-	}
-	if !isterm {
-		w.pos = chkpt
-		return false
-	}
-	return true
-}
-
-func (w *fieldWriter) outputField(enclosed bool) field {
-	var fild []byte
-	start := 0
-	if enclosed {
-		start = 1
-	}
-	for i := start; i < len(w.OutputBuf); i++ {
-		fild = append(fild, w.OutputBuf[i])
-	}
-	if len(fild) == 0 {
-		fild = []byte("")
-	}
-	w.OutputBuf = w.OutputBuf[0:0]
-	w.isEnclosed = false
-	w.isFieldStart = true
-	return field{fild, false, enclosed}
-}
-
-func (w *fieldWriter) GetField() (bool, field) {
-	// The first return value implies whether fieldWriter read the last character of line.
-	if w.isLineStart {
-		_, ch := w.getChar()
-		if ch == w.enclosedChar {
-			w.isEnclosed = true
-			w.isFieldStart, w.isLineStart = false, false
-			w.OutputBuf = append(w.OutputBuf, ch)
-		} else {
-			w.putback()
-		}
-	}
-	for {
-		flag, ch := w.getChar()
-		if !flag {
-			ret := w.outputField(false)
-			return true, ret
-		}
-		if ch == w.enclosedChar && w.isFieldStart {
-			// If read enclosed char at field start.
-			w.isEnclosed = true
-			w.OutputBuf = append(w.OutputBuf, ch)
-			w.isLineStart, w.isFieldStart = false, false
-			continue
-		}
-		w.isLineStart, w.isFieldStart = false, false
-		if ch == w.fieldTermChar && !w.isEnclosed {
-			// If read filed terminate char.
-			if w.isTerminator() {
-				ret := w.outputField(false)
-				return false, ret
-			}
-			w.OutputBuf = append(w.OutputBuf, ch)
-		} else if ch == w.enclosedChar && w.isEnclosed {
-			// If read enclosed char, look ahead.
-			flag, ch = w.getChar()
-			if !flag {
-				ret := w.outputField(true)
-				return true, ret
-			} else if ch == w.enclosedChar {
-				w.OutputBuf = append(w.OutputBuf, ch)
-				continue
-			} else if ch == w.fieldTermChar {
-				// If the next char is fieldTermChar, look ahead.
-				if w.isTerminator() {
-					ret := w.outputField(true)
-					return false, ret
-				}
-				w.OutputBuf = append(w.OutputBuf, ch)
-			} else {
-				// If there is no terminator behind enclosedChar, put the char back.
-				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
-				w.putback()
-			}
-		} else if ch == w.escapeChar {
-			// When the escaped character is interpreted as if
-			// it was not escaped, backslash is ignored.
-			flag, ch = w.getChar()
-			if flag {
-				w.OutputBuf = append(w.OutputBuf, w.escapeChar)
-				w.OutputBuf = append(w.OutputBuf, ch)
-			}
-		} else {
-			w.OutputBuf = append(w.OutputBuf, ch)
-		}
-	}
-}
-
-// getFieldsFromLine splits line according to fieldsInfo.
-// TODO: remove this
-func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
-	var (
-		reader fieldWriter
-		fields []field
-	)
-
-	if len(line) == 0 {
-		str := []byte("")
-		fields = append(fields, field{str, false, false})
-		return fields, nil
-	}
-
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Escaped, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
-	for {
-		eol, f := reader.GetField()
-		f = f.escape(reader.escapeChar)
-		if bytes.Equal(f.str, null) && !f.enclosed {
-			f.str = []byte{'N'}
-			f.maybeNull = true
-		}
-		fields = append(fields, f)
-		if eol {
-			break
-		}
-	}
-	return fields, nil
-}
-
-// escape handles escape characters when running load data statement.
-// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-func (f *field) escape(escapeChar byte) field {
-	pos := 0
-	for i := 0; i < len(f.str); i++ {
-		c := f.str[i]
-		if i+1 < len(f.str) && f.str[i] == escapeChar {
-			c = f.escapeChar(f.str[i+1])
-			i++
-		}
-
-		f.str[pos] = c
-		pos++
-	}
-	return field{f.str[:pos], f.maybeNull, f.enclosed}
-}
-
-func (f *field) escapeChar(c byte) byte {
-	switch c {
-	case '0':
-		return 0
-	case 'b':
-		return '\b'
-	case 'n':
-		return '\n'
-	case 'r':
-		return '\r'
-	case 't':
-		return '\t'
-	case 'Z':
-		return 26
-	case 'N':
-		f.maybeNull = true
-		return c
-	case '\\':
-		return c
-	default:
-		return c
-	}
 }
 
 // loadDataVarKeyType is a dummy type to avoid naming collision in context.

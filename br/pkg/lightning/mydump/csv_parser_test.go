@@ -421,6 +421,21 @@ func TestMySQL(t *testing.T) {
 	assertPosEqual(t, parser, 26, 2)
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`"\0\b\n\r\t\Z\\\  \c\'\""`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})),
+		},
+		Length: 23,
+	}, parser.LastRow())
 }
 
 func TestCustomEscapeChar(t *testing.T) {
@@ -462,6 +477,29 @@ func TestCustomEscapeChar(t *testing.T) {
 	assertPosEqual(t, parser, 26, 2)
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+
+	cfg = config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+		EscapedBy: ``,
+		NotNull:   false,
+		Null:      []string{`NULL`},
+	}
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`),
+		},
+		Length: 115,
+	}, parser.LastRow())
 }
 
 func TestSyntaxErrorCSV(t *testing.T) {
