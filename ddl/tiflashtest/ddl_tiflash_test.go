@@ -556,7 +556,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule.Build())
 	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
@@ -568,7 +568,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	defer fCancelPD()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule.Build())
 	require.True(t, res)
 }
 
@@ -612,7 +612,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule.Build())
 	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
@@ -622,7 +622,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = s.tiflash.CheckPlacementRule(*expectRule)
+	res = s.tiflash.CheckPlacementRule(expectRule.Build())
 	require.False(t, res)
 }
 
@@ -643,7 +643,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res := s.tiflash.CheckPlacementRule(*expectRule)
+	res := s.tiflash.CheckPlacementRule(expectRule.Build())
 	require.False(t, res)
 }
 

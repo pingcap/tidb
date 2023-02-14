@@ -2158,7 +2158,7 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
 		logutil.BgLogger().Info("try delete TiFlash pd rule",
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
-		ruleID := fmt.Sprintf("table-%v-r", id)
+		ruleID := infosync.MakeRuleID(id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))

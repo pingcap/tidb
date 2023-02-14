@@ -1148,7 +1148,7 @@ func SetTiFlashGroupConfig(ctx context.Context) error {
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
-func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRawRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -1222,7 +1222,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	ctx := context.Background()
 	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
-	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
 		return errors.Trace(e)
 	}
 	return nil
@@ -1238,7 +1238,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
 			return errors.Trace(e)
 		}
 		if accel {
