@@ -2561,7 +2561,6 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		if len(infos) > injectBatchSize {
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
-
 	})
 	c := GetCreateTableWithInfoConfig(cs)
 
