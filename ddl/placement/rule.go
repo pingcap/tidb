@@ -74,6 +74,10 @@ type TiFlashRule struct {
 	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
+// TiFlashRawRule represents the raw placement rule for TiFlash.
+// It could not be submitted to PD directly. The user could set the
+// field without acknowledging the encoding of the PD rule.
+// Call Build() to get the TiFlashRule.
 type TiFlashRawRule struct {
 	GroupID        string
 	ID             string
@@ -88,6 +92,7 @@ type TiFlashRawRule struct {
 	IsolationLevel string
 }
 
+// Build builds a TiFlashRule from TiFlashRawRule.
 func (r *TiFlashRawRule) Build() TiFlashRule {
 	return TiFlashRule{
 		GroupID:        r.GroupID,
