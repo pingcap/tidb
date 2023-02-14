@@ -107,7 +107,7 @@ go_library(
 
 go_test(
     name = "session_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
@@ -115,7 +115,6 @@ go_test(
         "clustered_index_test.go",
         "index_usage_sync_lease_test.go",
         "main_test.go",
-        "nontransactional_test.go",
         "schema_test.go",
         "session_test.go",
         "tidb_test.go",
@@ -168,7 +167,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
