@@ -10,6 +10,10 @@ go_library(
         "//expression/aggregation",
         "//parser/model",
         "//sessionctx",
+        "//store/mockstore",
+        "//store/mockstore/unistore",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
     ],
 )
