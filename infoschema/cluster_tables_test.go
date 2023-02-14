@@ -854,14 +854,8 @@ func TestMDLView(t *testing.T) {
 }
 
 func TestCreateBindingForPrepareToken(t *testing.T) {
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
-	defer s.rpcserver.Stop()
-	tk := s.newTestKitWithRoot(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test")
