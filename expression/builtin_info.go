@@ -778,11 +778,14 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBDecodeKeySig.
+// evalString evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	if len(s) == 0 {
+		return "{}", false, nil
 	}
 	decode := func(ctx sessionctx.Context, s string) string { return s }
 	if fn := b.ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
