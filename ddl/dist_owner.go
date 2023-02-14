@@ -440,7 +440,7 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 		return nil
 	}
 
-	return cleanupBackfillJobs(sess, bJobs[0].prefixKeyString())
+	return cleanupBackfillJobs(sess, bJobs[0].PrefixKeyString())
 }
 
 func cleanupBackfillJobs(sess *session, prefixKey string) error {
