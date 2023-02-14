@@ -1799,53 +1799,6 @@ func TestExtensionChangeUser(t *testing.T) {
 	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
 	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }
-<<<<<<< HEAD
-=======
-
-func TestAuthSha(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(store)
-	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
-	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, tidbdrv)
-	require.NoError(t, err)
-	defer server.Close()
-
-	cc := &clientConn{
-		connectionID: 1,
-		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server:       server,
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(&outBuffer),
-		},
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41,
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	ctx := &TiDBContext{Session: tk.Session()}
-	cc.setCtx(ctx)
-
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthCachingSha2Password,
-		Auth:       []byte{}, // No password
-	}
-
-	authData, err := cc.authSha(context.Background(), resp)
-	require.NoError(t, err)
-
-	// If no password is specified authSha() should return an empty byte slice
-	// which differs from when a password is specified as that should trigger
-	// fastAuthFail and the rest of the auth process.
-	require.Equal(t, authData, []byte{})
-}
 
 func TestProcessInfoForExecuteCommand(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1878,4 +1831,3 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }
->>>>>>> be740110f4 (server, execute: set text for execute command (#41340))
