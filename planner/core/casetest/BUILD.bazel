@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "binary_plan_test.go",
+        "cbo_test.go",
         "expression_rewriter_test.go",
         "main_test.go",
         "plan_test.go",
@@ -23,6 +24,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
+        "//executor",
         "//expression",
         "//expression/aggregation",
         "//infoschema",
@@ -34,8 +36,11 @@ go_test(
         "//planner/core",
         "//planner/core/internal",
         "//planner/property",
+        "//session",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//statistics",
+        "//statistics/handle",
         "//testkit",
         "//testkit/testdata",
         "//testkit/testmain",
