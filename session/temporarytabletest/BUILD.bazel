@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "temporarytable_test_test",
+    name = "temporarytable_test",
     srcs = [
         "main_test.go",
         "temporary_table_test.go",

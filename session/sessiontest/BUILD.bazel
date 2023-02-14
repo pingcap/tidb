@@ -1,14 +1,14 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "session_test_test",
-    timeout = "moderate",
+    name = "session_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "session_test.go",
     ],
     flaky = True,
-    shard_count = 4,
+    shard_count = 50,
     deps = [
         "//config",
         "//domain",
