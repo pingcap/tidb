@@ -19,6 +19,6 @@ go_test(
     flaky = True,
     deps = [
         "//config",
-        "@com_github_stretchr_testify//suite",
+        "@com_github_stretchr_testify//require",
     ],
 )
