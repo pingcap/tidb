@@ -56,7 +56,7 @@ go_library(
 
 go_test(
     name = "storage_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "azblob_test.go",
         "compress_test.go",
@@ -69,7 +69,6 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 40,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
