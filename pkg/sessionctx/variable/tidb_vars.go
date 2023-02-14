@@ -1158,6 +1158,8 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiDBDistSQLParallelBuild indicates whether enable parallel building distsql.
+	TiDBDistSQLParallelBuild = "tidb_distsql_parallel_build"
 )
 
 // TiDB intentional limits
@@ -1485,6 +1487,7 @@ const (
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefTiDBDMLType                                    = "STANDARD"
+	DefTiDBDistSQLParallelBuild                       = false
 )
 
 // Process global variables.

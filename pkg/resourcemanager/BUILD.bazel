@@ -13,6 +13,7 @@ go_library(
         "//pkg/resourcemanager/util",
         "//pkg/util",
         "//pkg/util/cpu",
+        "//pkg/util/intest",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",

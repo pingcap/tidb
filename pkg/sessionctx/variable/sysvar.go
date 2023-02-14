@@ -3079,6 +3079,10 @@ var defaultSysVars = []*SysVar{
 			}
 			return errors.Errorf("unsupport DML type: %s", val)
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDistSQLParallelBuild, Value: BoolToOnOff(DefTiDBDistSQLParallelBuild), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.DistSQLParallelBuild = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

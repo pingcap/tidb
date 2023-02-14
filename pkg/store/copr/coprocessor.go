@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
+	resourcemanager_util "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -102,109 +104,98 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	errRes = it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	if errRes != nil {
+		return errRes
+	}
 	return it
 }
 
 // BuildCopIterator builds the iterator without calling `open`.
 func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) (*copIterator, kv.Response) {
 	eventCb := option.EventCb
-	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
-		req.Paging.Enable = false
-	})
-	if req.StoreType == kv.TiDB {
-		// coprocessor on TiDB doesn't support paging
+
+	// TODO: the request is shared between cop iterators, it's not safe to modify it here, better clone it for each cop iterator.
+	if req.Paging.Enable && !checkPagingCopr(req) {
 		req.Paging.Enable = false
 	}
-	if req.Tp != kv.ReqTypeDAG {
-		// coprocessor request but type is not DAG
-		req.Paging.Enable = false
-	}
-	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
-		if req.Paging.Enable {
-			if !req.KeyRanges.IsFullySorted() {
-				logutil.BgLogger().Fatal("distsql request key range not sorted!")
-			}
-		}
-	})
-	if !checkStoreBatchCopr(req) {
+	if req.StoreBatchSize > 0 && !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
 	}
 
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	var (
-		tasks []*copTask
-		err   error
-	)
 	tryRowHint := optRowHint(req)
-	elapsed := time.Duration(0)
-	buildOpt := &buildCopTaskOpt{
-		req:      req,
-		cache:    c.store.GetRegionCache(),
+	buildOpt := &buildCopTaskOptV2{
 		eventCb:  eventCb,
 		respChan: req.KeepOrder,
-		elapsed:  &elapsed,
 	}
-	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
-		keyRanges := NewKeyRanges(ranges)
-		if tryRowHint {
-			buildOpt.rowHints = hints
-		}
-		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
-		if err != nil {
-			return err
-		}
-		if len(tasks) == 0 {
-			tasks = tasksFromRanges
-			return nil
-		}
-		tasks = append(tasks, tasksFromRanges...)
-		return nil
+	if req.Paging.Enable {
+		buildOpt.pagingSize = req.Paging.MinPagingSize
 	}
-	// Here we build the task by partition, not directly by region.
-	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
-	// Keep it split by partition would be more safe.
-	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
-	// only batch store requests in first build.
-	req.StoreBatchSize = 0
+
+	taskBuilder := buildCopTasksV2(bo, req, c.store.GetRegionCache(), req.KeyRanges, buildOpt)
+
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
+		// When closest replica read is enabled, we build the tasks in unparalleled mode.
+		// TODO: support parallel build in closest replica read mode.
+		if err := taskBuilder.Build(); err != nil {
+			return nil, copErrorResponse{err}
+		}
 		reqType = "miss"
-		if req.ClosestReplicaReadAdjuster(req, len(tasks)) {
+		// TODO: fix the closest replica adjuster.
+		if req.ClosestReplicaReadAdjuster(req, len(taskBuilder.builtTasks)) {
 			reqType = "hit"
 		}
 	}
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
-	if err != nil {
-		return nil, copErrorResponse{err}
-	}
 	it := &copIterator{
-		store:            c.store,
-		req:              req,
-		concurrency:      req.Concurrency,
-		finishCh:         make(chan struct{}),
-		vars:             vars,
-		memTracker:       req.MemTracker,
-		replicaReadSeed:  c.replicaReadSeed,
-		rpcCancel:        tikv.NewRPCanceller(),
-		buildTaskElapsed: *buildOpt.elapsed,
-		runawayChecker:   req.RunawayChecker,
+		store:                c.store,
+		req:                  req,
+		concurrency:          req.Concurrency,
+		smallTaskConcurrency: c.store.numcpu * smallConcPerCore,
+		finishCh:             make(chan struct{}),
+		vars:                 vars,
+		memTracker:           req.MemTracker,
+		replicaReadSeed:      c.replicaReadSeed,
+		rpcCancel:            tikv.NewRPCanceller(),
+		exit:                 make(chan struct{}),
+		buildTaskElapsed:     &taskBuilder.elapsed,
+		runawayChecker:       req.RunawayChecker,
+		taskBuilder:          taskBuilder,
 	}
-	it.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
+	if !tryRowHint {
+		it.smallTaskConcurrency = 0
 	}
-	if tryRowHint {
-		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.store.numcpu)
-		if len(tasks)-smallTasks < it.concurrency {
-			it.concurrency = len(tasks) - smallTasks
+
+	// maxSendRate and disableDynamicWorkerAndExtraConc are used for oom testing.
+	// TODO: remove them.
+	maxSendRate := 0
+	if !req.ParallelBuildTask || (req.Desc && req.KeepOrder) {
+		if taskBuilder.builtTasks == nil {
+			if err := taskBuilder.Build(); err != nil {
+				return nil, copErrorResponse{err}
+			}
 		}
+		if it.concurrency > len(taskBuilder.builtTasks) {
+			it.concurrency = len(taskBuilder.builtTasks)
+		}
+		if tryRowHint {
+			var smallTasks int
+			smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(taskBuilder.builtTasks, c.store.numcpu)
+			if len(taskBuilder.builtTasks)-smallTasks < it.concurrency {
+				it.concurrency = len(taskBuilder.builtTasks) - smallTasks
+			}
+		}
+		if it.concurrency < 1 {
+			it.concurrency = 1
+		}
+		maxSendRate = it.concurrency
 	}
-	if it.concurrency < 1 {
-		// Make sure that there is at least one worker.
-		it.concurrency = 1
-	}
+
+	// Since the task is built in another goroutine, no more adjust the concurrency before execution.
+	// With util/workers package, we create coprocessor task handler worker dynamically during execution.
+	// copIterator.concurrency and copIterator.smallTaskConcurrency is the upper limit of the final concurrency.
 
 	if it.req.KeepOrder {
 		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
@@ -235,12 +226,26 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}
-		it.sendRate = util.NewRateLimit(2 * (it.concurrency + it.smallTaskConcurrency))
+		sendRate := 2 * (it.concurrency + it.smallTaskConcurrency)
+		if sendRate > maxSendRate && maxSendRate > 0 {
+			sendRate = maxSendRate
+		}
+		it.sendRate = util.NewRateLimit(sendRate)
 		it.respChan = nil
+		it.tasks = make(chan *copTask, sendRate)
 	} else {
 		it.respChan = make(chan *copResponse)
-		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
+		sendRate := 2 * (it.concurrency + it.smallTaskConcurrency)
+		if sendRate > maxSendRate && maxSendRate > 0 {
+			sendRate = maxSendRate
+		}
+		it.sendRate = util.NewRateLimit(sendRate)
 	}
+	failpoint.Inject("testRateLimitActionWithCapacity", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			it.sendRate = util.NewRateLimit(v)
+		}
+	})
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
 	return it, nil
 }
@@ -313,7 +318,7 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-type buildCopTaskOpt struct {
+type buildCopTaskOptV1 struct {
 	req      *kv.Request
 	cache    *RegionCache
 	eventCb  trxevents.EventCallback
@@ -324,7 +329,7 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
-func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
+func buildCopTasksV1(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOptV1) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
@@ -358,11 +363,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		chanSize = 18
 	}
 
-	var builder taskBuilder
+	var builder taskHandlerWithReverse
 	if req.StoreBatchSize > 0 && hints != nil {
-		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
+		builder = newBatchTaskHandler(bo, req, cache, req.ReplicaRead)
 	} else {
-		builder = newLegacyTaskBuilder(len(locs))
+		builder = newLegacyTaskHandler(len(locs))
 	}
 	origRangeIdx := 0
 	for _, loc := range locs {
@@ -442,13 +447,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	tasks := builder.build()
 	elapsed := time.Since(start)
 	if elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildCopTasks takes too much time",
+		logutil.BgLogger().Warn("buildCopTasksV2 takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
 	if elapsed > time.Millisecond {
-		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasksV1").End()
 	}
 	if opt.elapsed != nil {
 		*opt.elapsed = *opt.elapsed + elapsed
@@ -457,46 +462,61 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	return tasks, nil
 }
 
-type taskBuilder interface {
+type buildCopTaskOptV2 struct {
+	eventCb trxevents.EventCallback
+	// respChan is true when build first time in keep-order req.
+	respChan bool
+	elapsed  *time.Duration
+	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
+	ignoreTiKVClientReadTimeout bool
+	// if readCache is set to true, it'll build cache hit regions, then the misses.
+	readCache bool
+	// handle function returns false if the build need to be stopped.
+	handle func(task *copTask) bool
+	// If this is a paging request, we set the paging size to minPagingSize,
+	// the size will grow every round.
+	pagingSize uint64
+}
+
+type taskHandler interface {
 	handle(*copTask) error
-	reverse()
 	build() []*copTask
 	regionNum() int
 }
 
-type legacyTaskBuilder struct {
+type taskHandlerWithReverse interface {
+	taskHandler
+	reverse()
+}
+
+type legacyTaskHandler struct {
 	tasks []*copTask
 }
 
-func newLegacyTaskBuilder(hint int) *legacyTaskBuilder {
-	return &legacyTaskBuilder{
+func newLegacyTaskHandler(hint int) *legacyTaskHandler {
+	return &legacyTaskHandler{
 		tasks: make([]*copTask, 0, hint),
 	}
 }
 
-func (b *legacyTaskBuilder) handle(task *copTask) error {
+func (b *legacyTaskHandler) handle(task *copTask) error {
 	b.tasks = append(b.tasks, task)
 	return nil
 }
 
-func (b *legacyTaskBuilder) regionNum() int {
+func (b *legacyTaskHandler) regionNum() int {
 	return len(b.tasks)
 }
 
-func (b *legacyTaskBuilder) reverse() {
-	reverseTasks(b.tasks)
+func (b *legacyTaskHandler) reverse() {
+	reverse(b.tasks)
 }
 
-func (b *legacyTaskBuilder) build() []*copTask {
+func (b *legacyTaskHandler) build() []*copTask {
 	return b.tasks
 }
 
-type storeReplicaKey struct {
-	storeID     uint64
-	replicaRead bool
-}
-
-type batchStoreTaskBuilder struct {
+type batchStoreTaskHandler struct {
 	bo          *Backoffer
 	req         *kv.Request
 	cache       *RegionCache
@@ -507,8 +527,8 @@ type batchStoreTaskBuilder struct {
 	replicaRead kv.ReplicaReadType
 }
 
-func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType) *batchStoreTaskBuilder {
-	return &batchStoreTaskBuilder{
+func newBatchTaskHandler(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType) *batchStoreTaskHandler {
+	return &batchStoreTaskHandler{
 		bo:          bo,
 		req:         req,
 		cache:       cache,
@@ -520,7 +540,7 @@ func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, rep
 	}
 }
 
-func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
+func (b *batchStoreTaskHandler) handle(task *copTask) (err error) {
 	b.taskID++
 	task.taskID = b.taskID
 	handled := false
@@ -569,17 +589,142 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 	return nil
 }
 
-func (b *batchStoreTaskBuilder) regionNum() int {
+func (b *batchStoreTaskHandler) regionNum() int {
 	// we allocate b.taskID for each region task, so the final b.taskID is equal to the related region number.
 	return int(b.taskID)
 }
 
-func (b *batchStoreTaskBuilder) reverse() {
-	reverseTasks(b.tasks)
+func (b *batchStoreTaskHandler) reverse() {
+	reverse(b.tasks)
 }
 
-func (b *batchStoreTaskBuilder) build() []*copTask {
+func (b *batchStoreTaskHandler) build() []*copTask {
 	return b.tasks
+}
+
+type asyncLegacyTaskHandler struct {
+	region      int
+	taskHandler func(*copTask) bool
+}
+
+func newAsyncLegacyTaskHandler(taskHandler func(*copTask) bool) *asyncLegacyTaskHandler {
+	return &asyncLegacyTaskHandler{
+		taskHandler: taskHandler,
+	}
+}
+
+func (b *asyncLegacyTaskHandler) handle(task *copTask) error {
+	if b.taskHandler(task) {
+		return nil
+	}
+	return finCopBuild
+}
+
+func (b *asyncLegacyTaskHandler) regionNum() int {
+	return b.region
+}
+
+func (b *asyncLegacyTaskHandler) build() []*copTask {
+	return nil
+}
+
+type storeReplicaKey struct {
+	storeID     uint64
+	replicaRead bool
+}
+
+type asyncBatchStoreTaskHandler struct {
+	bo          *Backoffer
+	req         *kv.Request
+	cache       *RegionCache
+	taskID      uint64
+	limit       int
+	store2Task  map[storeReplicaKey]*copTask
+	taskHandler func(*copTask) bool
+	replicaRead kv.ReplicaReadType
+}
+
+func newAsyncBatchTaskHandler(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType, taskHandler func(*copTask) bool) *asyncBatchStoreTaskHandler {
+	return &asyncBatchStoreTaskHandler{
+		bo:          bo,
+		req:         req,
+		cache:       cache,
+		taskID:      0,
+		limit:       req.StoreBatchSize,
+		store2Task:  make(map[storeReplicaKey]*copTask, 16),
+		taskHandler: taskHandler,
+		replicaRead: replicaRead,
+	}
+}
+
+func (b *asyncBatchStoreTaskHandler) handle(task *copTask) (err error) {
+	b.taskID++
+	task.taskID = b.taskID
+	handled := false
+	defer func() {
+		if !handled && err == nil {
+			// fallback to non-batch way. It's mainly caused by region miss.
+			if !b.taskHandler(task) {
+				err = finCopBuild
+			}
+		}
+	}()
+	// only batch small tasks for memory control.
+	if b.limit <= 0 || !isSmallTask(task) {
+		return nil
+	}
+	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
+	if err != nil {
+		return err
+	}
+	if batchedTask == nil {
+		return nil
+	}
+	key := storeReplicaKey{
+		storeID:     batchedTask.storeID,
+		replicaRead: batchedTask.loadBasedReplicaRetry,
+	}
+	if parent, ok := b.store2Task[key]; !ok {
+		if batchedTask.loadBasedReplicaRetry {
+			// If the task is dispatched to leader because all followers are busy,
+			// task.redirect2Replica != nil means the busy threshold shouldn't take effect again.
+			batchedTask.task.redirect2Replica = &batchedTask.storeID
+		}
+		b.store2Task[key] = task
+	} else {
+		if parent.batchTaskList == nil {
+			parent.batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
+			parent.paging = false
+			parent.pagingSize = 0
+		}
+		if task.RowCountHint > 0 {
+			parent.RowCountHint += task.RowCountHint
+		}
+		parent.batchTaskList[task.taskID] = batchedTask
+		if len(parent.batchTaskList) >= b.limit {
+			delete(b.store2Task, key)
+			if !b.taskHandler(parent) {
+				return finCopBuild
+			}
+		}
+	}
+	handled = true
+	return nil
+}
+
+func (b *asyncBatchStoreTaskHandler) regionNum() int {
+	// we allocate b.taskID for each region task, so the final b.taskID is equal to the related region number.
+	return int(b.taskID)
+}
+
+func (b *asyncBatchStoreTaskHandler) build() []*copTask {
+	// handle remains
+	for _, task := range b.store2Task {
+		if !b.taskHandler(task) {
+			break
+		}
+	}
+	return nil
 }
 
 func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
@@ -607,10 +752,11 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 	return tasks, nil
 }
 
-func reverseTasks(tasks []*copTask) {
-	for i := 0; i < len(tasks)/2; i++ {
-		j := len(tasks) - i - 1
-		tasks[i], tasks[j] = tasks[j], tasks[i]
+func reverse[T any](elems []T) {
+	length := len(elems)
+	for i := 0; i < length/2; i++ {
+		j := length - i - 1
+		elems[i], elems[j] = elems[j], elems[i]
 	}
 }
 
@@ -648,6 +794,218 @@ func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 	return res, extraConc
 }
 
+type copTaskBuilder struct {
+	bo         *Backoffer
+	req        *kv.Request
+	cache      *RegionCache
+	opt        *buildCopTaskOptV2
+	builtTasks []*copTask
+	ranges     *kv.KeyRanges
+	elapsed    atomic.Int64
+	err        atomic.Pointer[error]
+}
+
+func buildCopTasksV2(bo *Backoffer, req *kv.Request, cache *RegionCache, ranges *kv.KeyRanges, opt *buildCopTaskOptV2) *copTaskBuilder {
+	return &copTaskBuilder{
+		bo:     bo,
+		req:    req,
+		cache:  cache,
+		opt:    opt,
+		ranges: ranges,
+	}
+}
+
+// buildTasks accepts a handle function, and handle function returns false if the build need to be stopped.
+func (b *copTaskBuilder) buildTasks(handle func(task *copTask) bool) error {
+	// handle the case the tasks are built in unparalleled mode.
+	if b.builtTasks != nil && handle != nil {
+		for _, task := range b.builtTasks {
+			if !handle(task) {
+				return nil
+			}
+		}
+		return nil
+	}
+	req := b.req
+	b.opt.handle = handle
+	// Here we build the task by partition, not directly by region.
+	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+	// Keep it split by partition would be more safe.
+	err := b.ranges.ForEachPartitionWithErr(func(ranges []kv.KeyRange, hints []int) error {
+		keyRanges := NewKeyRanges(ranges)
+		if req.StoreType == kv.TiDB {
+			tasks, err := buildTiDBMemCopTasks(keyRanges, req)
+			if err != nil {
+				return err
+			}
+			for _, task := range tasks {
+				if handle != nil {
+					if !handle(task) {
+						return finCopBuild
+					}
+				} else {
+					b.builtTasks = append(b.builtTasks, task)
+				}
+			}
+			return nil
+		}
+		tasks, err := b.buildTasksForRanges(keyRanges, hints, b.opt)
+		if err != nil {
+			return err
+		}
+		if b.opt.handle == nil {
+			if b.builtTasks == nil {
+				b.builtTasks = tasks
+			} else {
+				b.builtTasks = append(b.builtTasks, tasks...)
+			}
+		}
+		return nil
+	})
+	if errors.ErrorEqual(err, finCopBuild) {
+		return nil
+	} else if err != nil {
+		b.err.Store(&err)
+	}
+	return err
+}
+
+func (b *copTaskBuilder) buildTasksForRanges(ranges *KeyRanges, hints []int, opt *buildCopTaskOptV2) ([]*copTask, error) {
+	if opt.handle == nil {
+		// TODO: remove V1 builder code.
+		start := time.Now()
+		optV1 := &buildCopTaskOptV1{
+			req:                         b.req,
+			cache:                       b.cache,
+			eventCb:                     opt.eventCb,
+			respChan:                    opt.respChan,
+			rowHints:                    hints,
+			elapsed:                     nil,
+			ignoreTiKVClientReadTimeout: opt.ignoreTiKVClientReadTimeout,
+		}
+		tasks, err := buildCopTasksV1(b.bo, ranges, optV1)
+		b.elapsed.Add(int64(time.Since(start)))
+		if err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	}
+
+	var builder taskHandler
+	if opt.handle != nil {
+		if b.req.StoreBatchSize > 0 && !b.req.KeepOrder {
+			builder = newAsyncBatchTaskHandler(b.bo, b.req, b.cache, b.req.ReplicaRead, opt.handle)
+		} else {
+			builder = newAsyncLegacyTaskHandler(opt.handle)
+		}
+	}
+
+	locsHandler := func(locs []*LocationKeyRanges) error {
+		buildTasks, err := b.buildTaskFromLocs(locs, opt)
+		if err != nil {
+			return err
+		}
+		for _, task := range buildTasks {
+			if err = builder.handle(task); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	var err error
+	if b.req.KeepOrder && b.req.Desc {
+		// not stable now, async build will be disabled when building iterator.
+		err = b.cache.SplitKeyRangesByLocationsDesc(b.bo, ranges, hints, locsHandler)
+	} else {
+		err = b.cache.SplitCachedKeyRangesByLocations(b.bo, ranges, hints, b.req.KeepOrder, opt.readCache, locsHandler)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return builder.build(), nil
+}
+
+func (b *copTaskBuilder) buildTaskFromLocs(locs []*LocationKeyRanges, opt *buildCopTaskOptV2) ([]*copTask, error) {
+	tasks := make([]*copTask, 0, len(locs))
+	req, eventCb := b.req, opt.eventCb
+	rangesPerTaskLimit := rangesPerTask
+	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			rangesPerTaskLimit = v
+		}
+	})
+	// Channel buffer is 2 for handling region split.
+	// In a common case, two region split tasks will not be blocked.
+	chanSize := 2
+	// in paging request, a request will be returned in multi batches,
+	// enlarge the channel size to avoid the request blocked by buffer full.
+	if req.Paging.Enable {
+		chanSize = 18
+	}
+
+	for _, loc := range locs {
+		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+		// to make sure the message can be sent successfully.
+		rLen := loc.Ranges.Len()
+		for i := 0; i < rLen; {
+			nextI := min(i+rangesPerTaskLimit, rLen)
+			hint := -1
+			// calculate the row count hint
+			if loc.rowHint != nil {
+				hint = *loc.rowHint
+			}
+			ranges := loc.Ranges.Slice(i, nextI)
+			task := &copTask{
+				region:        loc.Location.Region,
+				bucketsVer:    loc.getBucketVersion(),
+				ranges:        ranges,
+				cmdType:       tikvrpc.CmdCop,
+				storeType:     req.StoreType,
+				eventCb:       eventCb,
+				paging:        req.Paging.Enable,
+				pagingSize:    opt.pagingSize,
+				requestSource: req.RequestSource,
+				RowCountHint:  hint,
+			}
+			if !opt.ignoreTiKVClientReadTimeout {
+				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
+			}
+			// only keep-order need chan inside task.
+			// tasks by region error will reuse the channel of parent task.
+			if req.KeepOrder && opt.respChan {
+				task.respChan = make(chan *copResponse, chanSize)
+			}
+			tasks = append(tasks, task)
+			i = nextI
+			if req.Paging.Enable {
+				opt.pagingSize = paging.GrowPagingSize(opt.pagingSize, req.Paging.MaxPagingSize)
+			}
+		}
+	}
+	return tasks, nil
+}
+
+// Drain the tasks from builder, used for test.
+func (b *copTaskBuilder) Drain() ([]*copTask, error) {
+	tasks := make([]*copTask, 0, 16)
+	err := b.buildTasks(func(task *copTask) bool {
+		tasks = append(tasks, task)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+// Build builds copTasks from copTaskBuilder, block until all tasks are built.
+func (b *copTaskBuilder) Build() error {
+	if b.builtTasks != nil {
+		return errors.New("cop tasks are already built")
+	}
+	return b.buildTasks(nil)
+}
+
 // CopInfo is used to expose functions of copIterator.
 type CopInfo interface {
 	// GetConcurrency returns the concurrency and small task concurrency.
@@ -665,10 +1023,11 @@ type copIterator struct {
 	smallTaskConcurrency int
 	finishCh             chan struct{}
 
-	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
-	tasks []*copTask
-	// curr indicates the curr id of the finished copTask
-	curr int
+	// If keepOrder, results are stored in copTask.respChan, read them out from tasks channel one by one.
+	// If not, tasks will be nil.
+	tasks chan *copTask
+	// curr indicates the current copTask
+	curr *copTask
 
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *util.RateLimit
@@ -684,11 +1043,11 @@ type copIterator struct {
 
 	rpcCancel *tikv.RPCCanceller
 
-	wg sync.WaitGroup
+	exit chan struct{}
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to make sure the channel is not closed twice.
-	closed uint32
+	closed atomic.Uint32
 
 	resolvedLocks  util.TSSet
 	committedLocks util.TSSet
@@ -696,17 +1055,21 @@ type copIterator struct {
 	actionOnExceed *rateLimitAction
 	pagingTaskIdx  uint32
 
-	buildTaskElapsed        time.Duration
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
 
 	runawayChecker *resourcegroup.RunawayChecker
+
+	buildTaskElapsed *atomic.Int64
+
+	taskBuilder      *copTaskBuilder
+	taskHandler      *spool.DynamicConcurrencyHandle[*copTask, *copIteratorWorker]
+	smallTaskHandler *spool.DynamicConcurrencyHandle[*copTask, *copIteratorWorker]
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
 	taskCh   <-chan *copTask
-	wg       *sync.WaitGroup
 	store    *Store
 	req      *kv.Request
 	respChan chan<- *copResponse
@@ -723,17 +1086,23 @@ type copIteratorWorker struct {
 
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
+
+	// used to rebuild tasks when region error.
+	taskBuilder *copTaskBuilder
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh      chan<- *copTask
-	smallTaskCh chan<- *copTask
-	wg          *sync.WaitGroup
-	tasks       []*copTask
-	finishCh    <-chan struct{}
-	respChan    chan<- *copResponse
-	sendRate    *util.RateLimit
+	pool             *spool.Pool
+	taskHandler      *spool.DynamicConcurrencyHandle[*copTask, *copIteratorWorker]
+	smallTaskHandler *spool.DynamicConcurrencyHandle[*copTask, *copIteratorWorker]
+	exit             chan struct{}
+	tasks            chan *copTask
+	closed           *atomic.Uint32
+	finishCh         chan struct{}
+	respChan         chan<- *copResponse
+	sendRate         *util.RateLimit
+	taskBuilder      *copTaskBuilder
 }
 
 type copResponse struct {
@@ -793,58 +1162,45 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // finCopResp from the respCh, it will be aware that there is one task finished.
 var finCopResp *copResponse
 
+// When cop build needs to be stopped, use finCopBuild.
+var finCopBuild error
+
 func init() {
 	finCopResp = &copResponse{}
+	finCopBuild = errors.New("fin cop task build")
 }
 
-// run is a worker function that get a copTask from channel, handle it and
-// send the result back.
-func (worker *copIteratorWorker) run(ctx context.Context) {
-	defer func() {
-		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
-			if val.(bool) {
-				worker.memTracker.Consume(10 * MockResponseSizeForTest)
-				worker.memTracker.Consume(10 * MockResponseSizeForTest)
-			}
-		})
-		worker.wg.Done()
-	}()
-	for task := range worker.taskCh {
-		respCh := worker.respChan
-		if respCh == nil {
-			respCh = task.respChan
-		}
-		worker.handleTask(ctx, task, respCh)
-		if worker.respChan != nil {
-			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
-			// there is a task finished.
-			worker.sendToRespCh(finCopResp, worker.respChan, false)
-		}
-		if task.respChan != nil {
-			close(task.respChan)
-		}
-		if worker.finished() {
-			return
-		}
+func (worker *copIteratorWorker) HandleTask(ctx context.Context, task *copTask) {
+	respCh := worker.respChan
+	if respCh == nil {
+		respCh = task.respChan
+	}
+	worker.handleTask(ctx, task, respCh)
+	if worker.respChan != nil {
+		// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+		// there is a task finished.
+		worker.sendToRespCh(finCopResp, worker.respChan, false)
+	}
+	if task.respChan != nil {
+		close(task.respChan)
 	}
 }
 
-// open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
-	taskCh := make(chan *copTask, 1)
-	smallTaskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
-	// Start it.concurrency number of workers to handle cop requests.
-	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
-		var ch chan *copTask
-		if i < it.concurrency {
-			ch = taskCh
-		} else {
-			ch = smallTaskCh
+func (worker *copIteratorWorker) Close() {
+	failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+		if val.(bool) {
+			worker.memTracker.Consume(10 * MockResponseSizeForTest)
+			worker.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
-		worker := &copIteratorWorker{
-			taskCh:                     ch,
-			wg:                         &it.wg,
+	})
+}
+
+var poolID atomic.Uint64
+
+// open starts workers and sender goroutines.
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) kv.Response {
+	create := func() *copIteratorWorker {
+		return &copIteratorWorker{
 			store:                      it.store,
 			req:                        it.req,
 			respChan:                   it.respChan,
@@ -857,17 +1213,49 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			pagingTaskIdx:              &it.pagingTaskIdx,
 			storeBatchedNum:            &it.storeBatchedNum,
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
+			taskBuilder:                it.taskBuilder,
 		}
-		go worker.run(ctx)
 	}
+
+	// May make the pool in the store.
+	pool, err := spool.NewPool(fmt.Sprintf("coprocessor-%d", poolID.Add(1)),
+		int32(it.concurrency+it.smallTaskConcurrency),
+		resourcemanager_util.Coprocessor,
+		spool.WithIgnoreMetric(true))
+	if err != nil {
+		return copErrorResponse{err}
+	}
+
 	taskSender := &copIteratorTaskSender{
-		taskCh:      taskCh,
-		smallTaskCh: smallTaskCh,
-		wg:          &it.wg,
+		pool:        pool,
+		exit:        it.exit,
 		tasks:       it.tasks,
+		closed:      &it.closed,
 		finishCh:    it.finishCh,
 		sendRate:    it.sendRate,
+		taskBuilder: it.taskBuilder,
 	}
+
+	if len(it.taskBuilder.builtTasks) > 0 {
+		taskSender.taskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, int32(it.concurrency), int32(it.concurrency))
+	} else {
+		taskSender.taskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, int32(it.concurrency))
+	}
+	if err != nil {
+		return copErrorResponse{err}
+	}
+	if it.smallTaskConcurrency > 0 {
+		if len(it.taskBuilder.builtTasks) > 0 {
+			taskSender.smallTaskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, int32(it.smallTaskConcurrency), int32(it.smallTaskConcurrency))
+		} else {
+			taskSender.smallTaskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, int32(it.smallTaskConcurrency))
+		}
+		if err != nil {
+			return copErrorResponse{err}
+		}
+	}
+
+	it.taskHandler, it.smallTaskHandler = taskSender.taskHandler, taskSender.smallTaskHandler
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
@@ -876,40 +1264,56 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
+
 	go taskSender.run(it.req.ConnID)
+	return nil
 }
 
 func (sender *copIteratorTaskSender) run(connID uint64) {
+	keepOrder := sender.taskBuilder.req.KeepOrder
 	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.tasks {
+	err := sender.taskBuilder.buildTasks(func(task *copTask) bool {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
 		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		exit := sender.sendRate.GetToken(sender.finishCh)
-		if exit {
-			break
-		}
-		var sendTo chan<- *copTask
-		if isSmallTask(t) {
-			sendTo = sender.smallTaskCh
-		} else {
-			sendTo = sender.taskCh
-		}
-		exit = sender.sendToTaskCh(t, sendTo)
-		if exit {
-			break
+		if sender.sendRate.GetToken(sender.finishCh) {
+			return false
 		}
 		if connID > 0 {
 			failpoint.Inject("pauseCopIterTaskSender", func() {})
 		}
-	}
-	close(sender.taskCh)
-	close(sender.smallTaskCh)
 
-	// Wait for worker goroutines to exit.
-	sender.wg.Wait()
+		if isSmallTask(task) && sender.smallTaskHandler != nil {
+			sender.smallTaskHandler.Send(task)
+		} else {
+			sender.taskHandler.Send(task)
+		}
+		if keepOrder {
+			sender.tasks <- task
+		}
+		return true
+	})
+
+	if err != nil {
+		// handle build err.
+		if sender.closed.CompareAndSwap(0, 1) {
+			close(sender.finishCh)
+		}
+	}
+
+	if keepOrder {
+		close(sender.tasks)
+	}
+	sender.taskHandler.Close(false)
+	if sender.smallTaskHandler != nil {
+		sender.smallTaskHandler.Close(false)
+	}
+	// Wait for all worker done.
+	sender.pool.ReleaseAndWait()
+	// notice copIterator.Close to exit
+	close(sender.exit)
 	if sender.respChan != nil {
 		close(sender.respChan)
 	}
@@ -927,6 +1331,8 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 					if val.(bool) {
 						if resp != finCopResp {
 							consumed = MockResponseSizeForTest
+							// consume slowly to trigger oom.
+							time.Sleep(100 * time.Millisecond)
 						}
 					}
 				})
@@ -949,7 +1355,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			}
 		case <-ctx.Done():
 			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+			if it.closed.CompareAndSwap(0, 1) {
 				close(it.finishCh)
 			}
 			exit = true
@@ -960,7 +1366,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 
 // GetConcurrency returns the concurrency and small task concurrency.
 func (it *copIterator) GetConcurrency() (int, int) {
-	return it.concurrency, it.smallTaskConcurrency
+	return it.taskHandler.Volume(), it.smallTaskHandler.Volume()
 }
 
 // GetStoreBatchInfo returns the batched and fallback num.
@@ -970,7 +1376,7 @@ func (it *copIterator) GetStoreBatchInfo() (uint64, uint64) {
 
 // GetBuildTaskElapsed returns the duration of building task.
 func (it *copIterator) GetBuildTaskElapsed() time.Duration {
-	return it.buildTaskElapsed
+	return time.Duration(it.buildTaskElapsed.Load())
 }
 
 // GetSendRate returns the rate-limit object.
@@ -978,9 +1384,9 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
 }
 
-// GetTasks returns the built tasks.
-func (it *copIterator) GetTasks() []*copTask {
-	return it.tasks
+// GetTaskBuilder returns the task builder for test.
+func (it *copIterator) GetTaskBuilder() *copTaskBuilder {
+	return it.taskBuilder
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *copTask) (exit bool) {
@@ -1037,8 +1443,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
-			// we only need to trigger oom at least once.
-			if len(it.tasks) > 9 {
+			if !it.req.ParallelBuildTask && len(it.taskBuilder.builtTasks) > 9 {
+				// we only need to trigger oom at least once.
 				for it.memTracker.MaxConsumed() < 5*MockResponseSizeForTest {
 					time.Sleep(10 * time.Millisecond)
 				}
@@ -1052,6 +1458,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
+			if err := it.taskBuilder.err.Load(); err != nil {
+				return nil, *err
+			}
 			return nil, nil
 		}
 		if resp == finCopResp {
@@ -1062,26 +1471,37 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 	} else {
 		for {
-			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finishCh.
-				it.actionOnExceed.close()
-				return nil, nil
+			if it.curr != nil {
+				resp, ok, closed = it.recvFromRespCh(ctx, it.curr.respChan)
+				if closed {
+					// Close() is already called, so Next() is invalid.
+					return nil, nil
+				}
+				if ok {
+					break
+				}
+				it.actionOnExceed.destroyTokenIfNeeded(func() {
+					it.sendRate.PutToken()
+				})
 			}
-			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
-			}
-			if ok {
-				break
-			}
-			it.actionOnExceed.destroyTokenIfNeeded(func() {
-				it.sendRate.PutToken()
-			})
 			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
+			select {
+			case it.curr, ok = <-it.tasks:
+				if !ok {
+					// Resp will be nil if iterator is finishCh.
+					it.actionOnExceed.close()
+					if err := it.taskBuilder.err.Load(); err != nil {
+						return nil, *err
+					}
+					return nil, nil
+				}
+			case <-it.finishCh:
+				it.actionOnExceed.close()
+				if err := it.taskBuilder.err.Load(); err != nil {
+					return nil, *err
+				}
+				return nil, nil
+			}
 		}
 	}
 
@@ -1399,10 +1819,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
-		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-			req:                         worker.req,
-			cache:                       worker.store.GetRegionCache(),
+		// We may meet RegionError at the first packet,but not during visiting the stream.
+		remains, err := worker.taskBuilder.buildTasksForRanges(task.ranges, nil, &buildCopTaskOptV2{
 			respChan:                    false,
 			eventCb:                     task.eventCb,
 			ignoreTiKVClientReadTimeout: true,
@@ -1527,11 +1945,10 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
-				req:                         worker.req,
-				cache:                       worker.store.GetRegionCache(),
+			remains, err := worker.taskBuilder.buildTasksForRanges(task.ranges, nil, &buildCopTaskOptV2{
 				respChan:                    false,
 				eventCb:                     task.eventCb,
+				readCache:                   false,
 				ignoreTiKVClientReadTimeout: true,
 			})
 			if err != nil {
@@ -1599,7 +2016,11 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			return nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
 		busyThresholdFallback = true
-		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+		batchedRemains := make([]*copTask, 0, len(remainTasks))
+		handler := newAsyncBatchTaskHandler(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower, func(task *copTask) bool {
+			batchedRemains = append(batchedRemains, task)
+			return true
+		})
 		for _, task := range remainTasks {
 			// do not set busy threshold again.
 			task.busyThreshold = 0
@@ -1607,7 +2028,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				return nil, err
 			}
 		}
-		remainTasks = handler.build()
+		handler.build()
+		remainTasks = batchedRemains
 	}
 	return remainTasks, nil
 }
@@ -1894,12 +2316,12 @@ func (worker *copIteratorWorker) finished() bool {
 }
 
 func (it *copIterator) Close() error {
-	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+	if it.closed.CompareAndSwap(0, 1) {
 		close(it.finishCh)
 	}
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
-	it.wg.Wait()
+	<-it.exit
 	return nil
 }
 
@@ -2093,6 +2515,9 @@ func optRowHint(req *kv.Request) bool {
 		// disable extra concurrency for internal tasks.
 		return false
 	}
+	if !req.KeyRanges.HasHint() {
+		return false
+	}
 	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
 		opt = false
 	})
@@ -2117,4 +2542,31 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 		return false
 	}
 	return true
+}
+
+func checkPagingCopr(req *kv.Request) bool {
+	paging := true
+	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
+		paging = false
+	})
+	if req.StoreType == kv.TiDB {
+		// coprocessor on TiDB doesn't support paging
+		return false
+	}
+	if req.Tp != kv.ReqTypeDAG {
+		// coprocessor request but type is not DAG
+		return false
+	}
+	if req.LimitSize != 0 && req.LimitSize < req.Paging.MinPagingSize {
+		// disable paging for small limit.
+		return false
+	}
+	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
+		if req.Paging.Enable {
+			if !req.KeyRanges.IsFullySorted() {
+				logutil.BgLogger().Fatal("distsql request key range not sorted!")
+			}
+		}
+	})
+	return paging
 }

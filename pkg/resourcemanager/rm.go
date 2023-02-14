@@ -15,6 +15,7 @@
 package resourcemanager
 
 import (
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +23,14 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // InstanceResourceManager is a local instance resource manager
 var InstanceResourceManager = NewResourceManger()
+
+// InstanceResourceManagerMu is a mutex for instance resource manager, for test only.
+var InstanceResourceManagerMu sync.RWMutex
 
 // RandomName is to get a random name for register pool. It is just for test.
 func RandomName() string {
@@ -84,15 +89,27 @@ func (r *ResourceManager) Register(pool util.GoroutinePool, name string, compone
 }
 
 func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) error {
+	if intest.InTest {
+		InstanceResourceManagerMu.RLock()
+		defer InstanceResourceManagerMu.RUnlock()
+	}
 	return r.poolMap.Add(name, pool)
 }
 
 // Unregister is to unregister pool into resource manager.
 func (r *ResourceManager) Unregister(name string) {
+	if intest.InTest {
+		InstanceResourceManagerMu.RLock()
+		defer InstanceResourceManagerMu.RUnlock()
+	}
 	r.poolMap.Del(name)
 }
 
 // Reset is to Reset resource manager. it is just for test.
 func (r *ResourceManager) Reset() {
+	if intest.InTest {
+		InstanceResourceManagerMu.Lock()
+		defer InstanceResourceManagerMu.Unlock()
+	}
 	r.poolMap = util.NewShardPoolMap()
 }

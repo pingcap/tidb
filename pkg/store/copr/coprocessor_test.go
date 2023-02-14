@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -28,13 +29,73 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
-	return buildCopTasks(bo, ranges, &buildCopTaskOpt{
-		req:      req,
-		cache:    cache,
-		eventCb:  eventCb,
-		respChan: true,
-	})
+func buildTestCopTasks(bo *Backoffer, req *kv.Request, cache *RegionCache, ranges *KeyRanges, eventCb trxevents.EventCallback, hints []int) ([]*copTask, error) {
+	opt := &buildCopTaskOptV2{
+		eventCb: eventCb,
+	}
+	if req.Paging.Enable {
+		opt.pagingSize = req.Paging.MinPagingSize
+	}
+	var kvRanges []kv.KeyRange
+	if ranges.first != nil {
+		kvRanges = append(kvRanges, *ranges.first)
+	}
+	kvRanges = append(kvRanges, ranges.mid...)
+	if ranges.last != nil {
+		kvRanges = append(kvRanges, *ranges.last)
+	}
+	builder := buildCopTasksV2(bo, req, cache, kv.NewNonParitionedKeyRangesWithHint(kvRanges, hints), opt)
+	if req.ParallelBuildTask {
+		return builder.Drain()
+	}
+	if err := builder.Build(); err != nil {
+		return nil, err
+	}
+	return builder.builtTasks, nil
+}
+
+func testBuildCopTasks(t *testing.T, cache *RegionCache, ranges *KeyRanges, regionIDs []uint64, results [][]string) {
+	require.Equal(t, len(regionIDs), len(results))
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	flashReq := &kv.Request{}
+	flashReq.StoreType = kv.TiFlash
+	for _, isTiFlash := range []bool{false, true} {
+		for _, desc := range []bool{false, true} {
+			for _, parallel := range []bool{false, true} {
+				cpRegionIDs := make([]uint64, len(regionIDs))
+				copy(cpRegionIDs, regionIDs)
+				cpResults := make([][]string, 0, len(results))
+				for _, r := range results {
+					cp := make([]string, len(r))
+					copy(cp, r)
+					cpResults = append(cpResults, cp)
+				}
+				if desc {
+					reverse(cpRegionIDs)
+					reverse(cpResults)
+				}
+				msg := fmt.Sprintf("isTiFlash:%v, desc:%v, parallel:%v", isTiFlash, desc, parallel)
+				req := &kv.Request{}
+				if isTiFlash {
+					req.StoreType = kv.TiFlash
+				}
+				if desc {
+					req.Desc, req.KeepOrder = true, true
+				}
+				req.ParallelBuildTask = parallel
+				tasks, err := buildTestCopTasks(bo, req, cache, ranges, nil, nil)
+				require.NoError(t, err, msg)
+				require.Len(t, tasks, len(cpResults), msg)
+				for i := 0; i < len(tasks); i++ {
+					if tasks[i].region.GetID() != cpRegionIDs[i] {
+						a := 1
+						_ = a
+					}
+					taskEqual(t, tasks[i], cpRegionIDs[i], 0, cpResults[i]...)
+				}
+			}
+		}
+	}
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {
@@ -55,112 +116,17 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
-	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
-
-	req := &kv.Request{}
-	flashReq := &kv.Request{}
-	flashReq.StoreType = kv.TiFlash
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("g", "n"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "g", "n")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "g", "n")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("m", "n"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "m", "n")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "m", "n")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "k"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "g")
-	taskEqual(t, tasks[1], regionIDs[1], 0, "g", "k")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "g")
-	taskEqual(t, tasks[1], regionIDs[1], 0, "g", "k")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "x"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 4)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "g")
-	taskEqual(t, tasks[1], regionIDs[1], 0, "g", "n")
-	taskEqual(t, tasks[2], regionIDs[2], 0, "n", "t")
-	taskEqual(t, tasks[3], regionIDs[3], 0, "t", "x")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 4)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "g")
-	taskEqual(t, tasks[1], regionIDs[1], 0, "g", "n")
-	taskEqual(t, tasks[2], regionIDs[2], 0, "n", "t")
-	taskEqual(t, tasks[3], regionIDs[3], 0, "t", "x")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "b", "b", "c")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "b", "b", "c")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "b", "e", "f")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "b", "e", "f")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "g", "n")
-	taskEqual(t, tasks[1], regionIDs[2], 0, "o", "p")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "g", "n")
-	taskEqual(t, tasks[1], regionIDs[2], 0, "o", "p")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "h", "k", "m", "n")
-	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
-
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq, nil)
-	require.NoError(t, err)
-	require.Len(t, tasks, 2)
-	taskEqual(t, tasks[0], regionIDs[1], 0, "h", "k", "m", "n")
-	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
+	testBuildCopTasks(t, cache, buildCopRanges("a", "c"), []uint64{regionIDs[0]}, [][]string{{"a", "c"}})
+	testBuildCopTasks(t, cache, buildCopRanges("g", "n"), []uint64{regionIDs[1]}, [][]string{{"g", "n"}})
+	testBuildCopTasks(t, cache, buildCopRanges("m", "n"), []uint64{regionIDs[1]}, [][]string{{"m", "n"}})
+	testBuildCopTasks(t, cache, buildCopRanges("a", "k"), []uint64{regionIDs[0], regionIDs[1]}, [][]string{{"a", "g"}, {"g", "k"}})
+	testBuildCopTasks(t, cache, buildCopRanges("a", "x"), []uint64{regionIDs[0], regionIDs[1], regionIDs[2], regionIDs[3]},
+		[][]string{{"a", "g"}, {"g", "n"}, {"n", "t"}, {"t", "x"}})
+	testBuildCopTasks(t, cache, buildCopRanges("a", "b", "b", "c"), []uint64{regionIDs[0]}, [][]string{{"a", "b", "b", "c"}})
+	testBuildCopTasks(t, cache, buildCopRanges("a", "b", "e", "h"), []uint64{regionIDs[0], regionIDs[1]}, [][]string{{"a", "b", "e", "g"}, {"g", "h"}})
+	testBuildCopTasks(t, cache, buildCopRanges("g", "n", "o", "p"), []uint64{regionIDs[1], regionIDs[2]}, [][]string{{"g", "n"}, {"o", "p"}})
+	testBuildCopTasks(t, cache, buildCopRanges("h", "k", "m", "p"), []uint64{regionIDs[1], regionIDs[2]}, [][]string{{"h", "k", "m", "n"}, {"n", "p"}})
+	testBuildCopTasks(t, cache, buildCopRanges("h", "k", "m", "z"), []uint64{regionIDs[1], regionIDs[2], regionIDs[3]}, [][]string{{"h", "k", "m", "n"}, {"n", "t"}, {"t", "z"}})
 }
 
 func TestBuildTasksByBuckets(t *testing.T) {
@@ -201,7 +167,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	}
 	for _, regionRange := range regionRanges {
 		regionID, ranges := regionRange.regionID, regionRange.ranges
-		tasks, err := buildTestCopTasks(bo, cache, buildCopRanges(ranges...), req, nil)
+		tasks, err := buildTestCopTasks(bo, req, cache, buildCopRanges(ranges...), nil, nil)
 		require.NoError(t, err)
 		require.Len(t, tasks, len(ranges)/2)
 		for i, task := range tasks {
@@ -214,7 +180,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	for _, regionRange := range regionRanges {
 		allRanges = append(allRanges, regionRange.ranges...)
 	}
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges(allRanges...), req, nil)
+	tasks, err := buildTestCopTasks(bo, req, cache, buildCopRanges(allRanges...), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(allRanges)/2)
 	taskIdx := 0
@@ -240,7 +206,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		"h", "i", "j", "k",
 		"k", "l", "m", "n",
 	}
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges(keyRanges...), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges(keyRanges...), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(keyRanges)/4)
 	for i, task := range tasks {
@@ -261,7 +227,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		{"c", "d", "e", "g"},
 		{"g", "h", "i", "j"},
 	}
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges(keyRanges...), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges(keyRanges...), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -287,7 +253,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'t'}, {'u'}, {'v'}, {'x'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("n", "o", "p", "q", "s", "w"), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges("n", "o", "p", "q", "s", "w"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -311,7 +277,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'q'}, {'s'}, {'u'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("n", "o", "p", "s", "t", "v", "w", "x"), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges("n", "o", "p", "s", "t", "v", "w", "x"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -331,7 +297,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'g'}, {'t'}, {'z'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("o", "p", "u", "w"), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges("o", "p", "u", "w"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -353,7 +319,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'q'}, {'r'}, {'x'}}, regionIDs[1])
 	cache = NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("n", "x"), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges("n", "x"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, len(expectedTaskRanges))
 	for i, task := range tasks {
@@ -531,7 +497,7 @@ func TestRebuild(t *testing.T) {
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
+	tasks, err := buildTestCopTasks(bo, req, cache, buildCopRanges("a", "z"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "m")
@@ -544,8 +510,9 @@ func TestRebuild(t *testing.T) {
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
 	cache.InvalidateCachedRegion(tasks[1].region)
 
+	req.KeepOrder = true // if req.KeepOrder == false, desc will be ignored because the order doesn't matter.
 	req.Desc = true
-	tasks, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
+	tasks, err = buildTestCopTasks(bo, req, cache, buildCopRanges("a", "z"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 3)
 	taskEqual(t, tasks[2], regionIDs[0], 0, "a", "m")
@@ -598,7 +565,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	req := &kv.Request{}
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	tasks, err := buildTestCopTasks(bo, req, cache, buildCopRanges("a", "c"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
@@ -629,7 +596,9 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
 	req.LimitSize = 1
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.False(t, checkPagingCopr(req))
+	req.Paging.Enable = false
+	tasks, err := buildTestCopTasks(bo, req, cache, buildCopRanges("a", "c"), nil, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
@@ -800,63 +769,54 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
-	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
-	req := &kv.Request{}
-	ranges := buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
-	tasks, err := buildCopTasks(bo, ranges, &buildCopTaskOpt{
-		req:      req,
-		cache:    cache,
-		rowHints: []int{1, 1, 3, CopSmallTaskRow},
-	})
-	require.Nil(t, err)
-	require.Equal(t, len(tasks), 4)
-	// task[0] ["a"-"c", "d"-"e"]
-	require.Equal(t, tasks[0].RowCountHint, 2)
-	// task[1] ["h"-"n"]
-	require.Equal(t, tasks[1].RowCountHint, 3)
-	// task[2] ["n"-"t"]
-	require.Equal(t, tasks[2].RowCountHint, 3)
-	// task[3] ["t"-"x", "y"-"z"]
-	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
-	_, conc := smallTaskConcurrency(tasks, 16)
-	require.Equal(t, conc, 1)
+	for _, parallel := range []bool{false, true} {
+		bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+		req := &kv.Request{}
+		req.ParallelBuildTask = parallel
+		ranges := buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
+		tasks, err := buildTestCopTasks(bo, req, cache, ranges, nil, []int{1, 1, 3, CopSmallTaskRow})
+		require.Nil(t, err)
+		require.Equal(t, len(tasks), 4)
+		// task[0] ["a"-"c", "d"-"e"]
+		require.Equal(t, tasks[0].RowCountHint, 2)
+		// task[1] ["h"-"n"]
+		require.Equal(t, tasks[1].RowCountHint, 3)
+		// task[2] ["n"-"t"]
+		require.Equal(t, tasks[2].RowCountHint, 3)
+		// task[3] ["t"-"x", "y"-"z"]
+		require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
+		_, conc := smallTaskConcurrency(tasks, 16)
+		require.Equal(t, conc, 1)
 
-	ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
-	tasks, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
-		req:      req,
-		cache:    cache,
-		rowHints: []int{1, 1, 3, 3},
-	})
-	require.Nil(t, err)
-	require.Equal(t, len(tasks), 4)
-	// task[0] ["a"-"c", "d"-"e"]
-	require.Equal(t, tasks[0].RowCountHint, 2)
-	// task[1] ["h"-"n"]
-	require.Equal(t, tasks[1].RowCountHint, 3)
-	// task[2] ["n"-"t"]
-	require.Equal(t, tasks[2].RowCountHint, 3)
-	// task[3] ["t"-"x", "y"-"z"]
-	require.Equal(t, tasks[3].RowCountHint, 6)
-	_, conc = smallTaskConcurrency(tasks, 16)
-	require.Equal(t, conc, 2)
+		ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
+		tasks, err = buildTestCopTasks(bo, req, cache, ranges, nil, []int{1, 1, 3, 3})
+		require.Nil(t, err)
+		require.Equal(t, len(tasks), 4)
+		// task[0] ["a"-"c", "d"-"e"]
+		require.Equal(t, tasks[0].RowCountHint, 2)
+		// task[1] ["h"-"n"]
+		require.Equal(t, tasks[1].RowCountHint, 3)
+		// task[2] ["n"-"t"]
+		require.Equal(t, tasks[2].RowCountHint, 3)
+		// task[3] ["t"-"x", "y"-"z"]
+		require.Equal(t, tasks[3].RowCountHint, 6)
+		_, conc = smallTaskConcurrency(tasks, 16)
+		require.Equal(t, conc, 2)
 
-	// cross-region long range
-	ranges = buildCopRanges("a", "z")
-	tasks, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
-		req:      req,
-		cache:    cache,
-		rowHints: []int{10},
-	})
-	require.Nil(t, err)
-	require.Equal(t, len(tasks), 4)
-	// task[0] ["a"-"g"]
-	require.Equal(t, tasks[0].RowCountHint, 10)
-	// task[1] ["g"-"n"]
-	require.Equal(t, tasks[1].RowCountHint, 10)
-	// task[2] ["n"-"t"]
-	require.Equal(t, tasks[2].RowCountHint, 10)
-	// task[3] ["t"-"z"]
-	require.Equal(t, tasks[3].RowCountHint, 10)
+		// cross-region long range
+		ranges = buildCopRanges("a", "z")
+		tasks, err = buildTestCopTasks(bo, req, cache, ranges, nil, []int{10})
+		require.Nil(t, err)
+		require.Equal(t, len(tasks), 4)
+		// task[0] ["a"-"g"]
+		require.Equal(t, tasks[0].RowCountHint, 10)
+		// task[1] ["g"-"n"]
+		require.Equal(t, tasks[1].RowCountHint, 10)
+		// task[2] ["n"-"t"]
+		require.Equal(t, tasks[2].RowCountHint, 10)
+		// task[3] ["t"-"z"]
+		require.Equal(t, tasks[3].RowCountHint, 10)
+	}
 }
 
 func TestSmallTaskConcurrencyLimit(t *testing.T) {

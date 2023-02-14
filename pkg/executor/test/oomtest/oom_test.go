@@ -197,8 +197,10 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	oom.AddMessageFilter("memory exceeds quota, rateLimitAction delegate to fallback action")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/testRateLimitActionWithCapacity", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/testRateLimitActionWithCapacity"))
 	}()
 	tk.Session().GetSessionVars().EnabledRateLimitAction = true
 	tk.Session().GetSessionVars().MemQuotaQuery = 10000

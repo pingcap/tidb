@@ -30,7 +30,13 @@ func NewCPUScheduler() *CPUScheduler {
 }
 
 // Tune is to tune the goroutine pool
-func (*CPUScheduler) Tune(_ util.Component, pool util.GoroutinePool) Command {
+func (*CPUScheduler) Tune(component util.Component, pool util.GoroutinePool) Command {
+	switch component {
+	// ignore tuning some components.
+	case util.Coprocessor:
+		return Hold
+	default:
+	}
 	if time.Since(pool.LastTunerTs()) < util.MinSchedulerInterval.Load() {
 		return Hold
 	}

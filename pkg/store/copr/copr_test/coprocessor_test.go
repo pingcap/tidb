@@ -25,80 +25,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
-	// nil --- 'g' --- 'n' --- 't' --- nil
-	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, []byte("g"), []byte("n"), []byte("t"))
-		}),
-	)
-	require.NoError(t, err)
-	defer require.NoError(t, store.Close())
-	copClient := store.GetClient().(*copr.CopClient)
-	ctx := context.Background()
-	killed := uint32(0)
-	vars := kv.NewVariables(&killed)
-	opt := &kv.ClientSendOption{}
-
-	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
-	req := &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, copr.CopSmallTaskRow}),
-		Concurrency: 15,
-	}
-	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
-	require.Nil(t, errRes)
-	conc, smallConc := it.GetConcurrency()
-	rateLimit := it.GetSendRate()
-	require.Equal(t, conc, 1)
-	require.Equal(t, smallConc, 1)
-	require.Equal(t, rateLimit.GetCapacity(), 2)
-
-	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
-	req = &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
-		Concurrency: 15,
-	}
-	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
-	require.Nil(t, errRes)
-	conc, smallConc = it.GetConcurrency()
-	rateLimit = it.GetSendRate()
-	require.Equal(t, conc, 1)
-	require.Equal(t, smallConc, 2)
-	require.Equal(t, rateLimit.GetCapacity(), 3)
-
-	// cross-region long range
-	ranges = copr.BuildKeyRanges("a", "z")
-	req = &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{10}),
-		Concurrency: 15,
-	}
-	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
-	require.Nil(t, errRes)
-	conc, smallConc = it.GetConcurrency()
-	rateLimit = it.GetSendRate()
-	require.Equal(t, conc, 1)
-	require.Equal(t, smallConc, 2)
-	require.Equal(t, rateLimit.GetCapacity(), 3)
-
-	ranges = copr.BuildKeyRanges("a", "z")
-	req = &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{copr.CopSmallTaskRow + 1}),
-		Concurrency: 15,
-	}
-	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
-	require.Nil(t, errRes)
-	conc, smallConc = it.GetConcurrency()
-	rateLimit = it.GetSendRate()
-	require.Equal(t, conc, 4)
-	require.Equal(t, smallConc, 0)
-	require.Equal(t, rateLimit.GetCapacity(), 4)
-}
-
 func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
@@ -124,7 +50,8 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	}
 	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
-	tasks := it.GetTasks()
+	tasks, err := it.GetTaskBuilder().Drain()
+	require.Nil(t, err)
 	require.Equal(t, len(tasks), 2)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
 	require.Equal(t, tasks[0].RowCountHint, 5)
@@ -140,7 +67,8 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
-	tasks = it.GetTasks()
+	tasks, err = it.GetTaskBuilder().Drain()
+	require.Nil(t, err)
 	require.Equal(t, len(tasks), 1)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
@@ -164,7 +92,8 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
-	tasks = it.GetTasks()
+	tasks, err = it.GetTaskBuilder().Drain()
+	require.Nil(t, err)
 	require.Equal(t, len(tasks), 4)
 
 	// only small tasks will be batched.
@@ -177,7 +106,8 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
-	tasks = it.GetTasks()
+	tasks, err = it.GetTaskBuilder().Drain()
+	require.Nil(t, err)
 	require.Equal(t, len(tasks), 2)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
 	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)

@@ -24,6 +24,8 @@ go_library(
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/terror",
+        "//pkg/resourcemanager/pool/spool",
+        "//pkg/resourcemanager/util",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr/metrics",
         "//pkg/store/driver/backoff",

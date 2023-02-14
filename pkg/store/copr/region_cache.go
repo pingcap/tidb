@@ -65,7 +65,8 @@ type LocationKeyRanges struct {
 	// Location is the real location in PD.
 	Location *tikv.KeyLocation
 	// Ranges is the logic ranges the current Location contains.
-	Ranges *KeyRanges
+	Ranges  *KeyRanges
+	rowHint *int
 }
 
 func (l *LocationKeyRanges) getBucketVersion() uint64 {
@@ -96,7 +97,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 		}
 		// All rest ranges belong to the same bucket.
 		if i == ranges.Len() {
-			res = append(res, &LocationKeyRanges{l.Location, ranges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: ranges})
 			break
 		}
 
@@ -107,7 +108,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 				StartKey: r.StartKey,
 				EndKey:   bucket.EndKey,
 			}
-			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: taskRanges})
 
 			ranges = ranges.Slice(i+1, ranges.Len())
 			ranges.first = &kv.KeyRange{
@@ -117,7 +118,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 		} else {
 			// ranges[i] is not in the bucket.
 			taskRanges := ranges.Slice(0, i)
-			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: taskRanges})
 			ranges = ranges.Slice(i, ranges.Len())
 		}
 	}
@@ -332,4 +333,243 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, req *kv.Request, task *copTa
 		peer:                  rpcContext.Peer,
 		loadBasedReplicaRetry: replicaRead != kv.ReplicaReadLeader,
 	}, nil
+}
+
+// SplitCachedKeyRangesByLocations splits the cached KeyRanges by logical info in the cache,
+// there may be remained ranges.
+// It may replace the usage of SplitKeyRangesByLocations.
+func (c *RegionCache) SplitCachedKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, hints []int, keepOrder, tryCache bool,
+	handler func(locs []*LocationKeyRanges) error,
+) error {
+	if ranges.Len() != len(hints) {
+		hints = nil
+	}
+	// Turn off tryCache when the result tasks must be in order.
+	tryCache = tryCache && !keepOrder
+	var (
+		locs      []*LocationKeyRanges
+		misses    []kv.KeyRange
+		missHints []int
+	)
+	if tryCache {
+		locs = make([]*LocationKeyRanges, 0, 16)
+		misses = make([]kv.KeyRange, 0, 16)
+		if hints != nil {
+			missHints = make([]int, 0, 16)
+		}
+	}
+	for ranges.Len() > 0 {
+		var loc *tikv.KeyLocation
+		remain := ranges.Len()
+		var i int
+		for ; i < remain; i++ {
+			keyRange := ranges.RefAt(i)
+			if tryCache {
+				loc = c.TryLocateKey(keyRange.StartKey)
+			} else {
+				var err error
+				loc, err = c.LocateKey(bo.TiKVBackoffer(), keyRange.StartKey)
+				if err != nil {
+					return err
+				}
+			}
+			if loc != nil {
+				break
+			}
+			// When tryCache and cache miss, store the missed keyRange.
+			hint := -1
+			if hints != nil {
+				hint = hints[i]
+			}
+			misses = append(misses, *keyRange)
+			if hint >= 0 {
+				missHints = append(missHints, hint)
+			}
+		}
+		// ranges is drained.
+		if loc == nil {
+			break
+		}
+
+		// loc of ith range exist.
+		ranges = ranges.Slice(i, ranges.Len())
+		if hints != nil {
+			hints = hints[i:]
+		}
+
+		// Iterate to the first range that is not complete in the region.
+		var r *kv.KeyRange
+		i = 0
+		for ; i < ranges.Len(); i++ {
+			r = ranges.RefAt(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.Len() {
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: ranges}
+			if hints != nil {
+				hint := 0
+				for j := 0; j < len(hints); j++ {
+					hint += hints[j]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+			locs = append(locs, locKeyRanges.splitKeyRangesByBuckets()...)
+			break
+		}
+
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: taskRanges}
+			if hints != nil {
+				hint := 0
+				for j := 0; j <= i; j++ {
+					hint += hints[j]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+
+			// When tryCache, the cache-hit locs will be handled after the loop.
+			if tryCache {
+				locs = append(locs, locKeyRanges.splitKeyRangesByBuckets()...)
+			} else {
+				if err := handler(locKeyRanges.splitKeyRangesByBuckets()); err != nil {
+					return err
+				}
+			}
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.Slice(0, i)
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: taskRanges}
+			if hints != nil {
+				hint := 0
+				for j := 0; j < i; j++ {
+					hint += hints[j]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+
+			// When tryCache, the cache-hit locs will be handled after the loop.
+			if tryCache {
+				locs = append(locs, locKeyRanges.splitKeyRangesByBuckets()...)
+			} else {
+				if err := handler(locKeyRanges.splitKeyRangesByBuckets()); err != nil {
+					return err
+				}
+			}
+
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+		if hints != nil {
+			hints = hints[i:]
+		}
+	}
+	if len(locs) > 0 {
+		if err := handler(locs); err != nil {
+			return nil
+		}
+	}
+	if tryCache && len(misses) > 0 {
+		if err := c.SplitCachedKeyRangesByLocations(bo, NewKeyRanges(misses), missHints, keepOrder, false, handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SplitKeyRangesByLocationsDesc splits the cached KeyRanges by logical info in the cache in desc mode,
+// Because desc scan must be in order, so load region regardless of cache.
+func (c *RegionCache) SplitKeyRangesByLocationsDesc(bo *Backoffer, ranges *KeyRanges, hints []int,
+	handler func(locs []*LocationKeyRanges) error,
+) error {
+	if ranges.Len() != len(hints) {
+		hints = nil
+	}
+
+	getHint := func(i int) int {
+		if hints == nil {
+			return -1
+		}
+		return hints[i]
+	}
+
+	locs := make([]*tikv.KeyLocation, 0, 2)
+
+	for i := ranges.Len() - 1; i >= 0; i-- {
+		keyRange := ranges.RefAt(i)
+		startKey := keyRange.StartKey
+		locs = locs[:0]
+		for {
+			loc, err := c.LocateKey(bo.TiKVBackoffer(), startKey)
+			if err != nil {
+				return err
+			}
+			locs = append(locs, loc)
+			if loc.Contains(keyRange.EndKey) || bytes.Equal(loc.EndKey, keyRange.EndKey) {
+				// the range is drained.
+				break
+			}
+			startKey = loc.EndKey
+			continue
+		}
+
+		hint := getHint(i)
+		endKey := keyRange.EndKey
+		for j := len(locs) - 1; j >= 0; j-- {
+			loc := locs[j]
+			var keyRanges []kv.KeyRange
+			if j > 0 {
+				keyRanges = make([]kv.KeyRange, 0, 1)
+			} else {
+				keyRanges = make([]kv.KeyRange, 0, 4)
+			}
+			locStartKey := loc.StartKey
+			if loc.Contains(keyRange.StartKey) {
+				locStartKey = keyRange.StartKey
+			}
+			keyRanges = append(keyRanges, kv.KeyRange{StartKey: locStartKey, EndKey: endKey})
+			endKey = loc.StartKey
+			// the start key of the first range may cover the lower ranges.
+			for j == 0 && i >= 1 {
+				subKeyRange := ranges.RefAt(i - 1)
+				if loc.Contains(subKeyRange.StartKey) {
+					keyRanges = append(keyRanges, *subKeyRange)
+					hint += getHint(i - 1)
+					i--
+					continue
+				} else if loc.Contains(subKeyRange.EndKey) && !bytes.Equal(subKeyRange.EndKey, loc.StartKey) {
+					keyRanges = append(keyRanges, kv.KeyRange{StartKey: subKeyRange.StartKey, EndKey: subKeyRange.EndKey})
+					subKeyRange.EndKey = loc.StartKey
+					hint += getHint(i - 1)
+				}
+				break
+			}
+			// the key ranges are built in reverse(descending order), so we need to reverse it back to ascending order.
+			reverse(keyRanges)
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: NewKeyRanges(keyRanges)}
+			if hint >= 0 {
+				h := hint
+				locKeyRanges.rowHint = &h
+			}
+			buckets := locKeyRanges.splitKeyRangesByBuckets()
+			reverse(buckets)
+			if err := handler(buckets); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

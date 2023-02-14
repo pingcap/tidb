@@ -519,11 +519,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
-		if ci, ok := r.resp.(copr.CopInfo); ok {
-			conc, extraConc := ci.GetConcurrency()
-			r.stats.distSQLConcurrency = conc
-			r.stats.extraConcurrency = extraConc
-		}
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
@@ -611,6 +606,9 @@ func (r *selectResult) Close() error {
 				if batched != 0 || fallback != 0 {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
 				}
+				conc, extraConc := ci.GetConcurrency()
+				r.stats.distSQLConcurrency = conc
+				r.stats.extraConcurrency = extraConc
 			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
