@@ -259,6 +259,16 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
 	}
+
+	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
+	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
+	// instead.
+	sql := ""
+	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
+	if ok {
+		sql = planCacheStmt.StmtText
+	}
+	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
