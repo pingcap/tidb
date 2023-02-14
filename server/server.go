@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -287,7 +288,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			proxyTarget = s.socket
 		}
 		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
-			int(s.cfg.ProxyProtocol.HeaderTimeout))
+			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
 			return nil, errors.Trace(err)
@@ -455,7 +456,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			if authPlugin.OnConnectionEvent == nil {
 				return nil
 			}
-			host, _, err := clientConn.PeerHost("")
+			host, _, err := clientConn.PeerHost("", false)
 			if err != nil {
 				logutil.BgLogger().Error("get peer host failed", zap.Error(err))
 				terror.Log(clientConn.Close())
@@ -535,7 +536,7 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
 	// init the connInfo
-	_, _, err := conn.PeerHost("")
+	_, _, err := conn.PeerHost("", false)
 	if err != nil {
 		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 			Error("get peer host failed", zap.Error(err))

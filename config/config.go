@@ -765,6 +765,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -979,6 +982,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
