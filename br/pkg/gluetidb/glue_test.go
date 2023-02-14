@@ -134,7 +134,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
 	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
@@ -168,6 +168,42 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_1'").Check(testkit.Rows("1234"))
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_2'").Check(testkit.Rows("1235"))
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").Check(testkit.Rows("1236"))
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
+}
+
+// batch create table with table id reused
+func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("drop table if exists table_2")
+	tk.MustExec("drop table if exists table_3")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("tables_3"),
+	})
+
+	se := &tidbSession{se: tk.Session()}
+
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
+	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return true
+	}))
+
+	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
