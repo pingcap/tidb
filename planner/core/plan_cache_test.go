@@ -202,6 +202,23 @@ func TestNonPreparedPlanCacheHints(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestNonPreparedPlanCacheBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("create binding for select * from t where a=1 using select /*+ use_index(t, a) */ * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("drop binding for select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
