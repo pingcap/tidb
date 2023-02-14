@@ -44,8 +44,6 @@ const (
 	retryTimeout = 3 * time.Second
 
 	defaultMaxRetry = 3
-
-	dbTimeout = 30 * time.Second
 )
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
@@ -76,8 +74,6 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.Params["charset"] = "utf8mb4"
 	cfg.Params["sql_mode"] = fmt.Sprintf("'%s'", param.SQLMode)
 	cfg.MaxAllowedPacket = int(param.MaxAllowedPacket)
-	cfg.ReadTimeout = dbTimeout
-	cfg.WriteTimeout = dbTimeout
 
 	cfg.TLS = param.TLSConfig
 	cfg.AllowFallbackToPlaintext = param.AllowFallbackToPlaintext

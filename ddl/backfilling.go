@@ -60,6 +60,7 @@ const (
 	typeUpdateColumnWorker     backfillerType = 1
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
+	typeReorgPartitionWorker   backfillerType = 4
 
 	// InstanceLease is the instance lease.
 	InstanceLease                = 1 * time.Minute
@@ -85,12 +86,14 @@ func (bT backfillerType) String() string {
 		return "clean up index"
 	case typeAddIndexMergeTmpWorker:
 		return "merge temporary index"
+	case typeReorgPartitionWorker:
+		return "reorganize partition"
 	default:
 		return "unknown"
 	}
 }
 
-// BackfillJob is for a tidb_ddl_backfill table's record.
+// BackfillJob is for a tidb_background_subtask table's record.
 type BackfillJob struct {
 	ID              int64
 	JobID           int64
@@ -101,15 +104,9 @@ type BackfillJob struct {
 	State           model.JobState
 	InstanceID      string
 	InstanceLease   types.Time
-	// range info
-	CurrKey  []byte
-	StartKey []byte
-	EndKey   []byte
-
-	StartTS  uint64
-	FinishTS uint64
-	RowCount int64
-	Meta     *model.BackfillMeta
+	StartTS         uint64
+	StateUpdateTS   uint64
+	Meta            *model.BackfillMeta
 }
 
 // AbbrStr returns the BackfillJob's info without the Meta info.
@@ -146,6 +143,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
+// 4: reorganize partition
 //
 // They all have a write reorganization state to back fill data into the rows existed.
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
@@ -321,7 +319,7 @@ func (w *backfillWorker) updateLease(execID string, bfJob *BackfillJob, nextKey 
 	if err != nil {
 		return err
 	}
-	bfJob.CurrKey = nextKey
+	bfJob.Meta.CurrKey = nextKey
 	bfJob.InstanceID = execID
 	bfJob.InstanceLease = GetLeaseGoTime(leaseTime, InstanceLease)
 	return w.backfiller.UpdateTask(bfJob)
@@ -475,7 +473,7 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 	// Change the batch size dynamically.
 	w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 	result = w.handleBackfillTask(w.GetCtx().ddlCtx, task, w.backfiller)
-	task.bfJob.RowCount = int64(result.addedCount)
+	task.bfJob.Meta.RowCount = int64(result.addedCount)
 	if result.err != nil {
 		logutil.BgLogger().Warn("[ddl] backfill worker runTask failed",
 			zap.Stringer("worker", w), zap.String("backfillJob", task.bfJob.AbbrStr()), zap.Error(result.err))
@@ -666,7 +664,6 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
-	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	dc.getReorgCtx(reorgInfo.Job.ID).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
@@ -713,7 +710,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 
 		task := &reorgBackfillTask{
 			id:            i,
-			jobID:         job.ID,
+			jobID:         reorgInfo.Job.ID,
 			physicalTable: phyTbl,
 			priority:      reorgInfo.Priority,
 			startKey:      startKey,
@@ -730,7 +727,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
+func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
@@ -940,6 +937,13 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
 			worker = idxWorker
+		case typeReorgPartitionWorker:
+			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
+			runner = newBackfillWorker(jc.ddlJobCtx, partWorker)
+			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")
 		}
@@ -1142,6 +1146,8 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 				Type:     reorgInfo.Job.Type,
 				Query:    reorgInfo.Job.Query,
 			},
+			StartKey: task.startKey,
+			EndKey:   task.endKey,
 		}
 		bj := &BackfillJob{
 			ID:              sJobCtx.currBackfillJobID.Add(1),
@@ -1152,11 +1158,9 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 			Tp:              sJobCtx.bfWorkerType,
 			State:           model.JobStateNone,
 			InstanceID:      instanceID,
-			CurrKey:         task.startKey,
-			StartKey:        task.startKey,
-			EndKey:          task.endKey,
 			Meta:            bm,
 		}
+		bj.Meta.CurrKey = task.startKey
 		bJobs = append(bJobs, bj)
 	}
 	if err := AddBackfillJobs(sess, bJobs); err != nil {

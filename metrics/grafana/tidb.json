@@ -3845,11 +3845,20 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, txn_mode)",
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", scope=~\"general\"}[1m])) by (type, txn_mode)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}-{{txn_mode}}",
               "refId": "A",
+              "step": 10
+            },
+            {
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", scope=~\"internal\"}[1m])) by (type, txn_mode)",
+              "format": "time_series",
+              "hide": true,
+              "intervalFactor": 2,
+              "legendFormat": "Internal-{{type}}-{{txn_mode}}",
+              "refId": "B",
               "step": 10
             }
           ],
@@ -3947,24 +3956,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, txn_mode))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", scope=~\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "99-{{txn_mode}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, txn_mode))",
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}[1m])) by (txn_mode) / sum(rate(tidb_session_transaction_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}[1m])) by (txn_mode)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "95-{{txn_mode}}",
-              "refId": "B"
-            },
-            {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, txn_mode))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "80-{{txn_mode}}",
+              "legendFormat": "avg-{{txn_mode}}",
               "refId": "C"
             }
           ],
@@ -4045,7 +4047,7 @@
           "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_session_transaction_statement_num_bucket{instance=~\"$instance\"}[1m])) by (le)",
+              "expr": "sum(increase(tidb_session_transaction_statement_num_bucket{instance=~\"$instance\", scope=~\"general\"}[1m])) by (le)",
               "format": "heatmap",
               "intervalFactor": 2,
               "legendFormat": "{{le}}",
@@ -4114,7 +4116,7 @@
           "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_session_retry_num_bucket{instance=~\"$instance\"}[1m])) by (le)",
+              "expr": "sum(increase(tidb_session_retry_num_bucket{instance=~\"$instance\", scope=~\"general\"}[1m])) by (le)",
               "format": "heatmap",
               "intervalFactor": 2,
               "legendFormat": "{{le}}",

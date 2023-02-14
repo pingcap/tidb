@@ -40,6 +40,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -519,7 +520,8 @@ func jobNeedGC(job *model.Job) bool {
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn,
-			model.ActionAddIndex, model.ActionAddPrimaryKey:
+			model.ActionAddIndex, model.ActionAddPrimaryKey,
+			model.ActionReorganizePartition:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -673,9 +675,10 @@ func (w *worker) unlockSeqNum(err error) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:     "add_index",
-	model.ActionModifyColumn: "modify_column",
-	model.ActionDropIndex:    "drop_index",
+	model.ActionAddIndex:            "add_index",
+	model.ActionModifyColumn:        "modify_column",
+	model.ActionDropIndex:           "drop_index",
+	model.ActionReorganizePartition: "reorganize_partition",
 }
 
 func getDDLRequestSource(jobType model.ActionType) string {
@@ -1088,6 +1091,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionReorganizePartition:
+		ver, err = w.onReorganizePartition(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
@@ -1359,6 +1364,22 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
+			}
+		}
+	case model.ActionReorganizePartition:
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
+				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
+					// to use AffectedOpts we need both new and old to have the same length
+					maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+					// Also initialize them to 0!
+					oldIDs := make([]int64, maxParts)
+					copy(oldIDs, droppedIDs)
+					newIDs := make([]int64, maxParts)
+					copy(newIDs, addedIDs)
+					diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+				}
 			}
 		}
 	case model.ActionCreateTable:

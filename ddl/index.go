@@ -101,7 +101,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
 			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
-				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
 			colLenPerUint, err := getIndexColumnLength(col, 1)
@@ -110,7 +110,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			}
 			indexColLen = maxIndexLength / colLenPerUint
 			// produce warning message
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(maxIndexLength))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -149,7 +149,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		return err
 	}
 	if idxLen > config.GetGlobalConfig().MaxIndexLength {
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+		return dbterror.ErrTooLongKey.GenWithStackByArgs(idxLen, config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
 		// return error in strict sql mode
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 	}
 	return nil
 }
@@ -1374,8 +1374,8 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and id = %d",
-			bfJob.JobID, bfJob.EleID, wrapKey2String(bfJob.EleKey), bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%d_%s_%d_%d'",
+			bfJob.JobID, hex.EncodeToString(bfJob.EleKey), bfJob.EleID, bfJob.ID), "update_backfill_task")
 		if err != nil {
 			return err
 		}
@@ -1391,7 +1391,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 			return err
 		}
 		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(se, BackfillTable, bfJob, "update_backfill_task")
+		return updateBackfillJob(se, BackgroundSubtaskTable, bfJob, "update_backfill_task")
 	})
 }
 
@@ -1402,7 +1402,7 @@ func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		bfJob.FinishTS = txn.StartTS()
+		bfJob.StateUpdateTS = txn.StartTS()
 		err = RemoveBackfillJob(se, false, bfJob)
 		if err != nil {
 			return err
@@ -1851,7 +1851,16 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	pid, err := findNextPartitionID(currPhysicalTableID, pi.Definitions)
+	// During data copying, copy data from partitions to be dropped
+	nextPartitionDefs := pi.DroppingDefinitions
+	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
+		// During index re-creation, process data from partitions to be added
+		nextPartitionDefs = pi.AddingDefinitions
+	}
+	if nextPartitionDefs == nil {
+		nextPartitionDefs = pi.Definitions
+	}
+	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))

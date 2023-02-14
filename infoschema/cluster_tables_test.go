@@ -226,9 +226,12 @@ func TestSelectClusterTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-slow0.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")

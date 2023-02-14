@@ -58,6 +58,7 @@ go_library(
         "//util/etcd",
         "//util/execdetails",
         "//util/expensivequery",
+        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/memoryusagealarm",

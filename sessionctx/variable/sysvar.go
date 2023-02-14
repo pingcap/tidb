@@ -463,8 +463,10 @@ var defaultSysVars = []*SysVar{
 			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
 			if oldVal != newVal {
 				err := switchDDL(newVal)
+				if err != nil {
+					return err
+				}
 				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
-				return err
 			}
 			return nil
 		},
@@ -2357,6 +2359,15 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableINLJoinInnerMultiPattern = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2485,7 +2496,7 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
-	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
+	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
