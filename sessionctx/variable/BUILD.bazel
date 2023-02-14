@@ -54,6 +54,7 @@ go_library(
         "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
         "//util/tableutil",
+        "//util/tiflashcompute",
         "//util/tikvutil",
         "//util/timeutil",
         "//util/tls",

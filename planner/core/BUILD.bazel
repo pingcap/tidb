@@ -142,6 +142,7 @@ go_library(
         "//util/stmtsummary",
         "//util/stringutil",
         "//util/texttree",
+        "//util/tiflashcompute",
         "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
