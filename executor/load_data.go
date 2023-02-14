@@ -330,13 +330,11 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		for _, v := range e.ColumnAssignments {
 			columnNames = append(columnNames, v.Column.Name.O)
 		}
+	}
 
-		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
-		}
-	} else {
-		cols = tableCols
+	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
+	if missingColName != "" {
+		return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 	}
 
 	for _, col := range cols {
