@@ -239,14 +239,14 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		// prepare batch and enqueue task
 		err = loadDataInfo.ReadRows(ctx, csvParser)
 		if err != nil {
-			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+			logutil.Logger(ctx).Error("load data process stream error in ReadRows", zap.Error(err))
 			return
 		}
 		if loadDataInfo.curBatchCnt == 0 {
 			return
 		}
 		if err = loadDataInfo.enqOneTask(ctx); err != nil {
-			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+			logutil.Logger(ctx).Error("load data process stream error in enqOneTask", zap.Error(err))
 			return
 		}
 	}
