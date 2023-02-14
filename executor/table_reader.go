@@ -459,13 +459,19 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *TableReaderExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
-	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
-		for i, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+	e.virtualColumnIndex, e.virtualColumnRetFieldTypes = buildVirtualColumnInfo(e.Schema(), e.columns)
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func buildVirtualColumnInfo(schema *expression.Schema, columns []*model.ColumnInfo) (colIndexs []int, retTypes []*types.FieldType) {
+	colIndexs = buildVirtualColumnIndex(schema, columns)
+	if len(colIndexs) > 0 {
+		retTypes = make([]*types.FieldType, len(colIndexs))
+		for i, idx := range colIndexs {
+			retTypes[i] = schema.Columns[idx].RetType
 		}
 	}
+	return colIndexs, retTypes
 }
 
 type tableResultHandler struct {
