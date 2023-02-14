@@ -128,6 +128,11 @@ func TestRevokeTableScope(t *testing.T) {
 	//delete row when last prv , updated by issue #38421
 	rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Rows()
 	require.Len(t, rows, 0)
+
+	// Test the case insensitive case for grant/revoke table_priv #issue41048
+	tk.MustExec(`CREATE TABLE test.TABLE_PRIV(id int);`)
+	tk.MustExec(`GRANT SELECT ON test.table_priv TO 'root'@'%';`)
+	tk.MustExec(`revoke SELECT ON test.TABLE_PRIV from 'root'@'%';;`)
 }
 
 func TestRevokeColumnScope(t *testing.T) {
