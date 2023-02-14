@@ -101,7 +101,6 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 		return false
 	}))
 	require.NoError(t, err)
-
 }
 
 // batch create table with table id reused
