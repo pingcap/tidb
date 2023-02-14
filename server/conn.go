@@ -171,6 +171,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -214,6 +215,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -960,9 +964,16 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 }
 
 func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
-	// Update means reload the client's peer IP and port.
-	if !update && len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+	// already get peer host
+	if len(cc.peerHost) > 0 {
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
