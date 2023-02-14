@@ -15,6 +15,7 @@ go_test(
         "//ddl/testutil",
         "//ddl/util",
         "//domain",
+        "//errno",
         "//kv",
         "//parser/model",
         "//session",
