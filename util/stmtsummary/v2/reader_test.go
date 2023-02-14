@@ -67,6 +67,31 @@ func TestStmtFile(t *testing.T) {
 	require.Equal(t, `{"begin":1,"end":2}`, string(firstLine))
 }
 
+func TestStmtFileInvalidLine(t *testing.T) {
+	filename := "tidb-statements-2022-12-27T16-21-20.245.log"
+
+	file, err := os.Create(filename)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, os.Remove(filename))
+	}()
+	_, err = file.WriteString("invalid line\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("{\"begin\":1,\"end\":2}\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("{\"begin\":3,\"end\":4}\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	f, err := openStmtFile(filename)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, f.file.Close())
+	}()
+	require.Equal(t, int64(1), f.begin)
+	require.Equal(t, int64(1672129280), f.end) // 2022-12-27T16-21-20.245 == 1672129280
+}
+
 func TestStmtFiles(t *testing.T) {
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
 	filename2 := "tidb-statements.log"
@@ -377,6 +402,43 @@ func TestHistoryReader(t *testing.T) {
 			require.Equal(t, len(columns), len(row))
 		}
 	}()
+}
+
+func TestHistoryReaderInvalidLine(t *testing.T) {
+	filename := "tidb-statements.log"
+
+	file, err := os.Create(filename)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, os.Remove(filename))
+	}()
+	_, err = file.WriteString("invalid header line\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":30}\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("corrupted line\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("{\"begin\":1672129380,\"end\":1672129390,\"digest\":\"digest3\",\"exec_count\":40}\n")
+	require.NoError(t, err)
+	_, err = file.WriteString("invalid footer line")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	timeLocation, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	columns := []*model.ColumnInfo{
+		{Name: model.NewCIStr(DigestStr)},
+		{Name: model.NewCIStr(ExecCountStr)},
+	}
+
+	reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, nil, 2)
+	require.NoError(t, err)
+	defer reader.Close()
+	rows := readAllRows(t, reader)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		require.Equal(t, len(columns), len(row))
+	}
 }
 
 func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {

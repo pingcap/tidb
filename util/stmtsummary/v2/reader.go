@@ -388,8 +388,8 @@ func (r *HistoryReader) scheduleTasks(
 	case <-ctx.Done():
 		// notified by manager or parent ctx is canceled
 	}
-	close(rowsCh) // task done
 	mgrWg.Wait()
+	close(rowsCh) // task done
 }
 
 type stmtChecker struct {
@@ -482,18 +482,21 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	firstLine, err := readLine(bufio.NewReader(file))
-	if err != nil {
-		return 0, err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return 0, err
-	}
-	if len(firstLine) == 0 {
-		return 0, nil
-	}
+
+	reader := bufio.NewReader(file)
 	var record stmtTinyRecord
-	if err := json.Unmarshal(firstLine, &record); err != nil {
+	for { // ignore invalid lines
+		line, err := readLine(reader)
+		if err != nil {
+			return 0, err
+		}
+		err = json.Unmarshal(line, &record)
+		if err == nil {
+			break
+		}
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
 	return record.Begin, nil
@@ -668,14 +671,19 @@ func (w *stmtScanWorker) putLines(
 }
 
 func (w *stmtScanWorker) readlines(reader *bufio.Reader) ([][]byte, error) {
-	firstLine, err := readLine(reader)
-	if err != nil {
-		return nil, err
-	}
+	var firstLine []byte
+	var record *stmtTinyRecord
+	for { // ingore invalid lines
+		var err error
+		firstLine, err = readLine(reader)
+		if err != nil {
+			return nil, err
+		}
 
-	record, err := w.parse(firstLine)
-	if err != nil {
-		return nil, err
+		record, err = w.parse(firstLine)
+		if err == nil {
+			break
+		}
 	}
 
 	if w.needStop(record) {
@@ -740,7 +748,7 @@ func (w *stmtParseWorker) run(
 func (w *stmtParseWorker) handleLines(
 	lines [][]byte,
 	rowsCh chan<- [][]types.Datum,
-	errCh chan<- error,
+	_ chan<- error,
 ) {
 	if len(lines) == 0 {
 		return
@@ -750,8 +758,8 @@ func (w *stmtParseWorker) handleLines(
 	for _, line := range lines {
 		record, err := w.parse(line)
 		if err != nil {
-			w.putErr(err, errCh)
-			return
+			// ignore invalid lines
+			continue
 		}
 
 		if w.needStop(record) {
@@ -768,16 +776,6 @@ func (w *stmtParseWorker) handleLines(
 
 	if len(rows) > 0 {
 		w.putRows(rows, rowsCh)
-	}
-}
-
-func (w *stmtParseWorker) putErr(
-	err error,
-	errCh chan<- error,
-) {
-	select {
-	case errCh <- err:
-	case <-w.ctx.Done():
 	}
 }
 
