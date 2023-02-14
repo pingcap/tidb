@@ -1427,6 +1427,16 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 	s.ChunkPool.Alloc = alloc
 }
 
+// CheckAlloc check if alloc is enable
+func (s *SessionVars) CheckAlloc() bool {
+	if !s.EnableReuseCheck {
+		return false
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	return s.ChunkPool.Alloc != nil
+}
+
 // ClearAlloc indicates stop reuse chunk
 func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
 	if !b {

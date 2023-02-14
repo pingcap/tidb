@@ -399,6 +399,7 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
+	checkCanUseReuseChunk(ctx, sctx, plan)
 	return plan, nil
 }
 
@@ -1219,4 +1220,71 @@ func init() {
 	expression.RewriteAstExpr = rewriteAstExpr
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
+}
+
+// checkCanUseReuseChunk Check if chunk reuse can be used.
+func checkCanUseReuseChunk(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
+	if !sctx.GetSessionVars().EnableReuseCheck || !sctx.GetSessionVars().CheckAlloc() {
+		return
+	}
+
+	if checkReadType(sctx, plan) {
+		return
+	}
+
+	for _, child := range plan.Children() {
+		checkCanUseReuseChunk(ctx, sctx, child)
+	}
+}
+
+// checkReadType Check if read type is too long.
+func checkReadType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	switch x := plan.(type) {
+	case *PhysicalIndexLookUpReader:
+		if checkIfExistsLongStr(x.schema.Columns) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	case *PhysicalIndexReader:
+		if checkIfExistsLongStr(x.schema.Columns) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	case *PhysicalIndexMergeReader:
+		if checkIfExistsLongStr(x.schema.Columns) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	case *PhysicalTableReader:
+		if checkIfExistsLongStr(x.schema.Columns) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	case *PointGetPlan:
+		if checkIfExistsLongStr(x.schema.Columns) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true
+		}
+	default:
+		return false
+	}
+	return false
+}
+
+func checkIfExistsLongStr(columns []*expression.Column) bool {
+	for _, column := range columns {
+		switch column.RetType.GetType() {
+		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+			mysql.TypeBlob, mysql.TypeJSON:
+			return true
+		case mysql.TypeVarchar:
+			if column.RetType.GetFlen() > 1000 {
+				return true
+			}
+		}
+	}
+	return false
 }
