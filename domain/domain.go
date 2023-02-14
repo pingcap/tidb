@@ -100,6 +100,25 @@ type Domain struct {
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+<<<<<<< HEAD
+=======
+
+	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
+
+	stopAutoAnalyze atomicutil.Bool
+}
+
+type mdlCheckTableInfo struct {
+	mu         sync.Mutex
+	newestVer  int64
+	jobsVerMap map[int64]int64
+	jobsIdsMap map[int64]string
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 }
 
 // InfoCache export for test.
@@ -737,7 +756,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
+<<<<<<< HEAD
 
+=======
+	do.stopAutoAnalyze.Store(false)
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
@@ -1509,7 +1533,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -1835,6 +1859,34 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// StartTTLJobManager creates and starts the ttl job manager
+func (do *Domain) StartTTLJobManager() {
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("ttlJobManager exited.")
+		}()
+
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
+		do.ttlJobManager.Store(ttlJobManager)
+		ttlJobManager.Start()
+
+		<-do.exit
+	}, "ttlJobManager")
+}
+
+// TTLJobManager returns the ttl job manager on this domain
+func (do *Domain) TTLJobManager() *ttlworker.JobManager {
+	return do.ttlJobManager.Load()
+}
+
+// StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
+func (do *Domain) StopAutoAnalyze() {
+	do.stopAutoAnalyze.Store(true)
+}
+
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 func init() {
 	initByLDFlagsForGlobalKill()
 	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
