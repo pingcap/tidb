@@ -648,6 +648,9 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+	// Prevent initializing the mock context in the workers concurrently.
+	// For details, see https://github.com/pingcap/tidb/issues/40879.
+	_ = sessCtx.GetDomainInfoSchema()
 	return sessCtx, nil
 }
 
