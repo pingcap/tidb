@@ -1223,7 +1223,7 @@ func init() {
 }
 
 // checkCanUseReuseChunk Check if chunk reuse can be used.
-func checkCanUseReuseChunk(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
+func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
 	if !sctx.GetSessionVars().CheckAlloc() {
 		return
 	}
