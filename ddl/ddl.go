@@ -537,18 +537,13 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.references.Add(1)
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
+	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		existedRC.references.Add(1)
+		return existedRC
+	}
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
-}
-
-func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
-	rc := dc.getReorgCtx(bfJob.JobID)
-	if rc == nil {
-		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
-		dc.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, ele, bfJob.Meta.RowCount)
-	} else {
-		rc.references.Add(1)
-	}
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
