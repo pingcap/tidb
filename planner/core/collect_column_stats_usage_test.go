@@ -324,7 +324,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		},
 	}
 
-	s := createPlannerSuite()
+	s := casetest.createPlannerSuite()
 	ctx := context.Background()
 	for _, tt := range tests {
 		comment := fmt.Sprintf("sql: %s", tt.sql)

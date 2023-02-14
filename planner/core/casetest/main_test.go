@@ -25,8 +25,6 @@ import (
 )
 
 var testDataMap = make(testdata.BookKeeper)
-var indexMergeSuiteData testdata.TestData
-var planSuiteUnexportedData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
@@ -34,7 +32,6 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
-	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
@@ -46,15 +43,11 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
-	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
-
-	indexMergeSuiteData = testDataMap["index_merge_suite"]
-	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
@@ -131,10 +124,6 @@ func GetFlatPlanSuiteData() testdata.TestData {
 
 func GetBinaryPlanSuiteData() testdata.TestData {
 	return testDataMap["binary_plan_suite"]
-}
-
-func GetIndexMergeSuiteData() testdata.TestData {
-	return testDataMap["index_merge_suite"]
 }
 
 func GetJSONPlanSuiteData() testdata.TestData {

@@ -18,15 +18,24 @@ import (
 	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
+
+var testDataMap = make(testdata.BookKeeper)
+var planSuiteUnexportedData testdata.TestData
+var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-
+	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
+	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	indexMergeSuiteData = testDataMap["index_merge_suite"]
+	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -36,5 +45,14 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
 }
