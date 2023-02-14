@@ -1,0 +1,50 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package internal
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/stretchr/testify/require"
+)
+
+func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr(dbName))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == tableName {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+}
+
+// WrapCastForAggFuncs wraps the args of an aggregate function with a cast function.
+// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
+// since the types of the args are already the expected.
+func WrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
+	for i := range aggFuncs {
+		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
+			aggFuncs[i].WrapCastForAggArgs(sctx)
+		}
+	}
+}
