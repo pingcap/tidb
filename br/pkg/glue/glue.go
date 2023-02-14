@@ -52,7 +52,7 @@ type Session interface {
 
 // BatchCreateTableSession is an interface to batch create table parallelly
 type BatchCreateTableSession interface {
-	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ddl.CreateTableWithInfoConfigurier) error
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error
 }
 
 // Progress is an interface recording the current execution progress.
