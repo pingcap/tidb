@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -323,7 +324,14 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
 	defer ticker.Stop()
 	for {
+		failpoint.Inject("MockCanceledErr", func() {
+			getReorgCtx(reorgCtxs, ddlJobID).notifyReorgCancel()
+		})
 		if getReorgCtx(reorgCtxs, ddlJobID).isReorgCanceled() {
+			err := cleanupBackfillJobs(sess, fmt.Sprintf("%d_%s_%d_%%", ddlJobID, hex.EncodeToString(currEle.TypeKey), currEle.ID))
+			if err != nil {
+				return err
+			}
 			// Job is cancelled. So it can't be done.
 			return dbterror.ErrCancelledDDLJob
 		}
@@ -366,6 +374,10 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 				}
 			}
 		case <-ctx.Done():
+			err := cleanupBackfillJobs(sess, fmt.Sprintf("%d_%s_%d_%%", ddlJobID, hex.EncodeToString(currEle.TypeKey), currEle.ID))
+			if err != nil {
+				return err
+			}
 			return ctx.Err()
 		}
 	}
@@ -428,15 +440,20 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 		return nil
 	}
 
+	return cleanupBackfillJobs(sess, bJobs[0].prefixKeyString())
+}
+
+func cleanupBackfillJobs(sess *session, prefixKey string) error {
+	var err error
 	for i := 0; i < retrySQLTimes; i++ {
-		err = MoveBackfillJobsToHistoryTable(sess, bJobs[0])
+		err = MoveBackfillJobsToHistoryTable(sess, prefixKey)
 		if err == nil {
-			return bJobs[0].Meta.Error
+			return nil
 		}
 		logutil.BgLogger().Info("[ddl] MoveBackfillJobsToHistoryTable failed", zap.Error(err))
 		time.Sleep(RetrySQLInterval)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
@@ -496,7 +513,7 @@ func GetPhysicalTableMetas(sess *session, ddlJobID, currEleID int64, currEleKey 
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
-func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
+func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, prefixKey string) error {
 	s, ok := sctx.(*session)
 	if !ok {
 		return errors.Errorf("sess ctx:%#v convert session failed", sctx)
@@ -504,8 +521,7 @@ func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob)
 
 	return s.runInTxn(func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
-		bJobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
-			bfJob.JobID, hex.EncodeToString(bfJob.EleKey), bfJob.EleID), "update_backfill_job")
+		bJobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key like '%s'", prefixKey), "update_backfill_job")
 		if err != nil {
 			return errors.Trace(err)
 		}
