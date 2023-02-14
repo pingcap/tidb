@@ -222,6 +222,10 @@ type Transaction interface {
 	// LockKeys tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
+	// LockKeysFunc tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
+	// fn is called before LockKeys unlocks the keys.
+	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, fn func(), keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt int, val interface{})
@@ -539,6 +543,8 @@ type Request struct {
 	FixedRowCountHint []int
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// LimitSize indicates whether the request is scan and limit
+	LimitSize uint64
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

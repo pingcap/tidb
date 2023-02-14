@@ -160,6 +160,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		if limit != nil && limit.Limit < estimatedRegionRowCount {
 			builder.Request.Concurrency = 1
 		}
+		builder.Request.LimitSize = limit.GetLimit()
 	}
 	return builder
 }

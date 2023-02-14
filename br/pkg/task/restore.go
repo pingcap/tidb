@@ -62,6 +62,8 @@ const (
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
 
+	FlagResetSysUsers = "reset-sys-users"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -93,6 +95,8 @@ type RestoreCommonConfig struct {
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
+
+	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -118,10 +122,12 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
-		"after how long a restore batch would be auto sended.")
+		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
-		"batch size for ddl to create a batch of tabes once.")
+		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
+	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -149,6 +155,10 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	cfg.ResetSysUsers, err = flags.GetStringArray(FlagResetSysUsers)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return errors.Trace(err)
 }
@@ -383,7 +393,8 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.PitrBatchSize == 0 {
 		cfg.PitrBatchSize = defaultPiTRBatchSize
 	}
-
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
@@ -463,10 +474,17 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	if err := checkTaskExists(c, cfg); err != nil {
+		return errors.Annotate(err, "failed to check task exits")
+	}
+
 	if IsStreamRestore(cmdName) {
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)

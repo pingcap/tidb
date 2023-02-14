@@ -637,6 +637,17 @@ func TestOrderByandLimit(t *testing.T) {
 	}
 }
 
+func TestOrderByOnUnsignedPk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tunsigned_hash(a bigint unsigned primary key) partition by hash(a) partitions 6")
+	tk.MustExec("insert into tunsigned_hash values(25), (9279808998424041135)")
+	tk.MustQuery("select min(a) from tunsigned_hash").Check(testkit.Rows("25"))
+	tk.MustQuery("select max(a) from tunsigned_hash").Check(testkit.Rows("9279808998424041135"))
+}
+
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
