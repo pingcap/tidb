@@ -17,4 +17,4 @@
 package distributereorg
 
 // TiDBEnableDistributeReorg is a feature tag
-const TiDBEnableDistributeReorg bool = true
+const TiDBEnableDistributeReorg bool = false
