@@ -148,7 +148,7 @@ func TestNonPreparedPlanCacheSwitch(t *testing.T) {
 	tk.MustExec(`select * from t where a=1`)
 	tk.MustExec(`select * from t where a=1`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 	tk.MustExec(`select * from t where a=1`) // the session-level switch can take effect in real time
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
