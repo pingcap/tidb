@@ -8116,3 +8116,13 @@ func TestIssue41273(t *testing.T) {
 	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
 	require.False(t, tk.HasPlanForLastExecution("IndexMerge"))
 }
+
+// https://github.com/pingcap/tidb/issues/41355
+func TestIssue41355(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1; CREATE TABLE `t1` (`c1` varchar(100) DEFAULT NULL, `c2` varchar(100) GENERATED ALWAYS AS (lower(`c1`)) VIRTUAL);")
+	tk.MustExec("insert into t1(c1) values('a'), ('e'), ('b'), ('c'), ('d'), ('e'), ('x'), ('y'), ('a'), ('b');")
+	tk.MustQuery("select * from t1 order by c2 limit 2;").Check(testkit.Rows("a a", "a a"))
+}
