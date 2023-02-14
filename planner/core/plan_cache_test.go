@@ -150,6 +150,88 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestInvalidRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select * from t where a>? and a<?'")
+	tk.MustExec("set @l=100, @r=10")
+	tk.MustExec("execute st using @l, @r")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+
+	tk.MustExec("execute st using @l, @r")
+	tk.MustExec("execute st using @l, @r")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue40093(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int, key(b, a))")
+	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?)'")
+	tk.MustExec("set @b=1")
+	tk.MustExec("execute st using @b")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"Projection_9"},
+			{"└─HashJoin_21"},
+			{"  ├─IndexReader_26(Build)"},
+			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
+			{"  └─TableReader_24(Probe)"},
+			{"    └─Selection_23"},
+			{"      └─TableFullScan_22"},
+		})
+
+	tk.MustExec("execute st using @b")
+	tk.MustExec("execute st using @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue38205(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `item` (`id` int, `vid` varbinary(16), `sid` int)")
+	tk.MustExec("CREATE TABLE `lv` (`item_id` int, `sid` int, KEY (`sid`,`item_id`))")
+
+	tk.MustExec("prepare stmt from 'SELECT /*+ TIDB_INLJ(lv, item) */ * FROM lv LEFT JOIN item ON lv.sid = item.sid AND lv.item_id = item.id WHERE item.sid = ? AND item.vid IN (?, ?)'")
+	tk.MustExec("set @a=1, @b='1', @c='3'")
+	tk.MustExec("execute stmt using @a, @b, @c")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"IndexJoin_10"},
+			{"├─TableReader_19(Build)"},
+			{"│ └─Selection_18"},
+			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
+			{"└─IndexReader_9(Probe)"},
+			{"  └─Selection_8"},
+			{"    └─IndexRangeScan_7"},
+		})
+
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestIgnoreInsertStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
