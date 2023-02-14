@@ -924,6 +924,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 			StorageBackend: importer.backend,
 			RewriteRules:   rewriteRules,
 			Context:        reqCtx,
+			StorageCacheId: importer.cacheKey,
 		}
 	} else {
 		req = &import_sstpb.ApplyRequest{
@@ -931,6 +932,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 			StorageBackend: importer.backend,
 			RewriteRule:    *rewriteRules[0],
 			Context:        reqCtx,
+			StorageCacheId: importer.cacheKey,
 		}
 	}
 

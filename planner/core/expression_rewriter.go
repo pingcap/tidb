@@ -2115,7 +2115,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var val *expression.Constant
 	switch {
 	case isCurrentTimestamp && (col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp):
-		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal())
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal(), nil)
 		if err != nil {
 			return
 		}

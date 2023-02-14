@@ -597,7 +597,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint()
+				client.WaitForFinishCheckpoint(ctx)
 			}
 		}()
 	}
@@ -695,7 +695,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

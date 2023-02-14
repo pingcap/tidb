@@ -946,7 +946,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetType()) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal())
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -971,7 +971,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal())
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -1219,7 +1219,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)

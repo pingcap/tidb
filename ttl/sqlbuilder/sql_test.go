@@ -159,11 +159,50 @@ func TestEscape(t *testing.T) {
 }
 
 func TestFormatSQLDatum(t *testing.T) {
+	// invalid pk types contains the types that should not exist in primary keys of a TTL table.
+	// We do not need to check sqlbuilder.FormatSQLDatum for these types
+	invalidPKTypes := []struct {
+		types  []string
+		errMsg string
+	}{
+		{
+			types:  []string{"json"},
+			errMsg: "[ddl:3152]JSON column 'pk0' cannot be used in key specification.",
+		},
+		{
+			types:  []string{"blob"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+		},
+		{
+			types:  []string{"blob(8)"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+		},
+		{
+			types:  []string{"text"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+		},
+		{
+			types:  []string{"text(8)"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+		},
+		{
+			types:  []string{"int", "json"},
+			errMsg: "[ddl:3152]JSON column 'pk1' cannot be used in key specification.",
+		},
+		{
+			types:  []string{"int", "blob"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+		},
+		{
+			types:  []string{"int", "text"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+		},
+	}
+
 	cases := []struct {
-		ft         string
-		values     []interface{}
-		hex        bool
-		notSupport bool
+		ft     string
+		values []interface{}
+		hex    bool
 	}{
 		{
 			ft:     "int",
@@ -241,19 +280,50 @@ func TestFormatSQLDatum(t *testing.T) {
 			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
+			ft:     "datetime(6)",
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
+		},
+		{
 			ft:     "timestamp",
 			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
-			ft:         "json",
-			values:     []interface{}{"{}"},
-			notSupport: true,
+			ft:     "timestamp(6)",
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
+		},
+		{
+			ft:     "enum('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
+			values: []interface{}{"e1", "e2", "e3'", "e4\"", ";你好👋"},
+		},
+		{
+			ft:     "set('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
+			values: []interface{}{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 	}
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	for _, c := range invalidPKTypes {
+		var sb strings.Builder
+		sb.WriteString("create table t(")
+		cols := make([]string, 0, len(invalidPKTypes))
+		for i, tp := range c.types {
+			colName := fmt.Sprintf("pk%d", i)
+			cols = append(cols, colName)
+			sb.WriteString(colName)
+			sb.WriteString(" ")
+			sb.WriteString(tp)
+			sb.WriteString(", ")
+		}
+		sb.WriteString("t timestamp, ")
+		sb.WriteString("primary key (")
+		sb.WriteString(strings.Join(cols, ", "))
+		sb.WriteString(")) TTL=`t` + INTERVAL 1 DAY")
+		err := tk.ExecToErr(sb.String())
+		require.Equal(t, c.errMsg, err.Error(), sb.String())
+	}
 
 	// create a table with n columns
 	var sb strings.Builder
@@ -290,13 +360,8 @@ func TestFormatSQLDatum(t *testing.T) {
 			col := tbl.Meta().FindPublicColumnByName(colName)
 			d := rows[0].GetDatum(0, &col.FieldType)
 			s, err := sqlbuilder.FormatSQLDatum(d, &col.FieldType)
-			if c.notSupport {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				//fmt.Printf("%s: %s\n", c.ft, s)
-				tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
-			}
+			require.NoError(t, err)
+			tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
 			if c.hex {
 				require.True(t, strings.HasPrefix(s, "x'"), "ft: %s, got: %s", c.ft, s)
 			}
