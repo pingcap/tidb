@@ -1237,50 +1237,25 @@ func checkCanUseReuseChunk(ctx context.Context, sctx sessionctx.Context, plan Ph
 	}
 }
 
-// checkReadType Check if read field type is too long.
-func checkReadType(sctx sessionctx.Context, plan PhysicalPlan) bool {
-	if plan == nil {
-		return true
-	}
-	switch x := plan.(type) {
-	case *PhysicalIndexLookUpReader:
-		if checkIfExistsLongStr(x.schema.Columns) {
+// checkOverlongColType Check if read field type is too long.
+func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+	switch plan.(type) {
+	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGet:
+		if existsOverlongType(plan.Schema().Columns) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true
 		}
-	case *PhysicalIndexReader:
-		if checkIfExistsLongStr(x.schema.Columns) {
-			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
-		}
-	case *PhysicalIndexMergeReader:
-		if checkIfExistsLongStr(x.schema.Columns) {
-			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
-		}
-	case *PhysicalTableReader:
-		if checkIfExistsLongStr(x.schema.Columns) {
-			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
-		}
-	case *PointGetPlan:
-		if checkIfExistsLongStr(x.schema.Columns) {
-			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
-		}
-	default:
-		return false
 	}
 	return false
 }
 
-func checkIfExistsLongStr(columns []*expression.Column) bool {
+func existsOverlongType(columns []*expression.Column) bool {
 	for _, column := range columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON:
 			return true
-		case mysql.TypeVarchar:
+		case mysql.TypeVarString, mysql.TypeVarchar:
 			if column.RetType.GetFlen() > 1000 {
 				return true
 			}
