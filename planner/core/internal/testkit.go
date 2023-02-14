@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// SetTiFlashReplica is to set TiFlash replica
 func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr(dbName))
