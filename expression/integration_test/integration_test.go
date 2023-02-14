@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression_test
+package integration_test
 
 import (
 	"bytes"
@@ -3771,18 +3771,23 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 			}
 		}
 	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
 	rows := tk.MustQuery("explain select max(b) from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
-		require.NotContains(t, line, "tiflash")
+		if strings.Contains(line, "TableFullScan") {
+			require.Contains(t, line, "tiflash")
+		}
 	}
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	rows = tk.MustQuery("explain select max(b) from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
-		require.NotContains(t, line, "tiflash")
+		if strings.Contains(line, "TableFullScan") {
+			require.NotContains(t, line, "mpp[tiflash]")
+		}
 	}
 }
 

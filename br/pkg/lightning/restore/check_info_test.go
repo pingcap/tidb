@@ -326,13 +326,13 @@ func TestCheckCSVHeader(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       `"`,
-				Header:          false,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
+				Separator:   ",",
+				Delimiter:   `"`,
+				Header:      false,
+				NotNull:     false,
+				Null:        []string{`\N`},
+				EscapedBy:   `\`,
+				TrimLastSep: false,
 			},
 		},
 	}

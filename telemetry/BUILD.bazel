@@ -51,7 +51,7 @@ go_library(
 
 go_test(
     name = "telemetry_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "data_cluster_hardware_test.go",
         "data_feature_usage_test.go",

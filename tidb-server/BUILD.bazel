@@ -13,6 +13,7 @@ go_library(
         "//domain/infosync",
         "//executor",
         "//extension",
+        "//keyspace",
         "//kv",
         "//metrics",
         "//parser/mysql",
