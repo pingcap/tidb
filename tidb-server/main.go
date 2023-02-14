@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -232,7 +233,7 @@ func main() {
 	setupBinlogClient()
 	setupMetrics()
 
-	keyspaceName := config.GetGlobalKeyspaceName()
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
