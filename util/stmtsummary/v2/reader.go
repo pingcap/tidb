@@ -748,7 +748,7 @@ func (w *stmtParseWorker) run(
 func (w *stmtParseWorker) handleLines(
 	lines [][]byte,
 	rowsCh chan<- [][]types.Datum,
-	errCh chan<- error,
+	_ chan<- error,
 ) {
 	if len(lines) == 0 {
 		return
@@ -776,16 +776,6 @@ func (w *stmtParseWorker) handleLines(
 
 	if len(rows) > 0 {
 		w.putRows(rows, rowsCh)
-	}
-}
-
-func (w *stmtParseWorker) putErr(
-	err error,
-	errCh chan<- error,
-) {
-	select {
-	case errCh <- err:
-	case <-w.ctx.Done():
 	}
 }
 
