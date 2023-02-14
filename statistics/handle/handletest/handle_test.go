@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package updatetest_test
+package handletest
 
 import (
 	"bytes"
