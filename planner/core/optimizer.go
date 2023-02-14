@@ -1224,7 +1224,7 @@ func init() {
 
 // checkCanUseReuseChunk Check if chunk reuse can be used.
 func checkCanUseReuseChunk(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
-	if !sctx.GetSessionVars().EnableReuseCheck || !sctx.GetSessionVars().CheckAlloc() {
+	if !sctx.GetSessionVars().CheckAlloc() {
 		return
 	}
 
@@ -1237,10 +1237,10 @@ func checkCanUseReuseChunk(ctx context.Context, sctx sessionctx.Context, plan Ph
 	}
 }
 
-// checkReadType Check if read type is too long.
+// checkReadType Check if read field type is too long.
 func checkReadType(sctx sessionctx.Context, plan PhysicalPlan) bool {
 	if plan == nil {
-		return false
+		return true
 	}
 	switch x := plan.(type) {
 	case *PhysicalIndexLookUpReader:
