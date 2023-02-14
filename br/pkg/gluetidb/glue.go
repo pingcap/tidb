@@ -28,8 +28,9 @@ import (
 
 // Asserting Glue implements glue.ConsoleGlue and glue.Glue at compile time.
 var (
-	_ glue.ConsoleGlue = Glue{}
-	_ glue.Glue        = Glue{}
+	_ glue.ConsoleGlue             = Glue{}
+	_ glue.Glue                    = Glue{}
+	_ glue.BatchCreateTableSession = &tidbSession{}
 )
 
 const (
