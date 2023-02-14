@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
@@ -540,4 +541,332 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+}
+
+func TestAddIndexMergeInsertOnMerging(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		var err error
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err = tk1.Exec("insert into t values (5, 5)")
+			assert.NoError(t, err)
+		case model.StateWriteOnly:
+			_, err = tk1.Exec("insert into t values (5, 7)")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("delete from t where b = 7")
+			assert.NoError(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	ddl.MockDMLExecutionStateMerging = func() {
+		_, err := tk1.Exec("insert into t values (5, 8);")
+		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
+		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
+		assert.NoError(t, err) // The row should be normally updated to (6, 5).
+		ddl.MockDMLExecutionStateMerging = nil
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "return(true)"))
+	tk.MustExec("alter table t add unique index idx(a);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("6 5"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging"))
+}
+
+func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int default 0, b int default 0);")
+	tk.MustExec("insert into t values (5, 5);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	ddl.MockDMLExecution = func() {
+		_, err := tk1.Exec("delete from t where b = 5;")
+		assert.NoError(t, err)
+	}
+
+	ddl.MockDMLExecutionStateMerging = func() {
+		_, err := tk1.Exec("replace into t values (5, 8);")
+		assert.NoError(t, err)
+		ddl.MockDMLExecutionStateMerging = nil
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "return(true)"))
+	tk.MustExec("alter table t add unique index idx(a);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging"))
+}
+
+func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	tk.MustExec("insert into t values (5, 5);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		var err error
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			_, err = tk1.Exec("delete from t where b = 5")
+			assert.NoError(t, err)
+			_, err := tk1.Exec("set @@tidb_constraint_check_in_place = true;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (5, 8);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (5, 8);")
+			assert.Error(t, err)
+			_, err = tk1.Exec("set @@tidb_constraint_check_in_place = false;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (5, 8);")
+			assert.Error(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(a);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
+}
+
+func TestAddIndexMergeReplaceDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int default 0);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("insert into t values (1, 1);")
+			assert.NoError(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	ddl.MockDMLExecutionMerging = func() {
+		_, err := tk1.Exec("replace into t values (2, 1);")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("delete from t where id = 2;")
+		assert.NoError(t, err)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
+	tk.MustExec("alter table t add unique index idx(a);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging"))
+}
+
+func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, c char(10));")
+	tk.MustExec("insert into t values (1, 'a');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	runDML := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		if job.SnapshotVer == 0 {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (2, 'a');")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("replace into t values (3, 'a');")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	ddl.MockDMLExecution = func() {
+		// It is too late to remove the duplicated index value.
+		_, err := tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	tk.MustGetErrCode("alter table t add unique index idx(c);", errno.ErrDupEntry)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 a"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
+}
+
+func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id_a bigint, id_b char(20), c char(20), primary key (id_a, id_b));")
+	tk.MustExec("insert into t values (1, 'id_1', 'char_1');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	runDML := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		if job.SnapshotVer == 0 {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (2, 'id_2', 'char_2');")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (3, 'id_3', 'char_3');")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(c);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 id_1 char_1", "2 id_2 char_2", "3 id_3 char_3"))
+}
+
+func TestAddIndexInsertIgnoreOnBackfill(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	runDML := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert ignore into t values (1, 1);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert ignore into t values (2, 2);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("update t set b = null where id = 1;")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 <nil>", "2 2"))
+}
+
+func TestAddIndexMultipleDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("delete from t where id in (4, 5, 6);")
+			assert.NoError(t, err)
+		case model.StateWriteOnly:
+			_, err := tk1.Exec("delete from t where id in (2, 3);")
+			assert.NoError(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	ddl.MockDMLExecution = func() {
+		_, err := tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
 }
