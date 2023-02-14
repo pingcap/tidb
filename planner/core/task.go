@@ -990,7 +990,7 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
 
 // canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
 func (p *PhysicalTopN) canPushDownToTiFlash() bool {
-	return !p.canExpressionConvertedToPB(kv.TiFlash)
+	return p.canExpressionConvertedToPB(kv.TiFlash)
 }
 
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
