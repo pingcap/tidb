@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "temporarytable_test",
+    name = "temporarytabletest_test",
     timeout = "short",
     srcs = [
         "main_test.go",
@@ -9,29 +9,6 @@ go_test(
     ],
     flaky = True,
     shard_count = 15,
-    deps = [
-        "//config",
-        "//domain",
-        "//errno",
-        "//kv",
-        "//parser/terror",
-        "//session",
-        "//sessionctx/variable",
-        "//testkit",
-        "//testkit/testmain",
-        "//testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
-    ],
-)
-
-go_test(
-    name = "temporarytabletest_test",
-    srcs = [
-        "main_test.go",
-        "temporary_table_test.go",
-    ],
     deps = [
         "//config",
         "//domain",
