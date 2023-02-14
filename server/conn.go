@@ -838,6 +838,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
+
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol if PROXY Protocol is enabled.
 	host, port, err := cc.PeerHost(hasPassword, true)
 	if err != nil {
 		return err
@@ -881,6 +884,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
+
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol if PROXY Protocol is enabled.
 	host, _, err := cc.PeerHost(hasPassword, true)
 	if err != nil {
 		return nil, err
@@ -954,6 +960,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 }
 
 func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// Update means reload the client's peer IP and port.
 	if !update && len(cc.peerHost) > 0 {
 		return cc.peerHost, cc.peerPort, nil
 	}
