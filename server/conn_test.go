@@ -1799,3 +1799,35 @@ func TestExtensionChangeUser(t *testing.T) {
 	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
 	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }
+
+func TestProcessInfoForExecuteCommand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+
+	tk.MustExec("use test")
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("create table t (col1 int)")
+
+	// simple prepare and execute
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t")
+
+	// prepare and execute with params
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	// 1 params, length of nullBitMap is 1, `0x8, 0x0` represents the type, and the following `0x10, 0x0....` is the param
+	// 10
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x2, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x8, 0x0,
+		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
+}
