@@ -284,6 +284,7 @@ var tokenMap = map[string]int{
 	"DEC":                      decimalType,
 	"DECIMAL":                  decimalType,
 	"DEFAULT":                  defaultKwd,
+	"DEFINED":                  defined,
 	"DEFINER":                  definer,
 	"DELAY_KEY_WRITE":          delayKeyWrite,
 	"DELAYED":                  delayed,
