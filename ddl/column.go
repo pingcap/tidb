@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1538,7 +1537,7 @@ func adjustTableInfoAfterModifyColumn(
 }
 
 func adjustForeignKeyChildTableInfoAfterModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo) ([]schemaIDAndTableInfo, error) {
-	if !variable.EnableForeignKey.Load() || newCol.Name.L == oldCol.Name.L {
+	if newCol.Name.L == oldCol.Name.L {
 		return nil, nil
 	}
 	is, err := getAndCheckLatestInfoSchema(d, t)

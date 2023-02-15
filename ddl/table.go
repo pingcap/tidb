@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	field_types "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1110,7 +1109,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 }
 
 func adjustForeignKeyChildTableInfoAfterRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) error {
-	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	if newTableName.L == oldTableName.L {
 		return nil
 	}
 	is, err := getAndCheckLatestInfoSchema(d, t)

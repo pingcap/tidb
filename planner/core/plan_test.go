@@ -111,7 +111,6 @@ func TestNormalizedPlan(t *testing.T) {
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
 	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +

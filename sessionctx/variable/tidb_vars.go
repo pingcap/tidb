@@ -762,10 +762,6 @@ const (
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
 
-	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
-	// TODO(crazycs520): remove this after foreign key GA.
-	TiDBEnableForeignKey = "tidb_enable_foreign_key"
-
 	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
@@ -1241,9 +1237,7 @@ var (
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
-	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
-	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(true)
+	DDLDiskQuota        = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).

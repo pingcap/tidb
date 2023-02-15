@@ -115,7 +115,6 @@ var foreignKeyTestCase1 = []struct {
 func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -178,7 +177,6 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -279,7 +277,6 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 func TestForeignKeyCheckAndLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -493,7 +490,6 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 func TestForeignKeyOnInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	// Test for foreign key index is primary key.
@@ -517,7 +513,6 @@ func TestForeignKeyOnInsertIgnore(t *testing.T) {
 func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -586,7 +581,6 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 func TestForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -633,7 +627,6 @@ func TestForeignKey(t *testing.T) {
 func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, a int, primary key (id));")
@@ -645,7 +638,6 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 			tk.MustExec("set @@foreign_key_checks=1")
 			tk.MustExec("use test")
 			for cnt := 0; cnt < 20; cnt++ {
@@ -661,7 +653,6 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -757,7 +748,6 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	for _, ca := range foreignKeyTestCase1 {
@@ -808,7 +798,6 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -870,7 +859,6 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 func TestForeignKeyOnDeleteCascade(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	cases := []struct {
@@ -1071,7 +1059,6 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1244,7 +1231,6 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 
 	// Test foreign key cascade execution meet lock and do retry.
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1331,7 +1317,6 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1446,7 +1431,6 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1597,7 +1581,6 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 
 	// Test foreign key set null execution meet lock and do retry.
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk2.MustExec("set @@foreign_key_checks=1")
 	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4")
@@ -1645,7 +1628,6 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1873,7 +1855,6 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1949,7 +1930,6 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 func TestForeignKeyOnUpdateSetNull(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -1967,12 +1947,17 @@ func TestForeignKeyOnUpdateSetNull(t *testing.T) {
 }
 
 func TestShowCreateTableWithForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("set @@global.tidb_enable_foreign_key=0")
 	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) ON DELETE CASCADE ON UPDATE SET NULL);")
+	tbl1Info, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbl1Info.Meta().ForeignKeys))
+	// Mock for create foreign key in old version.
+	tbl1Info.Meta().ForeignKeys[0].Version = model.FKVersion0
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `leader` int(11) DEFAULT NULL,\n" +
@@ -1981,8 +1966,12 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("alter table t1 add constraint fk2 foreign key (leader2) references t1 (id)")
+	tbl1Info, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	require.Equal(t, 2, len(tbl1Info.Meta().ForeignKeys))
+	// Mock for create foreign key in old version.
+	tbl1Info.Meta().ForeignKeys[0].Version = model.FKVersion0
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
 		"  `leader` int(11) DEFAULT NULL,\n" +
@@ -1992,14 +1981,12 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,\n" +
 		"  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `test`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);")
+	tk.MustExec("create table t (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t(id) /* FOREIGN KEY INVALID */);")
 }
 
 func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -2030,7 +2017,6 @@ func getExplainResult(res *testkit.Result) string {
 func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 
@@ -2047,7 +2033,6 @@ func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
 func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, name varchar(10));")
@@ -2092,7 +2077,6 @@ func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 func TestForeignKeyIssue39419(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key);")
@@ -2118,7 +2102,6 @@ func TestForeignKeyIssue39419(t *testing.T) {
 func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key);")
@@ -2440,7 +2423,6 @@ func TestForeignKeyRuntimeStats(t *testing.T) {
 func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key);")
@@ -2497,7 +2479,6 @@ func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 func TestTableLockInForeignKeyCascade(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)

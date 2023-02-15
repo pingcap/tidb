@@ -1629,7 +1629,6 @@ func TestDisableTTLForFKParentTable(t *testing.T) {
 	tk.MustExec("use test")
 
 	// alter ttl for a FK parent table is not allowed
-	tk.MustExec("set global tidb_enable_foreign_key='ON'")
 	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime)")
 	tk.MustExec("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))")
 	tk.MustGetDBError("ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR", dbterror.ErrUnsupportedTTLReferencedByFK)

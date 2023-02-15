@@ -6738,9 +6738,7 @@ func buildFKInfo(ctx sessionctx.Context, fkName model.CIStr, keys []*ast.IndexPa
 		RefSchema: refer.Table.Schema,
 		RefTable:  refer.Table.Name,
 		Cols:      make([]model.CIStr, len(keys)),
-	}
-	if variable.EnableForeignKey.Load() {
-		fkInfo.Version = model.FKVersion1
+		Version:   model.FKVersion1,
 	}
 
 	for i, key := range keys {
@@ -6832,7 +6830,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(err)
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-	err = checkAddForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, fkCheck)
+	err = checkTableForeignKeyValid(is, schema.Name.L, t.Meta(), fkInfo, fkCheck)
 	if err != nil {
 		return err
 	}
