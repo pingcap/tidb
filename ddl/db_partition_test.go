@@ -1884,6 +1884,20 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 
 	tk.MustExec("insert into test_global values (1,2,2)")
 	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrCode(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, errno.ErrUniqueKeyNeedAllFieldsInPf)
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] NONCLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
