@@ -1222,7 +1222,6 @@ func init() {
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }
 
-// checkCanUseReuseChunk Check if chunk reuse can be used.
 func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
