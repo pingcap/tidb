@@ -1449,7 +1449,6 @@ import (
 	HashString                      "Hashed string"
 	LikeEscapeOpt                   "like escape option"
 	LinesTerminated                 "Lines terminated by"
-	NullDef                         "NULL definition in LOAD DATA statement"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -14013,28 +14012,17 @@ LinesTerminated:
 		$$ = $3
 	}
 
-NullDef:
-	stringLit
-|	hexLit
-	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
-	}
-|	bitLit
-	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
-	}
-
 NullDefinedByClause:
 	{
 		$$ = nil
 	}
-|	"NULL" "DEFINED" "BY" NullDef
+|	"NULL" "DEFINED" "BY" TextString
 	{
-		$$ = &ast.NullDefinedBy{NullDef: $4}
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value}
 	}
-|	"NULL" "DEFINED" "BY" NullDef "OPTIONALLY" "ENCLOSED"
+|	"NULL" "DEFINED" "BY" TextString "OPTIONALLY" "ENCLOSED"
 	{
-		$$ = &ast.NullDefinedBy{NullDef: $4, OptEnclosed: true}
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value, OptEnclosed: true}
 	}
 
 LoadDataSetSpecOpt:
