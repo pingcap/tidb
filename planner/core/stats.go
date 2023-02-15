@@ -980,8 +980,13 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	if len(p.children) > 0 {
+		p.stats = childStats[0]
 		return p.stats, nil
 	}
 
@@ -1036,4 +1041,32 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 	}
 	p.stats = p.seedStat
 	return p.stats, nil
+}
+
+func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	p.stats = childStats[len(childStats)-1]
+	return p.stats, nil
+}
+
+func (p *LogicalCTE) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if len(p.children) == 0 {
+		return p.DeriveStats(nil, p.self.Schema(), nil, colGroups)
+	}
+	var err error
+	p.children[0], err = logicalOptimize(context.TODO(), p.cte.optFlag, p.children[0])
+	if err != nil {
+		return nil, err
+	}
+	childStats := make([]*property.StatsInfo, len(p.children))
+	childSchema := make([]*expression.Schema, len(p.children))
+	cumColGroups := p.self.ExtractColGroups(colGroups)
+	for i, child := range p.children {
+		childProfile, err := child.recursiveDeriveStats(cumColGroups)
+		if err != nil {
+			return nil, err
+		}
+		childStats[i] = childProfile
+		childSchema[i] = child.Schema()
+	}
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
 }

@@ -2006,3 +2006,13 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	}
 	return corCols
 }
+
+type LogicalSequence struct {
+	baseLogicalPlan
+
+	ctes []*cteInfo
+}
+
+func (p *LogicalSequence) Schema() *expression.Schema {
+	return p.children[len(p.children)-1].Schema()
+}

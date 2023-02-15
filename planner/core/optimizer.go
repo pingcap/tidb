@@ -272,23 +272,16 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(sctx) {
-		flag |= flagStabilizeResults
-	}
-	if sctx.GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
 	}
+
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("optimizing", zap.String("plan", ToString(logic)))
+	}
+
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
@@ -1039,6 +1032,19 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (L
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= flagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {

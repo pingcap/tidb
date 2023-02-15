@@ -201,6 +201,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
+	case *LogicalSequence:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		name := "Sequence"
+		str = name + "{" + strings.Join(children, ",") + "}"
+		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
 			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)

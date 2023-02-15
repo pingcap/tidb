@@ -1005,3 +1005,10 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
 	return predicates, p.self
 }
+
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	lastIdx := len(p.children) - 1
+	remained, newLastChild := p.children[lastIdx].PredicatePushDown(predicates, op)
+	p.SetChild(lastIdx, newLastChild)
+	return remained, p
+}

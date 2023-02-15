@@ -2453,6 +2453,33 @@ func (p *CTEDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+type PhysicalCTEStorage PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (p *PhysicalCTEStorage) ExplainInfo() string {
+	return "Non-Recursive CTE Storage"
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTEStorage) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
+}
+
+// MemoryUsage return the memory usage of CTEDefinition
+func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + p.cteAsName.MemoryUsage()
+	if p.CTE != nil {
+		sum += p.CTE.MemoryUsage()
+	}
+	return
+}
+
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
@@ -2465,4 +2492,38 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
 	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
+}
+
+type PhysicalSequence struct {
+	physicalSchemaProducer
+
+	ctes []*PhysicalCTE
+}
+
+func (p *PhysicalSequence) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage()
+
+	for _, cte := range p.ctes {
+		sum += cte.MemoryUsage()
+	}
+	return
+}
+
+func (p *PhysicalSequence) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
+		return p.TP() + "_" + strconv.Itoa(p.id)
+	})
+}
+
+func (p *PhysicalSequence) ExplainInfo() string {
+	var res string
+	res = "Sequence Node"
+	return res
 }

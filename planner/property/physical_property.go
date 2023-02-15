@@ -202,6 +202,8 @@ type PhysicalProperty struct {
 	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
+
+	CTECanMPP bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -328,6 +330,11 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
+		if p.CTECanMPP {
+			p.hashcode = append(p.hashcode, codec.EncodeInt(p.hashcode, 1)...)
+		} else {
+			p.hashcode = append(p.hashcode, codec.EncodeInt(p.hashcode, 0)...)
+		}
 	}
 	return p.hashcode
 }
@@ -348,6 +355,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
+		CTECanMPP:             p.CTECanMPP,
 	}
 	return prop
 }

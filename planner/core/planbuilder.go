@@ -1315,6 +1315,11 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	publicPaths = append(publicPaths, tablePath)
 
 	if tblInfo.TiFlashReplica == nil {
+
+		if !ctx.GetSessionVars().InRestrictedSQL {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		}
+
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
 	} else if !tblInfo.TiFlashReplica.Available {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")

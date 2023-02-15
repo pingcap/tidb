@@ -205,6 +205,10 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *l
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
+	// CTE's logical optimization is indenpent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p
+	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChildren = append(newChildren, a.eliminateMaxMin(child, opt))

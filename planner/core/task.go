@@ -2058,6 +2058,51 @@ func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
+func (p *PhysicalCTEStorage) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	if mpp, ok := t.(*mppTask); ok {
+		p.SetChildren(t.plan())
+		return &mppTask{
+			p:           p,
+			partTp:      mpp.partTp,
+			hashCols:    mpp.hashCols,
+			tblColHists: mpp.tblColHists,
+		}
+	}
+	t.convertToRootTask(p.ctx)
+	p.SetChildren(t.plan())
+	return &rootTask{
+		p: p,
+	}
+}
+
+func (p *PhysicalSequence) attach2Task(tasks ...task) task {
+	for _, t := range tasks {
+		_, isMpp := t.(*mppTask)
+		if !isMpp {
+			return tasks[len(tasks)-1]
+		}
+	}
+
+	lastTask := tasks[len(tasks)-1].(*mppTask)
+
+	children := make([]PhysicalPlan, 0, len(tasks))
+	for _, t := range tasks {
+		children = append(children, t.plan())
+	}
+
+	p.SetChildren(children...)
+
+	mppTask := &mppTask{
+		p:           p,
+		partTp:      lastTask.partTp,
+		hashCols:    lastTask.hashCols,
+		tblColHists: lastTask.tblColHists,
+	}
+	return mppTask
+
+}
+
 // mppTask can not :
 // 1. keep order
 // 2. support double read

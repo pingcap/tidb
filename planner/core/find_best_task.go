@@ -248,6 +248,115 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			}
 		}
 
+		if _, ok := pp.(*PhysicalCTEStorage); ok {
+			logutil.BgLogger().Warn("xxxxx")
+		}
+		// Combine best child tasks with parent physical plan.
+		curTask := pp.attach2Task(childTasks...)
+
+		if curTask.invalid() {
+			continue
+		}
+
+		// An optimal task could not satisfy the property, so it should be converted here.
+		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {
+			curTask = curTask.convertToRootTask(p.ctx)
+		}
+
+		// Enforce curTask property
+		if addEnforcer {
+			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
+		}
+
+		// Optimize by shuffle executor to running in parallel manner.
+		if _, isMpp := curTask.(*mppTask); !isMpp && prop.IsSortItemEmpty() {
+			// Currently, we do not regard shuffled plan as a new plan.
+			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
+		}
+
+		cntPlan += curCntPlan
+		planCounter.Dec(curCntPlan)
+
+		if planCounter.Empty() {
+			bestTask = curTask
+			break
+		}
+		opt.appendCandidate(p, curTask.plan(), prop)
+		// Get the most efficient one.
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
+			bestTask = curTask
+		}
+	}
+	return bestTask, cntPlan, nil
+}
+
+func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan,
+	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+	var bestTask task = invalidTask
+	var curCntPlan, cntPlan int64
+	childTasks := make([]task, 0, len(p.children))
+	childCnts := make([]int64, len(p.children))
+	cntPlan = 0
+	origCTECanMPP := p.ctx.GetSessionVars().CurrentCTECanMPP
+	defer func() {
+		p.ctx.GetSessionVars().CurrentCTECanMPP = origCTECanMPP
+	}()
+	for _, pp := range physicalPlans {
+		// Find best child tasks firstly.
+		childTasks = childTasks[:0]
+		// The curCntPlan records the number of possible plans for pp
+		curCntPlan = 1
+		timeStampNow := p.GetLogicalTS4TaskMap()
+		savedPlanID := p.ctx.GetSessionVars().PlanID
+		allMpp := true
+		lastIdx := len(p.children) - 1
+		p.ctx.GetSessionVars().CurrentCTECanMPP = true
+		for j := 0; j < lastIdx; j++ {
+			child := p.children[j]
+			childProp := pp.GetChildReqProps(j)
+			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
+			childCnts[j] = cnt
+			if err != nil {
+				return nil, 0, err
+			}
+			curCntPlan = curCntPlan * cnt
+			if childTask != nil && childTask.invalid() {
+				break
+			}
+			childTasks = append(childTasks, childTask)
+			_, isMpp := childTask.(*mppTask)
+			allMpp = allMpp && isMpp
+		}
+		lastChildProp := pp.GetChildReqProps(lastIdx).CloneEssentialFields()
+		lastChildProp.CTECanMPP = allMpp
+		lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
+		childCnts[lastIdx] = cnt
+		if err != nil {
+			return nil, 0, err
+		}
+		curCntPlan = curCntPlan * cnt
+		if lastChildTask != nil && lastChildTask.invalid() {
+			break
+		}
+		childTasks = append(childTasks, lastChildTask)
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			continue
+		}
+
+		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
+		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
+			p.ctx.GetSessionVars().PlanID = savedPlanID
+			curCntPlan = int64(*planCounter)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
@@ -367,6 +476,107 @@ func (op *physicalOptimizeOp) appendPlanCostDetail(detail *tracing.PhysicalPlanC
 
 // findBestTask implements LogicalPlan interface.
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (bestTask task, cntPlan int64, err error) {
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
+	// and set inner child prop nil, so here we do nothing.
+	if prop == nil {
+		return nil, 1, nil
+	}
+	// Look up the task with this prop in the task map.
+	// It's used to reduce double counting.
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		planCounter.Dec(1)
+		return bestTask, 1, nil
+	}
+
+	canAddEnforcer := prop.CanAddEnforcer
+
+	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
+		// Currently all plan cannot totally push down to TiKV.
+		p.storeTask(prop, invalidTask)
+		return invalidTask, 0, nil
+	}
+
+	bestTask = invalidTask
+	cntPlan = 0
+	// prop should be read only because its cached hashcode might be not consistent
+	// when it is changed. So we clone a new one for the temporary changes.
+	newProp := prop.CloneEssentialFields()
+	var plansFitsProp, plansNeedEnforce []PhysicalPlan
+	var hintWorksWithProp bool
+	// Maybe the plan can satisfy the required property,
+	// so we try to get the task without the enforced sort first.
+	plansFitsProp, hintWorksWithProp, err = p.self.exhaustPhysicalPlans(newProp)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !hintWorksWithProp && !newProp.IsSortItemEmpty() {
+		// If there is a hint in the plan and the hint cannot satisfy the property,
+		// we enforce this property and try to generate the PhysicalPlan again to
+		// make sure the hint can work.
+		canAddEnforcer = true
+	}
+
+	if canAddEnforcer {
+		// Then, we use the empty property to get physicalPlans and
+		// try to get the task with an enforced sort.
+		newProp.SortItems = []property.SortItem{}
+		newProp.SortItemsForPartition = []property.SortItem{}
+		newProp.ExpectedCnt = math.MaxFloat64
+		newProp.MPPPartitionCols = nil
+		newProp.MPPPartitionTp = property.AnyType
+		var hintCanWork bool
+		plansNeedEnforce, hintCanWork, err = p.self.exhaustPhysicalPlans(newProp)
+		if err != nil {
+			return nil, 0, err
+		}
+		if hintCanWork && !hintWorksWithProp {
+			// If the hint can work with the empty property, but cannot work with
+			// the required property, we give up `plansFitProp` to make sure the hint
+			// can work.
+			plansFitsProp = nil
+		}
+		if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
+			// If the original property is not enforced and hint cannot
+			// work anyway, we give up `plansNeedEnforce` for efficiency,
+			plansNeedEnforce = nil
+		}
+		newProp = prop
+	}
+
+	var cnt int64
+	var curTask task
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
+		return nil, 0, err
+	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		goto END
+	}
+
+	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter, opt)
+	if err != nil {
+		return nil, 0, err
+	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		bestTask = curTask
+		goto END
+	}
+	opt.appendCandidate(p, curTask.plan(), prop)
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask, opt); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
+		bestTask = curTask
+	}
+
+END:
+	p.storeTask(prop, bestTask)
+	return bestTask, cntPlan, nil
+}
+
+// findBestTask implements LogicalPlan interface.
+func (p *LogicalSequence) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -2419,14 +2629,29 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	return is
 }
 
-func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *PlanCounterTp, pop *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+	if len(p.children) > 0 {
+		logutil.BgLogger().Warn("build physical for cte", zap.String("logical plan", ToString(p.children[0])))
+		return p.baseLogicalPlan.findBestTask(prop, counter, pop)
+	}
+	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP))
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
+	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP))
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, false}
+	if prop.IsFlashProp() && prop.CTECanMPP {
+		t = &mppTask{
+			p:           pcte,
+			partTp:      prop.MPPPartitionTp,
+			hashCols:    prop.MPPPartitionCols,
+			tblColHists: p.stats.HistColl,
+		}
+	} else {
+		t = &rootTask{pcte, false}
+	}
 	if prop.CanAddEnforcer {
 		t = enforceProperty(prop, t, p.basePlan.ctx)
 	}

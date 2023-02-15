@@ -2117,7 +2117,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {
-		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, RejectSort: true}
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.stats.RowCount {
 			expCntScale := prop.ExpectedCnt / p.stats.RowCount
@@ -2130,12 +2130,12 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 				hashKeys = lPartitionKeys
 			}
 			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true}
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 			} else {
 				return nil
 			}
 		} else {
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 		}
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -2269,7 +2269,7 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	return false
 }
 
-func (lt *LogicalTopN) getPhysTopN(_ *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2279,7 +2279,7 @@ func (lt *LogicalTopN) getPhysTopN(_ *property.PhysicalProperty) []PhysicalPlan 
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64, CTECanMPP: prop.CTECanMPP}
 		topN := PhysicalTopN{
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
@@ -2454,6 +2454,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		SortItems:             byItems,
 		TaskTp:                property.MppTaskType,
 		SortItemsForPartition: byItems,
+		CTECanMPP:             prop.CTECanMPP,
 	}
 	if !prop.IsPrefix(childProperty) {
 		return nil
@@ -2593,6 +2594,24 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
+		case *LogicalSequence:
+			if storeTp == kv.TiFlash {
+				for _, cte := range c.ctes {
+					if cte.cteClass.recursivePartLogicalPlan != nil || !cte.cteClass.seedPartLogicalPlan.canPushToCop(storeTp) {
+						return false
+					}
+				}
+				return true
+			}
+			return false
+		case *LogicalCTE:
+			if storeTp != kv.TiFlash {
+				return false
+			}
+			if c.cte.recursivePartLogicalPlan != nil || !c.cte.seedPartLogicalPlan.canPushToCop(storeTp) {
+				return false
+			}
+			return true
 		default:
 			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
@@ -2788,7 +2807,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		// If this is a skew distinct group agg, skip generating 1-phase agg, because skew data will cause performance issue
 		if len(partitionCols) != 0 && !la.ctx.GetSessionVars().EnableSkewDistinctAgg {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -3004,7 +3023,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset), CTECanMPP: prop.CTECanMPP}
 		limit := PhysicalLimit{
 			Offset: p.Offset,
 			Count:  p.Count,
@@ -3047,6 +3066,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
 				RejectSort:  true,
+				CTECanMPP:   prop.CTECanMPP,
 			})
 		} else {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true})
@@ -3084,7 +3104,7 @@ func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalP
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTECanMPP: prop.CTECanMPP})
 	return ps
 }
 
@@ -3130,4 +3150,34 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}, true, nil
+}
+
+func (p *LogicalCTE) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	pcte := PhysicalCTE{CTE: p.cte}.Init(p.ctx, p.stats)
+	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
+	return []PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
+}
+
+func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	possibleChildrenProps := make([]*property.PhysicalProperty, 0, 2)
+	childProp := prop.CloneEssentialFields()
+	possibleChildrenProps = append(possibleChildrenProps, childProp)
+
+	if prop.TaskTp != property.MppTaskType &&
+		p.SCtx().GetSessionVars().IsMPPAllowed() {
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.MppTaskType
+		possibleChildrenProps = append(possibleChildrenProps, childPropMpp)
+	}
+	seqs := make([]PhysicalPlan, 0, 2)
+	for _, propChoice := range possibleChildrenProps {
+		childReqs := make([]*property.PhysicalProperty, 0, len(p.children))
+		for i := 0; i < len(p.children)-1; i++ {
+			childReqs = append(childReqs, propChoice)
+		}
+		childReqs = append(childReqs, propChoice)
+		seq := PhysicalSequence{}.Init(p.ctx, p.stats, p.blockOffset, childReqs...)
+		seqs = append(seqs, seq)
+	}
+	return seqs, true, nil
 }

@@ -690,6 +690,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID int64
 
+	// CurrentCTECanMPP indicates we can make the current cte operator executed on MPP engine.
+	CurrentCTECanMPP bool
+
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
 

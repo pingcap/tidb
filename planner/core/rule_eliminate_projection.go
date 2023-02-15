@@ -168,6 +168,10 @@ func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt 
 
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *logicalOptimizeOp) LogicalPlan {
+	// LogicalCTE's logical optimization is independent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p
+	}
 	proj, isProj := p.(*LogicalProjection)
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {

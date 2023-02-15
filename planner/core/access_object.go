@@ -396,7 +396,11 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 		return DynamicPartitionAccessObjects(nil)
 	}
 	if len(p.PartitionInfos) == 0 {
-		ts := p.TablePlans[0].(*PhysicalTableScan)
+		ts, ok := p.TablePlans[0].(*PhysicalTableScan)
+		if !ok {
+			cte := p.TablePlans[0].(*PhysicalCTE)
+			return OtherAccessObject(fmt.Sprintf("cte: %v as %v", cte.cteName, cte.cteAsName))
+		}
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O

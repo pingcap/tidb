@@ -371,6 +371,10 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 		}
 	}
 NoOptimize:
+	// CTE's logical optimization is independent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p, nil
+	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, err := s.optimize(ctx, child, opt)

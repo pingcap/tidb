@@ -184,6 +184,10 @@ func GetDupAgnosticAggCols(
 }
 
 func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	// CTE's logical optimization is independent.
+	if _, ok := p.(*LogicalCTE); ok {
+		return p, nil
+	}
 	var err error
 	var isEliminated bool
 	for join, isJoin := p.(*LogicalJoin); isJoin; join, isJoin = p.(*LogicalJoin) {
