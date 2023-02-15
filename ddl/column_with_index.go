@@ -327,9 +327,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			job.SnapshotVer = 0
 			job.SchemaState = model.StateWriteReorganization
 			if job.MultiSchemaInfo == nil {
-				if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
-					return ver, errors.Trace(err)
-				}
+				initDistReorg(job.ReorgMeta)
 			}
 		case model.StateWriteReorganization:
 			// reorganization -> public
