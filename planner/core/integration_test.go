@@ -8118,36 +8118,80 @@ func TestIssue41273(t *testing.T) {
 }
 
 // https://github.com/pingcap/tidb/issues/41355
-func TestIssue41355(t *testing.T) {
+// Virtually generated columns push down is not supported now.
+// This test covers: TopN, Projection, Selection.
+func TestVirtualExprPushDown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE `t1` (`c1` varchar(100) DEFAULT NULL, `c2` varchar(100) GENERATED ALWAYS AS (lower(`c1`)) VIRTUAL);")
-	tk.MustExec("insert into t1(c1) values('a'), ('e'), ('b'), ('c'), ('d'), ('e'), ('x'), ('y'), ('a'), ('b');")
-
-	// tikv
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c1 int DEFAULT 0, c2 int GENERATED ALWAYS AS (abs(c1)) VIRTUAL);")
+	tk.MustExec("insert into t(c1) values(1), (-1), (2), (-2), (99), (-99);")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
-	tk.MustQuery("select * from t1 order by c2 limit 2;").Check(testkit.Rows("a a", "a a"))
 
-	// tiflash
+	// TopN to tikv.
+	rows := [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader_13", "root", "data:TableFullScan_12"},
+		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tikv.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_5", "root", "data:TableFullScan_4"},
+		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tikv.
+	rows = [][]interface{}{
+		{"Selection_7", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t1" {
+		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
 			}
 		}
 	}
-	rows := [][]interface{}{
-		{"TopN_7", "root", "test.t1.c2, offset:0, count:2"},
+
+	// TopN to tiflash.
+	rows = [][]interface{}{
+		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
 		{"└─TableReader_15", "root", "data:TableFullScan_14"},
 		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t1 order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+
+	// Projection to tiflash.
+	rows = [][]interface{}{
+		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
+	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
+
+	// Selection to tiflash.
+	rows = [][]interface{}{
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 }
