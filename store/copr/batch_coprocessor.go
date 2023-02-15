@@ -602,11 +602,17 @@ func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesS
 
 // todo: Only used when config.UseAutoScaler is false, will delete later.
 func getTiFlashComputeRPCContextByRoundRobin(ids []tikv.RegionVerID, stores []*tikv.Store) (res []*tikv.RPCContext, err error) {
-	storesStr := make([]string, 0, len(stores))
-	for _, s := range stores {
-		storesStr = append(storesStr, s.GetAddr())
+	startIdx := rand.Intn(len(stores))
+	for _, id := range ids {
+		rpcCtx := &tikv.RPCContext{
+			Region: id,
+			Addr:   stores[startIdx%len(stores)].GetAddr(),
+		}
+
+		startIdx++
+		res = append(res, rpcCtx)
 	}
-	return getTiFlashComputeRPCContextByRoundRobinHelper(ids, storesStr)
+	return res, nil
 }
 
 func getTiFlashComputeRPCContextByRoundRobinHelper(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
@@ -1313,7 +1319,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
 			rpcCtxs, err = cache.GetTiFlashComputeRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs, stores)
 		} else {
-			return nil, errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
+			err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
 		}
 		if err != nil {
 			return nil, err
@@ -1335,10 +1341,11 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			regionInfo := RegionInfo{
 				// tasks and rpcCtxs are correspond to each other.
 				Region:         tasks[i].region,
-				Meta:           rpcCtx.Meta,
 				Ranges:         tasks[i].ranges,
-				AllStores:      []uint64{rpcCtx.Store.StoreID()},
 				PartitionIndex: tasks[i].partitionIndex,
+				// No need to setup regionMeta and Store info.
+				// Meta:           rpcCtx.Meta,
+				// AllStores:      []uint64{rpcCtx.Store.StoreID()},
 			}
 			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
 				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
