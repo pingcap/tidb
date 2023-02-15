@@ -464,25 +464,11 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			}
 		}
 
-		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent == nil {
-				return nil
-			}
-			host, _, err := clientConn.PeerHost("", false)
-			if err != nil {
-				logutil.BgLogger().Error("get peer host failed", zap.Error(err))
-				terror.Log(clientConn.Close())
-				return errors.Trace(err)
-			}
-			if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
-				&variable.ConnectionInfo{Host: host}); err != nil {
-				logutil.BgLogger().Info("do connection event failed", zap.Error(err))
-				terror.Log(clientConn.Close())
-				return errors.Trace(err)
-			}
-			return nil
-		})
+		err = nil
+		if !clientConn.ppEnabled {
+			// Check audit plugins when ProxyProtocol not enabled
+			err = s.checkAuditPlugin(clientConn)
+		}
 		if err != nil {
 			continue
 		}
@@ -495,6 +481,28 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		go s.onConn(clientConn)
 	}
+}
+
+func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
+	return plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent == nil {
+			return nil
+		}
+		host, _, err := clientConn.PeerHost("", false)
+		if err != nil {
+			logutil.BgLogger().Error("get peer host failed", zap.Error(err))
+			terror.Log(clientConn.Close())
+			return errors.Trace(err)
+		}
+		if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
+			&variable.ConnectionInfo{Host: host}); err != nil {
+			logutil.BgLogger().Info("do connection event failed", zap.Error(err))
+			terror.Log(clientConn.Close())
+			return errors.Trace(err)
+		}
+		return nil
+	})
 }
 
 func (s *Server) startShutdown() {
