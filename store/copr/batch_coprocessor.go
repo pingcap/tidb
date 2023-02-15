@@ -692,7 +692,10 @@ func buildBatchCopTasksConsistentHash(
 	} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
 		rpcCtxs, err = getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
 	} else {
-		return nil, errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
+		err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
+	}
+	if err != nil{
+		return nil, err
 	}
 	if len(rpcCtxs) != len(tasks) {
 		return nil, errors.Errorf("length should be equal, len(rpcCtxs): %d, len(tasks): %d", len(rpcCtxs), len(tasks))
