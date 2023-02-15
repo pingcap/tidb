@@ -19,14 +19,12 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/tidb/tablecodec"
-
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/multierr"
 )
 

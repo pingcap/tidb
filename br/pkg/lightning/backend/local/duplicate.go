@@ -727,9 +727,15 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 
 	pool := utils.NewWorkerPool(uint(m.concurrency), action)
 	g, gCtx := errgroup.WithContext(ctx)
-	for _, task := range tasks {
+	for i, task := range tasks {
 		task := task
-		pool.ApplyOnErrorGroup(g, func() error {
+		taskIndex := i
+		pool.ApplyOnErrorGroup(g, func() (retErr error) {
+			logger := m.logger.Begin(zap.InfoLevel, fmt.Sprintf("%s, task %d", action, taskIndex))
+			defer func() {
+				logger.End(zap.ErrorLevel, retErr)
+			}()
+
 			if err := common.Retry(action, m.logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
@@ -953,10 +959,16 @@ func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 		}
 	}()
 
-	for _, task := range tasks {
+	for i, task := range tasks {
 		task := task
-		taskPool.ApplyOnErrorGroup(g, func() error {
-			taskLogger := m.logger.With(
+		taskIndex := i
+		taskPool.ApplyOnErrorGroup(g, func() (retErr error) {
+			logger := m.logger.Begin(zap.InfoLevel, fmt.Sprintf("%s, task %d", action, taskIndex))
+			defer func() {
+				logger.End(zap.ErrorLevel, retErr)
+			}()
+
+			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
 				zap.Int64("tableID", task.tableID),
@@ -1250,20 +1262,24 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 	if err != nil {
 		return err
 	}
+	var (
+		indexKVs int
+		dataKVs  int
+	)
+
 	defer func() {
 		if retErr == nil {
 			retErr = txn.Commit(ctx)
+			if retErr == nil {
+				m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("index").Add(float64(indexKVs))
+				m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("data").Add(float64(dataKVs))
+			}
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
 				m.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
 			}
 		}
 	}()
-
-	var (
-		indexKVs int
-		dataKVs  int
-	)
 
 	// Collect all rows & index keys into the deletion transaction.
 	// (if the number of duplicates is small this should fit entirely in memory)
@@ -1292,8 +1308,6 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		}
 	}
 
-	m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("index").Add(float64(indexKVs))
-	m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("data").Add(float64(dataKVs))
 	m.logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
 	return nil
 }
