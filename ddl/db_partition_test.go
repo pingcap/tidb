@@ -1884,6 +1884,7 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 
 	tk.MustExec("insert into test_global values (1,2,2)")
 	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.p_b'")
 
 	tk.MustExec("drop table if exists test_global")
 	tk.MustGetErrCode(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
@@ -1893,11 +1894,14 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 	);`, errno.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists test_global")
-	tk.MustExec(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] NONCLUSTERED */)
+	tk.MustExec(`create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
 	partition by range( a ) (
 		partition p1 values less than (10),
 		partition p2 values less than (20)
 	);`)
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.PRIMARY'")
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
