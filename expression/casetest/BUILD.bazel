@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "casetest_test",
+    timeout = "short",
+    srcs = [
+        "constant_propagation_test.go",
+        "flag_simplify_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//config",
+        "//testkit",
+        "//testkit/testdata",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "//util/timeutil",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
