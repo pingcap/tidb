@@ -1481,6 +1481,3 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 	}
 }
 
-func TestTiDBGlobalVariablesDefaultValueUpgradeFrom650To660(t *testing.T) {
-
-}
