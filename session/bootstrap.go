@@ -2293,7 +2293,7 @@ func upgradeToVer113(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, "80%", variable.TiDBServerMemoryLimit, "0")
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
 }
 
 func writeOOMAction(s Session) {

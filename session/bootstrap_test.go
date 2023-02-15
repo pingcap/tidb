@@ -1468,7 +1468,7 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row = chk.GetRow(0)
 	require.Equal(t, 2, row.Len())
-	require.Equal(t, "80%", row.GetString(1))
+	require.Equal(t, variable.DefTiDBServerMemoryLimit, row.GetString(1))
 }
 
 func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
