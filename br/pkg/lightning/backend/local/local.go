@@ -1686,7 +1686,7 @@ func (local *local) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	dupeRecordQuota := atomic.NewInt64(int64(local.dupeConcurrency))
+	dupeRecordQuota := atomic.NewInt64(int64(local.dupeRecordLimit))
 	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.duplicateDB, local.keyAdapter, dupeRecordQuota); err != nil {
 		return false, errors.Trace(err)
 	}

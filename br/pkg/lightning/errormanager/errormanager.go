@@ -462,14 +462,14 @@ func (em *ErrorManager) LogErrorDetails() {
 		em.logger.Warn(fmtErrMsg(errCnt, "data type", typeErrorTableName))
 	}
 	if errCnt := em.syntaxError(); errCnt > 0 {
-		em.logger.Warn(fmtErrMsg(errCnt, "data type", syntaxErrorTableName))
+		em.logger.Warn(fmtErrMsg(errCnt, "syntax", syntaxErrorTableName))
 	}
 	if errCnt := em.charsetError(); errCnt > 0 {
 		// TODO: add charset table name
-		em.logger.Warn(fmtErrMsg(errCnt, "data type", ""))
+		em.logger.Warn(fmtErrMsg(errCnt, "charset", ""))
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
-		em.logger.Warn(fmtErrMsg(errCnt, "data type", ConflictErrorTableName))
+		em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
 	}
 }
 
@@ -491,7 +491,7 @@ func (em *ErrorManager) Output() string {
 		{Name: "Error Count", WidthMax: 12},
 		{Name: "Error Data Table", WidthMax: 42},
 	})
-	t.SetAllowedRowLength(80)
+	t.SetAllowedRowLength(120)
 	t.SetRowPainter(func(row table.Row) text.Colors {
 		return text.Colors{text.FgRed}
 	})

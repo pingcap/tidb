@@ -66,12 +66,22 @@ verify_result() {
 
 run_lightning --config "tests/$TEST_NAME/config1.toml"
 verify_result
+run_sql 'select count(*) from lightning_task_info.conflict_error_v1'
+check_contains 'count(*): 40'
 
 run_sql 'drop database dup_resolve'
 run_sql 'drop database lightning_task_info'
 run_lightning --config "tests/$TEST_NAME/config2.toml"
 verify_result
+run_sql 'select count(*) from lightning_task_info.conflict_error_v1 where table_name = "`dup_resolve`.`a`"'
+check_contains 'count(*): 10'
+run_sql 'select count(*) from lightning_task_info.conflict_error_v1 where table_name = "`dup_resolve`.`b`"'
+check_contains 'count(*): 10'
+run_sql 'select count(*) from lightning_task_info.conflict_error_v1 where table_name = "`dup_resolve`.`c`"'
+check_contains 'count(*): 10'
 
 run_sql 'drop database dup_resolve'
 run_sql 'drop database lightning_task_info'
 run_lightning --config "tests/$TEST_NAME/config3.toml"
+run_sql 'select count(*) from lightning_task_info.conflict_error_v1'
+check_contains 'count(*): 40'
