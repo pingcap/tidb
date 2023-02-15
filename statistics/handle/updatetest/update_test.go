@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle_test
+package updatetest
 
 import (
 	"fmt"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -1327,7 +1328,7 @@ func TestFeedbackWithStatsVer2(t *testing.T) {
 	require.NoError(t, err)
 	statsTblAfter := h.GetTableStats(tblInfo)
 	// assert that statistics not changed
-	assertTableEqual(t, statsTblBefore, statsTblAfter)
+	internal.AssertTableEqual(t, statsTblBefore, statsTblAfter)
 
 	// Case 3: Feedback is still effective on version 1 statistics.
 	testKit.MustExec("set tidb_analyze_version = 1")
