@@ -109,6 +109,11 @@ type BackfillJob struct {
 	Meta            *model.BackfillMeta
 }
 
+// PrefixKeyString returns the BackfillJob's prefix key.
+func (bj *BackfillJob) PrefixKeyString() string {
+	return fmt.Sprintf("%d_%s_%d_%%", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
+}
+
 // AbbrStr returns the BackfillJob's info without the Meta info.
 func (bj *BackfillJob) AbbrStr() string {
 	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
