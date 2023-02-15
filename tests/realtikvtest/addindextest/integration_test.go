@@ -461,6 +461,9 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(4)
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(7)
+	tk.MustExec("alter table t add index idx_2(b);")
+	tk.MustExec("admin check table t;")
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
 
