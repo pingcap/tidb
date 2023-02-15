@@ -770,6 +770,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
 
+	d.mu.RLock()
+	d.mu.hook.OnJobRunAfter(job)
+	d.mu.RUnlock()
+
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.reset()
