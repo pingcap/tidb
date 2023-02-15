@@ -12,6 +12,7 @@ go_test(
         "integration_partition_test.go",
         "integration_test.go",
         "main_test.go",
+        "partition_pruner_test.go",
         "physical_plan_test.go",
         "plan_test.go",
         "point_get_plan_test.go",
