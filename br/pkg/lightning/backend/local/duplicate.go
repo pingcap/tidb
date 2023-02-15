@@ -1052,15 +1052,13 @@ func (m *DuplicateManager) resolveIndexHandles(ctx context.Context, rawHandles [
 		return errors.Trace(err)
 	}
 
-	handleRows := make([][2][]byte, len(rawHandles))
-	for i, rawHandle := range rawHandles {
+	handleRows := make([][2][]byte, 0, len(rawHandles))
+	for _, rawHandle := range rawHandles {
 		rawValue, ok := batchGetMap[string(hack.String(rawHandle))]
-		handleRows[i][0] = rawHandle
 		if ok {
-			handleRows[i][1] = rawValue
+			handleRows = append(handleRows, [2][]byte{rawHandle, rawValue})
 		} else {
-			m.logger.Warn("[detect-dupe] can not found row data corresponding to the handle",
-				logutil.Key("rawHandle", rawHandle))
+			// The row is deleted, we can ignore it.
 		}
 	}
 
