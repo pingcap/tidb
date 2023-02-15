@@ -941,15 +941,6 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	return true
 }
 
-// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
-	exprs := make([]expression.Expression, 0, len(p.ByItems))
-	for _, item := range p.ByItems {
-		exprs = append(exprs, item.Expr)
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
-}
-
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
@@ -1003,6 +994,56 @@ func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*
 	return true
 }
 
+// canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
+func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
+	exprs := make([]expression.Expression, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		exprs = append(exprs, item.Expr)
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
+}
+
+// containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
+func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+	for _, by := range p.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			for _, tCol := range tCols {
+				// A column with ID > 0 indicates that the column can be resolved by data source.
+				if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
+func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiKV) {
+		return false
+	}
+	if len(copTask.rootTaskConds) != 0 {
+		return false
+	}
+	if p.containVirtualColumn(copTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
+// canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
+func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+		return false
+	}
+	if p.containVirtualColumn(mppTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
@@ -1011,7 +1052,15 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
+<<<<<<< HEAD
 	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
+=======
+	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDownToTiKV(copTask) {
+		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
+		if changed {
+			return newTask
+		}
+>>>>>>> d2d91b5d969 (planner: add more checks when pushing TopN down (#41370))
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1023,8 +1072,12 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
+<<<<<<< HEAD
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
 	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
+=======
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
+>>>>>>> d2d91b5d969 (planner: add more checks when pushing TopN down (#41370))
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.addCost(pushedDownTopN.GetCost(mppTask.p.StatsCount(), false))
 		pushedDownTopN.SetCost(mppTask.cst)
