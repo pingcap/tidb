@@ -625,6 +625,14 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost(hasPassword, true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -843,9 +851,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		hasPassword = "NO"
 	}
 
-	// After read packets we should update the client's host and port to grab
-	// real client's IP and port from PROXY Protocol if PROXY Protocol is enabled.
-	host, port, err := cc.PeerHost(hasPassword, true)
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -889,9 +895,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		hasPassword = "NO"
 	}
 
-	// After read packets we should update the client's host and port to grab
-	// real client's IP and port from PROXY Protocol if PROXY Protocol is enabled.
-	host, _, err := cc.PeerHost(hasPassword, true)
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
