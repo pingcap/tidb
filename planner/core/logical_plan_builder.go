@@ -7062,13 +7062,38 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// containDifferentJoinTypes checks whether `preferJoinType` contains different join types.
+// containDifferentJoinTypes checks whether `preferJoinType` contains different
+// join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
-	onesCount := bits.OnesCount(preferJoinType)
-	if onesCount > 1 {
+	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
+	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
+	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
+	hjRightBuildMask := preferRightAsHJBuild ^ preferLeftAsHJProbe
+	hjLeftBuildMask := preferLeftAsHJBuild ^ preferRightAsHJProbe
+
+	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
+	onesCount := bits.OnesCount(preferJoinType & ^mask)
+	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
 		return true
 	}
-	return false
+
+	cnt := 0
+	if preferJoinType&inlMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlhjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&inlmjMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjLeftBuildMask > 0 {
+		cnt++
+	}
+	if preferJoinType&hjRightBuildMask > 0 {
+		cnt++
+	}
+	return cnt > 1
 }
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
