@@ -543,7 +543,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up backfilling data in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
-func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key, limit int) ([]kv.KeyRange, error) {
+func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
 	logutil.BgLogger().Info("[ddl] split table range from PD",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
@@ -558,7 +558,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	maxSleep := 10000 // ms
 	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	rc := copr.NewRegionCache(s.GetRegionCache())
-	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
+	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1052,7 +1052,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}
 
 	for {
-		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1165,7 +1165,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 	startKey, endKey := pTblMeta.StartKey, pTblMeta.EndKey
 	bJobs := make([]*BackfillJob, 0, batchSize)
 	for {
-		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
+		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -381,51 +381,46 @@ func TestSplitRegionRanges(t *testing.T) {
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
-	ranges, err := cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"), UnspecifiedLimit)
+	ranges, err := cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "a", "c")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 3)
 	rangeEqual(t, ranges, "h", "n", "n", "t", "t", "y")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "z"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 2)
 	rangeEqual(t, ranges, "s", "t", "t", "z")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "s"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "s"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "s", "s")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "t"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "t"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "t", "t")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "u"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "u"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "t", "u")
 
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("u", "z"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("u", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "u", "z")
 
 	// min --> max
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "z"), UnspecifiedLimit)
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 4)
 	rangeEqual(t, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
-
-	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "z"), 3)
-	require.NoError(t, err)
-	require.Len(t, ranges, 3)
-	rangeEqual(t, ranges, "a", "g", "g", "n", "n", "t")
 }
 
 func TestRebuild(t *testing.T) {
