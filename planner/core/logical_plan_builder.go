@@ -591,49 +591,98 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+		p.leftPreferJoinType |= preferMergeJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+		p.rightPreferJoinType |= preferMergeJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
+		p.leftPreferJoinType |= preferBCJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferShuffleJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
+		p.preferJoinType |= preferBCJoin
+		p.rightPreferJoinType |= preferBCJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
+		p.leftPreferJoinType |= preferShuffleJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
+		p.preferJoinType |= preferShuffleJoin
+		p.rightPreferJoinType |= preferShuffleJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
+		p.leftPreferJoinType |= preferHashJoin
+		p.hintFromLeft = true
+	}
+	if hintInfo.ifPreferHashJoin(rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+		p.rightPreferJoinType |= preferHashJoin
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLJInner
+		p.preferJoinType |= preferINLJ
+		p.leftPreferJoinType |= preferINLJ
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLJInner
+		p.preferJoinType |= preferINLJ
+		p.rightPreferJoinType |= preferINLJ
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLHJInner
+		p.preferJoinType |= preferINLHJ
+		p.leftPreferJoinType |= preferINLHJ
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLHJInner
+		p.preferJoinType |= preferINLHJ
+		p.rightPreferJoinType |= preferINLHJ
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLMJInner
+		p.preferJoinType |= preferINLMJ
+		p.leftPreferJoinType |= preferINLMJ
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLMJInner
+		p.preferJoinType |= preferINLMJ
+		p.rightPreferJoinType |= preferINLMJ
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
-		p.preferJoinType |= preferLeftAsHJBuild
+		p.preferJoinType |= preferHJBuild
+		p.leftPreferJoinType |= preferHJBuild
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
-		p.preferJoinType |= preferRightAsHJBuild
+		p.preferJoinType |= preferHJBuild
+		p.rightPreferJoinType |= preferHJBuild
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
-		p.preferJoinType |= preferLeftAsHJProbe
+		p.preferJoinType |= preferHJProbe
+		p.leftPreferJoinType |= preferHJProbe
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
-		p.preferJoinType |= preferRightAsHJProbe
+		p.preferJoinType |= preferHJProbe
+		p.rightPreferJoinType |= preferHJProbe
+		p.hintFromRight = true
 	}
-	if containDifferentJoinTypes(p.preferJoinType) {
+	if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) ||
+		(!p.ctx.GetSessionVars().EnableAdvancedJoinHint && containDifferentJoinTypes(p.preferJoinType)) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -646,6 +695,68 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	// set hintInfo for further usage if this hint info can be used.
 	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
+	}
+}
+
+// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
+// This information is used for selecting the physical operator.
+func (p *LogicalJoin) setPreferredJoinType4PhysicalOp(leftHintInfo uint, rightHintInfo uint) {
+	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
+		// The hint information on the left and right child nodes is different. It causes the conflict.
+		errMsg := "Join hints are conflict after join reorder phase, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+		return
+	} else {
+		if leftHintInfo != 0 {
+			p.preferJoinType = leftHintInfo
+		} else {
+			p.preferJoinType = rightHintInfo
+		}
+		preferJoinType := uint(0)
+		// Some implementations of physical operators are dependent on the direction,
+		// and adjustments need to be made based on the direction.
+		switch p.preferJoinType {
+		case preferINLJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferRightAsINLJInner
+			}
+		case preferINLHJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+		case preferINLMJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+		case preferHJBuild:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+		case preferHJProbe:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+		default:
+			preferJoinType = p.preferJoinType
+		}
+		p.preferJoinType = preferJoinType
 	}
 }
 
@@ -6962,38 +7073,13 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// containDifferentJoinTypes checks whether `preferJoinType` contains different
-// join types.
+// containDifferentJoinTypes checks whether `preferJoinType` contains different join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
-	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
-	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
-	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
-	hjRightBuildMask := preferRightAsHJBuild ^ preferLeftAsHJProbe
-	hjLeftBuildMask := preferLeftAsHJBuild ^ preferRightAsHJProbe
-
-	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
-	onesCount := bits.OnesCount(preferJoinType & ^mask)
-	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
+	onesCount := bits.OnesCount(preferJoinType)
+	if onesCount > 1 {
 		return true
 	}
-
-	cnt := 0
-	if preferJoinType&inlMask > 0 {
-		cnt++
-	}
-	if preferJoinType&inlhjMask > 0 {
-		cnt++
-	}
-	if preferJoinType&inlmjMask > 0 {
-		cnt++
-	}
-	if preferJoinType&hjLeftBuildMask > 0 {
-		cnt++
-	}
-	if preferJoinType&hjRightBuildMask > 0 {
-		cnt++
-	}
-	return cnt > 1
+	return false
 }
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
