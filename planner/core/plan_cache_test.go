@@ -320,6 +320,26 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.Session().GetSessionVars().InRestrictedSQL = false
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
