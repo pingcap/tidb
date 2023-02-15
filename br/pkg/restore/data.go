@@ -302,7 +302,6 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
-<<<<<<< HEAD
 	retryErr := utils.WithRetry(
 		ctx,
 		func() error {
@@ -326,24 +325,6 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 
 	recovery.progress.Inc()
 	return retryErr
-=======
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, startTS, r)
-		return stats, err
-	}
-
-	runner := rangetask.NewRangeTaskRunner("br-flashback-prepare-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
-	// Run prepare flashback on the entire TiKV cluster. Empty keys means the range is unbounded.
-	err = runner.RunOnRange(ctx, []byte(""), []byte(""))
-	if err != nil {
-		log.Error("region flashback prepare get error")
-		return errors.Trace(err)
-	}
-	recovery.progress.Inc()
-	log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
-
-	return nil
->>>>>>> 321d313b060 (br: remove totalFlashbackRegions since task completion region already contains all regions (#40504))
 }
 
 // flashback the region data to version resolveTS
