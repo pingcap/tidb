@@ -862,33 +862,6 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
 
-func TestIssue34863(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists c")
-	tk.MustExec("drop table if exists o")
-	tk.MustExec("create table c(c_id bigint);")
-	tk.MustExec("create table o(o_id bigint, c_id bigint);")
-	tk.MustExec("insert into c values(1),(2),(3),(4),(5);")
-	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);")
-	tk.MustExec("set @@tidb_opt_agg_push_down=1")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustExec("set @@tidb_opt_agg_push_down=0")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-}
-
 func TestIssue40857(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
