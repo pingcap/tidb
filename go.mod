@@ -275,6 +275,6 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/kvproto => github.com/iosmanthus/kvproto v0.0.0-20230210123209-579d6ab1bfff
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230210123647-e93360b607b9
+	github.com/tikv/client-go/v2 => github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230215160027-d9cf63373368
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
