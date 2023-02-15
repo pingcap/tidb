@@ -682,14 +682,18 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 // setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
 // This information is used for selecting the physical operator.
-func (p *LogicalJoin) setPreferredJoinType4PhysicalOp(leftHintInfo uint, rightHintInfo uint) {
+func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+	leftHintInfo := p.leftPreferJoinType
+	rightHintInfo := p.rightPreferJoinType
+	if leftHintInfo == 0 && rightHintInfo == 0 {
+		return
+	}
 	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
 		// The hint information on the left and right child nodes is different. It causes the conflict.
 		errMsg := "Join hints are conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
-		return
 	} else {
 		if leftHintInfo != 0 {
 			p.preferJoinType = leftHintInfo
@@ -740,6 +744,9 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp(leftHintInfo uint, rightHi
 		}
 		p.preferJoinType = preferJoinType
 	}
+	// Clear information from left and right child nodes to prevent multiple calls to this function.
+	p.leftPreferJoinType = 0
+	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
