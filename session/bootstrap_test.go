@@ -1231,7 +1231,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 
-	// In a new created cluster(above 6.5+), tidb_ost_model_version is 2 by default.
+	// In a new created cluster(above 6.5+), tidb_cost_model_version is 2 by default.
 	mustExec(t, se, "use test;")
 	r := mustExecToRecodeSet(t, se, "select @@tidb_cost_model_version;")
 	require.NotNil(t, r)
