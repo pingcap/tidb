@@ -526,6 +526,13 @@ func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 }
 
 func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+	dc.reorgCtx.Lock()
+	defer dc.reorgCtx.Unlock()
+	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		existedRC.references.Add(1)
+		return existedRC
+	}
 	rc := &reorgCtx{}
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
@@ -535,20 +542,8 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	rc.references.Add(1)
-	dc.reorgCtx.Lock()
-	defer dc.reorgCtx.Unlock()
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
-}
-
-func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
-	rc := dc.getReorgCtx(bfJob.JobID)
-	if rc == nil {
-		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
-		dc.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, ele, bfJob.Meta.RowCount)
-	} else {
-		rc.references.Add(1)
-	}
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
