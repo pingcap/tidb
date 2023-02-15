@@ -9,7 +9,7 @@ go_test(
         "main_test.go",
     ],
     data = glob(["testdata/**"]),
-    flaky = "true",
+    flaky = True,
     shard_count = 2,
     deps = [
         "//config",
