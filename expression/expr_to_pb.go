@@ -183,6 +183,10 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
+	// virtual generated column, can not support for now.
+	if column.VirtualExpr != nil {
+		return nil
+	}
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
