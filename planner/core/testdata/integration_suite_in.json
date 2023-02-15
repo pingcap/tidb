@@ -50,6 +50,15 @@
     ]
   },
   {
+    "name": "TestIssue37986",
+    "cases": [
+      "explain format = 'brief' SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 100;",
+      "explain format = 'brief' SELECT v2.c0 FROM (select unix_timestamp() as c0 from t3) v2 order by v2.c0 limit 100;",
+      "explain format = 'brief' SELECT v2.c0 FROM (select unix_timestamp('20220921') as c0 from t3) v2 order by v2.c0 limit 100;",
+      "explain format = 'brief' SELECT v2.c0 FROM (select sleep(0.1) as c0 from t3) v2 order by v2.c0 limit 100;"
+    ]
+  },
+  {
     "name": "TestMaxMinEliminate",
     "cases": [
       "explain format = 'brief' (select max(a) from t) union (select min(a) from t)",

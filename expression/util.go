@@ -1166,7 +1166,11 @@ func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
-			return true
+			// The function unix_timestamp is more special.
+			// If there is no argument, it's a mutable effects expression. Otherwise, it's a immutable effects expression.
+			if x.FuncName.L != ast.UnixTimestamp || len(x.GetArgs()) == 0 {
+				return true
+			}
 		}
 		for _, arg := range x.GetArgs() {
 			if IsMutableEffectsExpr(arg) {

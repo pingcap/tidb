@@ -120,7 +120,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 
 func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
+		if expression.IsMutableEffectsExpr(expr) {
 			return p.baseLogicalPlan.pushDownTopN(topN, opt)
 		}
 	}

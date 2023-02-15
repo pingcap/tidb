@@ -168,6 +168,49 @@
     ]
   },
   {
+    "Name": "TestIssue37986",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 100;",
+        "Plan": [
+          "TopN 100.00 root  Column#2, offset:0, count:100",
+          "└─Projection 10000.00 root  rand()->Column#2",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT v2.c0 FROM (select unix_timestamp() as c0 from t3) v2 order by v2.c0 limit 100;",
+        "Plan": [
+          "Projection 100.00 root  1663744799->Column#2",
+          "└─Limit 100.00 root  offset:0, count:100",
+          "  └─TableReader 100.00 root  data:Limit",
+          "    └─Limit 100.00 cop[tikv]  offset:0, count:100",
+          "      └─TableFullScan 100.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT v2.c0 FROM (select unix_timestamp('20220921') as c0 from t3) v2 order by v2.c0 limit 100;",
+        "Plan": [
+          "Projection 100.00 root  1663689600->Column#2",
+          "└─Limit 100.00 root  offset:0, count:100",
+          "  └─TableReader 100.00 root  data:Limit",
+          "    └─Limit 100.00 cop[tikv]  offset:0, count:100",
+          "      └─TableFullScan 100.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT v2.c0 FROM (select sleep(0.1) as c0 from t3) v2 order by v2.c0 limit 100;",
+        "Plan": [
+          "TopN 100.00 root  Column#2, offset:0, count:100",
+          "└─Projection 10000.00 root  sleep(0.1)->Column#2",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMaxMinEliminate",
     "Cases": [
       {
