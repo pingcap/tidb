@@ -225,7 +225,7 @@ func TestTiFlashManager(t *testing.T) {
 
 	// SetTiFlashPlacementRule/GetTiFlashGroupRules
 	rule := MakeNewRule(1, 2, []string{"a"})
-	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	require.NoError(t, SetTiFlashPlacementRule(ctx, rule))
 	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(rules))
