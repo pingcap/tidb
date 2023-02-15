@@ -4114,7 +4114,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 
-	if ti.UseTableLookUp && s.sessionVars.StoreBatchSize > 0 {
+	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
 		telemetryStoreBatchedUsage.Inc()
 	}
 }
