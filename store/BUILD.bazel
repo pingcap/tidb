@@ -25,6 +25,7 @@ go_test(
     ],
     embed = [":store"],
     flaky = True,
+    shard_count = 23,
     deps = [
         "//domain",
         "//kv",
