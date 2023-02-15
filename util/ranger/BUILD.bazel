@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ranger",
+    timeout = "short",
     srcs = [
         "checker.go",
         "detacher.go",
@@ -9,7 +10,9 @@ go_library(
         "ranger.go",
         "types.go",
     ],
+    flaky = True,
     importpath = "github.com/pingcap/tidb/util/ranger",
+    shard_count = 26,
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
