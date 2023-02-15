@@ -1866,13 +1866,32 @@ func TestMultiPartitionDropAndTruncate(t *testing.T) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	store := testkit.CreateMockStore(t)
+func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+}
+
+func TestDropPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -1902,9 +1921,6 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 2, cnt)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
-	})
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
