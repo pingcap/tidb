@@ -228,7 +228,7 @@ func TestDispatchPolicyRR(t *testing.T) {
 			if v, ok := checkMap[c.Addr]; !ok {
 				checkMap[c.Addr] = 1
 			} else {
-				checkMap[c.Addr] = v+1
+				checkMap[c.Addr] = v + 1
 			}
 		}
 		actCnt := 0
@@ -261,7 +261,6 @@ func TestDispatchPolicyRR(t *testing.T) {
 				require.True(t, v == 0 || v == 1)
 			}
 		}
-
 	}
 }
 
