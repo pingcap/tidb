@@ -3,11 +3,11 @@
 - Author(s): [zimulala](https://github.com/zimulala), [Defined2014](https://github.com/Defined2014)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/41208
 
-##Abstract
+## Abstract
 
 This is distributed processing of design in the DDL reorg phase. The current design is based on the main logic that only the DDL owner can handle DDL jobs. However, for jobs in the reorg phase, it is expected that all TiDBs can claim subtasks in the reorg phase based on resource usage.
 
-##Motivation or Background
+## Motivation or Background
 
 At present, TiDB already supports parallel processing of DDL jobs on the owner. However, the resources of a single TiDB are limited. Even if it supports a parallel framework, the execution speed of DDL is relatively limited, and it will compete for resources that affect the daily operations such as TiDB's TPS.
 
@@ -15,7 +15,7 @@ DDL Jobs can be divided into the general job and the reorg job. It can also be c
 
 At present, considering the problem of significantly improving DDL performance and improving TiDB resource utilization, and relatively stable design and development, we will DDL reorg stage for distributed processing.
 
-##Current Implementation
+## Current Implementation
 
 At present, the master branch reorg stage processing logic (that is, no lighting optimization is added), takes an  added index as an example. The simple steps that the owner needs to perform in the reorg stage of the added index operation:
 
@@ -27,15 +27,15 @@ At present, the master branch reorg stage processing logic (that is, no lighting
 
 ![Figure 1: add index flow chart](./imgs/add-index-flow-chart.png)
 
-##Rationale
+## Rationale
 
-###Prepare
+### Prepare
 
 The reorg worker and backfill worker for this scenario are completely decoupled, i.e. the two roles are not related.
 
 Backfill workers build the associated worker pool to handle subtasks ( DDL small tasks that a job splits into during the reorg phase).
 
-###Process
+### Process
 
 The overall process of this document program is rough as follows:
 
@@ -48,9 +48,9 @@ The overall process of this document program is rough as follows:
 
 ![Figure 2: dist reorg flow chart](./imgs/dist-reorg-flow-chart.png)
 
-##Detailed Design
+## Detailed Design
 
-###Meta Info Definition
+### Meta Info Definition
 
 The contents of the existing table structure may be lacking, and a new Metadata needs to be added or defined.
 
@@ -68,35 +68,20 @@ Consider that if all subtask information is added to the TiDB_ddl_reorg.reorg fi
 
 ```sql
 +---------------+------------+------+-------------+
-
 | Field              | Type         | Null | Key  |
-
 +---------------+------------+------+-------------+
-
 | id                 | bigint(20)   | NO   | PK   | auto
-
 | Namespace string   | varchar(256) | NO   | MUL  |
-
 | Key string         | varchar(256) | NO   | MUL  | // ele_key, ele_id, ddl_job_id, sub_id
-
 | ddl_physical_tid   | bigint(20)   | NO   |      |
-
 | type               | int          | NO   |      | // e.g.ddl_addIndex type
-
 | exec_id            | varchar(256) | YES  |      |
-
 | exec_expired       | Timestamp    | YES  |      | // TSO
-
 | state              | varchar(64)  | YES  |      |
-
 | checkpoint         | longblob     | YES  |      |
-
 | start_time         | bigint(20)   | YES  |      |
-
 | state_update_time  | bigint(20)   | YES  |      |
-
 | meta               | longblob     | YES  |      |
-
 +---------------+------------+------+-------------+
 ```
 
@@ -117,7 +102,7 @@ type BackfillMeta struct {
 
 Add `mysql.tidb_background_subtask_history` table to record completed (including failure status) subtasks. The table structure is the same as tidb_background_subtask . Considering the number of subtasks, some records of the history table are deleted regularly in the later stage.
 
-###Principle
+### Principle
 
 The general process is simply divided into two parts:
 
@@ -128,7 +113,7 @@ The general process is simply divided into two parts:
 
 Regarding step 1.b, the current plan is to reorg worker through timer regular check, consider the completion of subtask synchronization through PD, to actively check.
 
-###Rules
+### Rules
 
 Rules for backfill workers to claim subtasks:
 
@@ -147,7 +132,7 @@ Subtask claim notification method:
     - The Owner node notifies backfill workers to other nodes by changing the information registered in the PD.
 - Passive mode: All nodes themselves periodically check if there are tasks to handle.
 
-###Interface Definition
+### Interface Definition
 
 Adjust the `backfiller` and `backfillWorker` to update their interfaces and make them more explicit and generic when fetching and processing tasks.
 
@@ -187,11 +172,11 @@ func (w *backfillWorker) String() string {}
 - Add the backfill worker pool like `WorkerPool`(later considered to be unified with the existing WorkerPool).
 - In addition, the above interface will be modified in the second phase of this project to make it more general.
 
-###Communication Mode
+### Communication Mode
 
 In the current scheme, the backfill worker obtains subtasks and the reorg worker checks whether the subtask is completed through regular inspection and processing. Here, we consider combining PD watches for communication.
 
-###Breakpoints Resume
+### Breakpoints Resume
 
 When the network partition or abnormal exit occurs in the TiDB where the current backfill worker is located, the corresponding subtask may not be handled by the worker. In the current scheme, it is tentatively planned to mark whether the executor owner of the current subtask is valid by lease. There are more suitable schemes that can be discussed later. The specific operation of this scheme:
 
@@ -200,14 +185,14 @@ When the network partition or abnormal exit occurs in the TiDB where the current
     1. When there is a network problem in the TiDB where the backfill worker who is processing the subtask is located, and another TiDB obtains the current subtask and finds that its exec_expired expired (for example, the exec_expired + lease value is earlier than now () ), the exec_id and exec_expired values of this subtask are updated, and the subtask is processed from curr_key.
 3. DDL Owner TiDB may encounter this problem refer to the following changing owner description.
 
-###Changing Owner
+### Changing Owner
 
 - DDL an exception may occur in the TiDB where the owner is located, resulting in the need to switch DDL owner.
     1. The reorg worker will check the reorg info to confirm that the reorg job has completed subtasks.
         1. If it is not completed, enter the stage of reorg job splitting, and then enter the process of checking the completion of the reorg job. The subsequent process will not be repeated.
         2. If completed, enter the process of checking the completion of the reorg job. The follow-up process will not be repeated. (Problem: under the new framework, no owner can continue to perform backfill phase tasks).
 
-###Failed
+### Failed
 
 When processing the reorg stage, the process with an error when backfilling is handled as follows:
 
@@ -218,27 +203,27 @@ When processing the reorg stage, the process with an error when backfilling is h
 3. All TiDB b ackfill worker in each task to take subtask, if the half of the execution found that the task does not exist (indicating that half of the reorg task failed to execute, the owner cleaned up its subtask), then exit normally .
 4. Follow-up operations refer to the rollback process.
 
-###Cancel
+### Cancel
 
 When the user executes admin cancel ddl job , the job is marked as canceling as in the original logic. DDL the reorg worker where the owner is located checks this field and finds that it is canceling, the next process is similar to step 3-6 of Failed.
 
-###Clean up
+### Clean up
 
 Since the subtask may be segmented by each table region, it may cause the `mysql.tidb_background_subtask_history` table is particularly large, so you need to add a regular cleaning function.
 
-###Display
+### Display
 
-####Display of Progress
+#### Display of Progress
 
 The first stage can be through subtasks inside row count to calculate the entire DDL job row count. Then the display is the same as the original logic.
 
 Subsequent progress can be displayed more humanely, providing results such as percentages, allowing users to better understand the processing of the reorg phase.
 
-####Monitor
+#### Monitor
 
 Update and add some new logs and metrics.
 
-##Further
+## Further
 
 - Improve and optimize backfill processing subtask scheduling strategy
     - Use more flexible and reasonable subtask segmentation and preemption mechanism
