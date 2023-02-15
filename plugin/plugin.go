@@ -184,6 +184,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 					logutil.Logger(ctx).Warn("validate plugin fail and disable plugin",
 						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
+					//nolint: ineffassign
 					err = nil
 					continue
 				}

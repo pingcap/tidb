@@ -159,7 +159,7 @@ go_library(
 
 go_test(
     name = "core_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "binary_plan_test.go",
         "cbo_test.go",

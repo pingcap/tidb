@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "nontransactionaltest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "nontransactional_test.go",
+    ],
+    flaky = True,
+    shard_count = 20,
+    deps = [
+        "//config",
+        "//testkit",
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
