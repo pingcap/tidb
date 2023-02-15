@@ -54,7 +54,7 @@ The overall process of this document program is rough as follows:
 
 The contents of the existing table structure may be lacking, and a new Metadata needs to be added or defined.
 
-Add fields to the DDLReorgMeta structure of the `mysql.TiDB_ddl_job` table as follows:
+Add a new field to the `DDLReorgMeta` structure in the `mysql.tidb_ddl_job` table, for example:
 
 ```go
 type DDLReorgMeta struct {
@@ -64,7 +64,7 @@ type DDLReorgMeta struct {
 }
 ```
 
-Consider that if all subtask information is added to the TiDB_ddl_reorg.reorg field, there may be a lock problem. It is added to the mysql.tidb_background_subtask table, the specific structure is as follows:
+Consider that if all subtask information is added to the TiDB_ddl_reorg.reorg field, there may be a lock problem. It is added to the `mysql.tidb_background_subtask` table, the specific structure is as follows:
 
 ```sql
 +---------------+------------+------+-------------+
@@ -115,7 +115,7 @@ type BackfillMeta struct {
 }
 ```
 
-Add mysql.TiDB_background_subtask_history table to record completed (including failure status) subtasks. The table structure is the same as tidb_background_subtask . Considering the number of subtasks, some records of the history table are deleted regularly in the later stage.
+Add `mysql.tidb_background_subtask_history` table to record completed (including failure status) subtasks. The table structure is the same as tidb_background_subtask . Considering the number of subtasks, some records of the history table are deleted regularly in the later stage.
 
 ###Principle
 
@@ -224,7 +224,7 @@ When the user executes admin cancel ddl job , the job is marked as canceling as 
 
 ###Clean up
 
-Since the subtask may be segmented by each table region, it may cause the mysql.TiDB_background_subtask_history table is particularly large, so you need to add a regular cleaning function.
+Since the subtask may be segmented by each table region, it may cause the `mysql.tidb_background_subtask_history` table is particularly large, so you need to add a regular cleaning function.
 
 ###Display
 
