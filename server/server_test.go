@@ -988,7 +988,7 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Serv
 		db.MustExec("drop table if exists t66")
 		db.MustExec("create table t66 (id int primary key, c1 varchar(255))")
 		_, err = db.GetDB().Exec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (c1, c2)", path))
-		require.EqualError(t, err, "Error 1105 (HY000): LOAD DATA INTO t66: unknown column c2")
+		require.EqualError(t, err, "Error 1054 (42S22): Unknown column 'c2' in 'field list'")
 	})
 }
 
