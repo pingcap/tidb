@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package casetest
 
 import (
 	"testing"
 
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 )
@@ -39,7 +38,7 @@ func TestPushDerivedTopnNegative(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	suiteData := plannercore.GetDerivedTopNSuiteData()
+	suiteData := GetDerivedTopNSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
@@ -69,7 +68,7 @@ func TestPushDerivedTopnPositive(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	suiteData := plannercore.GetDerivedTopNSuiteData()
+	suiteData := GetDerivedTopNSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
