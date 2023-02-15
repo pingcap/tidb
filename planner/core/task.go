@@ -953,6 +953,22 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
+// containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
+func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+	for _, by := range p.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			for _, tCol := range tCols {
+				// A column with ID > 0 indicates that the column can be resolved by data source.
+				if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
 func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
 	if !p.canExpressionConvertedToPB(kv.TiKV) {
@@ -961,12 +977,21 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
 	if len(copTask.rootTaskConds) != 0 {
 		return false
 	}
+	if p.containVirtualColumn(copTask.plan().Schema().Columns) {
+		return false
+	}
 	return true
 }
 
 // canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
-func (p *PhysicalTopN) canPushDownToTiFlash() bool {
-	return p.canExpressionConvertedToPB(kv.TiFlash)
+func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+		return false
+	}
+	if p.containVirtualColumn(mppTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
 }
 
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
@@ -992,7 +1017,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
-	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash() {
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
 	}
