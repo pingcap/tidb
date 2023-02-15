@@ -8118,7 +8118,7 @@ func TestIssue41273(t *testing.T) {
 }
 
 // https://github.com/pingcap/tidb/issues/41355
-// Virtually generated columns push down is not supported now.
+// The "virtual generated columns" push down is not supported now.
 // This test covers: TopN, Projection, Selection.
 func TestVirtualExprPushDown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
