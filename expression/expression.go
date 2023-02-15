@@ -1271,6 +1271,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.GetFormat:
 		return true
+	case ast.IsIPv4, ast.IsIPv6:
+		return true
 	}
 	return false
 }
