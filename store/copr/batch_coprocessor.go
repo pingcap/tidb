@@ -1228,7 +1228,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		splitKeyStart := time.Now()
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
