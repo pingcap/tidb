@@ -172,7 +172,6 @@ go_test(
         "expression_test.go",
         "function_traits_test.go",
         "helper_test.go",
-        "integration_serial_test.go",
         "main_test.go",
         "multi_valued_index_test.go",
         "scalar_function_test.go",
