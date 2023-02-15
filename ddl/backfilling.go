@@ -817,7 +817,12 @@ type backfillScheduler struct {
 	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
 
-const backfillTaskChanSize = 1024
+var backfillTaskChanSize = 1024
+
+// SetBackfillTaskChanSizeForTest is only used for test.
+func SetBackfillTaskChanSizeForTest(n int) {
+	backfillTaskChanSize = n
+}
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
 	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
@@ -1052,12 +1057,18 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}
 
 	for {
+		if startKey.Cmp(endKey) >= 0 {
+			break
+		}
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		scheduler.setMaxWorkerSize(len(kvRanges))
+		if len(kvRanges) == 0 {
+			break
+		}
 
+		scheduler.setMaxWorkerSize(len(kvRanges))
 		err = scheduler.adjustWorkerSize()
 		if err != nil {
 			return errors.Trace(err)
@@ -1080,14 +1091,15 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if len(remains) == 0 {
-			if ingestBeCtx != nil {
-				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
-			}
-			break
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			lastFinishedKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = lastFinishedKey.Next()
 		}
-		startKey = remains[0].StartKey
+	}
+	if ingestBeCtx != nil {
+		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
 	}
 	return nil
 }
