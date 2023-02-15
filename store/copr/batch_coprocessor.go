@@ -603,6 +603,9 @@ func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesS
 // todo: Only used when config.UseAutoScaler is false, will delete later.
 func getTiFlashComputeRPCContextByRoundRobin(ids []tikv.RegionVerID, stores []*tikv.Store) (res []*tikv.RPCContext, err error) {
 	storesStr := make([]string, 0, len(stores))
+	for _, s := range stores {
+		storesStr = append(storesStr, s.GetAddr())
+	}
 	return getTiFlashComputeRPCContextByRoundRobinHelper(ids, storesStr)
 }
 
