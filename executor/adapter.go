@@ -1113,7 +1113,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, lockErr
 	}
 
-	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+	if config.GetGlobalConfig().PessimisticTxn.MaxRetryCount > 0 &&
+		a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
