@@ -794,11 +794,15 @@ const (
 	version111 = 111
 	// version112 modifies the view tidb_mdl_view
 	version112 = 112
+	// version113 modifies the following global variables default value:
+	// - foreign_key_checks: off -> on
+	// - tidb_enable_foreign_key: off -> on
+	version113 = 113
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version112
+var currentBootstrapVersion int64 = version113
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -918,6 +922,7 @@ var (
 		upgradeToVer110,
 		upgradeToVer111,
 		upgradeToVer112,
+		upgradeToVer113,
 	}
 )
 
@@ -2283,6 +2288,15 @@ func upgradeToVer112(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer113(s Session, ver int64) {
+	if ver >= version113 {
+		return
+	}
+
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
 }
 
 func writeOOMAction(s Session) {
