@@ -276,7 +276,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 	if containTableDual(p) && paramNum > 0 {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
 	}
-	if stmtAst.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
+	if stmtCtx.UseCache && !ignorePlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -636,7 +636,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	stmt *PlanCacheStmt, _ infoschema.InfoSchema, p Plan) error {
-	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
 	}
 	var (

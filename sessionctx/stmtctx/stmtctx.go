@@ -171,7 +171,6 @@ type StatementContext struct {
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
-	SkipPlanCache                 bool
 	IgnoreExplainIDSuffix         bool
 	SkipUTF8Check                 bool
 	SkipASCIICheck                bool
@@ -599,10 +598,10 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	if sc.UseCache && sc.SkipPlanCache {
+	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
-	sc.SkipPlanCache = true
+	sc.UseCache = false
 	sc.AppendWarning(reason)
 }
 
