@@ -77,7 +77,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, ctx.GetSessionVars().StmtCtx.UseCache)
+	require.False(t, ctx.GetSessionVars().StmtCtx.UseCache)
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
