@@ -714,7 +714,7 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 		for {
 			select {
 			case <-ticker.C:
-				m.logger.Info(action+", progress",
+				m.logger.Info(action+", task progress",
 					zap.String("progress", fmt.Sprintf("%.1f%%", float64(finishedTasks.Load())/float64(totalTasks)*100)),
 					zap.Int64("finished", finishedTasks.Load()), zap.Int("total", totalTasks))
 			case <-ctx.Done():
@@ -942,7 +942,7 @@ func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 		for {
 			select {
 			case <-ticker.C:
-				m.logger.Info(action+", progress",
+				m.logger.Info(action+", task progress",
 					zap.String("progress", fmt.Sprintf("%.1f%%", float64(finishedTasks.Load())/float64(totalTasks)*100)),
 					zap.Int64("finished", finishedTasks.Load()), zap.Int("total", totalTasks))
 			case <-ctx.Done():
@@ -1007,6 +1007,11 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 	writeBatch := dupDB.NewBatch()
 	writeBatchSize := 0
 
+	var (
+		indexKVs int
+		dataKVs  int
+	)
+
 	var encodedKey []byte
 	for {
 		key, val, err := stream.Next()
@@ -1016,6 +1021,12 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 		if ctx.Err() != nil {
 			return errors.Trace(ctx.Err())
 		}
+		if tablecodec.IsRecordKey(key) {
+			dataKVs++
+		} else {
+			indexKVs++
+		}
+
 		encodedKey = keyAdapter.Encode(encodedKey[:0], key, rowIDGen.Inc())
 		if err := writeBatch.Set(encodedKey, val, nil); err != nil {
 			return errors.Trace(err)
@@ -1026,8 +1037,12 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 			if err := writeBatch.Commit(pebble.Sync); err != nil {
 				return errors.Trace(err)
 			}
+			m.metrics.DupeDetectKeysTotal.WithLabelValues("index").Add(float64(indexKVs))
+			m.metrics.DupeDetectKeysTotal.WithLabelValues("data").Add(float64(dataKVs))
 			writeBatch.Reset()
 			writeBatchSize = 0
+			indexKVs = 0
+			dataKVs = 0
 		}
 	}
 
@@ -1035,6 +1050,8 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 		if err := writeBatch.Commit(pebble.Sync); err != nil {
 			return errors.Trace(err)
 		}
+		m.metrics.DupeDetectKeysTotal.WithLabelValues("index").Add(float64(indexKVs))
+		m.metrics.DupeDetectKeysTotal.WithLabelValues("data").Add(float64(dataKVs))
 	}
 	return nil
 }
@@ -1243,6 +1260,11 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		}
 	}()
 
+	var (
+		indexKVs int
+		dataKVs  int
+	)
+
 	// Collect all rows & index keys into the deletion transaction.
 	// (if the number of duplicates is small this should fit entirely in memory)
 	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
@@ -1254,7 +1276,7 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		if err := txn.Delete(handleRow[0]); err != nil {
 			return err
 		}
-		m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("data").Inc()
+		dataKVs++
 
 		handle, err := m.decoder.DecodeHandleFromRowKey(handleRow[0])
 		if err != nil {
@@ -1262,7 +1284,7 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		}
 
 		err = m.decoder.IterRawIndexKeys(handle, handleRow[1], func(key []byte) error {
-			m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("index").Inc()
+			indexKVs++
 			return txn.Delete(key)
 		})
 		if err != nil {
@@ -1270,6 +1292,8 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		}
 	}
 
+	m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("index").Add(float64(indexKVs))
+	m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("data").Add(float64(dataKVs))
 	m.logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
 	return nil
 }

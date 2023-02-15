@@ -19,6 +19,10 @@ import (
 	"context"
 	"math"
 
+	"github.com/pingcap/tidb/tablecodec"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -81,7 +85,10 @@ type dupDetectIter struct {
 	keyAdapter     KeyAdapter
 	writeBatch     *pebble.Batch
 	writeBatchSize int64
+	indexKVs       int
+	dataKVs        int
 	logger         log.Logger
+	metrics        *metric.Metrics
 }
 
 func (d *dupDetectIter) Seek(key []byte) bool {
@@ -119,6 +126,12 @@ func (d *dupDetectIter) flush() {
 	d.err = d.writeBatch.Commit(pebble.Sync)
 	d.writeBatch.Reset()
 	d.writeBatchSize = 0
+	if m := d.metrics; m != nil {
+		m.DupeDetectKeysTotal.WithLabelValues("index").Add(float64(d.indexKVs))
+		m.DupeDetectKeysTotal.WithLabelValues("data").Add(float64(d.dataKVs))
+	}
+	d.indexKVs = 0
+	d.dataKVs = 0
 }
 
 func (d *dupDetectIter) record(rawKey, key, val []byte) {
@@ -129,6 +142,11 @@ func (d *dupDetectIter) record(rawKey, key, val []byte) {
 	d.err = d.writeBatch.Set(rawKey, val, nil)
 	if d.err != nil {
 		return
+	}
+	if tablecodec.IsRecordKey(key) {
+		d.dataKVs++
+	} else {
+		d.indexKVs++
 	}
 	d.writeBatchSize += int64(len(rawKey) + len(val))
 	if d.writeBatchSize >= maxDuplicateBatchSize {
@@ -200,12 +218,14 @@ func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
 	if len(opts.UpperBound) > 0 {
 		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
 	}
+	m, _ := metric.FromContext(ctx)
 	return &dupDetectIter{
 		ctx:        ctx,
 		iter:       db.NewIter(newOpts),
 		keyAdapter: keyAdapter,
 		writeBatch: dupDB.NewBatch(),
 		logger:     logger,
+		metrics:    m,
 	}
 }
 

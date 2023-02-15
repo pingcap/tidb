@@ -75,6 +75,7 @@ type Metrics struct {
 	LocalStorageUsageBytesGauge          *prometheus.GaugeVec
 	ProgressGauge                        *prometheus.GaugeVec
 
+	DupeDetectKeysTotal        *prometheus.CounterVec
 	DupeResolveDeleteKeysTotal *prometheus.CounterVec
 }
 
@@ -234,6 +235,13 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Help:      "progress of lightning phase",
 			}, []string{"phase"}),
 
+		DupeDetectKeysTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "lightning",
+				Name:      "dupe_detect_keys_total",
+				Help:      "total number of detected duplicate keys",
+			}, []string{"kind"}),
+
 		DupeResolveDeleteKeysTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lightning",
@@ -266,6 +274,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.ChecksumSecondsHistogram,
 		m.LocalStorageUsageBytesGauge,
 		m.ProgressGauge,
+		m.DupeDetectKeysTotal,
 		m.DupeResolveDeleteKeysTotal,
 	)
 }
@@ -292,6 +301,8 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ChecksumSecondsHistogram)
 	r.Unregister(m.LocalStorageUsageBytesGauge)
 	r.Unregister(m.ProgressGauge)
+	r.Unregister(m.DupeDetectKeysTotal)
+	r.Unregister(m.DupeResolveDeleteKeysTotal)
 }
 
 func (m *Metrics) RecordTableCount(status string, err error) {
