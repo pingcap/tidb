@@ -961,7 +961,7 @@ func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
 			if col.VirtualExpr != nil {
 				for _, tCol := range tCols {
 					// A column with ID > 0 indicates that the column can be resolved by data source.
-					if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
+					if tCol.ID > 0 && tCol.ID == col.ID {
 						return true
 					}
 				}
