@@ -1341,10 +1341,20 @@
         "SQL": "explain format='brief' select a from trange use index () where b > 10 order by b limit 10",
         "Plan": [
           "Projection 10.00 root  test.trange.a",
-          "└─TopN 10.00 root  test.trange.b, offset:0, count:10",
+          "└─Limit 10.00 root  offset:0, count:10",
           "  └─TableReader 10.00 root partition:all data:Limit",
           "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
           "      └─TableRangeScan 10.00 cop[tikv] table:trange range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from trange use index () where b > 100 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.trange.a",
+          "└─Limit 10.00 root  offset:0, count:10",
+          "  └─TableReader 10.00 root partition:p2,p3 data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─TableRangeScan 10.00 cop[tikv] table:trange range:(100,+inf], keep order:true, stats:pseudo"
         ]
       },
       {
@@ -1382,7 +1392,7 @@
         "SQL": "explain format='brief' select a from trange use index () where a > 10 order by b limit 10",
         "Plan": [
           "Projection 10.00 root  test.trange.a",
-          "└─TopN 10.00 root  test.trange.b, offset:0, count:10",
+          "└─Limit 10.00 root  offset:0, count:10",
           "  └─TableReader 10.00 root partition:all data:Limit",
           "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
           "      └─Selection 10.00 cop[tikv]  gt(test.trange.a, 10)",

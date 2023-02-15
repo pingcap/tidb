@@ -472,21 +472,29 @@ func (rr *KeyRanges) PartitionNum() int {
 	return len(rr.ranges)
 }
 
-// IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
-func (rr *KeyRanges) IsFullySorted() bool {
+// IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorted.
+func (rr *KeyRanges) IsFullySorted(desc bool) bool {
 	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
 		// A simple short-circuit since the empty range actually won't make anything wrong.
 		if len(i) == 0 || len(j) == 0 {
 			return true
 		}
-		return bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+		cmp := bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+		if desc {
+			return !cmp
+		}
+		return cmp
 	})
 	if !sortedByPartition {
 		return false
 	}
 	for _, ranges := range rr.ranges {
 		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) bool {
-			return bytes.Compare(i.StartKey, j.StartKey) < 0
+			cmp := bytes.Compare(i.StartKey, j.StartKey) < 0
+			if desc {
+				return !cmp
+			}
+			return cmp
 		}) {
 			return false
 		}

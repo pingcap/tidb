@@ -454,16 +454,14 @@
       },
       {
         "Plan": [
-          "Sort_6 2.00 root  test.trange.a",
-          "└─TableReader_9 2.00 root partition:p0,p2 data:TableRangeScan_8",
-          "  └─TableRangeScan_8 2.00 cop[tikv] table:trange range:[1,1], [200,200], keep order:false, stats:pseudo"
+          "TableReader_11 2.00 root partition:p0,p2 data:TableRangeScan_10",
+          "└─TableRangeScan_10 2.00 cop[tikv] table:trange range:[1,1], [200,200], keep order:true, stats:pseudo"
         ]
       },
       {
         "Plan": [
-          "Sort_6 100.00 root  test.trange.a",
-          "└─TableReader_9 100.00 root partition:p0,p1 data:TableRangeScan_8",
-          "  └─TableRangeScan_8 100.00 cop[tikv] table:trange range:[50,150], keep order:false, stats:pseudo"
+          "TableReader_11 100.00 root partition:p0,p1 data:TableRangeScan_10",
+          "└─TableRangeScan_10 100.00 cop[tikv] table:trange range:[50,150], keep order:true, stats:pseudo"
         ]
       }
     ]

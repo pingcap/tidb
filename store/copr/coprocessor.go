@@ -122,7 +122,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
-			if !req.KeyRanges.IsFullySorted() {
+			if !req.KeyRanges.IsFullySorted(req.Desc) {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
