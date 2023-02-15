@@ -156,15 +156,11 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo        *tableHintInfo
-	preferJoinType  uint
-	preferJoinOrder bool
-
-	leftPreferJoinType uint
-	hintFromLeft       bool
-
+	hintInfo            *tableHintInfo
+	preferJoinType      uint
+	preferJoinOrder     bool
+	leftPreferJoinType  uint
 	rightPreferJoinType uint
-	hintFromRight       bool
 
 	EqualConditions []*expression.ScalarFunction
 	NAEQConditions  []*expression.ScalarFunction

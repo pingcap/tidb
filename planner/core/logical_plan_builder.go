@@ -594,94 +594,76 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.leftPreferJoinType |= preferMergeJoin
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferMergeJoin(rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 		p.rightPreferJoinType |= preferMergeJoin
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
 		p.leftPreferJoinType |= preferBCJoin
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
 		p.preferJoinType |= preferBCJoin
 		p.rightPreferJoinType |= preferBCJoin
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
 		p.leftPreferJoinType |= preferShuffleJoin
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
 		p.rightPreferJoinType |= preferShuffleJoin
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
 		p.leftPreferJoinType |= preferHashJoin
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHashJoin(rhsAlias) {
 		p.preferJoinType |= preferHashJoin
 		p.rightPreferJoinType |= preferHashJoin
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferINLJ
+		p.preferJoinType |= preferLeftAsINLJInner
 		p.leftPreferJoinType |= preferINLJ
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferINLJ
+		p.preferJoinType |= preferRightAsINLJInner
 		p.rightPreferJoinType |= preferINLJ
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
-		p.preferJoinType |= preferINLHJ
+		p.preferJoinType |= preferLeftAsINLHJInner
 		p.leftPreferJoinType |= preferINLHJ
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
-		p.preferJoinType |= preferINLHJ
+		p.preferJoinType |= preferRightAsINLHJInner
 		p.rightPreferJoinType |= preferINLHJ
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= preferINLMJ
+		p.preferJoinType |= preferLeftAsINLMJInner
 		p.leftPreferJoinType |= preferINLMJ
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= preferINLMJ
+		p.preferJoinType |= preferRightAsINLMJInner
 		p.rightPreferJoinType |= preferINLMJ
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
-		p.preferJoinType |= preferHJBuild
+		p.preferJoinType |= preferLeftAsHJBuild
 		p.leftPreferJoinType |= preferHJBuild
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
-		p.preferJoinType |= preferHJBuild
+		p.preferJoinType |= preferRightAsHJBuild
 		p.rightPreferJoinType |= preferHJBuild
-		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
-		p.preferJoinType |= preferHJProbe
+		p.preferJoinType |= preferLeftAsHJProbe
 		p.leftPreferJoinType |= preferHJProbe
-		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
-		p.preferJoinType |= preferHJProbe
+		p.preferJoinType |= preferRightAsHJProbe
 		p.rightPreferJoinType |= preferHJProbe
-		p.hintFromRight = true
 	}
-	if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) ||
+	if (p.ctx.GetSessionVars().EnableAdvancedJoinHint && containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType)) ||
 		(!p.ctx.GetSessionVars().EnableAdvancedJoinHint && containDifferentJoinTypes(p.preferJoinType)) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
