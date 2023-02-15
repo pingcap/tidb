@@ -97,6 +97,7 @@ go_test(
     ],
     embed = [":types"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//parser/charset",
         "//parser/mysql",
