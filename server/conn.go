@@ -627,10 +627,17 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	// After read packets we should update the client's host and port to grab
 	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
-	_, _, err = cc.PeerHost(hasPassword, true)
+	_, _, err = cc.PeerHost("", true)
 	if err != nil {
 		terror.Log(err)
 		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
 	}
 
 	if resp.Capability&mysql.ClientSSL > 0 {
