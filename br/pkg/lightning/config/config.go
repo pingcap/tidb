@@ -535,18 +535,19 @@ type FileRouteRule struct {
 
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
-	Addr                string                       `toml:"addr" json:"addr"`
-	Backend             string                       `toml:"backend" json:"backend"`
-	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
-	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+	Addr                 string                       `toml:"addr" json:"addr"`
+	Backend              string                       `toml:"backend" json:"backend"`
+	OnDuplicate          string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs           int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs          int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize      ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys      int                          `toml:"region-split-keys" json:"region-split-keys"`
+	SortedKVDir          string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota            ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency     int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution  DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	DuplicateRecordLimit int                          `toml:"duplicate-record-limit" json:"duplicate-record-limit"`
+	IncrementalImport    bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -729,13 +730,14 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:             "",
-			OnDuplicate:         ReplaceOnDup,
-			MaxKVPairs:          4096,
-			SendKVPairs:         32768,
-			RegionSplitSize:     0,
-			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgNone,
+			Backend:              "",
+			OnDuplicate:          ReplaceOnDup,
+			MaxKVPairs:           4096,
+			SendKVPairs:          32768,
+			RegionSplitSize:      0,
+			DiskQuota:            ByteSize(math.MaxInt64),
+			DuplicateResolution:  DupeResAlgNone,
+			DuplicateRecordLimit: 100,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

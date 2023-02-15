@@ -976,11 +976,28 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 	return nil
 }
 
-func (m *DuplicateManager) ResolveLocalDuplicateRows(ctx context.Context, dupDB *pebble.DB, keyAdapter KeyAdapter) error {
-	return m.iterDuplicateRowsFromDupDB(ctx, dupDB, keyAdapter, m.resolveDataConflictError, m.resolveIndexConflictError)
+func (m *DuplicateManager) ResolveLocalDuplicateRows(
+	ctx context.Context,
+	dupDB *pebble.DB,
+	keyAdapter KeyAdapter,
+	dupeRecordQuota *atomic.Int64,
+) error {
+	return m.iterDuplicateRowsFromDupDB(
+		ctx, dupDB, keyAdapter,
+		func(ctx context.Context, stream DupKVStream) error {
+			return m.resolveDataConflictError(ctx, stream, dupeRecordQuota)
+		},
+		func(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
+			return m.resolveIndexConflictError(ctx, stream, tableID, indexInfo, dupeRecordQuota)
+		},
+	)
 }
 
-func (m *DuplicateManager) resolveDataConflictError(ctx context.Context, stream DupKVStream) (err error) {
+func (m *DuplicateManager) resolveDataConflictError(
+	ctx context.Context,
+	stream DupKVStream,
+	dupeRecordQuota *atomic.Int64,
+) (err error) {
 	//nolint: errcheck
 	defer stream.Close()
 	var handleRows [][2][]byte
@@ -1001,6 +1018,22 @@ func (m *DuplicateManager) resolveDataConflictError(ctx context.Context, stream 
 			}
 			handleRows = handleRows[:0]
 		}
+
+		if dupeRecordQuota.Dec() >= 0 {
+			h, err := m.decoder.DecodeHandleFromRowKey(key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			conflictInfo := errormanager.DataConflictInfo{
+				RawKey:   key,
+				RawValue: val,
+				KeyData:  h.String(),
+				Row:      m.decoder.DecodeRawRowDataAsStr(h, val),
+			}
+			if err := m.errorMgr.RecordDataConflictError(ctx, m.logger, m.tableName, []errormanager.DataConflictInfo{conflictInfo}); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	if len(handleRows) > 0 {
 		if err = m.resolveDuplicateRows(ctx, m.tableName, handleRows); err != nil {
@@ -1010,10 +1043,17 @@ func (m *DuplicateManager) resolveDataConflictError(ctx context.Context, stream 
 	return nil
 }
 
-func (m *DuplicateManager) resolveIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) (err error) {
+func (m *DuplicateManager) resolveIndexConflictError(
+	ctx context.Context,
+	stream DupKVStream,
+	tableID int64,
+	indexInfo *model.IndexInfo,
+	dupeRecordQuota *atomic.Int64,
+) (err error) {
 	//nolint: errcheck
 	defer stream.Close()
 	rawHandles := make([][]byte, 0)
+	indexKVs := make([][2][]byte, 0)
 	for {
 		key, val, err := stream.Next()
 		if errors.Cause(err) == io.EOF {
@@ -1029,23 +1069,31 @@ func (m *DuplicateManager) resolveIndexConflictError(ctx context.Context, stream
 			return errors.Trace(err)
 		}
 		rawHandles = append(rawHandles, tablecodec.EncodeRowKeyWithHandle(tableID, h))
+		indexKVs = append(indexKVs, [2][]byte{key, val})
 
 		if len(rawHandles) >= defaultRecordConflictErrorBatch {
-			if err := m.resolveIndexHandles(ctx, rawHandles); err != nil {
+			if err := m.resolveIndexHandles(ctx, rawHandles, indexKVs, indexInfo, dupeRecordQuota); err != nil {
 				return errors.Trace(err)
 			}
 			rawHandles = rawHandles[:0]
+			indexKVs = indexKVs[:0]
 		}
 	}
 	if len(rawHandles) > 0 {
-		if err := m.resolveIndexHandles(ctx, rawHandles); err != nil {
+		if err := m.resolveIndexHandles(ctx, rawHandles, indexKVs, indexInfo, dupeRecordQuota); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-func (m *DuplicateManager) resolveIndexHandles(ctx context.Context, rawHandles [][]byte) error {
+func (m *DuplicateManager) resolveIndexHandles(
+	ctx context.Context,
+	rawHandles [][]byte,
+	indexKVs [][2][]byte,
+	indexInfo *model.IndexInfo,
+	dupeRecordQuota *atomic.Int64,
+) error {
 	snapshot := m.tikvCli.GetSnapshot(math.MaxUint64)
 	batchGetMap, err := snapshot.BatchGet(ctx, rawHandles)
 	if err != nil {
@@ -1053,12 +1101,35 @@ func (m *DuplicateManager) resolveIndexHandles(ctx context.Context, rawHandles [
 	}
 
 	handleRows := make([][2][]byte, 0, len(rawHandles))
-	for _, rawHandle := range rawHandles {
+	for i, rawHandle := range rawHandles {
 		rawValue, ok := batchGetMap[string(hack.String(rawHandle))]
-		if ok {
-			handleRows = append(handleRows, [2][]byte{rawHandle, rawValue})
-		} else {
+		if !ok {
 			// The row is deleted, we can ignore it.
+			continue
+		}
+		handleRows = append(handleRows, [2][]byte{rawHandle, rawValue})
+		if dupeRecordQuota.Dec() >= 0 {
+			h, err := m.decoder.DecodeHandleFromRowKey(rawHandle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			conflictInfo := errormanager.DataConflictInfo{
+				RawKey:   indexKVs[i][0],
+				RawValue: indexKVs[i][1],
+				KeyData:  h.String(),
+				Row:      m.decoder.DecodeRawRowDataAsStr(h, rawValue),
+			}
+			if err := m.errorMgr.RecordIndexConflictError(
+				ctx,
+				m.logger,
+				m.tableName,
+				[]string{indexInfo.Name.O},
+				[]errormanager.DataConflictInfo{conflictInfo},
+				[][]byte{rawHandle},
+				[][]byte{rawValue},
+			); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 

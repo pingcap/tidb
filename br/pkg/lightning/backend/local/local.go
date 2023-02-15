@@ -362,6 +362,7 @@ type local struct {
 	checkpointEnabled bool
 
 	dupeConcurrency int
+	dupeRecordLimit int
 	maxOpenFiles    int
 
 	engineMemCacheSize      int
@@ -503,6 +504,7 @@ func NewLocalBackend(
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		dupeConcurrency:   rangeConcurrency * 2,
+		dupeRecordLimit:   cfg.TikvImporter.DuplicateRecordLimit,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
 		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
@@ -1684,10 +1686,11 @@ func (local *local) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.duplicateDB, local.keyAdapter); err != nil {
+	dupeRecordQuota := atomic.NewInt64(int64(local.dupeConcurrency))
+	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.duplicateDB, local.keyAdapter, dupeRecordQuota); err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.remoteDuplicateDB, local.keyAdapter); err != nil {
+	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.remoteDuplicateDB, local.keyAdapter, dupeRecordQuota); err != nil {
 		return false, errors.Trace(err)
 	}
 	return atomicHasDupe.Load(), nil
