@@ -226,3 +226,16 @@ func TestIssue24473AndIssue25669(t *testing.T) {
 	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
 		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
 }
+
+func TestIssue41412(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
+	for i := 0; i < 2000; i++ {
+		v := i * 100
+		tk.MustExec("insert into t values(?, ?, ?)", v, v, v)
+	}
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t t1 right join t t2 on t1.a = t2.b and t1.c = t2.c")
+}
