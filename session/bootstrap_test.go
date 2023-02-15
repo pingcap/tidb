@@ -1480,7 +1480,3 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 		require.Equal(t, varsValueList[i], row.GetString(1))
 	}
 }
-
-func TestTiDBGlobalVariablesDefaultValueUpgradeFrom650To660(t *testing.T) {
-
-}
