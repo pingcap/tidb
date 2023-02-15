@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package casetest
 
 import (
 	"context"
@@ -48,7 +48,7 @@ func TestGroupNDVs(t *testing.T) {
 		AggInput  string
 		JoinInput string
 	}
-	statsSuiteData := core.GetStatsSuiteData()
+	statsSuiteData := GetStatsSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
@@ -61,7 +61,7 @@ func TestGroupNDVs(t *testing.T) {
 		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
+		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(core.LogicalPlan)
 		_, err = core.RecursiveDeriveStats4Test(lp)
@@ -140,7 +140,7 @@ func TestNDVGroupCols(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	statsSuiteData := core.GetStatsSuiteData()
+	statsSuiteData := GetStatsSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {

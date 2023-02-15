@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 )
 
 // InjectExtraProjection is used to extract the expressions of specific
@@ -108,17 +108,6 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 	return un
 }
 
-// wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
-// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
-// since the types of the args are already the expected.
-func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
-	for i := range aggFuncs {
-		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
-			aggFuncs[i].WrapCastForAggArgs(sctx)
-		}
-	}
-}
-
 // InjectProjBelowAgg injects a ProjOperator below AggOperator. So that All
 // scalar functions in aggregation may speed up by vectorized evaluation in
 // the `proj`. If all the args of `aggFuncs`, and all the item of `groupByItems`
@@ -126,7 +115,7 @@ func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFun
 func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
-	wrapCastForAggFuncs(aggPlan.SCtx(), aggFuncs)
+	internal.WrapCastForAggFuncs(aggPlan.SCtx(), aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)

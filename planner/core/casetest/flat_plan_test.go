@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package casetest
 
 import (
 	"context"
@@ -74,7 +74,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		Main []*FlatPhysicalOperatorForTest
 		CTEs [][]*FlatPhysicalOperatorForTest
 	}
-	planSuiteData := core.GetFlatPlanSuiteData()
+	planSuiteData := GetFlatPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})

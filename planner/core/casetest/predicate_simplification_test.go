@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package casetest
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func TestRemoveRedundantPredicates(t *testing.T) {
 		SQL  string
 		Best string
 	}
-	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})

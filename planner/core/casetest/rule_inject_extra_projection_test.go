@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package casetest
 
 import (
 	"testing"
@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestWrapCastForAggFuncs(t *testing.T) {
 		orgAggFuncs = append(orgAggFuncs, agg.Clone())
 	}
 
-	wrapCastForAggFuncs(mock.NewContext(), aggFuncs)
+	internal.WrapCastForAggFuncs(mock.NewContext(), aggFuncs)
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			require.Equal(t, aggFuncs[i].Args[0].GetType().GetType(), aggFuncs[i].RetTp.GetType())

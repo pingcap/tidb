@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -335,37 +334,6 @@ func TestPointGetId(t *testing.T) {
 		require.NoError(t, err)
 		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
 		require.Equal(t, 1, p.ID())
-	}
-}
-
-func TestCBOPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
-	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.LoadTestCases(t, &input, &output)
-	require.Equal(t, len(input), len(output))
-	for i, sql := range input {
-		plan := tk.MustQuery("explain format = 'brief' " + sql)
-		res := tk.MustQuery(sql)
-		testdata.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
-		})
-		plan.Check(testkit.Rows(output[i].Plan...))
-		res.Check(testkit.Rows(output[i].Res...))
 	}
 }
 
@@ -839,46 +807,6 @@ func TestBatchPointGetWithInvisibleIndex(t *testing.T) {
 		"└─Selection 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-}
-
-func TestCBOShouldNotUsePointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
-	tk.MustExec("create table t1(id varchar(20) primary key)")
-	tk.MustExec("create table t2(id varchar(20), unique(id))")
-	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
-	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
-	tk.MustExec("create table t5(id bit(64) primary key)")
-	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
-	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
-	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
-	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
-	tk.MustExec("insert into t5 values(48)")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-
-	pointGetPlanData := core.GetPointGetPlanData()
-	pointGetPlanData.LoadTestCases(t, &input, &output)
-	require.Equal(t, len(input), len(output))
-	for i, sql := range input {
-		plan := tk.MustQuery("explain format = 'brief' " + sql)
-		res := tk.MustQuery(sql)
-		testdata.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(res.Rows())
-		})
-		plan.Check(testkit.Rows(output[i].Plan...))
-		res.Check(testkit.Rows(output[i].Res...))
-	}
 }
 
 func TestPointGetWithIndexHints(t *testing.T) {
