@@ -697,7 +697,7 @@ func buildBatchCopTasksConsistentHash(
 	} else {
 		err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
 	}
-	if err != nil{
+	if err != nil {
 		return nil, err
 	}
 	if len(rpcCtxs) != len(tasks) {
