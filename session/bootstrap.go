@@ -797,6 +797,7 @@ const (
 	// version113 modifies the following global variables default value:
 	// - foreign_key_checks: off -> on
 	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
 	version113 = 113
 )
 
@@ -2299,6 +2300,21 @@ func upgradeToVer113(s Session, ver int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStoreBatchSize)
+	terror.MustNil(err)
+	chk := rs.NewChunk(nil)
+	err = rs.Next(ctx, chk)
+	terror.MustNil(err)
+	if chk.NumRows() == 1 {
+		row := chk.GetRow(0)
+		if row.GetString(0) == "0" {
+			mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+				mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStoreBatchSize, "4")
+		}
+	}
 }
 
 func writeOOMAction(s Session) {
