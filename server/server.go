@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+	"reflect"
 
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
@@ -436,7 +437,19 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
-			uc, ok := conn.(*net.UnixConn)
+			var (
+				uc *net.UnixConn
+				ok bool
+			)
+			if clientConn.ppEnabled {
+				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
+				ppv := reflect.ValueOf(conn)
+				vconn := ppv.Elem().FieldByName("Conn")
+				rconn := vconn.Interface()
+				uc, ok = rconn.(*net.UnixConn)
+			} else {
+				uc, ok = conn.(*net.UnixConn)
+			}
 			if !ok {
 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
 				return
