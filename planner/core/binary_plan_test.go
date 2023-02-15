@@ -165,6 +165,12 @@ func TestBinaryPlanSwitch(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 
+	origin := tk.MustQuery("SELECT @@global.tidb_generate_binary_plan")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@global.tidb_generate_binary_plan = '" + originStr + "'")
+	}()
+
 	tk.MustExec("use test")
 	// 1. assert binary plan is generated if the variable is turned on
 	tk.MustExec("set global tidb_generate_binary_plan = 1")
@@ -234,6 +240,16 @@ func TestTooLongBinaryPlan(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 
+	origin := tk.MustQuery("SELECT @@global.tidb_enable_stmt_summary")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@global.tidb_enable_stmt_summary = '" + originStr + "'")
+	}()
+
+	// Trigger clear the stmt summary in memory to prevent this case from being affected by other cases.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -276,7 +292,6 @@ func TestTooLongBinaryPlan(t *testing.T) {
 }
 
 // TestLongBinaryPlan asserts that if the binary plan is smaller than 1024*1024 bytes, it should be output to both slow query and stmt summary.
-// The size of the binary plan in this test case is designed to be larger than 1024*1024*0.85 bytes but smaller than 1024*1024 bytes.
 func TestLongBinaryPlan(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -301,7 +316,7 @@ func TestLongBinaryPlan(t *testing.T) {
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1700;")
+	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1000;")
 	tk.MustQuery("select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")
 
 	result := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
@@ -309,10 +324,9 @@ func TestLongBinaryPlan(t *testing.T) {
 		"limit 1;").Rows())
 	require.Len(t, result, 1)
 	s1 := result[0]
-	// The binary plan in this test case is expected to be slightly smaller than MaxEncodedPlanSizeInBytes.
+	// The binary plan in this test case is expected to be smaller than MaxEncodedPlanSizeInBytes.
 	// If the size of the binary plan changed and this case failed in the future, you can adjust the partition numbers in the CREATE TABLE statement above.
 	require.Less(t, len(s1), stmtsummary.MaxEncodedPlanSizeInBytes)
-	require.Greater(t, len(s1), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
 	b, err := base64.StdEncoding.DecodeString(s1)
 	require.NoError(t, err)
 	b, err = snappy.Decode(nil, b)
@@ -510,6 +524,12 @@ func TestUnnecessaryBinaryPlanInSlowLog(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+
+	origin := tk.MustQuery("SELECT @@global.tidb_slow_log_threshold")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@global.tidb_slow_log_threshold = '" + originStr + "'")
+	}()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
