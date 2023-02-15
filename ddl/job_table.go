@@ -291,7 +291,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 			// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 			// the newest schema.
-			waitSchemaChanged(context.Background(), d.ddlCtx, d.lease*2, schemaVer, job)
+			waitSchemaChanged(d.ctx, d.ddlCtx, d.lease*2, schemaVer, job)
 			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
 			d.synced(job)
 
