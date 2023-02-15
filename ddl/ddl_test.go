@@ -44,7 +44,6 @@ type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
 	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
-	SetReorgCtxForBackfill(bfJob *BackfillJob)
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
 }
@@ -65,11 +64,6 @@ func (rc *reorgCtx) IsReorgCanceled() bool {
 // NewReorgCtx exports for testing.
 func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
 	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
-}
-
-// SetReorgCtxForBackfill exports for testing.
-func (d *ddl) SetReorgCtxForBackfill(bfJob *BackfillJob) {
-	d.setReorgCtxForBackfill(bfJob)
 }
 
 // GetReorgCtx exports for testing.
