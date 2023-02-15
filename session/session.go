@@ -1938,7 +1938,22 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if err != nil {
 		return nil, nil, err
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+	var (
+		dbName     = ""
+		tablesName = ""
+	)
+
+	if config.GetGlobalConfig().Status.RecordQueryDurationByDB {
+		if se.GetSessionVars().CurrentDB != "" {
+			dbName = se.GetSessionVars().CurrentDB
+		}
+		if config.GetGlobalConfig().Status.RecordQueryDurationByTable {
+			tablesName = ConcatTablesName(se.GetSessionVars().StmtCtx)
+		}
+	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, tablesName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2110,7 +2125,22 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		if err != nil {
 			return nil, nil, err
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+		var (
+			dbName     = ""
+			tablesName = ""
+		)
+
+		if config.GetGlobalConfig().Status.RecordQueryDurationByDB {
+			if se.GetSessionVars().CurrentDB != "" {
+				dbName = se.GetSessionVars().CurrentDB
+			}
+			if config.GetGlobalConfig().Status.RecordQueryDurationByTable {
+				tablesName = ConcatTablesName(se.GetSessionVars().StmtCtx)
+			}
+		}
+
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName,tablesName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -4279,4 +4309,19 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
+}
+
+// ConcatTablesName concat tables name in StatementContext.Tables into a string separated by dashes
+func ConcatTablesName(stmtctx *stmtctx.StatementContext) string {
+	if len(stmtctx.Tables) > 0 {
+		var tables []string
+
+		for _, entry := range stmtctx.Tables {
+			tables = append(tables, entry.Table)
+		}
+
+		return strings.Join(tables, ",")
+	}
+
+	return ""
 }
