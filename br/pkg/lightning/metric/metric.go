@@ -74,6 +74,9 @@ type Metrics struct {
 	ChecksumSecondsHistogram             prometheus.Histogram
 	LocalStorageUsageBytesGauge          *prometheus.GaugeVec
 	ProgressGauge                        *prometheus.GaugeVec
+
+	CollectRemoteDupeHistogram *prometheus.HistogramVec
+	ResolveRemoteHistogram     *prometheus.HistogramVec
 }
 
 // NewMetrics creates a new empty metrics.
@@ -231,6 +234,22 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Name:      "progress",
 				Help:      "progress of lightning phase",
 			}, []string{"phase"}),
+
+		CollectRemoteDupeHistogram: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "lightning",
+				Name:      "collect remote duration",
+				Help:      "duration of collecting remote dupes",
+				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+			}, []string{"kind"}),
+
+		ResolveRemoteHistogram: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "lightning",
+				Name:      "resolve remote duration",
+				Help:      "duration of resolving remote dupes",
+				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+			}, []string{"kind"}),
 	}
 }
 

@@ -1680,7 +1680,7 @@ func (local *local) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.metrics)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1701,7 +1701,7 @@ func (local *local) CollectRemoteDuplicateRowsToLocal(ctx context.Context, tbl t
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.metrics)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1720,7 +1720,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.metrics)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1738,7 +1738,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx), local.metrics)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
