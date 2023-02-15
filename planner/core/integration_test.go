@@ -8119,10 +8119,35 @@ func TestIssue41273(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/41355
 func TestIssue41355(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1; CREATE TABLE `t1` (`c1` varchar(100) DEFAULT NULL, `c2` varchar(100) GENERATED ALWAYS AS (lower(`c1`)) VIRTUAL);")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (`c1` varchar(100) DEFAULT NULL, `c2` varchar(100) GENERATED ALWAYS AS (lower(`c1`)) VIRTUAL);")
 	tk.MustExec("insert into t1(c1) values('a'), ('e'), ('b'), ('c'), ('d'), ('e'), ('x'), ('y'), ('a'), ('b');")
+
+	// tikv
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
 	tk.MustQuery("select * from t1 order by c2 limit 2;").Check(testkit.Rows("a a", "a a"))
+
+	// tiflash
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	rows := [][]interface{}{
+		{"TopN_7", "root", "test.t1.c2, offset:0, count:2"},
+		{"└─TableReader_15", "root", "data:TableFullScan_14"},
+		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select * from t1 order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 }

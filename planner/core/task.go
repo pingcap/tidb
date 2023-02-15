@@ -954,8 +954,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
-func (p *PhysicalTopN) containVirtualColumn(copTask *copTask) bool {
-	tCols := copTask.tablePlan.Schema().Columns
+func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
 	for _, by := range p.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
@@ -980,15 +979,21 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
 	if len(copTask.rootTaskConds) != 0 {
 		return false
 	}
-	if p.containVirtualColumn(copTask) {
+	if p.containVirtualColumn(copTask.plan().Schema().Columns) {
 		return false
 	}
 	return true
 }
 
 // canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
-func (p *PhysicalTopN) canPushDownToTiFlash() bool {
-	return p.canExpressionConvertedToPB(kv.TiFlash)
+func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+		return false
+	}
+	if p.containVirtualColumn(mppTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
 }
 
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
@@ -1014,7 +1019,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
-	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash() {
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
 	}
