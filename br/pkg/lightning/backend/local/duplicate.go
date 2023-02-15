@@ -685,11 +685,14 @@ func (m *DuplicateManager) buildLocalDupTasks(
 
 // CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter KeyAdapter) error {
-	return m.iterDuplicateRowsFromDupDB(ctx, dupDB, keyAdapter, m.RecordDataConflictError, m.RecordIndexConflictError)
+	return m.iterDuplicateRowsFromDupDB(ctx,
+		"collect duplicate rows from local duplicate db",
+		dupDB, keyAdapter, m.RecordDataConflictError, m.RecordIndexConflictError)
 }
 
 func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 	ctx context.Context,
+	action string,
 	dupDB *pebble.DB,
 	keyAdapter KeyAdapter,
 	dataConflictErrorHandler DataConflictErrorHandler,
@@ -711,7 +714,7 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 		for {
 			select {
 			case <-ticker.C:
-				m.logger.Info("iterDuplicateRows finish tasks progress", zap.String("table", m.tableName),
+				m.logger.Info(action+", progress",
 					zap.String("progress", fmt.Sprintf("%.1f%%", float64(finishedTasks.Load())/float64(totalTasks)*100)),
 					zap.Int64("finished", finishedTasks.Load()), zap.Int("total", totalTasks))
 			case <-ctx.Done():
@@ -721,21 +724,19 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 			}
 		}
 	}()
-	pool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from duplicate db")
+
+	pool := utils.NewWorkerPool(uint(m.concurrency), action)
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
-			if err := common.Retry("collect local duplicate rows", m.logger, func() error {
+			if err := common.Retry(action, m.logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
-				start := time.Now()
 				if task.indexInfo == nil {
 					err = dataConflictErrorHandler(gCtx, stream)
-					m.metrics.ResolveRemoteHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(time.Since(start).Seconds())
 				} else {
 					err = indexConflictErrorHandler(gCtx, stream, task.tableID, task.indexInfo)
-					m.metrics.ResolveRemoteHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(time.Since(start).Seconds())
 				}
 				return errors.Trace(err)
 			}); err != nil {
@@ -743,11 +744,9 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			start := time.Now()
 			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
 			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
-			m.metrics.ResolveRemoteHistogram.WithLabelValues("pebble").Observe(time.Since(start).Seconds())
 			finishedTasks.Inc()
 			return errors.Trace(err)
 		})
@@ -847,13 +846,10 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 				if err != nil {
 					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
-				start := time.Now()
 				if task.indexInfo == nil {
 					err = task.dataConflictErrorHandler(ctx, stream)
-					m.metrics.CollectRemoteDupeHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(time.Since(start).Seconds())
 				} else {
 					err = task.indexConflictErrorHandler(ctx, stream, task.tableID, task.indexInfo)
-					m.metrics.CollectRemoteDupeHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(time.Since(start).Seconds())
 				}
 				if err != nil {
 					return errors.Annotatef(err, "failed to record conflict errors")
@@ -917,11 +913,12 @@ func (m *DuplicateManager) processRemoteDupTask(
 
 // CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory) error {
-	return m.iterDuplicateRowsFromTiKV(ctx, importClientFactory, m.RecordDataConflictError, m.RecordIndexConflictError)
+	return m.iterDuplicateRowsFromTiKV(ctx, "collect duplicate rows from tikv", importClientFactory, m.RecordDataConflictError, m.RecordIndexConflictError)
 }
 
 func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 	ctx context.Context,
+	action string,
 	importClientFactory ImportClientFactory,
 	dataConflictErrorHandler DataConflictErrorHandler,
 	indexConflictErrorHandler IndexConflictErrorHandler,
@@ -930,9 +927,10 @@ func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	taskPool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from tikv")
-	regionPool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from tikv by region")
+	taskPool := utils.NewWorkerPool(uint(m.concurrency), action)
+	regionPool := utils.NewWorkerPool(uint(m.concurrency), action+" by region")
 	g, gCtx := errgroup.WithContext(ctx)
+
 	finishedTasks := atomic.NewInt64(0)
 	totalTasks := len(tasks)
 	var wg sync.WaitGroup
@@ -944,7 +942,7 @@ func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 		for {
 			select {
 			case <-ticker.C:
-				m.logger.Info("collect dupe rows from TiKV tasks progress", zap.String("table", m.tableName),
+				m.logger.Info(action+", progress",
 					zap.String("progress", fmt.Sprintf("%.1f%%", float64(finishedTasks.Load())/float64(totalTasks)*100)),
 					zap.Int64("finished", finishedTasks.Load()), zap.Int("total", totalTasks))
 			case <-ctx.Done():
@@ -954,6 +952,7 @@ func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
 			}
 		}
 	}()
+
 	for _, task := range tasks {
 		task := task
 		taskPool.ApplyOnErrorGroup(g, func() error {
@@ -987,7 +986,7 @@ func (m *DuplicateManager) CollectRemoteDuplicateRowsToLocal(
 	// RowIDGen is used to generate a unique row ID for each duplicate row
 	// before writing it into the local duplicate database.
 	rowIDGen := atomic.NewInt64(0)
-	return m.iterDuplicateRowsFromTiKV(ctx, importClientFactory,
+	return m.iterDuplicateRowsFromTiKV(ctx, "collect remote duplicate rows to local", importClientFactory,
 		func(ctx context.Context, stream DupKVStream) error {
 			return m.recordConflictErrorToLocal(ctx, stream, dupDB, keyAdapter, rowIDGen)
 		},
@@ -1024,21 +1023,15 @@ func (m *DuplicateManager) recordConflictErrorToLocal(
 		writeBatchSize += len(encodedKey) + len(val)
 
 		if writeBatchSize > maxDuplicateBatchSize {
-			m.logger.Info("[record-dupe] number of KV pairs to be recorded", zap.Uint32("count", writeBatch.Count()),
-				zap.Int("size", writeBatchSize))
-			start := time.Now()
 			if err := writeBatch.Commit(pebble.Sync); err != nil {
 				return errors.Trace(err)
 			}
 			writeBatch.Reset()
 			writeBatchSize = 0
-			m.metrics.CollectRemoteDupeHistogram.WithLabelValues("pebble").Observe(time.Since(start).Seconds())
 		}
 	}
 
 	if writeBatchSize > 0 {
-		m.logger.Info("[record-dupe] number of KV pairs to be recorded", zap.Uint32("count", writeBatch.Count()),
-			zap.Int("size", writeBatchSize))
 		if err := writeBatch.Commit(pebble.Sync); err != nil {
 			return errors.Trace(err)
 		}
@@ -1053,7 +1046,7 @@ func (m *DuplicateManager) ResolveLocalDuplicateRows(
 	dupeRecordQuota *atomic.Int64,
 ) error {
 	return m.iterDuplicateRowsFromDupDB(
-		ctx, dupDB, keyAdapter,
+		ctx, "resolve local duplicate rows", dupDB, keyAdapter,
 		func(ctx context.Context, stream DupKVStream) error {
 			return m.resolveDataConflictError(ctx, stream, dupeRecordQuota)
 		},
@@ -1250,11 +1243,6 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 		}
 	}()
 
-	deleteKey := func(key []byte) error {
-		m.logger.Debug("[resolve-dupe] will delete key", logutil.Key("key", key))
-		return txn.Delete(key)
-	}
-
 	// Collect all rows & index keys into the deletion transaction.
 	// (if the number of duplicates is small this should fit entirely in memory)
 	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
@@ -1263,21 +1251,25 @@ func (m *DuplicateManager) deleteDuplicateRows(ctx context.Context, handleRows [
 			logutil.Key("handle", handleRow[0]),
 			logutil.Key("row", handleRow[1]))
 
-		if err := deleteKey(handleRow[0]); err != nil {
+		if err := txn.Delete(handleRow[0]); err != nil {
 			return err
 		}
+		m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("data").Inc()
 
 		handle, err := m.decoder.DecodeHandleFromRowKey(handleRow[0])
 		if err != nil {
 			return err
 		}
 
-		err = m.decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
+		err = m.decoder.IterRawIndexKeys(handle, handleRow[1], func(key []byte) error {
+			m.metrics.DupeResolveDeleteKeysTotal.WithLabelValues("index").Inc()
+			return txn.Delete(key)
+		})
 		if err != nil {
 			return err
 		}
 	}
 
-	m.logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+	m.logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
 	return nil
 }

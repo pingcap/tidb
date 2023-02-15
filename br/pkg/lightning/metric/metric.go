@@ -75,8 +75,7 @@ type Metrics struct {
 	LocalStorageUsageBytesGauge          *prometheus.GaugeVec
 	ProgressGauge                        *prometheus.GaugeVec
 
-	CollectRemoteDupeHistogram *prometheus.HistogramVec
-	ResolveRemoteHistogram     *prometheus.HistogramVec
+	DupeResolveDeleteKeysTotal *prometheus.CounterVec
 }
 
 // NewMetrics creates a new empty metrics.
@@ -235,20 +234,11 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Help:      "progress of lightning phase",
 			}, []string{"phase"}),
 
-		CollectRemoteDupeHistogram: factory.NewHistogramVec(
-			prometheus.HistogramOpts{
+		DupeResolveDeleteKeysTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
 				Namespace: "lightning",
-				Name:      "collect remote duration",
-				Help:      "duration of collecting remote dupes",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
-			}, []string{"kind"}),
-
-		ResolveRemoteHistogram: factory.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: "lightning",
-				Name:      "resolve remote duration",
-				Help:      "duration of resolving remote dupes",
-				Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+				Name:      "dupe_resolve_delete_keys_total",
+				Help:      "total number of keys deleted by dupe resolve",
 			}, []string{"kind"}),
 	}
 }
@@ -276,6 +266,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.ChecksumSecondsHistogram,
 		m.LocalStorageUsageBytesGauge,
 		m.ProgressGauge,
+		m.DupeResolveDeleteKeysTotal,
 	)
 }
 
