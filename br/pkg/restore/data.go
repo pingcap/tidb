@@ -305,29 +305,6 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
-<<<<<<< HEAD
-	var totalRegions atomic.Uint64
-	totalRegions.Store(0)
-
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, startTS, r)
-		totalRegions.Add(uint64(stats.CompletedRegions))
-		return stats, err
-	}
-
-	runner := rangetask.NewRangeTaskRunner("br-flashback-prepare-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
-	// Run prepare flashback on the entire TiKV cluster. Empty keys means the range is unbounded.
-	err = runner.RunOnRange(ctx, []byte(""), []byte(""))
-	if err != nil {
-		log.Error("region flashback prepare get error")
-		return errors.Trace(err)
-	}
-
-	recovery.totalFlashbackRegions = totalRegions.Load()
-	log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
-
-	return nil
-=======
 	retryErr := utils.WithRetry(
 		ctx,
 		func() error {
@@ -351,7 +328,6 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 
 	recovery.progress.Inc()
 	return retryErr
->>>>>>> 3b66b540058 (br: add retry for prepare flashback for backup cluster is empty and there are only one region (#41059))
 }
 
 // flashback the region data to version resolveTS
