@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -76,7 +76,7 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(b,a))")
-	SetTiFlashReplica(t, dom, "test", "t")
+	internal.SetTiFlashReplica(t, dom, "test", "t")
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	var input Input
@@ -84,7 +84,7 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	suiteData := plannercore.GetDerivedTopNSuiteData()
+	suiteData := GetDerivedTopNSuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
