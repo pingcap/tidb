@@ -399,7 +399,7 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
-	checkCanUseReuseChunk(ctx, sctx, plan)
+	disableReuseChunkIfNeeded(sctx, plan)
 	return plan, nil
 }
 
