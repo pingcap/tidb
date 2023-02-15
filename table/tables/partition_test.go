@@ -2208,7 +2208,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	err := tk.ExecToErr("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
 	require.Regexp(t, "alter table partition is unsupported", err)
 	err = tk.ExecToErr("ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1")
-	require.Regexp(t, "alter table partition is unsupported", err)
+	require.Regexp(t, "Unsupported add partitions", err)
 	err = tk.ExecToErr("ALTER TABLE tkey14 DROP PARTITION p4")
 	require.Regexp(t, "DROP PARTITION can only be used on RANGE/LIST partitions", err)
 	tk.MustExec("ALTER TABLE tkey14 TRUNCATE PARTITION p3")
@@ -2241,13 +2241,14 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	err = tk.ExecToErr("ALTER TABLE tkey16 REMOVE PARTITIONING")
 	require.Regexp(t, "Unsupported remove partitioning", err)
 
-	err = tk.ExecToErr("CREATE TABLE tkey17 (" +
+	tk.MustExec("CREATE TABLE tkey17 (" +
 		"id INT NOT NULL PRIMARY KEY," +
 		"name VARCHAR(20)" +
 		")" +
 		"PARTITION BY KEY()" +
 		"PARTITIONS 2")
-	require.Regexp(t, "You have an error in your SQL syntax", err)
+	result := tk.MustQuery("show warnings")
+	result.CheckContains("Unsupported partition type KEY, treat as normal table")
 }
 
 func TestPruneModeWarningInfo(t *testing.T) {

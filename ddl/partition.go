@@ -457,7 +457,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Linear {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR KEY is not supported, using non-linear KEY instead"))
 		}
-		if s.Sub == nil {
+		if s.Sub == nil && len(s.ColumnNames) != 0 {
 			enable = true
 		}
 	case model.PartitionTypeList:
