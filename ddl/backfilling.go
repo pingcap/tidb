@@ -1094,8 +1094,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if len(remains) > 0 {
 			startKey = remains[0].StartKey
 		} else {
-			lastFinishedKey := kvRanges[len(kvRanges)-1].EndKey
-			startKey = lastFinishedKey.Next()
+			startKey = kvRanges[len(kvRanges)-1].EndKey
 		}
 	}
 	if ingestBeCtx != nil {
