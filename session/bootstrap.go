@@ -797,6 +797,7 @@ const (
 	// version113 modifies the following global variables default value:
 	// - foreign_key_checks: off -> on
 	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
 	version113 = 113
 )
 
@@ -2299,6 +2300,7 @@ func upgradeToVer113(s Session, ver int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
 }
 
 func writeOOMAction(s Session) {
