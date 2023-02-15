@@ -314,6 +314,32 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
 }
 
+func TestIssue40225(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select * from t where a<?'")
+	tk.MustExec("set @a='1'")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: '1' may be converted to INT")) // plan-cache limitation
+	tk.MustExec("create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by binding"))
+	// no warning about plan-cache limitations('1' -> INT) since plan-cache is totally disabled.
+
+	tk.MustExec("prepare st from 'select * from t where a>?'")
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute st using @a")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("create binding for select * from t where a>1 using select /*+ ignore_plan_cache() */ * from t where a>1")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
