@@ -314,9 +314,6 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
 }
 
-<<<<<<< HEAD
-func TestIssue40224(t *testing.T) {
-=======
 func TestIssue40225(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -343,8 +340,7 @@ func TestIssue40225(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
 
-func TestUncacheableReason(t *testing.T) {
->>>>>>> 7fafb6db45d (planner: better coordination between the ignore_plan_cache() binding and plan-cache (#40280))
+func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
