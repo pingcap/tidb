@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -331,9 +332,10 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	tk.MustExec("select * from t where a=1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	tk.Session().GetSessionVars().InRestrictedSQL = true
-	tk.MustExec("select * from t where a=1")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExecWithContext(ctx, "select * from t where a=1")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.Session().GetSessionVars().InRestrictedSQL = false
 	tk.MustExec("select * from t where a=1")
