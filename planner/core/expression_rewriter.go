@@ -1550,10 +1550,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
-<<<<<<< HEAD
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
-=======
+					}
 					if c.GetType().EvalType() == types.ETString {
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
@@ -1561,7 +1560,6 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 					} else {
 						continue
->>>>>>> b1967563e35 (planner: record reasons when skipping Plan Cache (#40210))
 					}
 					er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 					er.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
