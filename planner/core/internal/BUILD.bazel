@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "internal",
-    srcs = ["testkit.go"],
+    srcs = [
+        "testkit.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/planner/core/internal",
     visibility = ["//planner/core:__subpackages__"],
     deps = [

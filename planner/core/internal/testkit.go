@@ -21,9 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
@@ -41,17 +39,6 @@ func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName strin
 				Count:     1,
 				Available: true,
 			}
-		}
-	}
-}
-
-// WrapCastForAggFuncs wraps the args of an aggregate function with a cast function.
-// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
-// since the types of the args are already the expected.
-func WrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
-	for i := range aggFuncs {
-		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
-			aggFuncs[i].WrapCastForAggArgs(sctx)
 		}
 	}
 }
