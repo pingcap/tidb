@@ -14,7 +14,6 @@
 package restore
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -779,65 +779,13 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	// check etcd KV of CDC >= v6.2
-	cdcPrefix := "/tidb/cdc/"
-	changefeedPath := []byte("/changefeed/info/")
-
-	nameSet := make(map[string][]string, 1)
-	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix())
+	nameSet, err := utils.GetCDCNameSet(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, kv := range resp.Kvs {
-		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-		k := kv.Key[len(cdcPrefix):]
-		clusterAndNamespace, changefeedID, found := bytes.Cut(k, changefeedPath)
-		if !found {
-			continue
-		}
-		if !isActiveCDCChangefeed(kv.Value) {
-			continue
-		}
 
-		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
-	}
-	if len(nameSet) == 0 {
-		// check etcd KV of CDC <= v6.1
-		cdcPrefixV61 := "/tidb/cdc/changefeed/info/"
-		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/changefeed/info/<changefeedID>
-			k := kv.Key[len(cdcPrefixV61):]
-			if len(k) == 0 {
-				continue
-			}
-			if !isActiveCDCChangefeed(kv.Value) {
-				continue
-			}
-
-			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
-		}
-	}
-
-	if len(nameSet) > 0 {
-		var changefeedMsgBuf strings.Builder
-		changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
-		isFirst := true
-		for clusterID, captureIDs := range nameSet {
-			if !isFirst {
-				changefeedMsgBuf.WriteString(", ")
-			}
-			isFirst = false
-			changefeedMsgBuf.WriteString("cluster/namespace: ")
-			changefeedMsgBuf.WriteString(clusterID)
-			changefeedMsgBuf.WriteString(" changefeed(s): ")
-			changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
-		}
-		changefeedMsgBuf.WriteString(",")
-		errorMsg = append(errorMsg, changefeedMsgBuf.String())
+	if !nameSet.Empty() {
+		errorMsg = append(errorMsg, nameSet.String())
 	}
 
 	if len(errorMsg) > 0 {

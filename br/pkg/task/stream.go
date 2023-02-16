@@ -1050,12 +1050,22 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
+	// check log backup task
 	tasks, err := cli.GetAllTasks(ctx)
 	if err != nil {
 		return err
 	}
 	if len(tasks) > 0 {
 		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	}
+
+	// check cdc task
+	nameSet, err := utils.GetCDCNameSet(ctx, etcdCLI)
+	if err != nil {
+		return err
+	}
+	if !nameSet.Empty() {
+		return errors.Errorf("%s please stop changefeed(s) before restore")
 	}
 	return nil
 }
