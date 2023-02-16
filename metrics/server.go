@@ -42,7 +42,7 @@ var (
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblSQLType, LblDb, LblTable})
+		}, []string{LblSQLType, LblDb})
 
 	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -89,7 +89,7 @@ var (
 			Subsystem: "server",
 			Name:      "execute_error_total",
 			Help:      "Counter of execute errors.",
-		}, []string{LblType})
+		}, []string{LblType, LblDb})
 
 	CriticalErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{

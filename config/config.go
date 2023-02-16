@@ -657,9 +657,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
-		RecordQueryDurationByDB bool   `toml:"record-db-query-duration" json:"record-db-query-duration"`
-	// When RecordQueryDurationByDB is false, RecordQueryDurationByTable is invalid
-	RecordQueryDurationByTable bool `toml:"record-table-query-duration" json:"record-table-query-duration"`
+	RecordDBLabel   bool   `toml:"record-db-label" json:"record-db-label"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -942,8 +940,7 @@ var defaultConf = Config{
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
 		RecordQPSbyDB:         false,
-		RecordQueryDurationByDB:    false,
-		RecordQueryDurationByTable: false,
+		RecordDBLabel:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,

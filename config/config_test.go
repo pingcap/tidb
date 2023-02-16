@@ -414,9 +414,8 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
-# Record statements duration by database and table name if it is enabled.
-record-db-query-duration = false
-record-table-query-duration = false
+# Record database name label if it is enabled.
+record-db-label = false
 
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
