@@ -16,5 +16,9 @@
 
 package session
 
-var GetBootstrapVersion = getBootstrapVersion
-var CurrentBootstrapVersion = currentBootstrapVersion
+var (
+	// GetBootstrapVersion is used in test
+	GetBootstrapVersion = getBootstrapVersion
+	// CurrentBootstrapVersion is used in test
+	CurrentBootstrapVersion = currentBootstrapVersion
+)
