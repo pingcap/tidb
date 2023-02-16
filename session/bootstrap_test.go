@@ -1417,8 +1417,6 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, 2, row.Len())
 	require.Equal(t, "0", row.GetString(1))
 }
-<<<<<<< HEAD
-=======
 
 func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	ctx := context.Background()
@@ -1658,4 +1656,3 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 		}()
 	}
 }
->>>>>>> 5df1913e0f6 (session: fix upgrade (#40182))
