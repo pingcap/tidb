@@ -231,8 +231,9 @@ func main() {
 	setupBinlogClient()
 	setupMetrics()
 
-	// go sched.Scheduler(sched.LoadOption(0.30), sched.TimeSliceOption(10*time.Millisecond))
-	go sched.Scheduler(sched.LoadOption(0.3))
+	// go sched.Scheduler(sched.LoadOption(0.8), sched.TimeSliceOption(10*time.Millisecond))
+	go sched.Scheduler(sched.LoadOption(0.95), sched.TimeSliceOption(10*time.Millisecond))
+	// go sched.Scheduler(sched.LoadOption(0.6))
 
 	keyspaceName := config.GetGlobalKeyspaceName()
 

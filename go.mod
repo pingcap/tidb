@@ -281,5 +281,3 @@ replace (
 )
 
 replace github.com/tiancaiamao/sched => ../../tiancaiamao/sched
-
-replace github.com/tikv/client-go/v2 => ../../tikv/client-go

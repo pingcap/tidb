@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"runtime/debug"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -473,13 +472,6 @@ func (w *HashAggPartialWorker) run(ctx context.Context, sctx sessionctx.Context,
 		waitGroup.Done()
 	}()
 
-	if x := ctx.Value(sched.Debug); x != nil {
-		fmt.Println("here ... user hash agg request !!!!!!!!!!!!!!!")
-		if x := sched.FromContext(ctx); x==nil{
-			debug.PrintStack()
-		}
-	}
-
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -624,6 +616,7 @@ func (w *baseHashAggWorker) getPartialResult(ctx context.Context, _ *stmtctx.Sta
 	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
 	for i := 0; i < n; i++ {
 		var ok bool
+		sched.CheckPoint(ctx)
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
@@ -641,7 +634,6 @@ func (w *baseHashAggWorker) getPartialResult(ctx context.Context, _ *stmtctx.Sta
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
-		sched.CheckPoint(ctx)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
@@ -739,6 +731,7 @@ func (w *HashAggFinalWorker) loadFinalResult(ctx context.Context, sctx sessionct
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
+		sched.CheckPoint(ctx)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)

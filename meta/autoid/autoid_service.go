@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"
@@ -134,6 +135,8 @@ retry:
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
 	})
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	fmt.Println("lalalal /??")
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
