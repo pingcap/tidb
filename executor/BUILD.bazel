@@ -66,6 +66,7 @@ go_library(
         "parallel_apply.go",
         "partition_table.go",
         "pipelined_window.go",
+        "plan_change_capture.go",
         "plan_replayer.go",
         "point_get.go",
         "prepared.go",
