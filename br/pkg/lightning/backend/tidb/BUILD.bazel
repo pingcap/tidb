@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tidb",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "tidb.go",
-    ],
+    srcs = ["tidb.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend/tidb",
     visibility = ["//visibility:public"],
     deps = [

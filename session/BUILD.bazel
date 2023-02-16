@@ -4,7 +4,6 @@ go_library(
     name = "session",
     srcs = [
         "advisory_locks.go",
-        "binding__failpoint_binding__.go",
         "bootstrap.go",
         "nontransactional.go",
         "session.go",

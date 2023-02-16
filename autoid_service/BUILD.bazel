@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "autoid_service",
-    srcs = [
-        "autoid.go",
-        "binding__failpoint_binding__.go",
-    ],
+    srcs = ["autoid.go"],
     importpath = "github.com/pingcap/tidb/autoid_service",
     visibility = ["//visibility:public"],
     deps = [

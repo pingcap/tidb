@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "breakpoint",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "breakpoint.go",
-    ],
+    srcs = ["breakpoint.go"],
     importpath = "github.com/pingcap/tidb/util/breakpoint",
     visibility = ["//visibility:public"],
     deps = [

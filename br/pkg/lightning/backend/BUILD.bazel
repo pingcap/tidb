@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "backend",
-    srcs = [
-        "backend.go",
-        "binding__failpoint_binding__.go",
-    ],
+    srcs = ["backend.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/backend",
     visibility = ["//visibility:public"],
     deps = [

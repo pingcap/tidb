@@ -4,7 +4,6 @@ go_library(
     name = "core",
     srcs = [
         "access_object.go",
-        "binding__failpoint_binding__.go",
         "collect_column_stats_usage.go",
         "common_plans.go",
         "encode.go",

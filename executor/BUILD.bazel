@@ -21,7 +21,6 @@ go_library(
         "batch_checker.go",
         "batch_point_get.go",
         "bind.go",
-        "binding__failpoint_binding__.go",
         "brie.go",
         "builder.go",
         "change.go",
