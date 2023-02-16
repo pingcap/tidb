@@ -1787,7 +1787,7 @@ func (cli *testServerClient) runTestIssue3662(t *testing.T) {
 	// is valid, call Ping."
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1049: Unknown database 'non_existing_schema'", err.Error())
+	require.Equal(t, "Error 1049 (42000): Unknown database 'non_existing_schema'", err.Error())
 }
 
 func (cli *testServerClient) runTestIssue3680(t *testing.T) {
