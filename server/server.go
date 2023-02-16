@@ -37,12 +37,11 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
-	"reflect"
-
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
