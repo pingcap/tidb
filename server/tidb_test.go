@@ -25,9 +25,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2986,4 +2989,224 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 	rows := ts.Rows(t, rs)
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, "Asia/Shanghai", rows[0])
+}
+
+type mockProxyProtocolProxy struct {
+	frontend      string
+	backend       string
+	clientAddr    string
+	backendIsSock bool
+	ln            net.Listener
+	run           bool
+}
+
+func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
+	return &mockProxyProtocolProxy{
+		frontend:      frontend,
+		backend:       backend,
+		clientAddr:    clientAddr,
+		backendIsSock: backendIsSock,
+		ln:            nil,
+		run:           false,
+	}
+}
+
+func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
+	return p.ln.Addr()
+}
+
+func (p *mockProxyProtocolProxy) Run() (err error) {
+	p.run = true
+	p.ln, err = net.Listen("tcp", p.frontend)
+	if err != nil {
+		return err
+	}
+	for p.run {
+		conn, err := p.ln.Accept()
+		if err != nil {
+			break
+		}
+		go p.onConn(conn)
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) Close() error {
+	p.run = false
+	if p.ln != nil {
+		return p.ln.Close()
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) connectToBackend() (net.Conn, error) {
+	if p.backendIsSock {
+		return net.Dial("unix", p.backend)
+	}
+	return net.Dial("tcp", p.backend)
+}
+
+func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
+	bconn, err := p.connectToBackend()
+	if err != nil {
+		conn.Close()
+		fmt.Println(err)
+	}
+	defer bconn.Close()
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	bconn.Write(ppHeader)
+	p.proxyPipe(conn, bconn)
+}
+
+func (p *mockProxyProtocolProxy) proxyPipe(p1, p2 io.ReadWriteCloser) {
+	defer p1.Close()
+	defer p2.Close()
+
+	// start proxy
+	p1die := make(chan struct{})
+	go func() { io.Copy(p1, p2); close(p1die) }()
+
+	p2die := make(chan struct{})
+	go func() { io.Copy(p2, p1); close(p2die) }()
+
+	// wait for proxy termination
+	select {
+	case <-p1die:
+	case <-p2die:
+	}
+}
+
+func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr, dstAddr string) []byte {
+	var (
+		proxyProtocolV2Sig = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
+		v2CmdPos           = 12
+		v2FamlyPos         = 13
+	)
+	saddr, _ := net.ResolveTCPAddr(network, srcAddr)
+	daddr, _ := net.ResolveTCPAddr(network, dstAddr)
+	buffer := make([]byte, 1024)
+	copy(buffer, proxyProtocolV2Sig)
+	// Command
+	buffer[v2CmdPos] = 0x21
+	// Famly
+	if network == "tcp4" {
+		buffer[v2FamlyPos] = 0x11
+		binary.BigEndian.PutUint16(buffer[14:14+2], 12)
+		copy(buffer[16:16+4], []byte(saddr.IP.To4()))
+		copy(buffer[20:20+4], []byte(daddr.IP.To4()))
+		binary.BigEndian.PutUint16(buffer[24:24+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[26:26+2], uint16(saddr.Port))
+		return buffer[0:28]
+	} else if network == "tcp6" {
+		buffer[v2FamlyPos] = 0x21
+		binary.BigEndian.PutUint16(buffer[14:14+2], 36)
+		copy(buffer[16:16+16], []byte(saddr.IP.To16()))
+		copy(buffer[32:32+16], []byte(daddr.IP.To16()))
+		binary.BigEndian.PutUint16(buffer[48:48+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[50:50+2], uint16(saddr.Port))
+		return buffer[0:52]
+	}
+	return buffer
+}
+
+func TestProxyProtocolWithIpFallbackable(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.Port = 4999
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = true
+
+	ts := createTidbTestSuite(t)
+
+	// Prepare Server
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		server.Close()
+	}()
+
+	require.NotNil(t, server.listener)
+	require.Nil(t, server.socket)
+
+	// Prepare Proxy
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	go func() {
+		ppProxy.Run()
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		ppProxy.Close()
+	}()
+
+	cli := newTestServerClient()
+	cli.port = getPortFromTCPAddr(ppProxy.ListenAddr())
+	cli.waitUntilServerCanConnect()
+
+	cli.runTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "192.168.1.2:60055")
+		},
+	)
+
+	cli2 := newTestServerClient()
+	cli2.port = 4999
+	cli2.runTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "127.0.0.1:")
+		},
+	)
+}
+
+func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.Port = 4000
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := createTidbTestSuite(t)
+
+	// Prepare Server
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 1000)
+	defer func() {
+		server.Close()
+	}()
+
+	require.NotNil(t, server.listener)
+	require.Nil(t, server.socket)
+
+	cli := newTestServerClient()
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	dsn := cli.getDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	err = db.Ping()
+	require.NotNil(t, err)
+	db.Close()
 }
