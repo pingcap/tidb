@@ -32,6 +32,7 @@ type PlanChangeCaptureExec struct {
 	err   error
 }
 
+// Next Implements Executor
 func (e *PlanChangeCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.err != nil {
