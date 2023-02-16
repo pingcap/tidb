@@ -790,25 +790,25 @@ const (
 	version109 = 109
 	// version110 add column source to mysql.stats_meta_history
 	version110 = 110
-	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
-	version111 = 111
-	// version112 modifies the view tidb_mdl_view
-	version112 = 112
 	// ...
-	// [version113, version119] is the version range reserved for patches of 6.5.x
+	// [version111, version130] is the version range reserved for patches of 6.5.x
 	// ...
-	// version113 sets tidb_server_memory_limit to "80%"
-	version113 = 113
-	// version120 modifies the following global variables default value:
+	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version131 = 131
+	// version132 modifies the view tidb_mdl_view
+	version132 = 132
+	// version133 sets tidb_server_memory_limit to "80%"
+	version133 = 133
+	// version134 modifies the following global variables default value:
 	// - foreign_key_checks: off -> on
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
-	version120 = 120
+	version134 = 134
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version120
+var currentBootstrapVersion int64 = version134
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -926,10 +926,10 @@ var (
 		upgradeToVer108,
 		upgradeToVer109,
 		upgradeToVer110,
-		upgradeToVer111,
-		upgradeToVer112,
-		upgradeToVer113,
-		upgradeToVer120,
+		upgradeToVer131,
+		upgradeToVer132,
+		upgradeToVer133,
+		upgradeToVer134,
 	}
 )
 
@@ -2282,31 +2282,31 @@ func upgradeToVer110(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
-func upgradeToVer111(s Session, ver int64) {
-	if ver >= version111 {
+func upgradeToVer131(s Session, ver int64) {
+	if ver >= version131 {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTask)
 	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
-func upgradeToVer112(s Session, ver int64) {
-	if ver >= version112 {
+func upgradeToVer132(s Session, ver int64) {
+	if ver >= version132 {
 		return
 	}
 	doReentrantDDL(s, CreateMDLView)
 }
 
-func upgradeToVer113(s Session, ver int64) {
-	if ver >= version113 {
+func upgradeToVer133(s Session, ver int64) {
+	if ver >= version133 {
 		return
 	}
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
 }
 
-func upgradeToVer120(s Session, ver int64) {
-	if ver >= version120 {
+func upgradeToVer134(s Session, ver int64) {
+	if ver >= version134 {
 		return
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
