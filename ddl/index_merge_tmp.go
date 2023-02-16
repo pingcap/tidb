@@ -262,6 +262,11 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			if err != nil {
 				return false, err
 			}
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.index.Meta().Columns))
+			if err != nil {
+				return false, err
+			}
+
 			tempIdxVal = tempIdxVal.FilterOverwritten()
 
 			// Extract the operations on the original index and replay them later.
@@ -270,16 +275,6 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 					// For 'm' version kvs, they are double-written.
 					// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
 					continue
-				}
-
-				if elem.Handle == nil {
-					// If the handle is not found in the value of the temp index, it means
-					// 1) This is not a deletion marker, the handle is in the key or the origin value.
-					// 2) This is a deletion marker, but the handle is in the key of temp index.
-					elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, len(w.index.Meta().Columns))
-					if err != nil {
-						return false, err
-					}
 				}
 
 				originIdxKey := make([]byte, len(indexKey))
@@ -318,4 +313,19 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	logutil.BgLogger().Debug("[ddl] merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
+}
+
+func decodeTempIndexHandleFromIndexKV(indexKey kv.Key, tmpVal tablecodec.TempIndexValue, idxColLen int) (ret tablecodec.TempIndexValue, err error) {
+	for _, elem := range tmpVal {
+		if elem.Handle == nil {
+			// If the handle is not found in the value of the temp index, it means
+			// 1) This is not a deletion marker, the handle is in the key or the origin value.
+			// 2) This is a deletion marker, but the handle is in the key of temp index.
+			elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, idxColLen)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return tmpVal, nil
 }

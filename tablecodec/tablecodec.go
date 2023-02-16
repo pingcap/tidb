@@ -1224,9 +1224,6 @@ func (v TempIndexValue) FilterOverwritten() TempIndexValue {
 	}
 	occurred := kv.NewHandleMap()
 	for i := len(v) - 1; i >= 0; i-- {
-		if v[i].Handle == nil {
-			continue
-		}
 		if _, ok := occurred.Get(v[i].Handle); !ok {
 			occurred.Set(v[i].Handle, struct{}{})
 		} else {
