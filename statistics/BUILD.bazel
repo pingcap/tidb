@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "analyze.go",
         "analyze_jobs.go",
+        "binding__failpoint_binding__.go",
         "builder.go",
         "cmsketch.go",
         "column.go",

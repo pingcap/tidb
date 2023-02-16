@@ -1863,7 +1863,7 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, err)
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 3118: Access denied for user 'test1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.Equal(t, "Error 3118 (HY000): Access denied for user 'test1'@'127.0.0.1'. Account is locked.", err.Error())
 	require.NoError(t, db.Close())
 
 	// 2. test1 can connect after unlocked

@@ -4,6 +4,7 @@ go_library(
     name = "txn",
     srcs = [
         "batch_getter.go",
+        "binding__failpoint_binding__.go",
         "binlog.go",
         "error.go",
         "scanner.go",

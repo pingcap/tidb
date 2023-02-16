@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "backfilling.go",
+        "binding__failpoint_binding__.go",
         "callback.go",
         "cluster.go",
         "column.go",

@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "reporter",
     srcs = [
+        "binding__failpoint_binding__.go",
         "datamodel.go",
         "datasink.go",
         "metrics.go",

@@ -4,6 +4,7 @@ go_library(
     name = "memory",
     srcs = [
         "action.go",
+        "binding__failpoint_binding__.go",
         "meminfo.go",
         "memstats.go",
         "tracker.go",

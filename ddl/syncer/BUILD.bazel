@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "syncer",
-    srcs = ["syncer.go"],
+    srcs = [
+        "binding__failpoint_binding__.go",
+        "syncer.go",
+    ],
     importpath = "github.com/pingcap/tidb/ddl/syncer",
     visibility = ["//visibility:public"],
     deps = [

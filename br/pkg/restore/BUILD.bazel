@@ -4,6 +4,7 @@ go_library(
     name = "restore",
     srcs = [
         "batcher.go",
+        "binding__failpoint_binding__.go",
         "client.go",
         "data.go",
         "db.go",
