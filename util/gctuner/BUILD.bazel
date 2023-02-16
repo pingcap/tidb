@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util",
+        "//util/intest",
         "//util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
