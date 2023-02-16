@@ -523,7 +523,7 @@ func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.Unlock()
 }
 
-func (s *mockStmtStorage) sync() error {
+func (*mockStmtStorage) sync() error {
 	return nil
 }
 
