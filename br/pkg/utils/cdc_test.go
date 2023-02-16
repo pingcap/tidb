@@ -10,7 +10,7 @@ import (
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
-func TestGetCDCNameSet(t *testing.T) {
+func TestGetCDCChangefeedNameSet(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
@@ -26,7 +26,7 @@ func TestGetCDCNameSet(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nameSet, err := utils.GetCDCNameSet(ctx, cli)
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.True(t, nameSet.Empty())
 
@@ -48,7 +48,7 @@ func TestGetCDCNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
 
-	nameSet, err = utils.GetCDCNameSet(ctx, cli)
+	nameSet, err = utils.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test],",
@@ -67,7 +67,7 @@ func TestGetCDCNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
 	checkEtcdPut("/tidb/cdc/task/position/f14cb04d-5ba1-410e-a59b-ccd796920e9d/test")
 
-	nameSet, err = utils.GetCDCNameSet(ctx, cli)
+	nameSet, err = utils.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test],",

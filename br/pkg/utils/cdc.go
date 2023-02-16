@@ -45,7 +45,7 @@ func (s *CDCNameSet) String() string {
 	return changefeedMsgBuf.String()
 }
 
-func GetCDCNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
+func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	nameSet := make(map[string][]string, 1)
 	// check etcd KV of CDC >= v6.2
 	resp, err := cli.Get(ctx, CDCPrefix, clientv3.WithPrefix())

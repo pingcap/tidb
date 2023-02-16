@@ -1059,8 +1059,8 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
 	}
 
-	// check cdc task
-	nameSet, err := utils.GetCDCNameSet(ctx, etcdCLI)
+	// check cdc changefeed
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
 	if err != nil {
 		return err
 	}
