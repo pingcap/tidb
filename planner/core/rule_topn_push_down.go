@@ -59,9 +59,10 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPl
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:      lt.Count,
-			Offset:     lt.Offset,
-			limitHints: lt.limitHints,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			limitHints:  lt.limitHints,
+			PartitionBy: lt.GetPartitionBy(),
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		appendTopNPushDownTraceStep(limit, p, opt)

@@ -1637,10 +1637,17 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems    []*util.ByItems
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	ByItems []*util.ByItems
+	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1661,9 +1668,15 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // LogicalLock represents a select lock plan.
@@ -1732,6 +1745,11 @@ type LogicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+}
+
+// GetPartitionBy returns partition by fields.
+func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.

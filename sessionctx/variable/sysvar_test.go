@@ -1074,6 +1074,22 @@ func TestSetAggPushDownGlobally(t *testing.T) {
 	require.Equal(t, "ON", val)
 }
 
+func TestSetDeriveTopNGlobally(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBOptDeriveTopN)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptDeriveTopN, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptDeriveTopN)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
+
 func TestSetJobScheduleWindow(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

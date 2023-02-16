@@ -2374,9 +2374,10 @@ func (lt *LogicalTopN) getPhysTopN(_ *property.PhysicalProperty) []PhysicalPlan 
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
 		topN := PhysicalTopN{
-			ByItems: lt.ByItems,
-			Count:   lt.Count,
-			Offset:  lt.Offset,
+			ByItems:     lt.ByItems,
+			PartitionBy: lt.PartitionBy,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
 		ret = append(ret, topN)
 	}
@@ -2397,8 +2398,9 @@ func (lt *LogicalTopN) getPhysLimits(_ *property.PhysicalProperty) []PhysicalPla
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems}
 		limit := PhysicalLimit{
-			Count:  lt.Count,
-			Offset: lt.Offset,
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			PartitionBy: lt.GetPartitionBy(),
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
 		limit.SetSchema(lt.Schema())
 		ret = append(ret, limit)
@@ -2650,6 +2652,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			if (isTopN || isLimit) && considerIndexMerge {
 				return false // TopN and Limit cannot be pushed down to IndexMerge
 			}
+
 			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 				// Don't push to cop for cached table, it brings more harm than good:
 				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
@@ -3112,8 +3115,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			Offset: p.Offset,
-			Count:  p.Count,
+			Offset:      p.Offset,
+			Count:       p.Count,
+			PartitionBy: p.GetPartitionBy(),
 		}.Init(p.ctx, p.stats, p.blockOffset, resultProp)
 		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
