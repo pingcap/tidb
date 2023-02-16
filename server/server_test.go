@@ -1805,7 +1805,7 @@ func (cli *testServerClient) runTestIssue3680(t *testing.T) {
 	// is valid, call Ping."
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
+	require.Equal(t, "Error 1045 (28000): Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
 }
 
 func (cli *testServerClient) runTestIssue22646(t *testing.T) {
@@ -1906,7 +1906,7 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, err)
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 3118: Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.Equal(t, "Error 3118 (HY000): Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
 	require.NoError(t, db.Close())
 	// After unlocked by the ALTER USER statement, the role can connect to server like a user
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
