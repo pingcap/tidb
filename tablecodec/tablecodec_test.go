@@ -15,6 +15,7 @@
 package tablecodec
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"testing"
@@ -646,8 +647,9 @@ func TestTempIndexValueCodec(t *testing.T) {
 	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
-	require.Equal(t, newTempIdxVal.Handle.IntValue(), int64(100))
-	newTempIdxVal.Handle = nil
+	handle, err := DecodeHandleInUniqueIndexValue(newTempIdxVal.Value, false)
+	require.NoError(t, err)
+	require.Equal(t, handle.IntValue(), int64(100))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 
 	tempIdxVal = TempIndexValueElem{
@@ -700,6 +702,12 @@ func TestTempIndexValueCodec(t *testing.T) {
 	result, err = DecodeTempIndexValue(val)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
+	for i := 0; i < 3; i++ {
+		if result[i].Handle == nil {
+			uv := binary.BigEndian.Uint64(result[i].Value)
+			result[i].Handle = kv.IntHandle(int64(uv))
+		}
+	}
 	require.Equal(t, result[0].Handle.IntValue(), int64(100))
 	require.Equal(t, result[1].Handle.IntValue(), int64(100))
 	require.Equal(t, result[2].Handle.IntValue(), int64(101))
