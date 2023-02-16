@@ -75,6 +75,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("use test_partition")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	// TODO: Test DEFAULT partition
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -137,6 +138,31 @@ func TestListPartitionPruner(t *testing.T) {
 		}
 		require.True(t, valid)
 	}
+}
+
+func TestListDefaultPartitionPruner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database default_partition")
+	tk.MustExec("use default_partition")
+	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by list (a) (partition p0 values in (0, 10), partition p1 values in (1,2,4,8,9), partition p2 values in (3,5,default))")
+	tk.MustExec(`insert into t values (-22, "-22"), (0, "0"), (2, "2"), (3,"3"), (7,"7")`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a = 2`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select * from t where a <= 2`).Sort().Check(testkit.Rows("-22 -22", "0 0", "2 2"))
+	tk.MustQuery(`select * from t where a = 7`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`select * from t where a > 2`).Sort().Check(testkit.Rows("3 3", "7 7"))
+	tk.MustQuery(`select * from t where b = 7`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`select * from t where a >= 6`).Sort().Check(testkit.Rows("7 7"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a >= 6`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:all data:Selection",
+		"└─Selection 1.00 cop[tikv]  ge(default_partition.t.a, 6)",
+		"  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 7`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:p2 data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(default_partition.t.a, 7)",
+		"  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"))
 }
 
 type testTablePartitionInfo struct {
