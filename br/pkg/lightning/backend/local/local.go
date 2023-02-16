@@ -1160,14 +1160,14 @@ func (local *local) WriteToTiKV(
 	if len(leaderPeerMetas) == 0 {
 		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
-			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
 		return nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
 	}
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
-		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size),
+		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
 		zap.Stringer("takeTime", time.Since(begin)))
 
@@ -1176,7 +1176,7 @@ func (local *local) WriteToTiKV(
 		firstKey := append([]byte{}, iter.Key()...)
 		finishedRange = Range{start: regionRange.start, end: firstKey}
 		log.FromContext(ctx).Info("write to tikv partial finish", zap.Int64("count", totalCount),
-			zap.Int64("size", size), logutil.Key("startKey", regionRange.start), logutil.Key("endKey", regionRange.end),
+			zap.Int64("size", totalSize), logutil.Key("startKey", regionRange.start), logutil.Key("endKey", regionRange.end),
 			logutil.Key("remainStart", firstKey), logutil.Key("remainEnd", regionRange.end),
 			logutil.Region(region.Region), logutil.Leader(region.Leader))
 	}
