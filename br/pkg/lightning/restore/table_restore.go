@@ -737,8 +737,8 @@ func (tr *TableRestore) postProcess(
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
-		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			ft := &tblInfo.GetPkColInfo().FieldType
+		if tblInfo.ContainsAutoRandomBits() {
+			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
