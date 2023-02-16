@@ -171,6 +171,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -214,6 +215,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -621,6 +625,21 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -838,7 +857,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -881,7 +901,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -953,9 +974,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
