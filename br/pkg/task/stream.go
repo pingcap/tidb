@@ -1065,7 +1065,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 		return err
 	}
 	if !nameSet.Empty() {
-		return errors.Errorf("%s please stop changefeed(s) before restore")
+		return errors.Errorf("%s please stop changefeed(s) before restore", nameSet.String())
 	}
 	return nil
 }
