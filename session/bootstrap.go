@@ -794,16 +794,21 @@ const (
 	version111 = 111
 	// version112 modifies the view tidb_mdl_view
 	version112 = 112
-	// version113 modifies the following global variables default value:
+	// ...
+	// [version113, version119] is the version range reserved for patches of 6.5.x
+	// ...
+	// version113 sets tidb_server_memory_limit to "80%"
+	version113 = 113
+	// version120 modifies the following global variables default value:
 	// - foreign_key_checks: off -> on
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
-	version113 = 113
+	version120 = 120
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version113
+var currentBootstrapVersion int64 = version120
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -924,6 +929,7 @@ var (
 		upgradeToVer111,
 		upgradeToVer112,
 		upgradeToVer113,
+		upgradeToVer120,
 	}
 )
 
@@ -2295,7 +2301,14 @@ func upgradeToVer113(s Session, ver int64) {
 	if ver >= version113 {
 		return
 	}
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+}
 
+func upgradeToVer120(s Session, ver int64) {
+	if ver >= version120 {
+		return
+	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
