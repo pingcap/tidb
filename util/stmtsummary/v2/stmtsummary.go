@@ -28,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -323,6 +325,10 @@ func (s *StmtSummary) flush() {
 
 	if window.lru.Size() > 0 {
 		s.storage.persist(window, now)
+		err := s.storage.sync()
+		if err != nil {
+			logutil.BgLogger().Error("sync stmt summary failed", zap.Error(err))
+		}
 	}
 }
 
@@ -437,6 +443,7 @@ func (w *stmtWindow) clear() {
 
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
+	sync() error
 }
 
 // stmtKey defines key for stmtElement.
@@ -514,6 +521,10 @@ func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.Lock()
 	s.windows = append(s.windows, w)
 	s.Unlock()
+}
+
+func (s *mockStmtStorage) sync() error {
+	return nil
 }
 
 /* Public proxy functions between v1 and v2 */
