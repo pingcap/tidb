@@ -133,6 +133,14 @@ func TestFinishJob(t *testing.T) {
 
 	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
 	require.NoError(t, err)
+	tk.MustQuery("select * from mysql.tidb_ttl_job_history").Check(testkit.Rows(strings.Join([]string{
+		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		startTime.Format(timeFormat),
+		time.Unix(1, 0).Format(timeFormat),
+		expireTime.Format(timeFormat),
+		"<nil>", "<nil>", "<nil>", "<nil>",
+		"running",
+	}, " ")))
 
 	summary := &ttlworker.TTLSummary{
 		ScanTaskErr: "\"'an error message contains both single and double quote'\"",

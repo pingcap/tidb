@@ -25,37 +25,17 @@ import (
 )
 
 var testDataMap = make(testdata.BookKeeper)
-var indexMergeSuiteData testdata.TestData
 var planSuiteUnexportedData testdata.TestData
+var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-
-	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
-	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
-	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
-	testDataMap.LoadTestSuiteData("testdata", "point_get_plan")
-	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
-	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
-	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
-	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
-	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
-	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
-
+	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
-
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -73,74 +53,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetIntegrationPartitionSuiteData() testdata.TestData {
-	return testDataMap["integration_partition_suite"]
-}
-
-func GetPlanNormalizedSuiteData() testdata.TestData {
-	return testDataMap["plan_normalized_suite"]
-}
-
-func GetStatsSuiteData() testdata.TestData {
-	return testDataMap["stats_suite"]
-}
-
-func GetOrderedResultModeSuiteData() testdata.TestData {
-	return testDataMap["ordered_result_mode_suite"]
-}
-
-func GetJoinReorderSuiteData() testdata.TestData {
-	return testDataMap["join_reorder_suite"]
-}
-
-func GetPointGetPlanData() testdata.TestData {
-	return testDataMap["point_get_plan"]
-}
-
-func GetEnforceMPPSuiteData() testdata.TestData {
-	return testDataMap["enforce_mpp_suite"]
-}
-
-func GetExpressionRewriterSuiteData() testdata.TestData {
-	return testDataMap["expression_rewriter_suite"]
-}
-
-func GetPartitionPrunerData() testdata.TestData {
-	return testDataMap["partition_pruner"]
-}
-
-func GetPlanSuiteData() testdata.TestData {
-	return testDataMap["plan_suite"]
-}
-
-func GetIntegrationSuiteData() testdata.TestData {
-	return testDataMap["integration_suite"]
-}
-
-func GetAnalyzeSuiteData() testdata.TestData {
-	return testDataMap["analyze_suite"]
-}
-
-func GetWindowPushDownSuiteData() testdata.TestData {
-	return testDataMap["window_push_down_suite"]
-}
-
-func GetFlatPlanSuiteData() testdata.TestData {
-	return testDataMap["flat_plan_suite"]
-}
-
-func GetBinaryPlanSuiteData() testdata.TestData {
-	return testDataMap["binary_plan_suite"]
-}
-
 func GetIndexMergeSuiteData() testdata.TestData {
 	return testDataMap["index_merge_suite"]
-}
-
-func GetJSONPlanSuiteData() testdata.TestData {
-	return testDataMap["json_plan_suite"]
-}
-
-func GetDerivedTopNSuiteData() testdata.TestData {
-	return testDataMap["derive_topn_from_window"]
 }
