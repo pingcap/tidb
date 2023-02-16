@@ -242,7 +242,6 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	isCommonHandle := w.table.Meta().IsCommonHandle
 	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
@@ -259,7 +258,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				return false, nil
 			}
 
-			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
+			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)
 			if err != nil {
 				return false, err
 			}
@@ -285,7 +284,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 
 				originIdxKey := make([]byte, len(indexKey))
 				copy(originIdxKey, indexKey)
-				tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
+				tablecodec.TempIndexKey2IndexKey(originIdxKey)
 
 				idxRecord := &temporaryIndexRecord{
 					handle: elem.Handle,
