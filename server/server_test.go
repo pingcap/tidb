@@ -978,6 +978,18 @@ func (cli *testServerClient) runTestLoadDataWithColumnList(t *testing.T, _ *Serv
 		require.NoError(t, err)
 		columnsAsExpected(t, columns, strings.Split("1,4,a,2022-04-19,a,2022-04-19 00:00:01", ","))
 	})
+
+	// Also test for name mismatches
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(db *testkit.DBTestKit) {
+		db.MustExec("use test")
+		db.MustExec("drop table if exists t66")
+		db.MustExec("create table t66 (id int primary key, c1 varchar(255))")
+		_, err = db.GetDB().Exec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t66 FIELDS TERMINATED BY ',' ENCLOSED BY '\\\"' IGNORE 1 LINES (c1, c2)", path))
+		require.EqualError(t, err, "Error 1054 (42S22): Unknown column 'c2' in 'field list'")
+	})
 }
 
 func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {

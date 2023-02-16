@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -293,13 +294,11 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		for _, v := range e.ColumnAssignments {
 			columnNames = append(columnNames, v.Column.Name.O)
 		}
+	}
 
-		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
-		}
-	} else {
-		cols = tableCols
+	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
+	if missingColName != "" {
+		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
 
 	for _, col := range cols {
