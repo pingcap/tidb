@@ -48,7 +48,7 @@ var memoryGoroutineCntInTest = *atomicutil.NewInt64(0)
 func WaitMemoryLimitTunerExitInTest() {
 	if intest.InTest {
 		for memoryGoroutineCntInTest.Load() > 0 {
-			time.Sleep(time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
