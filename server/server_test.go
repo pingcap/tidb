@@ -1842,7 +1842,7 @@ func (cli *testServerClient) runTestIssue3682(t *testing.T) {
 	}()
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
+	require.Equal(t, "Error 1045 (28000): Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
 func (cli *testServerClient) runTestAccountLock(t *testing.T) {
