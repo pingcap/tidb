@@ -33,6 +33,7 @@ go_library(
         "//util/paging",
         "//util/tracing",
         "//util/tiflashcompute",
+        "//util/tracing",
         "//util/trxevents",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@com_github_gogo_protobuf//proto",
@@ -75,6 +76,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
+    shard_count = 33,
     deps = [
         "//kv",
         "//store/driver/backoff",

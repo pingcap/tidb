@@ -306,6 +306,7 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 
 	// set csv header to true, this will cause check columns fail
 	s.cfg.Mydumper.CSV.Header = true
+	s.cfg.Mydumper.CSV.HeaderSchemaMatch = true
 	s.cfg.Mydumper.StrictFormat = true
 	regionSize := s.cfg.Mydumper.MaxRegionSize
 	s.cfg.Mydumper.MaxRegionSize = 5
@@ -455,6 +456,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.MaxRegionSize = 40
 
 	cfg.Mydumper.CSV.Header = true
+	cfg.Mydumper.CSV.HeaderSchemaMatch = true
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
@@ -2135,13 +2137,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
 				CSV: config.CSVConfig{
-					Separator:       ",",
-					Delimiter:       `"`,
-					Header:          ca.hasHeader,
-					NotNull:         false,
-					Null:            `\N`,
-					BackslashEscape: true,
-					TrimLastSep:     false,
+					Separator:         ",",
+					Delimiter:         `"`,
+					Header:            ca.hasHeader,
+					HeaderSchemaMatch: true,
+					NotNull:           false,
+					Null:              []string{`\N`},
+					EscapedBy:         `\`,
+					TrimLastSep:       false,
 				},
 				IgnoreColumns: ca.ignoreColumns,
 			},
@@ -2170,13 +2173,14 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 			DataCharacterSet:       "gb18030",
 			DataInvalidCharReplace: string(utf8.RuneError),
 			CSV: config.CSVConfig{
-				Separator:       "，",
-				Delimiter:       `"`,
-				Header:          true,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
+				Separator:         "，",
+				Delimiter:         `"`,
+				Header:            true,
+				HeaderSchemaMatch: true,
+				NotNull:           false,
+				Null:              []string{`\N`},
+				EscapedBy:         `\`,
+				TrimLastSep:       false,
 			},
 			IgnoreColumns: nil,
 		},

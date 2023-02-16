@@ -30,12 +30,12 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/tiancaiamao/sched"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/tiancaiamao/sched"
 )
 
 // numResChkHold indicates the number of resource chunks that an inner worker

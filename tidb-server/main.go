@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -71,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -201,6 +203,7 @@ func main() {
 	}
 	setupLog()
 	setupExtensions()
+	setupStmtSummary()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
@@ -235,7 +238,7 @@ func main() {
 	go sched.Scheduler(sched.LoadOption(0.95), sched.TimeSliceOption(10*time.Millisecond))
 	// go sched.Scheduler(sched.LoadOption(0.6))
 
-	keyspaceName := config.GetGlobalKeyspaceName()
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
@@ -860,6 +863,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 }
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+	dom.StopAutoAnalyze()
 	if graceful {
 		done := make(chan struct{})
 		svr.GracefulDown(context.Background(), done)
@@ -885,4 +889,19 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func setupStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		err := stmtsummaryv2.Setup(&stmtsummaryv2.Config{
+			Filename:       instanceCfg.StmtSummaryFilename,
+			FileMaxSize:    instanceCfg.StmtSummaryFileMaxSize,
+			FileMaxDays:    instanceCfg.StmtSummaryFileMaxDays,
+			FileMaxBackups: instanceCfg.StmtSummaryFileMaxBackups,
+		})
+		if err != nil {
+			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
+		}
+	}
 }

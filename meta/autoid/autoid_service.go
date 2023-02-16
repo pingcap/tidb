@@ -16,10 +16,10 @@ package autoid
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/autoid"

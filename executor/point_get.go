@@ -16,16 +16,15 @@ package executor
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"hash/crc32"
+	mathrand "math/rand"
 	"sync"
 	"time"
-	"hash/crc32"
-	"crypto/rand"
-	mathrand "math/rand"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/tiancaiamao/sched"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tiancaiamao/sched"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -242,7 +242,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		ch := make(chan struct{})
 		NUM := 20
 		wg.Add(NUM)
-		for i:=0; i<NUM; i++ {
+		for i := 0; i < NUM; i++ {
 			go func(ctx context.Context) {
 				done := false
 				for !done {
@@ -256,7 +256,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				wg.Done()
 			}(sched.WithSchedInfo(ctx))
 		}
-		time.Sleep(30*time.Second)
+		time.Sleep(30 * time.Second)
 		close(ch)
 		wg.Wait()
 	}

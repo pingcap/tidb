@@ -12,14 +12,15 @@ go_library(
         "//parser/model",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@io_k8s_apimachinery//pkg/api/resource",
     ],
 )
 
 go_test(
     name = "resourcegroup_test",
+    timeout = "short",
     srcs = ["group_test.go"],
     embed = [":resourcegroup"],
+    flaky = True,
     deps = [
         "//parser/model",
         "@com_github_pingcap_kvproto//pkg/resource_manager",

@@ -21,10 +21,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,11 +45,11 @@ func TestInitMetaTable(t *testing.T) {
 	}
 
 	tbls := map[string]struct{}{
-		"tidb_ddl_job":              {},
-		"tidb_ddl_reorg":            {},
-		"tidb_ddl_history":          {},
-		"tidb_ddl_backfill":         {},
-		"tidb_ddl_backfill_history": {},
+		"tidb_ddl_job":                    {},
+		"tidb_ddl_reorg":                  {},
+		"tidb_ddl_history":                {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
 	}
 
 	for tbl := range tbls {
@@ -80,12 +83,58 @@ func TestMetaTableRegion(t *testing.T) {
 
 	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
 
-	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][0]
-	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillTableID))
-	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][0]
-	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillHistoryTableID))
+	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][0]
+	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskTableID))
+	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][0]
+	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskHistoryTableID))
 
 	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
+}
+
+func MustReadCounter(t *testing.T, m prometheus.Counter) float64 {
+	pb := &dto.Metric{}
+	require.NoError(t, m.Write(pb))
+	return pb.GetCounter().GetValue()
+}
+
+func TestRecordTTLRows(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(created_at datetime) TTL = created_at + INTERVAL 1 DAY")
+	// simple insert should be recorded
+	tk.MustExec("insert into t values (NOW())")
+	require.Equal(t, 1.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+
+	// insert in a explicit transaction should be recorded
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("commit")
+	require.Equal(t, 2.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+
+	// insert multiple rows should be the same
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("commit")
+	require.Equal(t, 4.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+
+	// rollback will remove all recorded TTL rows
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("rollback")
+	require.Equal(t, 6.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+
+	// savepoint will save the recorded TTL rows
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("savepoint insert1")
+	tk.MustExec("insert into t values (NOW())")
+	tk.MustExec("rollback to insert1")
+	tk.MustExec("commit")
+	require.Equal(t, 7.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
 }
