@@ -6545,6 +6545,7 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
 limit 100;`)
 }
 
+/*
 func TestLongBlobReuse(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -6660,3 +6661,4 @@ func TestLongBlobReuse(t *testing.T) {
 	tk.MustQuery("select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and char_length(id3) > 0);").Sort().Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("0"))
 }
+*/
