@@ -941,6 +941,7 @@ import (
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
+	PlanChangeCaptureStmt      "Plan Change Capture Statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -1600,19 +1601,19 @@ ResourceGroupOptionList:
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
 		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
-		   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
+			return 1
 		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
 		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
-    	   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
-    		 yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-             return 1
-    	}
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
@@ -1622,9 +1623,9 @@ DirectResourceGroupOption:
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
-    {
-    	$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
-    }
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -14673,6 +14674,23 @@ PlanReplayerStmt:
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,
+		}
+
+		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Plan Chnage Capture Statement
+ *
+ * PLAN REPLAYER Change 'begin_time' 'end_time'
+ *******************************************************************/
+PlanChangeCaptureStmt:
+	"PLAN" "CHANGE" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanChangeCaptureStmt{
+			Begin: $4,
+			End:   $5,
 		}
 
 		$$ = x
