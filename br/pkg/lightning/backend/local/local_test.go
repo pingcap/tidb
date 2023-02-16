@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -114,9 +115,20 @@ func TestNextKey(t *testing.T) {
 		require.NoError(t, err)
 		nextHdl, err := tidbkv.NewCommonHandle(nextKeyBytes)
 		require.NoError(t, err)
-		expectNextKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
-		require.Equal(t, expectNextKey, nextKey(key))
+		nextValidKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
+		// nextKey may return a key that can't be decoded, but it must not be larger than the valid next key.
+		require.True(t, bytes.Compare(nextKey(key), nextValidKey) <= 0, "datums: %v", datums)
 	}
+
+	// a special case that when len(string datum) % 8 == 7, nextKey twice should not panic.
+	keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewStringDatum("1234567"))
+	require.NoError(t, err)
+	h, err := tidbkv.NewCommonHandle(keyBytes)
+	require.NoError(t, err)
+	key = tablecodec.EncodeRowKeyWithHandle(1, h)
+	nextOnce := nextKey(key)
+	// should not panic
+	_ = nextKey(nextOnce)
 
 	// dIAAAAAAAAD/PV9pgAAAAAD/AAABA4AAAAD/AAAAAQOAAAD/AAAAAAEAAAD8
 	// a index key with: table: 61, index: 1, int64: 1, int64: 1
@@ -332,7 +344,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	pool := membuf.NewPool()
 	defer pool.Destroy()
 	kvBuffer := pool.NewBuffer()
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024, kvBuffer)
+	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, keyspace.CodecV1, 1024, kvBuffer)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1290,6 +1302,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		bufferPool:            membuf.NewPool(),
 		supportMultiIngest:    true,
 		shouldCheckWriteStall: true,
+		tikvCodec:             keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1313,6 +1326,8 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
-	// store 12 has a follower busy, so it will cause region peers (11, 12, 13) retry once
-	require.Equal(t, []uint64{11, 12, 11, 12, 13, 11, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
+	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+	// region (11, 12, 13) has key range ["a", "b"), it's not finished.
+	require.Equal(t, []Range{{start: []byte("b"), end: []byte("c")}}, f.finishedRanges.ranges)
 }

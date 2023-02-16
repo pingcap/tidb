@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/store/pdtypes"
 	pd "github.com/tikv/pd/client"
@@ -35,6 +36,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -200,7 +202,9 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	conn, err := grpc.Dial(store.GetAddress(), grpc.WithInsecure())
+	conn, err := grpc.Dial(store.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -336,11 +340,12 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 	if err != nil {
 		return false, nil, err
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if c.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
 	}
-	conn, err := grpc.Dial(store.GetAddress(), opt)
+	conn, err := grpc.Dial(store.GetAddress(), opt,
+		config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return false, nil, err
 	}

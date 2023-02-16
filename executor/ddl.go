@@ -743,13 +743,22 @@ func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) e
 }
 
 func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
-	return domain.GetDomain(e.ctx).DDL().CreateResourceGroup(e.ctx, s)
+	if !variable.EnableResourceControl.Load() {
+		return infoschema.ErrResourceGroupSupportDisabled
+	}
+	return domain.GetDomain(e.ctx).DDL().AddResourceGroup(e.ctx, s)
 }
 
 func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
+	if !variable.EnableResourceControl.Load() {
+		return infoschema.ErrResourceGroupSupportDisabled
+	}
 	return domain.GetDomain(e.ctx).DDL().AlterResourceGroup(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
+	if !variable.EnableResourceControl.Load() {
+		return infoschema.ErrResourceGroupSupportDisabled
+	}
 	return domain.GetDomain(e.ctx).DDL().DropResourceGroup(e.ctx, s)
 }

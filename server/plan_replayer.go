@@ -220,7 +220,7 @@ func isExists(path string) (bool, error) {
 }
 
 func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
-	if !strings.Contains(handler.filePath, "capture_replayer") {
+	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
 	b := bytes.NewReader(content)
@@ -276,7 +276,7 @@ func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
 			}
 			//nolint: errcheck,all_revive
 			defer v.Close()
-			_, err = toml.DecodeReader(v, &varMap)
+			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
 				return 0, errors.AddStack(err)
 			}

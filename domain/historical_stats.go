@@ -16,10 +16,13 @@ package domain
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -35,7 +38,21 @@ type HistoricalStatsWorker struct {
 
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats
 func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
-	w.tblCH <- tableID
+	send := enableDumpHistoricalStats.Load()
+	failpoint.Inject("sendHistoricalStats", func(val failpoint.Value) {
+		if val.(bool) {
+			send = true
+		}
+	})
+	if !send {
+		return
+	}
+	select {
+	case w.tblCH <- tableID:
+		return
+	default:
+		logutil.BgLogger().Warn("discard dump historical stats task", zap.Int64("table-id", tableID))
+	}
 }
 
 // DumpHistoricalStats dump stats by given tableID
@@ -77,5 +94,10 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 
 // GetOneHistoricalStatsTable gets one tableID from channel, only used for test
 func (w *HistoricalStatsWorker) GetOneHistoricalStatsTable() int64 {
-	return <-w.tblCH
+	select {
+	case tblID := <-w.tblCH:
+		return tblID
+	default:
+		return -1
+	}
 }

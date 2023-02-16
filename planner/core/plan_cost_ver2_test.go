@@ -140,7 +140,6 @@ func TestCostModelShowFormula(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
-	tk.MustExec("insert into t values (1), (2), (3)")
 	tk.MustExec("set @@tidb_cost_model_version=2")
 
 	tk.MustExecToErr("explain format='true_card_cost' select * from t") // 'true_card_cost' must work with 'explain analyze'
@@ -150,9 +149,9 @@ func TestCostModelShowFormula(t *testing.T) {
 		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
 	}
 	require.Equal(t, actual, [][]interface{}{
-		{"TableReader_7", "(((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
-		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))"},
-		{"  └─TableFullScan_5", "scan(3*logrowsize(32)*tikv_scan_factor(40.7))"},
+		{"TableReader_7", "(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
+		{"└─Selection_6", "(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))"},
+		{"  └─TableFullScan_5", "scan(0*logrowsize(32)*tikv_scan_factor(40.7))"},
 	})
 }
 
@@ -248,6 +247,35 @@ func TestCostModelTraceVer2(t *testing.T) {
 		}
 		require.True(t, ok)
 	}
+}
+
+func TestIndexJoinPenaltyCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, key(a))`)
+	tk.MustExec(`create table t2 (a int, key(a))`)
+
+	// default value 0
+	tk.MustQuery("select @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
+	//tk.MustQuery("select global @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
+
+	rs1 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
+	cost1, err := strconv.ParseFloat(rs1[0][2].(string), 64)
+	require.Nil(t, err)
+
+	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=0.5")
+	rs2 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
+	cost2, err := strconv.ParseFloat(rs2[0][2].(string), 64)
+	require.Nil(t, err)
+
+	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=1")
+	rs3 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
+	cost3, err := strconv.ParseFloat(rs3[0][2].(string), 64)
+	require.Nil(t, err)
+
+	require.Greater(t, cost2, cost1)
+	require.Greater(t, cost3, cost2)
 }
 
 func BenchmarkGetPlanCost(b *testing.B) {

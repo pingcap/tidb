@@ -31,7 +31,7 @@ import (
 )
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, pi *model.PartitionInfo, scatter bool) {
-	// Max partition count is 4096, should we sample and just choose some of the partition to split?
+	// Max partition count is 8192, should we sample and just choose some partitions to split?
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()

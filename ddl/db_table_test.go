@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -185,7 +186,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -209,7 +210,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(store, "alter table t1 add column c int not null after a", done)
+	go backgroundExec(store, "test", "alter table t1 add column c int not null after a", done)
 	err := <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -217,7 +218,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExec(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "test", "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -888,7 +889,7 @@ func TestAddColumn2(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
@@ -898,7 +899,7 @@ func TestAddColumn2(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 
@@ -917,7 +918,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
 	require.NoError(t, err)
 
@@ -939,7 +940,7 @@ func TestAddColumn2(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
-	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
+	go backgroundExec(store, "test", "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))

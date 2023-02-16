@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -220,6 +221,43 @@ func TestAddIndexFailed(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+func TestAddIndexCanceledInDistReorg(t *testing.T) {
+	if !variable.DDLEnableDistributeReorg.Load() {
+		// Non-dist-reorg hasn't this fail-point.
+		return
+	}
+	s := createFailDBSuite(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCanceledErr", `1*return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCanceledErr"))
+	}()
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("create database if not exists test_add_index_cancel")
+	defer tk.MustExec("drop database test_add_index_cancel")
+	tk.MustExec("use test_add_index_cancel")
+
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_add_index_cancel"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+
+	tk.MustGetErrCode("alter table t add index idx_b(b)", errno.ErrCancelledDDLJob)
+	tk.MustQuery(fmt.Sprintf("select count(1) from mysql.%s", ddl.BackgroundSubtaskTable)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(1) from mysql.%s", ddl.BackgroundSubtaskHistoryTable)).Check(testkit.Rows("100"))
+	tk.MustExec("admin check table t")
+}
+
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
 func TestFailSchemaSyncer(t *testing.T) {
@@ -333,6 +371,10 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 }
 
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
+	if variable.DDLEnableDistributeReorg.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")

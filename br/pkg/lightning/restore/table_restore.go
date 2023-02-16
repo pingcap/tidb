@@ -501,6 +501,7 @@ func (tr *TableRestore) restoreEngine(
 	metrics, _ := metric.FromContext(ctx)
 
 	// Restore table data
+ChunkLoop:
 	for chunkIndex, chunk := range cp.Chunks {
 		if rc.status != nil && rc.status.backend == config.BackendTiDB {
 			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
@@ -524,9 +525,15 @@ func (tr *TableRestore) restoreEngine(
 		}
 		checkFlushLock.Unlock()
 
+		failpoint.Inject("orphanWriterGoRoutine", func() {
+			if chunkIndex > 0 {
+				<-pCtx.Done()
+			}
+		})
+
 		select {
 		case <-pCtx.Done():
-			return nil, pCtx.Err()
+			break ChunkLoop
 		default:
 		}
 
@@ -615,6 +622,11 @@ func (tr *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
+	select {
+	case <-pCtx.Done():
+		return nil, pCtx.Err()
+	default:
+	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
@@ -794,11 +806,19 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasLocalDupe
 		}
+		failpoint.Inject("SlowDownCheckDupe", func(v failpoint.Value) {
+			sec := v.(int)
+			tr.logger.Warn("start to sleep several seconds before checking other dupe",
+				zap.Int("seconds", sec))
+			time.Sleep(time.Duration(sec) * time.Second)
+		})
 
-		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
 			return false, err
 		}
+		needChecksum := !otherHasDupe && needRemoteDupe
+		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
@@ -812,9 +832,11 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasDupe || hasRemoteDupe
 
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
+			if hasDupe {
+				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+					return false, err
+				}
 			}
 		}
 

@@ -551,7 +551,7 @@ type Analyze struct {
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal     bool
+	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
@@ -596,6 +596,7 @@ type PlanReplayer struct {
 	File     string
 
 	Capture    bool
+	Remove     bool
 	SQLDigest  string
 	PlanDigest string
 }

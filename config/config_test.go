@@ -858,7 +858,7 @@ history-size=100`)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 enable-table-lock = true
@@ -866,15 +866,15 @@ enable-table-lock = true
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.EnableTelemetry)
+	require.False(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
-enable-telemetry = false
+enable-telemetry = true
 `)
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
-	require.False(t, conf.EnableTelemetry)
+	require.True(t, conf.EnableTelemetry)
 
 	_, err = f.WriteString(`
 [security]
@@ -1287,4 +1287,19 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
+}
+
+func TestGetGlobalKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.KeyspaceName)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = "test"
+	})
+
+	require.Equal(t, "test", GetGlobalKeyspaceName())
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = ""
+	})
 }

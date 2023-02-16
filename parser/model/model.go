@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -758,6 +757,9 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1194,6 +1196,8 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+	// Only used during ReorganizePartition so far
+	DDLState SchemaState `json:"ddl_state"`
 }
 
 // Clone clones itself.
@@ -1328,15 +1332,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // IndexColumn provides index column info.
@@ -1737,6 +1741,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.
@@ -1762,7 +1767,7 @@ type TTLInfo struct {
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
 	// JobInterval is the interval between two TTL scan jobs.
-	JobInterval duration.Duration `json:"job_interval"`
+	JobInterval string `json:"job_interval"`
 }
 
 // Clone clones TTLInfo
@@ -1847,20 +1852,17 @@ type ResourceGroupRefInfo struct {
 
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RRURate          uint64 `json:"rru_per_sec"`
-	WRURate          uint64 `json:"wru_per_sec"`
+	RURate           uint64 `json:"ru_per_sec"`
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
+	BurstLimit       int64  `json:"burst_limit"`
 }
 
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
-	if p.RRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "RRU_PER_SEC", p.RRURate)
-	}
-	if p.WRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "WRU_PER_SEC", p.WRURate)
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
@@ -1871,7 +1873,19 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
 	}
+	// Once burst limit is negative, meaning allow burst with unlimit.
+	if p.BurstLimit < 0 {
+		writeSettingItemToBuilder(sb, "BURSTABLE")
+	}
 	return sb.String()
+}
+
+// Adjust adjusts the resource group settings.
+func (p *ResourceGroupSettings) Adjust() {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
+	if p.BurstLimit == 0 {
+		p.BurstLimit = int64(p.RURate)
+	}
 }
 
 // Clone clones the resource group settings.
@@ -1880,7 +1894,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	return &cloned
 }
 
-// ResourceGroupInfo is the struct to store the placement policy.
+// ResourceGroupInfo is the struct to store the resource group.
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`

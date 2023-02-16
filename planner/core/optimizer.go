@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,6 +75,7 @@ const (
 	flagPartitionProcessor
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
+	flagDeriveTopNFromWindow
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -95,6 +98,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
+	&deriveTopNFromWindow{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
@@ -393,7 +397,6 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
-	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	return plan, nil
@@ -748,14 +751,20 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 && uint64(logicalCpus) < minLogicalCores {
-				minLogicalCores = uint64(logicalCpus)
+			if err == nil && logicalCpus > 0 {
+				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		return true, minLogicalCores / 2
+		if runtime.GOARCH == "amd64" {
+			// In most x86-64 platforms, `Thread(s) per core` is 2
+			return true, minLogicalCores / 2
+		}
+		// ARM cpus don't implement Hyper-threading.
+		return true, minLogicalCores
+		// Other platforms are too rare to consider
 	}
 
 	return false, 0
@@ -966,16 +975,6 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 	}
 }
 
-// checkPlanCacheable used to check whether a plan can be cached. Plans that
-// meet the following characteristics cannot be cached:
-// 1. Use the TiFlash engine.
-// Todo: make more careful check here.
-func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
-	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
-	}
-}
-
 // propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
 // It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
 // see comments in PhysicalPlan for details.
@@ -1010,26 +1009,6 @@ func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 			propagateProbeParents(child, probeParents)
 		}
 	}
-}
-
-// useTiFlash used to check whether the plan use the TiFlash engine.
-func useTiFlash(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		switch x.StoreType {
-		case kv.TiFlash:
-			return true
-		default:
-			return false
-		}
-	default:
-		if len(p.Children()) > 0 {
-			for _, plan := range p.Children() {
-				return useTiFlash(plan)
-			}
-		}
-	}
-	return false
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {

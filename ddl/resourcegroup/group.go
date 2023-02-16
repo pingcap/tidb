@@ -15,91 +15,39 @@
 package resourcegroup
 
 import (
-	"github.com/pingcap/errors"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/parser/model"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const maxGroupNameLength = 32
+// MaxGroupNameLength is max length of the name of a resource group
+const MaxGroupNameLength = 32
 
 // NewGroupFromOptions creates a new resource group from the given options.
 func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings) (*rmpb.ResourceGroup, error) {
 	if options == nil {
 		return nil, ErrInvalidGroupSettings
 	}
-	if len(groupName) > maxGroupNameLength {
+	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
-	var isRUMode bool
-	if options.RRURate > 0 || options.WRURate > 0 {
-		isRUMode = true
+	if options.RURate > 0 {
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
-			RRU: &rmpb.TokenBucket{
+			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: options.RRURate,
-				},
-			},
-			WRU: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate: options.WRURate,
+					FillRate:   options.RURate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}
-	}
-	if len(options.CPULimiter) > 0 || len(options.IOReadBandwidth) > 0 || len(options.IOWriteBandwidth) > 0 {
-		if isRUMode {
+		if len(options.CPULimiter) > 0 || len(options.IOReadBandwidth) > 0 || len(options.IOWriteBandwidth) > 0 {
 			return nil, ErrInvalidResourceGroupDuplicatedMode
 		}
-		parseF := func(s string, scale resource.Scale) (uint64, error) {
-			if len(s) == 0 {
-				return 0, nil
-			}
-			q, err := resource.ParseQuantity(s)
-			if err != nil {
-				return 0, err
-			}
-			return uint64(q.ScaledValue(scale)), nil
-		}
-		cpuRate, err := parseF(options.CPULimiter, resource.Milli)
-		if err != nil {
-			return nil, errors.Annotate(ErrInvalidResourceGroupFormat, err.Error())
-		}
-		ioReadRate, err := parseF(options.IOReadBandwidth, resource.Scale(0))
-		if err != nil {
-			return nil, errors.Annotate(ErrInvalidResourceGroupFormat, err.Error())
-		}
-		ioWriteRate, err := parseF(options.IOWriteBandwidth, resource.Scale(0))
-		if err != nil {
-			return nil, errors.Annotate(ErrInvalidResourceGroupFormat, err.Error())
-		}
-
-		group.Mode = rmpb.GroupMode_RawMode
-		group.ResourceSettings = &rmpb.GroupResourceSettings{
-			Cpu: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate: cpuRate,
-				},
-			},
-			IoRead: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioReadRate,
-				},
-			},
-			IoWrite: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioWriteRate,
-				},
-			},
-		}
 		return group, nil
 	}
-	if isRUMode {
-		return group, nil
-	}
+	// Only support RU mode now
 	return nil, ErrUnknownResourceGroupMode
 }

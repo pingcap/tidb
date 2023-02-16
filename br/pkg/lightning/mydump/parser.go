@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -87,7 +88,7 @@ func makeBlockParser(
 type ChunkParser struct {
 	blockParser
 
-	escFlavor backslashEscapeFlavor
+	escFlavor escapeFlavor
 }
 
 // Chunk represents a portion of the data file.
@@ -115,12 +116,12 @@ func (row Row) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	return nil
 }
 
-type backslashEscapeFlavor uint8
+type escapeFlavor uint8
 
 const (
-	backslashEscapeFlavorNone backslashEscapeFlavor = iota
-	backslashEscapeFlavorMySQL
-	backslashEscapeFlavorMySQLWithNull
+	escapeFlavorNone escapeFlavor = iota
+	escapeFlavorMySQL
+	escapeFlavorMySQLWithNull
 )
 
 // Parser provides some methods to parse a source data file.
@@ -152,9 +153,9 @@ func NewChunkParser(
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
-	escFlavor := backslashEscapeFlavorMySQL
+	escFlavor := escapeFlavorMySQL
 	if sqlMode.HasNoBackslashEscapesMode() {
-		escFlavor = backslashEscapeFlavorNone
+		escFlavor = escapeFlavorNone
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
@@ -285,7 +286,13 @@ func (parser *blockParser) readBlock() error {
 		parser.remainBuf.Write(parser.buf)
 		parser.appendBuf.Reset()
 		parser.appendBuf.Write(parser.remainBuf.Bytes())
-		parser.appendBuf.Write(parser.blockBuf[:n])
+		blockData := parser.blockBuf[:n]
+		if parser.pos == 0 {
+			bomCleanedData := bom.Clean(blockData)
+			parser.pos += int64(n - len(bomCleanedData))
+			blockData = bomCleanedData
+		}
+		parser.appendBuf.Write(blockData)
 		parser.buf = parser.appendBuf.Bytes()
 		if parser.metrics != nil {
 			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
@@ -296,12 +303,14 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
-var unescapeRegexp = regexp.MustCompile(`(?s)\\.`)
+var chunkParserUnescapeRegexp = regexp.MustCompile(`(?s)\\.`)
 
 func unescape(
 	input string,
 	delim string,
-	escFlavor backslashEscapeFlavor,
+	escFlavor escapeFlavor,
+	escChar byte,
+	unescapeRegexp *regexp.Regexp,
 ) string {
 	if len(delim) > 0 {
 		delim2 := delim + delim
@@ -309,7 +318,7 @@ func unescape(
 			input = strings.ReplaceAll(input, delim2, delim)
 		}
 	}
-	if escFlavor != backslashEscapeFlavorNone && strings.IndexByte(input, '\\') != -1 {
+	if escFlavor != escapeFlavorNone && strings.IndexByte(input, escChar) != -1 {
 		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
 			switch substr[1] {
 			case '0':
@@ -336,9 +345,9 @@ func (parser *ChunkParser) unescapeString(input string) string {
 	if len(input) >= 2 {
 		switch input[0] {
 		case '\'', '"':
-			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor)
+			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\', chunkParserUnescapeRegexp)
 		case '`':
-			return unescape(input[1:len(input)-1], "`", backslashEscapeFlavorNone)
+			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\', chunkParserUnescapeRegexp)
 		}
 	}
 	return input
