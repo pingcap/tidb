@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression_test
+package casetest
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 )
@@ -35,7 +34,7 @@ func TestSimplifyExpressionByFlag(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
-	flagSimplifyData := expression.GetFlagSimplifyData()
+	flagSimplifyData := GetFlagSimplifyData()
 	flagSimplifyData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
