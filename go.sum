@@ -894,8 +894,8 @@ github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANyt
 github.com/inconshreveable/mousetrap v1.0.1 h1:U3uMjPSQEBMNp1lFxmllqCPM6P5u/Xq7Pgzkat/bFNc=
 github.com/inconshreveable/mousetrap v1.0.1/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/influxdata/influxdb v0.0.0-20170331210902-15e594fc09f1/go.mod h1:qZna6X/4elxqT3yI9iZYdZrWWdeFOOprn86kgg4+IzY=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230215160027-d9cf63373368 h1:htdD+6suyGwiVe8JfSNNq7WiNenMhT6sYBVZrczbDPQ=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230215160027-d9cf63373368/go.mod h1:tuWgAhOHisHqYlZe0FqUO1RZGziohuHrykG9FDPk2jw=
+github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230216072334-4ec124ea5a02 h1:NOdRTcyTS6Or5a3kqRQB//H3BQKkWFZNHSqw8DbpB60=
+github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230216072334-4ec124ea5a02/go.mod h1:tuWgAhOHisHqYlZe0FqUO1RZGziohuHrykG9FDPk2jw=
 github.com/iosmanthus/kvproto v0.0.0-20230210123209-579d6ab1bfff h1:66F7iBTSORYNS4T76AoR85wquzRVvkWikOGcdG0nUUM=
 github.com/iosmanthus/kvproto v0.0.0-20230210123209-579d6ab1bfff/go.mod h1:+on3Lfk/fb1lXkud3XvskJumhSIEEgN2TTbMObUlrxE=
 github.com/iris-contrib/blackfriday v2.0.0+incompatible/go.mod h1:UzZ2bDEoaSGPbkg6SAB4att1aAwTmVIx/5gCVqeyUdI=
