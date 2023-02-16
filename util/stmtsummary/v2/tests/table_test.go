@@ -17,6 +17,7 @@ package tests
 import (
 	"fmt"
 	"math"
+	"os"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -520,4 +521,5 @@ func closeStmtSummary() {
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
 	stmtsummaryv2.GlobalStmtSummary = nil
+	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 }
