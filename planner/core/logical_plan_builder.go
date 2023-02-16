@@ -690,7 +690,7 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
 	}
 	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
 		// The hint information on the left and right child nodes is different. It causes the conflict.
-		errMsg := "Join hints are conflict after join reorder phase, you can only specify one type of join"
+		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
