@@ -283,14 +283,15 @@ func (r *reorgBackfillTask) excludedEndKey() kv.Key {
 }
 
 func (r *reorgBackfillTask) String() string {
-	physicalID := strconv.FormatInt(r.physicalTable.GetPhysicalID(), 10)
-	startKey := hex.EncodeToString(r.startKey)
-	endKey := hex.EncodeToString(r.endKey)
-	rangeStr := "taskID_" + strconv.Itoa(r.id) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	pID := r.physicalTable.GetPhysicalID()
+	start := hex.EncodeToString(r.startKey)
+	end := hex.EncodeToString(r.endKey)
+	inclusion := ")"
+	jobID := r.getJobID()
 	if r.endInclude {
-		return rangeStr + "]"
+		inclusion = "]"
 	}
-	return rangeStr + ")"
+	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s%s, jobID: %d", r.id, pID, start, end, inclusion, jobID)
 }
 
 // mergeBackfillCtxToResult merge partial result in taskCtx into result.
