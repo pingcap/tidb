@@ -786,19 +786,42 @@ const (
 	version107 = 107
 	// version108 adds the table tidb_ttl_table_status
 	version108 = 108
-	// version109 add column source to mysql.stats_meta_history
+	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
+<<<<<<< HEAD
 	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
 	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
 	version111 = 111
 	// version112 modifies the view tidb_mdl_view
 	version112 = 112
+=======
+	// ...
+	// [version110, version129] is the version range reserved for patches of 6.5.x
+	// ...
+	// version130 add column source to mysql.stats_meta_history
+	version130 = 130
+	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version131 = 131
+	// version132 modifies the view tidb_mdl_view
+	version132 = 132
+	// version133 sets tidb_server_memory_limit to "80%"
+	version133 = 133
+	// version134 modifies the following global variables default value:
+	// - foreign_key_checks: off -> on
+	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
+	version134 = 134
+>>>>>>> 5df1913e0f6 (session: fix upgrade (#40182))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version112
+=======
+var currentBootstrapVersion int64 = version134
+>>>>>>> 5df1913e0f6 (session: fix upgrade (#40182))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -915,9 +938,17 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+<<<<<<< HEAD
 		upgradeToVer110,
 		upgradeToVer111,
 		upgradeToVer112,
+=======
+		upgradeToVer130,
+		upgradeToVer131,
+		upgradeToVer132,
+		upgradeToVer133,
+		upgradeToVer134,
+>>>>>>> 5df1913e0f6 (session: fix upgrade (#40182))
 	}
 )
 
@@ -2254,37 +2285,59 @@ func upgradeToVer108(s Session, ver int64) {
 	doReentrantDDL(s, CreateTTLTableStatus)
 }
 
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
 func upgradeToVer109(s Session, ver int64) {
 	if ver >= version109 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
-}
-
-// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
-func upgradeToVer110(s Session, ver int64) {
-	if ver >= version110 {
 		return
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
-func upgradeToVer111(s Session, ver int64) {
-	if ver >= version111 {
+func upgradeToVer130(s Session, ver int64) {
+	if ver >= version130 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
+}
+
+func upgradeToVer131(s Session, ver int64) {
+	if ver >= version131 {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTask)
 	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
-func upgradeToVer112(s Session, ver int64) {
-	if ver >= version112 {
+func upgradeToVer132(s Session, ver int64) {
+	if ver >= version132 {
 		return
 	}
 	doReentrantDDL(s, CreateMDLView)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer133(s Session, ver int64) {
+	if ver >= version133 {
+		return
+	}
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+}
+
+func upgradeToVer134(s Session, ver int64) {
+	if ver >= version134 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
+}
+
+>>>>>>> 5df1913e0f6 (session: fix upgrade (#40182))
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
