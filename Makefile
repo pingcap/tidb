@@ -469,7 +469,8 @@ bazel_txntest: failpoint-enable bazel_ci_prepare
 		-- //tests/realtikvtest/txntest/...
 
 bazel_addindextest: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) --local_ram_resources=29491 --local_cpu_resources=8 --jobs=1 \
+		--test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
 
 bazel_lint: bazel_prepare
