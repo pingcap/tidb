@@ -70,6 +70,7 @@ const (
 	copNextMaxBackoff      = 20000
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
+	smallConcPerCore       = 20
 )
 
 // CopClient is coprocessor client.
@@ -145,11 +146,13 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		err   error
 	)
 	tryRowHint := optRowHint(req)
+	elapsed := time.Duration(0)
 	buildOpt := &buildCopTaskOpt{
 		req:      req,
 		cache:    c.store.GetRegionCache(),
 		eventCb:  eventCb,
 		respChan: req.KeepOrder,
+		elapsed:  &elapsed,
 	}
 	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
 		keyRanges := NewKeyRanges(ranges)
@@ -185,14 +188,15 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		return nil, copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:           c.store,
-		req:             req,
-		concurrency:     req.Concurrency,
-		finishCh:        make(chan struct{}),
-		vars:            vars,
-		memTracker:      req.MemTracker,
-		replicaReadSeed: c.replicaReadSeed,
-		rpcCancel:       tikv.NewRPCanceller(),
+		store:            c.store,
+		req:              req,
+		concurrency:      req.Concurrency,
+		finishCh:         make(chan struct{}),
+		vars:             vars,
+		memTracker:       req.MemTracker,
+		replicaReadSeed:  c.replicaReadSeed,
+		rpcCancel:        tikv.NewRPCanceller(),
+		buildTaskElapsed: *buildOpt.elapsed,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -200,7 +204,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	if tryRowHint {
 		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks)
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.store.numcpu)
 		if len(tasks)-smallTasks < it.concurrency {
 			it.concurrency = len(tasks) - smallTasks
 		}
@@ -283,13 +287,14 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	}
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
-		pbTasks = append(pbTasks, &coprocessor.StoreBatchTask{
+		storeBatchTask := &coprocessor.StoreBatchTask{
 			RegionId:    task.region.GetRegionId(),
 			RegionEpoch: task.region.GetRegionEpoch(),
 			Peer:        task.peer,
 			Ranges:      task.region.GetRanges(),
 			TaskId:      task.task.taskID,
-		})
+		}
+		pbTasks = append(pbTasks, storeBatchTask)
 	}
 	return pbTasks
 }
@@ -303,6 +308,7 @@ type buildCopTaskOpt struct {
 	eventCb  trxevents.EventCallback
 	respChan bool
 	rowHints []int
+	elapsed  *time.Duration
 }
 
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
@@ -314,7 +320,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
-	if hints != nil && len(hints) != rangesLen {
+	if len(hints) != rangesLen {
 		hints = nil
 	}
 
@@ -340,7 +346,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 {
+	if req.StoreBatchSize > 0 && hints != nil {
 		builder = newBatchTaskBuilder(bo, req, cache)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -402,7 +408,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			}
 			i = nextI
 			if req.Paging.Enable {
-				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+				if req.LimitSize != 0 && req.LimitSize < pagingSize {
+					// disable paging for small limit.
+					task.paging = false
+					task.pagingSize = 0
+				} else {
+					pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+				}
 			}
 		}
 	}
@@ -420,6 +432,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 	if elapsed > time.Millisecond {
 		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+	}
+	if opt.elapsed != nil {
+		*opt.elapsed = *opt.elapsed + elapsed
 	}
 	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
 	return tasks, nil
@@ -491,7 +506,8 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	if b.limit <= 0 {
+	// only batch small tasks for memory control.
+	if b.limit <= 0 || !isSmallTask(task) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, task, b.req.ReplicaRead)
@@ -569,12 +585,14 @@ func isSmallTask(task *copTask) bool {
 	// strictly, only RowCountHint == -1 stands for unknown task rows,
 	// but when RowCountHint == 0, it may be caused by initialized value,
 	// to avoid the future bugs, let the tasks with RowCountHint == 0 be non-small tasks.
-	return task.RowCountHint > 0 && task.RowCountHint <= CopSmallTaskRow
+	return task.RowCountHint > 0 &&
+		(len(task.batchTaskList) == 0 && task.RowCountHint <= CopSmallTaskRow) ||
+		(len(task.batchTaskList) > 0 && task.RowCountHint <= 2*CopSmallTaskRow)
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
 // then returns the task count and extra concurrency for small tasks.
-func smallTaskConcurrency(tasks []*copTask) (int, int) {
+func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 	res := 0
 	for _, task := range tasks {
 		if isSmallTask(task) {
@@ -586,8 +604,25 @@ func smallTaskConcurrency(tasks []*copTask) (int, int) {
 	}
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
-	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res))))
-	return res, int(extraConc)
+	extraConc := int(float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res)))))
+	if numcpu <= 0 {
+		numcpu = 1
+	}
+	smallTaskConcurrencyLimit := smallConcPerCore * numcpu
+	if extraConc > smallTaskConcurrencyLimit {
+		extraConc = smallTaskConcurrencyLimit
+	}
+	return res, extraConc
+}
+
+// CopInfo is used to expose functions of copIterator.
+type CopInfo interface {
+	// GetConcurrency returns the concurrency and small task concurrency.
+	GetConcurrency() (int, int)
+	// GetStoreBatchInfo returns the batched and fallback num.
+	GetStoreBatchInfo() (uint64, uint64)
+	// GetBuildTaskElapsed returns the duration of building task.
+	GetBuildTaskElapsed() time.Duration
 }
 
 type copIterator struct {
@@ -627,6 +662,10 @@ type copIterator struct {
 
 	actionOnExceed *rateLimitAction
 	pagingTaskIdx  uint32
+
+	buildTaskElapsed        time.Duration
+	storeBatchedNum         atomic.Uint64
+	storeBatchedFallbackNum atomic.Uint64
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -646,6 +685,9 @@ type copIteratorWorker struct {
 
 	enableCollectExecutionInfo bool
 	pagingTaskIdx              *uint32
+
+	storeBatchedNum         *atomic.Uint64
+	storeBatchedFallbackNum *atomic.Uint64
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -778,6 +820,8 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			replicaReadSeed:            it.replicaReadSeed,
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
 			pagingTaskIdx:              &it.pagingTaskIdx,
+			storeBatchedNum:            &it.storeBatchedNum,
+			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
 		}
 		go worker.run(ctx)
 	}
@@ -874,6 +918,16 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 // GetConcurrency returns the concurrency and small task concurrency.
 func (it *copIterator) GetConcurrency() (int, int) {
 	return it.concurrency, it.smallTaskConcurrency
+}
+
+// GetStoreBatchInfo returns the batched and fallback num.
+func (it *copIterator) GetStoreBatchInfo() (uint64, uint64) {
+	return it.storeBatchedNum.Load(), it.storeBatchedFallbackNum.Load()
+}
+
+// GetBuildTaskElapsed returns the duration of building task.
+func (it *copIterator) GetBuildTaskElapsed() time.Duration {
+	return it.buildTaskElapsed
 }
 
 // GetSendRate returns the rate-limit object.
@@ -1072,30 +1126,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		Tasks:      task.ToPBBatchTasks(),
 	}
 
-	var cacheKey []byte
-	var cacheValue *coprCacheValue
-
-	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
-	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
-		cKey, err := coprCacheBuildKey(&copReq)
-		if err == nil {
-			cacheKey = cKey
-			cValue := worker.store.coprCache.Get(cKey)
-			copReq.IsCacheEnabled = true
-
-			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
-				// Append cache version to the request to skip Coprocessor computation if possible
-				// when request result is cached
-				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
-				cacheValue = cValue
-			} else {
-				copReq.CacheIfMatchVersion = 0
-			}
-		} else {
-			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
-		}
-	}
+	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
@@ -1265,13 +1296,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return remains, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.GetBatchResponses(), task, ch)
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.GetBatchResponses(), task, ch)
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1302,74 +1333,23 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
-	if resp.pbResp.IsCacheHit {
-		coprCacheCounterHit.Add(1)
-		if cacheValue == nil {
-			return nil, errors.New("Internal error: received illegal TiKV response")
-		}
-		// Cache hit and is valid: use cached data as response data and we don't update the cache.
-		data := make([]byte, len(cacheValue.Data))
-		copy(data, cacheValue.Data)
-		resp.pbResp.Data = data
-		if worker.req.Paging.Enable {
-			var start, end []byte
-			if cacheValue.PageStart != nil {
-				start = make([]byte, len(cacheValue.PageStart))
-				copy(start, cacheValue.PageStart)
-			}
-			if cacheValue.PageEnd != nil {
-				end = make([]byte, len(cacheValue.PageEnd))
-				copy(end, cacheValue.PageEnd)
-			}
-			// When paging protocol is used, the response key range is part of the cache data.
-			if start != nil || end != nil {
-				resp.pbResp.Range = &coprocessor.KeyRange{
-					Start: start,
-					End:   end,
-				}
-			} else {
-				resp.pbResp.Range = nil
-			}
-		}
-		resp.detail.CoprCacheHit = true
-	} else {
-		coprCacheCounterMiss.Add(1)
-		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
-		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
-					data := make([]byte, len(resp.pbResp.Data))
-					copy(data, resp.pbResp.Data)
 
-					newCacheValue := coprCacheValue{
-						Data:              data,
-						TimeStamp:         worker.req.StartTs,
-						RegionID:          task.region.GetID(),
-						RegionDataVersion: resp.pbResp.CacheLastVersion,
-					}
-					// When paging protocol is used, the response key range is part of the cache data.
-					if r := resp.pbResp.GetRange(); r != nil {
-						newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
-						newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
-					}
-
-					worker.store.coprCache.Set(cacheKey, &newCacheValue)
-				}
-			}
-		}
+	if err := worker.handleCopCache(task, resp, cacheKey, cacheValue); err != nil {
+		return nil, err
 	}
+
 	batchResps := resp.pbResp.BatchResponses
 	worker.sendToRespCh(resp, ch, true)
-	return worker.handleBatchCopResponse(bo, batchResps, task.batchTaskList, ch)
+	return worker.handleBatchCopResponse(bo, rpcCtx, batchResps, task.batchTaskList, ch)
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
 	if len(task.batchTaskList) == 0 {
 		return remains, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	batchedRemains, err := worker.handleBatchCopResponse(bo, batchResp, batchedTasks, ch)
+	batchedRemains, err := worker.handleBatchCopResponse(bo, rpcCtx, batchResp, batchedTasks, ch)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,17 +1358,32 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains 
 
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, batchResps []*coprocessor.StoreBatchTaskResponse,
+	tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) (remainTasks []*copTask, err error) {
 	if len(tasks) == 0 {
 		return nil, nil
 	}
-	var remainTasks []*copTask
+	batchedNum := len(tasks)
+	defer func() {
+		if err != nil {
+			return
+		}
+		worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
+		worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
+	}()
 	appendRemainTasks := func(tasks ...*copTask) {
 		if remainTasks == nil {
 			// allocate size fo remain length
 			remainTasks = make([]*copTask, 0, len(tasks))
 		}
 		remainTasks = append(remainTasks, tasks...)
+	}
+	// need Addr for recording details.
+	var dummyRPCCtx *tikv.RPCContext
+	if rpcCtx != nil {
+		dummyRPCCtx = &tikv.RPCContext{
+			Addr: rpcCtx.Addr,
+		}
 	}
 	for _, batchResp := range batchResps {
 		taskID := batchResp.GetTaskId()
@@ -1399,7 +1394,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		delete(tasks, taskID)
 		resp := &copResponse{
 			pbResp: &coprocessor.Response{
-				Data: batchResp.Data,
+				Data:          batchResp.Data,
+				ExecDetailsV2: batchResp.ExecDetailsV2,
 			},
 		}
 		task := batchedTask.task
@@ -1454,8 +1450,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			}
 			return nil, errors.Trace(err)
 		}
-		// TODO: check OOM
-		worker.sendToRespCh(resp, ch, false)
+		worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp)
+		worker.sendToRespCh(resp, ch, true)
 	}
 	for _, t := range tasks {
 		task := t.task
@@ -1506,6 +1502,90 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 	if msBeforeExpired > 0 {
 		if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
 			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocessor.Request) (cacheKey []byte, cacheValue *coprCacheValue) {
+	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
+	// computing is not the main cost. Ignore requests with many ranges directly to avoid slowly building the cache key.
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+		cKey, err := coprCacheBuildKey(copReq)
+		if err == nil {
+			cacheKey = cKey
+			cValue := worker.store.coprCache.Get(cKey)
+			copReq.IsCacheEnabled = true
+
+			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
+				// Append cache version to the request to skip Coprocessor computation if possible
+				// when request result is cached
+				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
+				cacheValue = cValue
+			} else {
+				copReq.CacheIfMatchVersion = 0
+			}
+		} else {
+			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
+		}
+	}
+	return
+}
+
+func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue) error {
+	if resp.pbResp.IsCacheHit {
+		if cacheValue == nil {
+			return errors.New("Internal error: received illegal TiKV response")
+		}
+		coprCacheCounterHit.Add(1)
+		// Cache hit and is valid: use cached data as response data and we don't update the cache.
+		data := make([]byte, len(cacheValue.Data))
+		copy(data, cacheValue.Data)
+		resp.pbResp.Data = data
+		if worker.req.Paging.Enable {
+			var start, end []byte
+			if cacheValue.PageStart != nil {
+				start = make([]byte, len(cacheValue.PageStart))
+				copy(start, cacheValue.PageStart)
+			}
+			if cacheValue.PageEnd != nil {
+				end = make([]byte, len(cacheValue.PageEnd))
+				copy(end, cacheValue.PageEnd)
+			}
+			// When paging protocol is used, the response key range is part of the cache data.
+			if start != nil || end != nil {
+				resp.pbResp.Range = &coprocessor.KeyRange{
+					Start: start,
+					End:   end,
+				}
+			} else {
+				resp.pbResp.Range = nil
+			}
+		}
+		resp.detail.CoprCacheHit = true
+		return nil
+	}
+	coprCacheCounterMiss.Add(1)
+	// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
+	if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
+		if resp.detail != nil {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
+				data := make([]byte, len(resp.pbResp.Data))
+				copy(data, resp.pbResp.Data)
+
+				newCacheValue := coprCacheValue{
+					Data:              data,
+					TimeStamp:         worker.req.StartTs,
+					RegionID:          task.region.GetID(),
+					RegionDataVersion: resp.pbResp.CacheLastVersion,
+				}
+				// When paging protocol is used, the response key range is part of the cache data.
+				if r := resp.pbResp.GetRange(); r != nil {
+					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
+					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+				}
+				worker.store.coprCache.Set(cacheKey, &newCacheValue)
+			}
 		}
 	}
 	return nil

@@ -1595,7 +1595,6 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 var tableResourceGroupsCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
 	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
-	{name: "RU_TOKENS", tp: mysql.TypeLonglong, size: 21},
 	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
@@ -2165,6 +2164,11 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return it.tp
+}
+
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (it *infoschemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
 }
 
 // VirtualTable is a dummy table.Table implementation.

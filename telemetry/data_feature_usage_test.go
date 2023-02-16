@@ -17,10 +17,12 @@ package telemetry_test
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -73,6 +75,14 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.AggressiveLocking)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.AggressiveLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -244,6 +254,7 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionReorganizePartitionCnt)
 
 	telemetry.PostReportTelemetryDataForTest()
 	tk.MustExec("drop table if exists pt1")
@@ -255,6 +266,7 @@ func TestTablePartition(t *testing.T) {
 		"partition p4 values less than (15))")
 	tk.MustExec("alter table pt1 first partition less than (9)")
 	tk.MustExec("alter table pt1 last partition less than (21)")
+	tk.MustExec("alter table pt1 reorganize partition p4 into (partition p4 values less than (13), partition p5 values less than (15))")
 	tk.MustExec("drop table if exists pt1")
 	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
 		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
@@ -279,6 +291,7 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionReorganizePartitionCnt)
 
 	tk.MustExec("drop table if exists pt2")
 	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
@@ -576,6 +589,38 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
+func TestDistReorgUsage(t *testing.T) {
+	t.Skip("skip in order to pass the test quickly")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	initCount := usage.DDLUsageCounter.DistReorgUsed
+
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = off")
+	allow := variable.DDLEnableDistributeReorg.Load()
+	require.Equal(t, false, allow)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tele_t")
+	tk.MustExec("create table tele_t(id int, b int)")
+	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
+
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = on")
+	allow = variable.DDLEnableDistributeReorg.Load()
+	require.Equal(t, true, allow)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
+	tk.MustExec("alter table tele_t add index idx_new(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, initCount+1, usage.DDLUsageCounter.DistReorgUsed)
+}
+
 func TestGlobalMemoryControl(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -689,6 +734,10 @@ func TestTTLTelemetry(t *testing.T) {
 			createTime.Format(timeFormat), finishTime.Format(timeFormat), ttlExpire.Format(timeFormat), summaryText,
 			totalRows, totalRows-errorRows, errorRows, status,
 		)
+
+		if status == "running" {
+			tk.MustExec("update mysql.tidb_ttl_job_history set finish_time=FROM_UNIXTIME(1), summary_text=NULL, expired_rows=NULL, deleted_rows=NULL, error_delete_rows=NULL where job_id=?", strconv.Itoa(jobIDIdx))
+		}
 	}
 
 	oneDayAgoDate := curDate.Add(-24 * time.Hour)
@@ -711,6 +760,7 @@ func TestTTLTelemetry(t *testing.T) {
 	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 112600, 110000, "finished")
 	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 2600, 0, "timeout")
 	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "", 100000000, 0, "running")
 	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 2600, 0, "finished")
 	insertTTLHistory("t1", "", times51[0], times51[1], times51[2], "", 100000000, 1, "finished")
 
@@ -776,4 +826,139 @@ func TestTTLTelemetry(t *testing.T) {
 	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
 	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
 	checkTableHistWithDelay(0, 1, 1, 0, 1)
+}
+
+func TestStoreBatchCopr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	init, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, init.StoreBatchCoprUsage.BatchSize, 4)
+
+	tk.MustExec("drop table if exists tele_batch_t")
+	tk.MustExec("create table tele_batch_t (id int primary key, c int, k int, index i(k))")
+	tk.MustExec("select * from tele_batch_t force index(i) where k between 1 and 10 and k % 2 != 0")
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff := usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(1))
+	require.Equal(t, diff.BatchedQueryTask, int64(0))
+	require.Equal(t, diff.BatchedCount, int64(0))
+	require.Equal(t, diff.BatchedFallbackCount, int64(0))
+
+	tk.MustExec("insert into tele_batch_t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 5), (7, 7, 7)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
+	}()
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(2))
+	require.Equal(t, diff.BatchedQueryTask, int64(2))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(0))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+	}()
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(3))
+	require.Equal(t, diff.BatchedQueryTask, int64(4))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(1))
+
+	tk.MustExec("set global tidb_store_batch_size = 0")
+	tk.MustExec("set session tidb_store_batch_size = 0")
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 0)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(3))
+	require.Equal(t, diff.BatchedQueryTask, int64(4))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(1))
+}
+
+func TestAggressiveLockingUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	usage, err := telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	// Not counted before transaction committing.
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Counted by transaction instead of by statement.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	tk.MustExec("update t set v = v + 1 where id = 2")
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Effective only when LockedWithConflict occurs.
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("update t set v = v + 1 where id = 1")
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set v = v + 1 where id = 1")
+		ch <- nil
+	}()
+	select {
+	case <-ch:
+		require.Fail(t, "expected statement to be blocked but finished")
+	case <-time.After(time.Millisecond * 100):
+	}
+	tk3.MustExec("commit")
+	select {
+	case <-time.After(time.Second):
+		require.Fail(t, "expected statement to be resumed but still blocked")
+	case <-ch:
+	}
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
 }

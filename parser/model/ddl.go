@@ -437,18 +437,20 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	PhysicalTableID int64         `json:"physical_table_id"`
-	IsUnique        bool          `json:"is_unique"`
-	EndInclude      bool          `json:"end_include"`
-	Error           *terror.Error `json:"err"`
+	IsUnique   bool          `json:"is_unique"`
+	EndInclude bool          `json:"end_include"`
+	Error      *terror.Error `json:"err"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
-
-	*JobMeta `json:"job_meta"`
+	RowCount      int64                            `json:"row_count"`
+	StartKey      []byte                           `json:"start_key"`
+	EndKey        []byte                           `json:"end_key"`
+	CurrKey       []byte                           `json:"curr_key"`
+	*JobMeta      `json:"job_meta"`
 }
 
 // Encode encodes BackfillMeta with json format.
@@ -598,13 +600,18 @@ func (job *Job) GetRowCount() int64 {
 
 // SetWarnings sets the warnings of rows handled.
 func (job *Job) SetWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	job.Mu.Lock()
 	job.ReorgMeta.Warnings = warnings
 	job.ReorgMeta.WarningsCount = warningsCount
+	job.Mu.Unlock()
 }
 
 // GetWarnings gets the warnings of the rows handled.
 func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
-	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Lock()
+	w, wc := job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Unlock()
+	return w, wc
 }
 
 // Encode encodes job with json format.
@@ -672,7 +679,8 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 	if job.ReorgMeta != nil {
-		ret += fmt.Sprintf(", UniqueWarnings:%d", len(job.ReorgMeta.Warnings))
+		warnings, _ := job.GetWarnings()
+		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
 	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
@@ -944,6 +952,30 @@ func (s JobState) String() string {
 		return "queueing"
 	default:
 		return "none"
+	}
+}
+
+// StrToJobState converts string to JobState.
+func StrToJobState(s string) JobState {
+	switch s {
+	case "running":
+		return JobStateRunning
+	case "rollingback":
+		return JobStateRollingback
+	case "rollback done":
+		return JobStateRollbackDone
+	case "done":
+		return JobStateDone
+	case "cancelled":
+		return JobStateCancelled
+	case "cancelling":
+		return JobStateCancelling
+	case "synced":
+		return JobStateSynced
+	case "queueing":
+		return JobStateQueueing
+	default:
+		return JobStateNone
 	}
 }
 
