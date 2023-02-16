@@ -1424,25 +1424,25 @@ func TestTiDBServerMemoryLimitUpgradeTo651_1(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
-	ver112 := version112
-	seV112 := createSessionAndSetID(t, store)
+	ver132 := version132
+	seV132 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver112))
+	err = m.FinishBootstrap(int64(ver132))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	mustExec(t, seV112, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver112))
-	mustExec(t, seV112, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBServerMemoryLimit))
-	mustExec(t, seV112, "commit")
+	mustExec(t, seV132, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver132))
+	mustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", variable.TiDBServerMemoryLimit))
+	mustExec(t, seV132, "commit")
 	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV112)
+	ver, err := getBootstrapVersion(seV132)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver112), ver)
+	require.Equal(t, int64(ver132), ver)
 
 	// We are now in 6.5.0, tidb_server_memory_limit is 0.
-	res := mustExecToRecodeSet(t, seV112, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res := mustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1477,25 +1477,25 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 
 	// upgrade from 6.5.0 to 6.5.1+.
-	ver112 := version112
-	seV112 := createSessionAndSetID(t, store)
+	ver132 := version132
+	seV132 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver112))
+	err = m.FinishBootstrap(int64(ver132))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	mustExec(t, seV112, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver112))
-	mustExec(t, seV112, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "70%", variable.TiDBServerMemoryLimit))
-	mustExec(t, seV112, "commit")
+	mustExec(t, seV132, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver132))
+	mustExec(t, seV132, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "70%", variable.TiDBServerMemoryLimit))
+	mustExec(t, seV132, "commit")
 	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV112)
+	ver, err := getBootstrapVersion(seV132)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver112), ver)
+	require.Equal(t, int64(ver132), ver)
 
 	// We are now in 6.5.0, tidb_server_memory_limit is "70%".
-	res := mustExecToRecodeSet(t, seV112, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
+	res := mustExecToRecodeSet(t, seV132, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBServerMemoryLimit))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1595,7 +1595,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 			defer func() { require.NoError(t, store.Close()) }()
 
 			// upgrade from 6.5 to 6.6.
-			ver65 := version112
+			ver65 := version132
 			seV65 := createSessionAndSetID(t, store)
 			txn, err := store.Begin()
 			require.NoError(t, err)
