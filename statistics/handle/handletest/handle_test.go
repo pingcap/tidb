@@ -488,6 +488,43 @@ func TestInitStatsVer2(t *testing.T) {
 	h.SetLease(0)
 }
 
+func TestInitStatsPK(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8)")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo := tbl.Meta()
+	colID := tblInfo.Columns[0].ID
+	require.NoError(t, err)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	for i := 1; i <= 2; i++ {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_analyze_version=%v", i))
+		tk.MustExec("analyze table t with 2 topn, 2 buckets")
+		h.Clear()
+		require.NoError(t, h.InitStats(is))
+		statTbl1 := h.GetTableStats(tblInfo)
+		col := statTbl1.Columns[colID]
+		require.True(t, col.IsFullLoad())
+		if i == 2 {
+			require.NotNil(t, col.TopN)
+			require.Len(t, col.TopN.TopN, 2)
+		}
+		h.Clear()
+		require.NoError(t, h.Update(is))
+		statTbl2 := h.GetTableStats(tblInfo)
+		internal.AssertTableEqual(t, statTbl1, statTbl2)
+	}
+
+	h.SetLease(0)
+}
+
 func TestReloadExtStatsLockRelease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1104,8 +1141,8 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20",  // global: g.count = p0.count + p1.count
-		"0 9",   // p0
+		"0 20", // global: g.count = p0.count + p1.count
+		"0 9",  // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -1135,7 +1172,7 @@ func TestGlobalStatsData2(t *testing.T) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8",   // p0
+			"5 1 8", // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -1149,7 +1186,7 @@ func TestGlobalStatsData2(t *testing.T) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
+			"5 1", // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)

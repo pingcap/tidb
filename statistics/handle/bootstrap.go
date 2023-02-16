@@ -158,12 +158,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
-				var err error
-				col.CMSketch, col.TopN, err = statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
-				if err != nil {
-					col.CMSketch = nil
-					terror.Log(errors.Trace(err))
+			if statsVer != statistics.Version0 {
+				if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+					// Note we don't need to call `DecodeCMSketchAndTopN(row.GetBytes(6), nil)` for PK since we don't maintain CMSketch for PK.
+					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				} else {
+					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 				}
 			}
 			table.Columns[hist.ID] = col
