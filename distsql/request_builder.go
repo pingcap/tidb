@@ -158,7 +158,11 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
 		limit := dag.Executors[1].GetLimit()
 		if limit != nil && limit.Limit < estimatedRegionRowCount {
-			builder.Request.Concurrency = builder.Request.KeyRanges.PartitionNum()
+			if kr := builder.Request.KeyRanges; kr != nil {
+				builder.Request.Concurrency = kr.PartitionNum()
+			} else {
+				builder.Request.Concurrency = 1
+			}
 		}
 		builder.Request.LimitSize = limit.GetLimit()
 	}
