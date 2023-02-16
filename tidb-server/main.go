@@ -876,6 +876,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	closeStmtSummary()
 	topsql.Close()
 }
 
@@ -903,5 +904,12 @@ func setupStmtSummary() {
 		if err != nil {
 			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
 		}
+	}
+}
+
+func closeStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		stmtsummaryv2.Close()
 	}
 }
