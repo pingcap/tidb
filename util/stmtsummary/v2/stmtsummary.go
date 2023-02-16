@@ -57,6 +57,13 @@ func Setup(cfg *Config) (err error) {
 	return
 }
 
+// Close closes the GlobalStmtSummary.
+func Close() {
+	if GlobalStmtSummary != nil {
+		GlobalStmtSummary.Close()
+	}
+}
+
 // Config is the static configuration of StmtSummary. It cannot be
 // modified at runtime.
 type Config struct {
@@ -141,12 +148,6 @@ func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
 		window:                 newStmtWindow(timeNow(), maxStmtCount),
 		storage:                &mockStmtStorage{},
 	}
-
-	ss.closeWg.Add(1)
-	go func() {
-		defer ss.closeWg.Done()
-		ss.rotateLoop()
-	}()
 
 	return ss
 }
@@ -309,6 +310,15 @@ func (s *StmtSummary) Close() {
 		s.closeWg.Wait()
 	}
 	s.closed.Store(true)
+	s.flush()
+}
+
+func (s *StmtSummary) flush() {
+	s.windowLock.Lock()
+	if s.window.lru.Size() > 0 {
+		s.storage.persist(s.window, timeNow())
+	}
+	s.windowLock.Unlock()
 }
 
 // GetMoreThanCntBindableStmt is used to get bindable statements.
@@ -491,11 +501,14 @@ type lockedStmtRecord struct {
 }
 
 type mockStmtStorage struct {
+	sync.Mutex
 	windows []*stmtWindow
 }
 
 func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
+	s.Lock()
 	s.windows = append(s.windows, w)
+	s.Unlock()
 }
 
 /* Public proxy functions between v1 and v2 */
