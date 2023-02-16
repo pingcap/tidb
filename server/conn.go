@@ -1138,7 +1138,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 				if config.GetGlobalConfig().Status.RecordDBLabel {
 					dbName = ctx.GetSessionVars().CurrentDB
 				}
-
 			}
 			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
