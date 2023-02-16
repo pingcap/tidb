@@ -99,6 +99,9 @@ go_library(
     deps = [
         "//bindinfo",
         "//br/pkg/glue",
+        "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
+        "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
         "//br/pkg/task",
         "//config",

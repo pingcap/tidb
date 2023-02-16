@@ -64,6 +64,24 @@ func (s *mockGCSSuite) SetupSuite() {
 104,""
 `),
 		},
+		{
+			BucketName: "test-bucket",
+			Name:       "ignore-lines-bad-syntax.csv",
+			Content: []byte(`"bad syntax"1
+"b",2
+"c",3
+`),
+		},
+		{
+			BucketName: "test-bucket",
+			Name:       "count-terminator-inside-quotes.csv",
+			Content: []byte(`"a
+",1
+"b
+",2
+"c",3
+`),
+		},
 	}
 
 	var err error

@@ -55,35 +55,6 @@ func runTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int
 	}
 }
 
-func runTestCasesCSVIgnoreNLines(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []testCase, ignoreNLines int) {
-	for _, tc := range cases {
-		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		assert.NoError(t, err)
-		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
-		assert.NoError(t, err)
-
-		for ignoreNLines > 0 {
-			// IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
-			_, _, err = parser.ReadUntilTerminator()
-			if errors.Cause(err) == io.EOF {
-				assert.Len(t, tc.expected, 0, "input = %q", tc.input)
-				return
-			}
-			assert.NoError(t, err)
-			ignoreNLines--
-		}
-
-		for i, row := range tc.expected {
-			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
-			e := parser.ReadRow()
-			assert.NoErrorf(t, e, "input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e))
-			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
-			assert.Equal(t, row, parser.LastRow().Row, comment)
-		}
-		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
-	}
-}
-
 func runFailingTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
@@ -450,6 +421,21 @@ func TestMySQL(t *testing.T) {
 	assertPosEqual(t, parser, 26, 2)
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`"\0\b\n\r\t\Z\\\  \c\'\""`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})),
+		},
+		Length: 23,
+	}, parser.LastRow())
 }
 
 func TestCustomEscapeChar(t *testing.T) {
@@ -491,6 +477,29 @@ func TestCustomEscapeChar(t *testing.T) {
 	assertPosEqual(t, parser, 26, 2)
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+
+	cfg = config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+		EscapedBy: ``,
+		NotNull:   false,
+		Null:      []string{`NULL`},
+	}
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`),
+		},
+		Length: 115,
+	}, parser.LastRow())
 }
 
 func TestSyntaxErrorCSV(t *testing.T) {
@@ -1285,80 +1294,6 @@ yyy",5,xx"xxxx,8
 	}
 	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkers, false, nil)
 	require.ErrorContains(t, err, "starting-by cannot contain (line) terminator")
-}
-
-func TestCallerCanIgnoreNLines(t *testing.T) {
-	cfg := config.MydumperRuntime{
-		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-		},
-	}
-	testCases := []testCase{
-		{
-			input: `1,1
-2,2
-3,3`,
-			expected: [][]types.Datum{
-				{types.NewStringDatum("3"), types.NewStringDatum("3")},
-			},
-		},
-	}
-	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
-
-	testCases = []testCase{
-		{
-			input: `"bad syntax"1
-"b",2
-"c",3`,
-			expected: [][]types.Datum{
-				{types.NewStringDatum("c"), types.NewStringDatum("3")},
-			},
-		},
-	}
-	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
-
-	cfg = config.MydumperRuntime{
-		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-		},
-	}
-	testCases = []testCase{
-		{
-			input: `1,1
-2,2
-3,3`,
-			expected: [][]types.Datum{},
-		},
-	}
-	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 100)
-
-	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
-
-	cfg = config.MydumperRuntime{
-		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-		},
-	}
-	testCases = []testCase{
-		{
-			input: `"a
-",1
-"b
-",2
-"c",3`,
-			expected: [][]types.Datum{
-				{types.NewStringDatum("b\n"), types.NewStringDatum("2")},
-				{types.NewStringDatum("c"), types.NewStringDatum("3")},
-			},
-		},
-	}
-	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
 }
 
 func TestCharsetConversion(t *testing.T) {
