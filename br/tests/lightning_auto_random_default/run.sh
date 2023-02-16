@@ -62,7 +62,7 @@ for backend in tidb local; do
 done
 
 function run_for_auro_random_data2() {
-		create_table=$1
+    create_table=$1
     run_sql 'DROP DATABASE IF EXISTS auto_random;'
     run_sql 'CREATE DATABASE IF NOT EXISTS auto_random;'
     run_sql "$create_table"
