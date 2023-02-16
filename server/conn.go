@@ -1655,12 +1655,46 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	err = loadDataInfo.Load(ctx, cc.readPacket)
+	// use Pipe to convert cc.readPacket to io.Reader
+	r, w := io.Pipe()
+	go func() {
+		//nolint: errcheck
+		defer w.Close()
+
+		var (
+			data []byte
+			err2 error
+		)
+		for {
+			if len(data) == 0 {
+				data, err2 = cc.readPacket()
+				if err2 != nil {
+					w.CloseWithError(err2)
+					return
+				}
+				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+				if len(data) == 0 {
+					loadDataInfo.Drained = true
+					return
+				}
+			}
+
+			n, err3 := w.Write(data)
+			if err3 != nil {
+				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
+				return
+			}
+			data = data[n:]
+		}
+	}()
+
+	err = loadDataInfo.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
 	if err != nil {
 		if !loadDataInfo.Drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !loadDataInfo.Drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
 			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
@@ -2053,7 +2087,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		return false, nil
 	}
 
-	handled, err := cc.handleQuerySpecial(ctx, status)
+	handled, err := cc.handleFileTransInConn(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
@@ -2067,7 +2101,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
