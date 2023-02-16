@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -185,15 +184,8 @@ type scanRegionBackoffer struct {
 }
 
 func newScanRegionBackoffer() utils.Backoffer {
-	attempt := ScanRegionAttemptTimes
-	// only use for test.
-	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
-		if val.(bool) {
-			attempt = 3
-		}
-	})
 	return &scanRegionBackoffer{
-		attempt: attempt,
+		attempt: ScanRegionAttemptTimes,
 	}
 }
 

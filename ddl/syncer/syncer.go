@@ -330,7 +330,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			if len(updatedMap) > 0 {
 				succ = false
 				for _, info := range updatedMap {
-					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced", zap.String("info", info), zap.Any("ddl id", jobID), zap.Any("ver", latestVer))
+					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced", zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer))
 				}
 			}
 		} else {

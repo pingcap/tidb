@@ -283,14 +283,15 @@ func (r *reorgBackfillTask) excludedEndKey() kv.Key {
 }
 
 func (r *reorgBackfillTask) String() string {
-	physicalID := strconv.FormatInt(r.physicalTable.GetPhysicalID(), 10)
-	startKey := hex.EncodeToString(r.startKey)
-	endKey := hex.EncodeToString(r.endKey)
-	rangeStr := "taskID_" + strconv.Itoa(r.id) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
+	pID := r.physicalTable.GetPhysicalID()
+	start := hex.EncodeToString(r.startKey)
+	end := hex.EncodeToString(r.endKey)
+	inclusion := ")"
+	jobID := r.getJobID()
 	if r.endInclude {
-		return rangeStr + "]"
+		inclusion = "]"
 	}
-	return rangeStr + ")"
+	return fmt.Sprintf("taskID: %d, physicalTableID: %d, range: [%s, %s%s, jobID: %d", r.id, pID, start, end, inclusion, jobID)
 }
 
 // mergeBackfillCtxToResult merge partial result in taskCtx into result.
@@ -825,7 +826,12 @@ type backfillScheduler struct {
 	copReqSenderPool *copReqSenderPool // for add index in ingest way.
 }
 
-const backfillTaskChanSize = 1024
+var backfillTaskChanSize = 1024
+
+// SetBackfillTaskChanSizeForTest is only used for test.
+func SetBackfillTaskChanSizeForTest(n int) {
+	backfillTaskChanSize = n
+}
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
 	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
@@ -1071,8 +1077,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
-		scheduler.setMaxWorkerSize(len(kvRanges))
+		if len(kvRanges) == 0 {
+			break
+		}
 
+		scheduler.setMaxWorkerSize(len(kvRanges))
 		err = scheduler.adjustWorkerSize()
 		if err != nil {
 			return errors.Trace(err)
@@ -1095,14 +1104,17 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if len(remains) == 0 {
-			if ingestBeCtx != nil {
-				ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
-			}
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			startKey = kvRanges[len(kvRanges)-1].EndKey
+		}
+		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
-		startKey = remains[0].StartKey
+	}
+	if ingestBeCtx != nil {
+		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
 	}
 	return nil
 }
