@@ -314,11 +314,16 @@ func (s *StmtSummary) Close() {
 }
 
 func (s *StmtSummary) flush() {
+	now := timeNow()
+
 	s.windowLock.Lock()
-	if s.window.lru.Size() > 0 {
-		s.storage.persist(s.window, timeNow())
-	}
+	window := s.window
+	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
 	s.windowLock.Unlock()
+
+	if window.lru.Size() > 0 {
+		s.storage.persist(window, now)
+	}
 }
 
 // GetMoreThanCntBindableStmt is used to get bindable statements.
