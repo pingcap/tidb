@@ -1851,18 +1851,18 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		return 0, nil
 	}
 
-	var partitionName model.CIStr
+	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		if col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr); ok {
-			partitionName = col.Name.Name
+			partitionColName = col.Name.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	case model.PartitionTypeKey:
 		if len(partitionExpr.KeyPartCols) == 1 {
 			colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
-			partitionName = colInfo.Name
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
@@ -1870,7 +1870,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left range columns partition for future development
 		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
 			colInfo := findColNameByColID(tbl.Columns, col)
-			partitionName = colInfo.Name
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
@@ -1878,27 +1878,23 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left list columns partition for future development
 		if locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column); ok && partitionExpr.ForListPruning.ColPrunes == nil {
 			colInfo := findColNameByColID(tbl.Columns, locateExpr)
-			partitionName = colInfo.Name
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	}
 
-	for i, idxCol := range idx.Columns {
-		if partitionName.L == idxCol.Name.L {
-			return i, nil
-		}
-	}
-	panic("unique index must include all partition columns")
+	return getColumnPosInIndex(idx, &partitionColName), nil
 }
 
-// getHashPartitionColumnPos gets the hash partition column's position in the unique index.
-func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *model.CIStr) int {
-	if partitionColName == nil {
+// getColumnPosInIndex gets the column's position in the index.
+// It is only used to get partition columns postition in unique index so far.
+func getColumnPosInIndex(idx *model.IndexInfo, colName *model.CIStr) int {
+	if colName == nil {
 		return 0
 	}
 	for i, idxCol := range idx.Columns {
-		if partitionColName.L == idxCol.Name.L {
+		if colName.L == idxCol.Name.L {
 			return i
 		}
 	}
@@ -1937,11 +1933,10 @@ func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInf
 	// PartitionExpr don't need columns and names for hash partition.
 	partitionExpr := table.(partitionTable).PartitionExpr()
 	if pi.Type == model.PartitionTypeKey {
+		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
 			return nil
 		}
-
-		// used to judge wthether the key partition contains only one field
 		return &pi.Columns[0]
 	}
 	expr := partitionExpr.OrigExpr

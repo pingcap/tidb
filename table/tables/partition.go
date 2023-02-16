@@ -308,7 +308,7 @@ func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
 	}
 
 	partID := nr1 & pi.HashMask
-	if partID > pi.Num {
+	if partID >= pi.Num {
 		newmask := ((pi.HashMask + 1) >> 1) - 1
 		partID = nr1 & newmask
 	}

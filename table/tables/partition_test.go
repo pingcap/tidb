@@ -2036,7 +2036,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY KEY (`col3`) PARTITIONS 4"))
 
-	// Blob, Json don't support key partition
+	// BLOB, JSON don't support key partition
 	err := tk.ExecToErr("create table tkey_string(\n" +
 		"id5 BLOB not null,\n" +
 		"id6 TEXT not null,\n" +
@@ -2045,7 +2045,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "Field 'id5' is of a not allowed type for this type of partitioning", err)
 
-	// Blob, Json don't support key partition
+	// BLOB, JSON don't support key partition
 	err = tk.ExecToErr("create table tkey_string2(\n" +
 		"id5 BLOB not null,\n" +
 		"id6 TEXT not null,\n" +
@@ -2058,10 +2058,12 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "Field 'c1' is of a not allowed type for this type of partitioning", err)
 
+	// It doesn't support LINEAR KEY partition
 	tk.MustExec("CREATE TABLE tkey_linear (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY LINEAR KEY(col3) PARTITIONS 5")
 	result := tk.MustQuery("show warnings")
 	result.CheckContains("LINEAR KEY is not supported, using non-linear KEY instead")
 
+	// It will ignore ALGORITHM=1|2
 	tk.MustExec("CREATE TABLE tkey_algorithm1 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=1 (col3) PARTITIONS 5")
 	tk.MustExec("CREATE TABLE tkey_algorithm2 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=2 (col3) PARTITIONS 5")
 
@@ -2069,6 +2071,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "You have an error in your SQL syntax", err)
 
+	// Key partition can't be as subpartition
 	tk.MustExec("CREATE TABLE tkey_subpartition1 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))" +
 		"PARTITION BY RANGE(JYRQ)\n" +
 		"SUBPARTITION BY KEY(KHH) SUBPARTITIONS 2 \n" +
@@ -2080,6 +2083,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.CheckContains("Unsupported partition type RANGE, treat as normal table")
 
+	// It ignores /*!50100 */ format
 	tk.MustExec("CREATE TABLE tkey10 (`col1` int, `col2` char(5),`col3` date)" +
 		"/*!50100 PARTITION BY KEY (col3) PARTITIONS 5 */")
 	result = tk.MustQuery("show create table tkey10")
@@ -2090,6 +2094,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY KEY (`col3`) PARTITIONS 5"))
 
+	// It ignores /*!50100 */ format, but doesn't ignore specified partition names
 	tk.MustExec("CREATE TABLE tkey11 (`col1` int, `col2` char(5),`col3` date)" +
 		"/*!50100 PARTITION BY KEY (col1) PARTITIONS 4 \n" +
 		"(PARTITION `pp0`,\n" +
@@ -2109,6 +2114,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		" PARTITION `pp2`,\n" +
 		" PARTITION `pp3`)"))
 
+	// It shows the comment defined in the ddl
 	tk.MustExec("CREATE TABLE tkey12 (`col1` int, `col2` char(5),`col3` date)" +
 		"PARTITION BY KEY (col1) \n" +
 		"(PARTITION `pp0` comment 'huaian',\n" +
@@ -2127,6 +2133,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		" PARTITION `pp2` COMMENT 'zhenjiang',\n" +
 		" PARTITION `pp3` COMMENT 'suzhou')"))
 
+	// It shows the placement policy defined in the ddl
 	tk.MustExec("drop placement policy if exists fivereplicas")
 	tk.MustExec("CREATE PLACEMENT POLICY fivereplicas FOLLOWERS=4")
 	tk.MustExec("CREATE TABLE tkey13 (`col1` int, `col2` char(5),`col3` date) placement policy fivereplicas\n" +
@@ -2139,6 +2146,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fivereplicas` */\n" +
 		"PARTITION BY KEY (`col1`) PARTITIONS 4"))
 
+	// The partition column can has null value
 	tk.MustExec("CREATE TABLE tkey14 (`col1` int, `col2` int,`col3` int, col4 int)\n" +
 		"PARTITION BY KEY (col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey14 values(20,1,1,1),(1,2,NULL,2),(3,3,3,3),(3,3,NULL,3),(4,4,4,4),(5,5,5,5),(6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,null,14)")
@@ -2154,6 +2162,12 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey15 WHERE col3 IS NULL")
 	result.CheckContains("partition:p2")
 	result.CheckNotContainMore([]string{"partition:p0", "partition:p1", "partition:p3"})
+
+	// This tests caculating the boundary partition ID when it prunes partition table
+	tk.MustExec("create table tkey16 (a int) partition by key (a) partitions 12")
+	tk.MustExec("insert into tkey16 values (0), (1), (2), (3)")
+	tk.MustExec("insert into tkey16 select a + 4 from tkey16")
+	tk.MustExec("insert into tkey16 select a + 8 from tkey16")
 }
 
 func TestIssue31721(t *testing.T) {
