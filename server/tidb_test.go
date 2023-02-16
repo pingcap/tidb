@@ -2972,12 +2972,14 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 
 	rs, err := conn.QueryContext(context.Background(), "show tables in test")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
 	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
 	require.NoError(t, err)
