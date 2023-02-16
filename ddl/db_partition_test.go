@@ -4537,8 +4537,6 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
 
-<<<<<<< HEAD
-=======
 func TestIssue40135Ver2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4576,26 +4574,6 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("admin check table t40135")
 }
 
-func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
-	t.Skip("waiting for supporting Modify Partition Column again")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "truncWarn"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`set sql_mode = default`)
-	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
-	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
-	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
-	tk.MustExec(`set sql_mode = ''`)
-	tk.MustExec(`alter table t modify a varchar(5)`)
-	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
-}
-
->>>>>>> a2e1e9bfea (ddl: Block change column on partitioned table if data needs change. (#40631))
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
