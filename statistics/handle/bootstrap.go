@@ -240,7 +240,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 
 func (h *Handle) initStatsTopN(cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value, count from mysql.stats_top_n where is_index = 1"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value, count from mysql.stats_top_n"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
