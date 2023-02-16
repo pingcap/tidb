@@ -842,3 +842,15 @@ func TestPointGetIssue40194(t *testing.T) {
 	tk2.MustExec("update t1 set v=v+1")
 	tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
 }
+
+func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where a = 1 for update")
+	tk.MustExec("commit")
+}
