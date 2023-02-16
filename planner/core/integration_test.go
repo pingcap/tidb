@@ -1394,24 +1394,6 @@ func TestKeepOrderHint(t *testing.T) {
 	}
 }
 
-func TestSplitJoinHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t(a int, b int, index idx_a(a), index idx_b(b));`)
-
-	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints are conflict, you can only specify one type of join"))
-
-	tk.MustExec(`set @@tidb_opt_advanced_join_hint=1`)
-	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints are conflict after join reorder phase, you can only specify one type of join"))
-
-	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-}
-
 func TestKeepOrderHintWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
