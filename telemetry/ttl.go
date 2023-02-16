@@ -36,7 +36,8 @@ const (
 		FROM
 		    mysql.tidb_ttl_job_history
 		WHERE
-		    create_time >= CURDATE() - INTERVAL 7 DAY
+			status != 'running'
+		    AND create_time >= CURDATE() - INTERVAL 7 DAY
 			AND finish_time >= CURDATE() - INTERVAL 1 DAY
 			AND finish_time < CURDATE()
 		GROUP BY parent_table_id;`

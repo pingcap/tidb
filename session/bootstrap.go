@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -793,11 +794,21 @@ const (
 	version111 = 111
 	// version112 modifies the view tidb_mdl_view
 	version112 = 112
+	// ...
+	// [version113, version119] is the version range reserved for patches of 6.5.x
+	// ...
+	// version113 sets tidb_server_memory_limit to "80%"
+	version113 = 113
+	// version120 modifies the following global variables default value:
+	// - foreign_key_checks: off -> on
+	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
+	version120 = 120
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version112
+var currentBootstrapVersion int64 = version120
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -917,6 +928,8 @@ var (
 		upgradeToVer110,
 		upgradeToVer111,
 		upgradeToVer112,
+		upgradeToVer113,
+		upgradeToVer120,
 	}
 )
 
@@ -2284,6 +2297,25 @@ func upgradeToVer112(s Session, ver int64) {
 	doReentrantDDL(s, CreateMDLView)
 }
 
+func upgradeToVer113(s Session, ver int64) {
+	if ver >= version113 {
+		return
+	}
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+}
+
+func upgradeToVer120(s Session, ver int64) {
+	if ver >= version120 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2490,6 +2522,13 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
 		}
+
+		failpoint.Inject("enableAggressiveLockingOnBootstrap", func() {
+			if v.Name == variable.TiDBPessimisticTransactionAggressiveLocking {
+				vVal = variable.On
+			}
+		})
+
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
@@ -2555,7 +2594,7 @@ func oldPasswordUpgrade(pass string) (string, error) {
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
 func rebuildAllPartitionValueMapAndSorted(s *session) {
 	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
@@ -2567,12 +2606,9 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 				continue
 			}
 
-			pe, err := t.(partitionExpr).PartitionExpr()
-			if err != nil {
-				panic("partition table gets partition expression failed")
-			}
+			pe := t.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
-				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
+				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
 					break
 				}

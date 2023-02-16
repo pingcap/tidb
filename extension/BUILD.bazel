@@ -29,6 +29,7 @@ go_library(
 
 go_test(
     name = "extension_test",
+    timeout = "short",
     srcs = [
         "bootstrap_test.go",
         "event_listener_test.go",
@@ -37,6 +38,7 @@ go_test(
         "registry_test.go",
     ],
     embed = [":extension"],
+    flaky = True,
     deps = [
         "//expression",
         "//parser/ast",

@@ -806,6 +806,9 @@ const (
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 )
 
 // TiDB vars that have only global scope
@@ -916,6 +919,16 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
+	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
+	TiDBStmtSummaryFilename = "tidb_stmt_summary_filename"
+	// TiDBStmtSummaryFileMaxDays indicates how many days the files written by stmtsummary will be kept.
+	TiDBStmtSummaryFileMaxDays = "tidb_stmt_summary_file_max_days"
+	// TiDBStmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file written by stmtsummary.
+	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
+	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
+	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
 )
 
 // TiDB intentional limits
@@ -1047,7 +1060,7 @@ const (
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
-	DefTiDBEnableTelemetry                         = true
+	DefTiDBEnableTelemetry                         = false
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
@@ -1168,7 +1181,7 @@ const (
 	DefTiDBTTLDeleteRateLimit                              = 0
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBStoreBatchSize                                  = 4
 	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture                 = false
 	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"

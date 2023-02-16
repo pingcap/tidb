@@ -283,6 +283,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
+	case kv.RequestSourceInternal:
+		return txn.RequestSourceInternal
 	case kv.RequestSourceType:
 		return txn.RequestSourceType
 	default:
