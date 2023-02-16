@@ -4126,13 +4126,12 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	// Key type partition cannot be constructed currently, ignoring it for now.
 	case model.PartitionTypeKey:
+		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
-
-	return errors.Trace(err)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {

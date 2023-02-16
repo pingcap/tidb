@@ -469,15 +469,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
-	mask := uint64(1)
-	for mask < s.Num {
-		mask <<= 1
-	}
+
 	pi := &model.PartitionInfo{
-		Type:     s.Tp,
-		Enable:   enable,
-		Num:      s.Num,
-		HashMask: mask - 1,
+		Type:   s.Tp,
+		Enable: enable,
+		Num:    s.Num,
 	}
 	tbInfo.Partition = pi
 	if s.Expr != nil {

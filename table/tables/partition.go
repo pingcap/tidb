@@ -306,13 +306,7 @@ func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
 		}
 		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
-
-	partID := nr1 & pi.HashMask
-	if partID >= pi.Num {
-		newmask := ((pi.HashMask + 1) >> 1) - 1
-		partID = nr1 & newmask
-	}
-
+	partID := nr1 % pi.Num
 	return int(partID), nil
 }
 

@@ -2197,7 +2197,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 		"col4 INT NOT NULL," +
 		"primary KEY (col1,col3)\n" +
 		")" +
-		"PARTITION BY HASH(col3) PARTITIONS 4")
+		"PARTITION BY KEY(col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey14 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 
 	tk.MustExec("CREATE TABLE tkey15 (\n" +
@@ -2216,7 +2216,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 		"col4 INT NOT NULL," +
 		"primary KEY (col1,col3)\n" +
 		")" +
-		"PARTITION BY HASH(col3) PARTITIONS 4")
+		"PARTITION BY KEY(col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey16 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 
 	err := tk.ExecToErr("ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4")
@@ -2237,12 +2237,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 	err = tk.ExecToErr("ALTER TABLE tkey14 REBUILD PARTITION p2")
 	require.Regexp(t, "Unsupported rebuild partition", err)
 	err = tk.ExecToErr("ALTER TABLE tkey14 EXCHANGE PARTITION p3 WITH TABLE tkey15")
-	require.Regexp(t, "Found a row that does not match the partition", err)
-
-	tk.MustExec("DELETE FROM tkey15")
-	tk.MustExec("INSERT INTO tkey15 VALUES(11,11,11,6)")
-	tk.MustExec("ALTER TABLE tkey14 EXCHANGE PARTITION p3 WITH TABLE tkey15")
-	tk.MustQuery("SELECT * FROM tkey14 partition(p3)").Check(testkit.Rows("11 11 11 6"))
+	require.Regexp(t, "Unsupported partition type of table tkey14 when exchanging partition", err)
 
 	err = tk.ExecToErr("ALTER TABLE tkey16 REORGANIZE PARTITION")
 	require.Regexp(t, "Unsupported reorganize partition", err)
