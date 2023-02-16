@@ -467,7 +467,7 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -482,7 +482,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}
@@ -533,7 +533,7 @@ func collectAllowFuncName4ExpressionIndex() string {
 }
 
 func updatePasswordValidationLength(s *SessionVars, length int32) error {
-	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10))
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
 	if err != nil {
 		return err
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -48,7 +49,7 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("insert t values (1, 2);")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 
 	ct := testNewContext(store)
 	// set up hook
@@ -149,7 +150,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	tk.MustExec("create table t (a bigint primary key clustered AUTO_RANDOM(5));")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 
 	var errCount int32 = 3
 	var genAutoRandErr error
@@ -438,6 +439,15 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 	return ctx
 }
 
+func TestIssue40150(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2")
+	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
 func TestIssue40135(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -448,7 +458,7 @@ func TestIssue40135(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE t40135 ( a tinyint DEFAULT NULL, b varchar(32) DEFAULT 'md') PARTITION BY HASH (a) PARTITIONS 2")
 	one := true
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if one {
@@ -459,5 +469,5 @@ func TestIssue40135(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
 
-	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }

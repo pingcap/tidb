@@ -106,7 +106,7 @@ func CheckDataConsistency(
 	// }
 
 	if rowInsertion.key != nil {
-		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta().Name.O); err != nil {
+		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -123,7 +123,7 @@ func CheckDataConsistency(
 // in row insertions and index insertions are consistent.
 // A PUT_index implies a PUT_row with the same handle.
 // Deletions are not checked since the values of deletions are unknown
-func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, tableName string) error {
+func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, tblInfo *model.TableInfo) error {
 	var insertionHandle kv.Handle
 	var err error
 
@@ -154,7 +154,18 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			indexHandle kv.Handle
 		)
 		if idxID != m.indexID {
-			value = tablecodec.DecodeTempIndexOriginValue(m.value)
+			if tablecodec.TempIndexValueIsUntouched(m.value) {
+				// We never commit the untouched key values to the storage. Skip this check.
+				continue
+			}
+			var tempIdxVal tablecodec.TempIndexValue
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value, tblInfo.IsCommonHandle)
+			if err != nil {
+				return err
+			}
+			if !tempIdxVal.IsEmpty() {
+				value = tempIdxVal.Current().Value
+			}
 			if len(value) == 0 {
 				// Skip the deleted operation values.
 				continue
@@ -170,7 +181,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		}
 		// NOTE: handle type can be different, see issue 29520
 		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
-			err = ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
+			err = ErrInconsistentHandle.GenWithStackByArgs(tblInfo.Name, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
 			logutil.BgLogger().Error("inconsistent handle in index and record insertions", zap.Error(err))
 			return err
 		}
@@ -209,9 +220,20 @@ func checkIndexKeys(
 			return errors.New("index not found")
 		}
 
+		var isTmpIdxValAndDeleted bool
 		// If this is temp index data, need remove last byte of index data.
 		if idxID != m.indexID {
-			value = append(value, m.value[:len(m.value)-1]...)
+			if tablecodec.TempIndexValueIsUntouched(m.value) {
+				// We never commit the untouched key values to the storage. Skip this check.
+				continue
+			}
+			tmpVal, err := tablecodec.DecodeTempIndexValue(m.value, t.Meta().IsCommonHandle)
+			if err != nil {
+				return err
+			}
+			curElem := tmpVal.Current()
+			isTmpIdxValAndDeleted = curElem.Delete
+			value = append(value, curElem.Value...)
 		} else {
 			value = append(value, m.value...)
 		}
@@ -236,7 +258,7 @@ func checkIndexKeys(
 		}
 
 		for i, v := range decodedIndexValues {
-			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
+			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
@@ -245,7 +267,7 @@ func checkIndexKeys(
 		}
 
 		// When it is in add index new backfill state.
-		if len(value) == 0 || (idxID != m.indexID && (tablecodec.CheckTempIndexValueIsDelete(value))) {
+		if len(value) == 0 || isTmpIdxValAndDeleted {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
@@ -347,7 +369,9 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -362,6 +386,30 @@ func compareIndexData(
 		}
 	}
 	return nil
+}
+
+// CompareIndexAndVal compare index valued and row value.
+func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+	var cmpRes int
+	var err error
+	if cmpMVIndex {
+		// If it is multi-valued index, we should check the JSON contains the indexed value.
+		bj := rowVal.GetMysqlJSON()
+		count := bj.GetElemCount()
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
+			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			if cmpRes == 0 {
+				break
+			}
+		}
+	} else {
+		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
+	}
+	return cmpRes, err
 }
 
 // getColumnMaps tries to get the columnMaps from transaction options. If there isn't one, it builds one and stores it.

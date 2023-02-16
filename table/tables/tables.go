@@ -27,7 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -57,6 +57,7 @@ import (
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
+	// TODO: Why do we need tableID, when it is already in meta.ID ?
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID                 int64
@@ -233,6 +234,11 @@ func (t *TableCommon) Meta() *model.TableInfo {
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (t *TableCommon) GetPhysicalID() int64 {
 	return t.physicalTableID
+}
+
+// GetPartitionedTable implements table.Table GetPhysicalID interface.
+func (t *TableCommon) GetPartitionedTable() table.PartitionedTable {
+	return nil
 }
 
 type getColsMode int64
@@ -700,11 +706,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var ctx context.Context
 	if opt.Ctx != nil {
 		ctx = opt.Ctx
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("table.AddRecord", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "table.AddRecord")
+		defer r.End()
 	} else {
 		ctx = context.Background()
 	}
@@ -925,6 +929,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		if err != nil {
 			return nil, err
 		}
+	}
+	if shouldIncreaseTTLMetricCount(t.meta) {
+		sctx.GetSessionVars().TxnCtx.InsertTTLRowsCount += 1
 	}
 	if sessVars.TxnCtx == nil {
 		return recordID, nil
@@ -1304,9 +1311,32 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 			}
 		}
 	})
-	err = txn.SetAssertion(key, kv.SetAssertExist)
-	if err != nil {
-		return err
+	doAssert := true
+	p := t.Meta().Partition
+	if p != nil {
+		// This disables asserting during Reorganize Partition.
+		switch ctx.GetSessionVars().AssertionLevel {
+		case variable.AssertionLevelFast:
+			// Fast option, just skip assertion for all partitions.
+			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
+				doAssert = false
+			}
+		case variable.AssertionLevelStrict:
+			// Strict, only disable assertion for intermediate partitions.
+			// If there were an easy way to get from a TableCommon back to the partitioned table...
+			for i := range p.AddingDefinitions {
+				if t.physicalTableID == p.AddingDefinitions[i].ID {
+					doAssert = false
+					break
+				}
+			}
+		}
+	}
+	if doAssert {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+		if err != nil {
+			return err
+		}
 	}
 	return txn.Delete(key)
 }
@@ -1592,6 +1622,10 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
+}
+
+func shouldIncreaseTTLMetricCount(tblInfo *model.TableInfo) bool {
+	return tblInfo.TTLInfo != nil
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
@@ -1948,7 +1982,7 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.TableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
 		PrimaryColumnIds: pkColIds,
 	}
 	if tableInfo.IsCommonHandle {
@@ -1962,7 +1996,7 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
 		PrimaryColumnIds: pkColIds,
 		IsFastScan:       &fastScan,
 	}

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1337,4 +1338,66 @@ PARTITION BY LIST COLUMNS(c_int)
 	tk.MustExec("begin")
 	tk.MustExec("delete t1, t2 from t1, t2 where t1.c_enum in ('blue');")
 	tk.MustExec("commit")
+}
+
+func TestIssue40158(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (_id int PRIMARY KEY, c1 char, index (c1));")
+	tk.MustExec("insert into t1 values (1, null);")
+	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
+}
+
+func TestIssue40596(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  c1 double DEFAULT '1.335088259490289',
+  c2 set('mj','4s7ht','z','3i','b26','9','cg11','uvzcp','c','ns','fl9') NOT NULL DEFAULT 'mj,z,3i,9,cg11,c',
+  PRIMARY KEY (c2) /*T![clustered_index] CLUSTERED */,
+  KEY i1 (c1),
+  KEY i2 (c1),
+  KEY i3 (c1)
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;`)
+	tk.MustExec("INSERT INTO t1 VALUES (634.2783557491367,''),(2000.5041449792013,'4s7ht'),(634.2783557491367,'3i'),(634.2783557491367,'9'),(7803.173688589342,'uvzcp'),(634.2783557491367,'ns'),(634.2783557491367,'fl9');")
+	tk.MustExec(`CREATE TABLE t2 (
+  c3 decimal(56,16) DEFAULT '931359772706767457132645278260455518957.9866038319986886',
+  c4 set('3bqx','g','6op3','2g','jf','arkd3','y0b','jdy','1g','ff5z','224b') DEFAULT '3bqx,2g,ff5z,224b',
+  c5 smallint(6) NOT NULL DEFAULT '-25973',
+  c6 year(4) DEFAULT '2122',
+  c7 text DEFAULT NULL,
+  PRIMARY KEY (c5) /*T![clustered_index] CLUSTERED */,
+  KEY i4 (c6),
+  KEY i5 (c5)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT=''
+PARTITION BY HASH (c5) PARTITIONS 4;`)
+	tk.MustExec("INSERT INTO t2 VALUES (465.0000000000000000,'jdy',-8542,2008,'FgZXe');")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+
+	// No nil pointer panic
+	tk.MustQuery("select    /*+ inl_join( t1 , t2 ) */ avg(   t2.c5 ) as r0 , repeat( t2.c7 , t2.c5 ) as r1 , locate( t2.c7 , t2.c7 ) as r2 , unhex( t1.c1 ) as r3 from t1 right join t2 on t1.c2 = t2.c5 where not( t2.c5 in ( -7860 ,-13384 ,-12940 ) ) and not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	// Again, a simpler reproduce.
+	tk.MustQuery("select /*+ inl_join (t1, t2) */ t2.c5 from t1 right join t2 on t1.c2 = t2.c5 where not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows())
+}
+
+func TestIssueRaceWhenBuildingExecutorConcurrently(t *testing.T) {
+	// issue: https://github.com/pingcap/tidb/issues/41412
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
+	for i := 0; i < 2000; i++ {
+		v := i * 100
+		tk.MustExec("insert into t values(?, ?, ?)", v, v, v)
+	}
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t t1 right join t t2 on t1.a = t2.b and t1.c = t2.c")
 }

@@ -107,8 +107,9 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			// hidden variable
-			inSessionStates: false,
+			inSessionStates: true,
 			varName:         variable.TiDBTxnReadTS,
+			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
@@ -1250,6 +1251,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop table test.t1")
+			},
+		},
+		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
 			},
 		},
 		{

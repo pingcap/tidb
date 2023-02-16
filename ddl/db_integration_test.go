@@ -26,8 +26,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -686,7 +687,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -1214,14 +1215,14 @@ func TestBitDefaultValue(t *testing.T) {
 	);`)
 }
 
-func backgroundExec(s kv.Storage, sql string, done chan error) {
+func backgroundExec(s kv.Storage, schema, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use "+schema)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -2371,6 +2372,43 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 	// NOTE (#18150): In creating generated column, row value is not allowed.
 	tk.MustGetErrCode("create table t (a int, b int as ((a, a)))", errno.ErrGeneratedColumnRowValueIsNotAllowed)
 	tk.MustExec("create table t (a int, b int as ((a)))")
+}
+
+func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int, b int as (lower(test.t.a)))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t add column b int as (lower(test.t.a))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustGetErrCode("alter table t add index idx((lower(test.t1.a)))", errno.ErrBadField)
+
+	tk.MustExec("drop table t")
+	tk.MustGetErrCode("create table t(a int, b int as (lower(test1.t.a)))", errno.ErrWrongDBName)
+
+	tk.MustExec("create table t(a int)")
+	tk.MustGetErrCode("alter table t add column b int as (lower(test.t1.a))", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column c int")
+	tk.MustGetErrCode("alter table t modify column c int as (test.t1.a + 1) stored", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column d int as (lower(test.T.a))")
+	tk.MustExec("alter table t add column e int as (lower(Test.t.a))")
 }
 
 func TestParserIssue284(t *testing.T) {
@@ -4272,4 +4310,91 @@ func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
 	tk.MustQuery("select * from reg_replace").Check(testkit.Rows("abcd bc. xzx axzx", "1234 23. xzx 1xzx"))
 
 	tk.MustExec("drop table if exists reg_like")
+}
+
+func TestReorgPartitionRangeFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create schema reorgfail`)
+	tk.MustExec("use reorgfail")
+
+	tk.MustExec("CREATE TABLE t (id int, d varchar(255)) partition by range (id) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition p2 values less than (3000000))")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (1000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (4000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+}
+
+func TestReorgPartitionDocs(t *testing.T) {
+	// To test what is added as partition management in the docs
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create schema reorgdocs`)
+	tk.MustExec("use reorgdocs")
+	tk.MustExec(`CREATE TABLE members (
+    id int,
+    fname varchar(255),
+    lname varchar(255),
+    dob date,
+    data json
+)
+PARTITION BY RANGE (YEAR(dob)) (
+ PARTITION pBefore1950 VALUES LESS THAN (1950),
+ PARTITION p1950 VALUES LESS THAN (1960),
+ PARTITION p1960 VALUES LESS THAN (1970),
+ PARTITION p1970 VALUES LESS THAN (1980),
+ PARTITION p1980 VALUES LESS THAN (1990),
+ PARTITION p1990 VALUES LESS THAN (2000))`)
+	tk.MustExec(`CREATE TABLE member_level (
+ id int,
+ level int,
+ achievements json
+)
+PARTITION BY LIST (level) (
+ PARTITION l1 VALUES IN (1),
+ PARTITION l2 VALUES IN (2),
+ PARTITION l3 VALUES IN (3),
+ PARTITION l4 VALUES IN (4),
+ PARTITION l5 VALUES IN (5));`)
+	tk.MustExec(`ALTER TABLE members DROP PARTITION p1990`)
+	tk.MustExec(`ALTER TABLE member_level DROP PARTITION l5`)
+	tk.MustExec(`ALTER TABLE members TRUNCATE PARTITION p1980`)
+	tk.MustExec(`ALTER TABLE member_level TRUNCATE PARTITION l4`)
+	tk.MustExec("ALTER TABLE members ADD PARTITION (PARTITION `p1990to2010` VALUES LESS THAN (2010))")
+	tk.MustExec(`ALTER TABLE member_level ADD PARTITION (PARTITION l5_6 VALUES IN (5,6))`)
+	tk.MustContainErrMsg(`ALTER TABLE members ADD PARTITION (PARTITION p1990 VALUES LESS THAN (2000))`, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION p1990to2010 INTO
+(PARTITION p1990 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2010),
+ PARTITION p2010 VALUES LESS THAN (2020),
+ PARTITION p2020 VALUES LESS THAN (2030),
+ PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l5_6 INTO
+(PARTITION l5 VALUES IN (5),
+ PARTITION l6 VALUES IN (6))`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION pBefore1950,p1950 INTO (PARTITION pBefore1960 VALUES LESS THAN (1960))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l1,l2 INTO (PARTITION l1_2 VALUES IN (1,2))`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION pBefore1960,p1960,p1970,p1980,p1990,p2000,p2010,p2020,pMax INTO
+(PARTITION p1800 VALUES LESS THAN (1900),
+ PARTITION p1900 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2100))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l1_2,l3,l4,l5,l6 INTO
+(PARTITION lOdd VALUES IN (1,3,5),
+ PARTITION lEven VALUES IN (2,4,6))`)
+	tk.MustContainErrMsg(`ALTER TABLE members REORGANIZE PARTITION p1800,p2000 INTO (PARTITION p2000 VALUES LESS THAN (2100))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+	tk.MustExec(`INSERT INTO members VALUES (313, "John", "Doe", "2022-11-22", NULL)`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2050))`)
+	tk.MustContainErrMsg(`ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2020))`, "[table:1526]Table has no partition for value 2022")
+	tk.MustExec(`INSERT INTO member_level (id, level) values (313, 6)`)
+	tk.MustContainErrMsg(`ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4))`, "[table:1526]Table has no partition for value 6")
+}
+
+func TestDisableDDL(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/41277
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
 }

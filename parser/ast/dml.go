@@ -288,15 +288,17 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
-	// restore db name
-	if n.Schema.String() != "" {
-		ctx.WriteName(n.Schema.String())
-		ctx.WritePlain(".")
-	} else if ctx.DefaultDB != "" {
-		// Try CTE, for a CTE table name, we shouldn't write the database name.
-		if !ctx.IsCTETableName(n.Name.L) {
-			ctx.WriteName(ctx.DefaultDB)
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		// restore db name
+		if n.Schema.String() != "" {
+			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
+		} else if ctx.DefaultDB != "" {
+			// Try CTE, for a CTE table name, we shouldn't write the database name.
+			if !ctx.IsCTETableName(n.Name.L) {
+				ctx.WriteName(ctx.DefaultDB)
+				ctx.WritePlain(".")
+			}
 		}
 	}
 	// restore table name
@@ -356,6 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
+	HintOrderIndex
+	HintNoOrderIndex
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -386,6 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
+	case HintOrderIndex:
+		indexHintType = "ORDER INDEX"
+	case HintNoOrderIndex:
+		indexHintType = "NO ORDER INDEX"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
@@ -1793,18 +1801,33 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+type FileLocRefTp int
+
+const (
+	// FileLocServerOrRemote is used when there's no keywords in SQL, which means the data file should be located on the
+	// tidb-server or on remote storage (S3 for example).
+	FileLocServerOrRemote FileLocRefTp = iota
+	// FileLocClient is used when there's LOCAL keyword in SQL, which means the data file should be located on the MySQL
+	// client.
+	FileLocClient
+)
+
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data, see
+// https://github.com/pingcap/tidb/issues/40499
 type LoadDataStmt struct {
 	dmlNode
 
-	IsLocal           bool
+	FileLocRef        FileLocRefTp
 	Path              string
+	Format            string // empty only when it's CSV-like
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
+	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
 
@@ -1814,11 +1837,17 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
-	if n.IsLocal {
+	switch n.FileLocRef {
+	case FileLocServerOrRemote:
+	case FileLocClient:
 		ctx.WriteKeyWord("LOCAL ")
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.Format != "" {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(n.Format)
+	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1828,8 +1857,15 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
 	}
-	n.FieldsInfo.Restore(ctx)
-	n.LinesInfo.Restore(ctx)
+	if n.FieldsInfo != nil {
+		n.FieldsInfo.Restore(ctx)
+	}
+	if n.LinesInfo != nil {
+		n.LinesInfo.Restore(ctx)
+	}
+	if n.NullInfo != nil {
+		n.NullInfo.Restore(ctx)
+	}
 	if n.IgnoreLines != 0 {
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WritePlainf("%d", n.IgnoreLines)
@@ -1969,6 +2005,21 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// NullDefinedBy represent a syntax that extends MySQL's standard
+type NullDefinedBy struct {
+	NullDef     string
+	OptEnclosed bool
+}
+
+// Restore for NullDefinedBy
+func (n *NullDefinedBy) Restore(ctx *format.RestoreCtx) {
+	ctx.WriteKeyWord(" NULL DEFINED BY ")
+	ctx.WriteString(n.NullDef)
+	if n.OptEnclosed {
+		ctx.WriteKeyWord(" OPTIONALLY ENCLOSED")
+	}
 }
 
 // CallStmt represents a call procedure query node.
@@ -2763,6 +2814,7 @@ const (
 	ShowPlacementForPartition
 	ShowPlacementLabels
 	ShowSessionStates
+	ShowCreateResourceGroup
 )
 
 const (
@@ -2783,19 +2835,20 @@ const (
 type ShowStmt struct {
 	dmlNode
 
-	Tp          ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *TableName  // Used for showing columns.
-	Partition   model.CIStr // Used for showing partition.
-	Column      *ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int // Some flag parsed from sql, such as FULL.
-	Full        bool
-	User        *auth.UserIdentity   // Used for show grants/create user.
-	Roles       []*auth.RoleIdentity // Used for show grants .. using
-	IfNotExists bool                 // Used for `show create database if not exists`
-	Extended    bool                 // Used for `show extended columns from ...`
-	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
+	Tp                ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *TableName  // Used for showing columns.
+	Partition         model.CIStr // Used for showing partition.
+	Column            *ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string // used for showing resource group
+	Flag              int    // Some flag parsed from sql, such as FULL.
+	Full              bool
+	User              *auth.UserIdentity   // Used for show grants/create user.
+	Roles             []*auth.RoleIdentity // Used for show grants .. using
+	IfNotExists       bool                 // Used for `show create database if not exists`
+	Extended          bool                 // Used for `show extended columns from ...`
+	Limit             *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -2871,6 +2924,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowCreatePlacementPolicy:
 		ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
 		ctx.WriteName(n.DBName)
+	case ShowCreateResourceGroup:
+		ctx.WriteKeyWord("CREATE RESOURCE GROUP ")
+		ctx.WriteName(n.ResourceGroupName)
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {

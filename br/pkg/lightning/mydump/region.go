@@ -404,7 +404,9 @@ func SplitLargeFile(
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
-		columns = parser.Columns()
+		if cfg.Mydumper.CSV.HeaderSchemaMatch {
+			columns = parser.Columns()
+		}
 		startOffset, _ = parser.Pos()
 		endOffset = startOffset + maxRegionSize
 		if endOffset > dataFile.FileMeta.FileSize {
@@ -431,7 +433,7 @@ func SplitLargeFile(
 			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
 				return 0, nil, nil, err
 			}
-			pos, err := parser.ReadUntilTerminator()
+			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err

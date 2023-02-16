@@ -538,7 +538,9 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
-	if col.GetType() != mysql.TypeTimestamp && col.GetType() != mysql.TypeDatetime {
+	switch col.GetType() {
+	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
+	default:
 		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
@@ -547,29 +549,27 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 
 	// Check and get timestamp/datetime default value.
-	sc := ctx.GetSessionVars().StmtCtx
 	var needChangeTimeZone bool
+	var explicitTz *time.Location
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
 	if col.GetType() == mysql.TypeTimestamp {
 		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			needChangeTimeZone = true
-			originalTZ := sc.TimeZone
 			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
-			sc.TimeZone = timeutil.SystemLocation()
+			explicitTz = timeutil.SystemLocation()
 			if col.Version >= model.ColumnInfoVersion1 {
-				sc.TimeZone = time.UTC
+				explicitTz = time.UTC
 			}
-			defer func() { sc.TimeZone = originalTZ }()
 		}
 	}
-	value, err := expression.GetTimeValue(ctx, defaultVal, col.GetType(), col.GetDecimal())
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.GetType(), col.GetDecimal(), explicitTz)
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
-		err = t.ConvertTimeZone(sc.TimeZone, ctx.GetSessionVars().Location())
+		err = t.ConvertTimeZone(explicitTz, ctx.GetSessionVars().Location())
 		if err != nil {
 			return value, err
 		}

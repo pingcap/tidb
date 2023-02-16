@@ -8,6 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 14,
     deps = [
         "//config",
         "//ddl",
@@ -15,6 +16,7 @@ go_test(
         "//ddl/testutil",
         "//ddl/util",
         "//domain",
+        "//errno",
         "//kv",
         "//parser/model",
         "//session",

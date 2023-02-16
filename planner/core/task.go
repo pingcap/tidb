@@ -86,6 +86,7 @@ type copTask struct {
 
 	idxMergePartPlans      []PhysicalPlan
 	idxMergeIsIntersection bool
+	idxMergeAccessMVIndex  bool
 
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -688,6 +689,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			partialPlans:       t.idxMergePartPlans,
 			tablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
+			AccessMVIndex:      t.idxMergeAccessMVIndex,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
@@ -893,15 +895,6 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	return true
 }
 
-// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
-	exprs := make([]expression.Expression, 0, len(p.ByItems))
-	for _, item := range p.ByItems {
-		exprs = append(exprs, item.Expr)
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
-}
-
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
@@ -953,6 +946,56 @@ func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*
 	return true
 }
 
+// canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
+func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
+	exprs := make([]expression.Expression, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		exprs = append(exprs, item.Expr)
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
+}
+
+// containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
+func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+	for _, by := range p.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			for _, tCol := range tCols {
+				// A column with ID > 0 indicates that the column can be resolved by data source.
+				if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
+func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiKV) {
+		return false
+	}
+	if len(copTask.rootTaskConds) != 0 {
+		return false
+	}
+	if p.containVirtualColumn(copTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
+// canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
+func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+		return false
+	}
+	if p.containVirtualColumn(mppTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
@@ -960,7 +1003,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDownToTiKV(copTask) {
 		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
 		if changed {
 			return newTask
@@ -976,7 +1019,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
-	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
 	}
@@ -1030,6 +1073,10 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		return true
 	}
 	var (
+		selOnIdxScan   *PhysicalSelection
+		selOnTblScan   *PhysicalSelection
+		selSelectivity float64
+
 		idxScan *PhysicalIndexScan
 		tblScan *PhysicalTableScan
 		tblInfo *model.TableInfo
@@ -1042,6 +1089,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalIdxScanPlan := copTsk.indexPlan
 		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			selOnIdxScan, _ = finalIdxScanPlan.(*PhysicalSelection)
 			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
 		}
 		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
@@ -1054,17 +1102,23 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalTblScanPlan := copTsk.tablePlan
 		for len(finalTblScanPlan.Children()) > 0 {
+			selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
 	}
 
+	// Note that we only need to care about one Selection at most.
+	if selOnIdxScan != nil && idxScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnIdxScan.statsInfo().RowCount / idxScan.statsInfo().RowCount
+	}
+	if idxScan == nil && selOnTblScan != nil && tblScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.statsInfo().RowCount / tblScan.statsInfo().RowCount
+	}
+
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		return nil, false
-	}
-	if pi.Type == model.PartitionTypeList {
 		return nil, false
 	}
 
@@ -1075,7 +1129,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		if !propMatched {
 			return nil, false
 		}
-
 		idxScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
@@ -1085,6 +1138,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->IndexScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1103,6 +1167,8 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		}
 		tblScan.Desc = isDesc
+		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
+		tblScan.KeepOrder = true
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1111,6 +1177,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalTableScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->TableScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else {
 		return nil, false
 	}
@@ -1163,6 +1240,12 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
+			if p.TP() == plancodec.TypePartitionUnion {
+				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
+				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
+				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return invalidTask
+			}
 			return p.attach2MppTasks(tasks...)
 		}
 	}
@@ -1742,9 +1825,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
-		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
-		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+		// We use (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) to decided whether the following plan is double
+		// read with order reserved.
+		if (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) || len(cop.rootTaskConds) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {
@@ -1982,10 +2065,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
-	case NoMpp:
-		t = mpp.convertToRootTask(p.ctx)
-		attachPlan2Task(p, t)
-		return t
 	default:
 		return invalidTask
 	}
@@ -2072,6 +2151,19 @@ type mppTask struct {
 
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
+
+	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
+
+	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
+	// Planner will generate physical plan like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> PhysicalTableScan(cop tiflash)
+	// Because planner will make mppTask invalid directly then use copTask directly.
+
+	// But in DisaggregatedTiFlash mode, cop and batchCop protocol is disabled, so we have to consider this situation for mppTask.
+	// When generating PhysicalTableScan, if prop.TaskTp is RootTaskType, mppTask will be converted to rootTask,
+	// and filters in rootTaskConds will be added in a Selection which will be executed in TiDB.
+	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
+	rootTaskConds []expression.Expression
+	tblColHists   *statistics.HistColl
 }
 
 func (t *mppTask) count() float64 {
@@ -2151,6 +2243,32 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	rt := &rootTask{
 		p: p,
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
+		// so this Selection will be executed in TiDB.
+		_, isTableScan := t.p.(*PhysicalTableScan)
+		_, isSelection := t.p.(*PhysicalSelection)
+		if isSelection {
+			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+		}
+		if !isTableScan {
+			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
+			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
+			// so no other operators are added into this mppTask.
+			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
+			return invalidTask
+		}
+		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.statsInfo().Scale(selectivity), rt.p.SelectBlockOffset())
+		sel.fromDataSource = true
+		sel.SetChildren(rt.p)
+		rt.p = sel
+	}
 	return rt
 }
 
@@ -2202,6 +2320,14 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
+
+	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
+		// Use compress when exchange type is `Hash`
+		if sender.ExchangeType == tipb.ExchangeType_Hash {
+			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
+		}
+	}
+
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)

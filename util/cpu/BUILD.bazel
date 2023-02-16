@@ -18,8 +18,10 @@ go_library(
 
 go_test(
     name = "cpu_test",
+    timeout = "short",
     srcs = ["cpu_test.go"],
     embed = [":cpu"],
     flaky = True,
+    race = "on",
     deps = ["@com_github_stretchr_testify//require"],
 )

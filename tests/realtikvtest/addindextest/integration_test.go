@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
@@ -137,7 +136,63 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
+func TestIngestMVIndexOnPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 4;")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 256; i++ {
+		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
+		if i != 256-1 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
+	tk.MustExec("alter table t add index idx((cast(a as signed array)));")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 4;")
+	tk.MustExec(sb.String())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var addIndexDone atomic.Bool
+	go func() {
+		n := 10240
+		internalTK := testkit.NewTestKit(t, store)
+		internalTK.MustExec("use addindexlit;")
+
+		for i := 0; i < 1024; i++ {
+			internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
+			internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-10))
+			internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-5))
+			n++
+			if i > 256 && addIndexDone.Load() {
+				break
+			}
+		}
+		wg.Done()
+	}()
+	tk.MustExec("alter table t add index idx((cast(a as signed array)));")
+	addIndexDone.Store(true)
+	wg.Wait()
+	tk.MustExec("admin check table t")
+}
+
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
+	if variable.DDLEnableDistributeReorg.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -331,6 +386,32 @@ func TestAddIndexIngestPanicOnCopRead(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
 }
 
+func TestAddIndexIngestUniqueKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10000, 1);")
+	tk.MustExec("split table t by (5000);")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int);")
+	tk.MustExec("insert into t values ('a', 1), ('z', 1);")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int, c char(5));")
+	tk.MustExec("insert into t values ('a', 1, 'c1'), ('d', 2, 'c1'), ('x', 1, 'c2'), ('z', 1, 'c1');")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b, c);", "[kv:1062]Duplicate entry '1-c1' for key 't.idx'")
+}
+
 func TestAddIndexIngestCancel(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -348,7 +429,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 			return
 		}
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "addindexlit", "t", "idx")
+			idx := testutil.FindIdxInfo(dom, "addindexlit", "t", "idx")
 			if idx == nil {
 				return
 			}
@@ -368,6 +449,29 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	require.Empty(t, ingest.LitBackCtxMgr.Keys())
 }
 
+func TestAddIndexSplitTableRanges(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+
+	ddl.SetBackfillTaskChanSizeForTest(4)
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(7)
+	tk.MustExec("alter table t add index idx_2(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(1024)
+}
+
 type testCallback struct {
 	ddl.Callback
 	OnJobRunBeforeExported func(job *model.Job)
@@ -385,13 +489,4 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	if c.OnJobRunBeforeExported != nil {
 		c.OnJobRunBeforeExported(job)
 	}
-}
-
-func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
-	if err != nil {
-		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
-		return nil
-	}
-	return tbl.Meta().FindIndexByName(idxName)
 }

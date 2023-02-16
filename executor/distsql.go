@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -75,7 +76,9 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
-	doneCh chan error
+	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
+	buildDoneTime time.Time
+	doneCh        chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
@@ -789,12 +792,31 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
+	var (
+		enableStats         = e.stats != nil
+		start               time.Time
+		indexFetchedInstant time.Time
+	)
+	if enableStats {
+		start = time.Now()
+	}
 	task, ok := <-e.resultCh
 	if !ok {
 		return nil, nil
 	}
+	if enableStats {
+		indexFetchedInstant = time.Now()
+	}
 	if err := <-task.doneCh; err != nil {
 		return nil, err
+	}
+	if enableStats {
+		e.stats.NextWaitIndexScan += indexFetchedInstant.Sub(start)
+		if task.buildDoneTime.After(indexFetchedInstant) {
+			e.stats.NextWaitTableLookUpBuild += task.buildDoneTime.Sub(indexFetchedInstant)
+			indexFetchedInstant = task.buildDoneTime
+		}
+		e.stats.NextWaitTableLookUpResp += time.Since(indexFetchedInstant)
 	}
 
 	// Release the memory usage of last task before we handle a new task.
@@ -1118,6 +1140,10 @@ type IndexLookUpRunTimeStats struct {
 	TableRowScan        int64
 	TableTaskNum        int64
 	Concurrency         int
+	// Record the `Next` call affected wait duration details.
+	NextWaitIndexScan        time.Duration
+	NextWaitTableLookUpBuild time.Duration
+	NextWaitTableLookUpResp  time.Duration
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
@@ -1141,6 +1167,15 @@ func (e *IndexLookUpRunTimeStats) String() string {
 		}
 		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
 	}
+	if e.NextWaitIndexScan > 0 || e.NextWaitTableLookUpBuild > 0 || e.NextWaitTableLookUpResp > 0 {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+			fmt.Fprintf(&buf, " next: {wait_index: %s, wait_table_lookup_build: %s, wait_table_lookup_resp: %s}",
+				execdetails.FormatDuration(e.NextWaitIndexScan),
+				execdetails.FormatDuration(e.NextWaitTableLookUpBuild),
+				execdetails.FormatDuration(e.NextWaitTableLookUpResp))
+		}
+	}
 	return buf.String()
 }
 
@@ -1161,6 +1196,9 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
+	e.NextWaitIndexScan += tmp.NextWaitIndexScan
+	e.NextWaitTableLookUpBuild += tmp.NextWaitTableLookUpBuild
+	e.NextWaitTableLookUpResp += tmp.NextWaitTableLookUpResp
 }
 
 // Tp implements the RuntimeStats interface.
@@ -1254,36 +1292,27 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
 			for i := range vals {
 				col := w.idxTblCols[i]
-				tp := &col.FieldType
-				idxVal := idxRow.GetDatum(i, tp)
+				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])
+				cmpRes, err := tables.CompareIndexAndVal(sctx, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
 				if err != nil {
-					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
-					for _, c := range w.idxTblCols {
-						fts = append(fts, &c.FieldType)
-					}
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,
 						col.Name.O,
-						idxRow.GetDatum(i, tp),
+						idxVal,
 						vals[i],
 						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
 					)
 				}
 				if cmpRes != 0 {
-					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
-					for _, c := range w.idxTblCols {
-						fts = append(fts, &c.FieldType)
-					}
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,
 						col.Name.O,
-						idxRow.GetDatum(i, tp),
+						idxRow.GetDatum(i, w.idxColTps[i]),
 						vals[i],
 						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
 					)
 				}
 			}
@@ -1308,6 +1337,7 @@ func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
+	task.buildDoneTime = time.Now()
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err

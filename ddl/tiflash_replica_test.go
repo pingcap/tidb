@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -286,7 +286,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
@@ -303,7 +303,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 			}
 
 			onceChecker.Store(job.ID, true)
-			go backgroundExec(store, "create table t2 like t1", doneCh)
+			go backgroundExec(store, "test", "create table t2 like t1", doneCh)
 		}
 	}
 	originalHook := dom.DDL().GetHook()

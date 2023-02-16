@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	field_types "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -946,7 +948,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetType()) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal())
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -971,7 +973,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal())
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -1082,7 +1084,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 		for _, v := range colDef.Options {
@@ -1142,7 +1144,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames := findDependedColumnNames(colDef)
+				_, dependColNames, err := findDependedColumnNames(model.NewCIStr(""), model.NewCIStr(""), colDef)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 				col.Dependences = dependColNames
 			case ast.ColumnOptionCollate:
 				if field_types.HasCharset(colDef.Tp) {
@@ -1165,7 +1170,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (interface{}, bool, error) {
 	switch expr.FnName.L {
-	case ast.CurrentTimestamp:
+	case ast.CurrentTimestamp, ast.CurrentDate:
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 			defaultFsp := 0
@@ -1218,8 +1223,8 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// If the function call is ast.CurrentTimestamp, it needs to be continuously processed.
 	}
 
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1561,7 +1566,7 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return false
 }
 
-func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx sessionctx.Context, schemaName model.CIStr, tableName model.CIStr, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -1576,7 +1581,10 @@ func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) erro
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
-		generated, depCols := findDependedColumnNames(colDef)
+		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
 				position:  i,
@@ -2094,7 +2102,7 @@ func CheckTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2548,6 +2556,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) error {
+	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+		injectBatchSize := val.(int)
+		if len(infos) > injectBatchSize {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
@@ -2744,7 +2758,9 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			variable.Off, /* tidb_super_read_only */
 			0,            /* totalRegions */
 			0,            /* startTS */
-			0 /* commitTS */},
+			0,            /* commitTS */
+			variable.On,  /* tidb_ttl_job_enable */
+			[]kv.KeyRange{} /* flashback key_ranges */},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3016,15 +3032,44 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 		placementSettings.FollowerConstraints = stringVal
 	case ast.PlacementOptionVoterConstraints:
 		placementSettings.VoterConstraints = stringVal
+	case ast.PlacementOptionSurvivalPreferences:
+		placementSettings.SurvivalPreferences = stringVal
 	default:
 		return errors.Trace(errors.New("unknown placement policy option"))
 	}
 	return nil
 }
 
+// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
+	switch typ {
+	case ast.ResourceRURate:
+		resourceGroupSettings.RURate = uintVal
+	case ast.ResourceUnitCPU:
+		resourceGroupSettings.CPULimiter = stringVal
+	case ast.ResourceUnitIOReadBandwidth:
+		resourceGroupSettings.IOReadBandwidth = stringVal
+	case ast.ResourceUnitIOWriteBandwidth:
+		resourceGroupSettings.IOWriteBandwidth = stringVal
+	case ast.ResourceBurstableOpiton:
+		// Some about BurstLimit(b):
+		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
+		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
+		//   - If b > 0, that means the limiter is limited capacity. (current not used).
+		limit := int64(0)
+		if boolValue {
+			limit = -1
+		}
+		resourceGroupSettings.BurstLimit = limit
+	default:
+		return errors.Trace(errors.New("unknown resource unit type"))
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
-	var handledTTLOrTTLEnable bool
+	var ttlOptionsHandled bool
 
 	for _, op := range options {
 		switch op.Tp {
@@ -3062,23 +3107,28 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
 			}
-		case ast.TableOptionTTL, ast.TableOptionTTLEnable:
-			if handledTTLOrTTLEnable {
+		case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
+			if ttlOptionsHandled {
 				continue
 			}
 
-			ttlInfo, ttlEnable, err := getTTLInfoInOptions(options)
+			ttlInfo, ttlEnable, ttlJobInterval, err := getTTLInfoInOptions(options)
 			if err != nil {
 				return err
 			}
 			// It's impossible that `ttlInfo` and `ttlEnable` are all nil, because we have met this option.
 			// After exclude the situation `ttlInfo == nil && ttlEnable != nil`, we could say `ttlInfo != nil`
-			if ttlInfo == nil && ttlEnable != nil {
-				return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			if ttlInfo == nil {
+				if ttlEnable != nil {
+					return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_ENABLE"))
+				}
+				if ttlJobInterval != nil {
+					return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
+				}
 			}
 
 			tbInfo.TTLInfo = ttlInfo
-			handledTTLOrTTLEnable = true
+			ttlOptionsHandled = true
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -3278,7 +3328,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
-		var handledTTLOrTTLEnable bool
+		var ttlOptionsHandled bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
@@ -3287,7 +3337,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
-			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+			err = d.ReorganizePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizeFirstPartition:
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
 		case ast.AlterTableReorganizeLastPartition:
@@ -3415,20 +3465,21 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						Name: model.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
-				case ast.TableOptionTTL, ast.TableOptionTTLEnable:
+				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
+					var ttlJobInterval *string
 
-					if handledTTLOrTTLEnable {
+					if ttlOptionsHandled {
 						continue
 					}
-					ttlInfo, ttlEnable, err = getTTLInfoInOptions(spec.Options)
+					ttlInfo, ttlEnable, ttlJobInterval, err = getTTLInfoInOptions(spec.Options)
 					if err != nil {
 						return err
 					}
-					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable)
+					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
-					handledTTLOrTTLEnable = true
+					ttlOptionsHandled = true
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -3672,7 +3723,10 @@ func CreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo,
 				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
-			_, dependColNames := findDependedColumnNames(specNewColumn)
+			_, dependColNames, err := findDependedColumnNames(schema.Name, t.Meta().Name, specNewColumn)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
 				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
@@ -3857,6 +3911,181 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// getReorganizedDefinitions return the definitions as they would look like after the REORGANIZE PARTITION is done.
+func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) []model.PartitionDefinition {
+	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
+	if pi.Type == model.PartitionTypeList {
+		replaced := false
+		for i := range pi.Definitions {
+			if _, ok := idMap[i]; ok {
+				if !replaced {
+					tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+					replaced = true
+				}
+				continue
+			}
+			tmpDefs = append(tmpDefs, pi.Definitions[i])
+		}
+		if !replaced {
+			// For safety, for future non-partitioned table -> partitioned
+			tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+		}
+		return tmpDefs
+	}
+	// Range
+	tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
+	tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+	if len(pi.Definitions) > (lastPartIdx + 1) {
+		tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
+	}
+	return tmpDefs
+}
+
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
+	idMap := make(map[int]struct{})
+	var firstPartIdx, lastPartIdx = -1, -1
+	for _, name := range names {
+		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		if partIdx == -1 {
+			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
+		}
+		if _, ok := idMap[partIdx]; ok {
+			return 0, 0, nil, errors.Trace(dbterror.ErrSameNamePartition)
+		}
+		idMap[partIdx] = struct{}{}
+		if firstPartIdx == -1 {
+			firstPartIdx = partIdx
+		} else {
+			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+		}
+		if lastPartIdx == -1 {
+			lastPartIdx = partIdx
+		} else {
+			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+		}
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
+		}
+	}
+
+	return firstPartIdx, lastPartIdx, idMap, nil
+}
+
+// ReorganizePartitions reorganize one set of partitions to a new set of partitions.
+func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	switch pi.Type {
+	case model.PartitionTypeRange, model.PartitionTypeList:
+	default:
+		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+		return errors.Trace(err)
+	}
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionReorganizePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.PartitionNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	pi := tblInfo.Partition
+	clonedMeta := tblInfo.Clone()
+	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if lastPartIdx == len(pi.Definitions)-1 {
+			// Last partition dropped, OK to change the end range
+			// Also includes MAXVALUE
+			return nil
+		}
+		// Check if the replaced end range is the same as before
+		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+		lastOldPartition := pi.Definitions[lastPartIdx]
+		if len(pi.Columns) > 0 {
+			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if newGtOld {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if oldGtNew {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			return nil
+		}
+
+		isUnsigned := isPartExprUnsigned(tblInfo)
+		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if currentRangeValue != newRangeValue {
+			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+		}
+	}
+	return nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
@@ -4306,6 +4535,9 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
+	if err = checkDropColumnWithPartitionConstraint(t, colName); err != nil {
+		return false, errors.Trace(err)
+	}
 	// Check the column with foreign key.
 	err = checkDropColumnWithForeignKeyConstraint(is, schema.Name.L, tblInfo, colName.L)
 	if err != nil {
@@ -4324,6 +4556,24 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
 	return true, nil
+}
+
+// checkDropColumnWithPartitionConstraint is used to check the partition constraint of the drop column.
+func checkDropColumnWithPartitionConstraint(t table.Table, colName model.CIStr) error {
+	if t.Meta().Partition == nil {
+		return nil
+	}
+	pt, ok := t.(table.PartitionedTable)
+	if !ok {
+		// Should never happen!
+		return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
+	}
+	for _, name := range pt.GetPartitionColumnNames() {
+		if strings.EqualFold(name.L, colName.L) {
+			return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
+		}
+	}
+	return nil
 }
 
 func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
@@ -4464,7 +4714,7 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool
@@ -4713,7 +4963,7 @@ func GetModifiableColumnJob(
 			// TODO: update the partitioning columns with new names if column is renamed
 			// Would be an extension from MySQL which does not support it.
 			if col.Name.L != newCol.Name.L {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("Column '%s' has a partitioning function dependency and cannot be renamed", col.Name.O))
+				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
 			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
@@ -4806,7 +5056,7 @@ func GetModifiableColumnJob(
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
+	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -5089,6 +5339,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 
 	newCol := oldCol.Clone()
@@ -5361,11 +5616,13 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 // AlterTableTTLInfoOrEnable submit ddl job to change table info according to the ttlInfo, or ttlEnable
-// at least one of the `ttlInfo` or `ttlEnable` should be not nil.
+// at least one of the `ttlInfo`, `ttlEnable` or `ttlCronJobSchedule` should be not nil.
 // When `ttlInfo` is nil, and `ttlEnable` is not, it will use the original `.TTLInfo` in the table info and modify the
 // `.Enable`. If the `.TTLInfo` in the table info is empty, this function will return an error.
+// When `ttlInfo` is nil, and `ttlCronJobSchedule` is not, it will use the original `.TTLInfo` in the table info and modify the
+// `.JobInterval`. If the `.TTLInfo` in the table info is empty, this function will return an error.
 // When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
-func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool) error {
+func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -5388,29 +5645,25 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 		if err != nil {
 			return err
 		}
-		job = &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tableID,
-			SchemaName: schema.Name.L,
-			TableName:  tableName,
-			Type:       model.ActionAlterTTLInfo,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{ttlInfo, ttlEnable},
-		}
 	} else {
 		if tblInfo.TTLInfo == nil {
-			return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			if ttlEnable != nil {
+				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_ENABLE"))
+			}
+			if ttlCronJobSchedule != nil {
+				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
+			}
 		}
+	}
 
-		job = &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tableID,
-			SchemaName: schema.Name.L,
-			TableName:  tableName,
-			Type:       model.ActionAlterTTLInfo,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{ttlInfo, ttlEnable},
-		}
+	job = &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tableID,
+		SchemaName: schema.Name.L,
+		TableName:  tableName,
+		Type:       model.ActionAlterTTLInfo,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ttlInfo, ttlEnable, ttlCronJobSchedule},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6280,7 +6533,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		sb.Reset()
 		err := idxPart.Expr.Restore(restoreCtx)
@@ -7541,6 +7794,142 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 		return true
 	}
 	return false
+}
+
+// AddResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			err = infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+	}
+
+	if groupName.L == variable.DefaultResourceGroupName {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
+	}
+
+	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
+	groupIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return err
+	}
+	groupInfo.ID = groupIDs[0]
+
+	job := &model.Job{
+		SchemaName: groupName.L,
+		Type:       model.ActionCreateResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupInfo, false},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
+	return err
+}
+
+// DropResourceGroup implements the DDL interface.
+func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		err = infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	// check to see if some user has dependency on the group
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	if matched {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   group.ID,
+		SchemaName: group.Name.L,
+		Type:       model.ActionDropResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupName},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	for _, opt := range options {
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
+		if err != nil {
+			return nil, err
+		}
+	}
+	groupInfo.ResourceGroupSettings.Adjust()
+	return groupInfo, nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		err := infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := d.checkResourceGroupValidation(newGroupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
+
+	job := &model.Job{
+		SchemaID:   newGroupInfo.ID,
+		SchemaName: newGroupInfo.Name.L,
+		Type:       model.ActionAlterResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newGroupInfo},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
 }
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {

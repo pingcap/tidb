@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -537,7 +538,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
-	e.ctx.StmtCommit()
+	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
@@ -771,7 +772,16 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
-		// Auto ID is out of range, the truncated ID is possible to duplicate with an existing ID.
+		// Auto ID is out of range.
+		sc := ctx.GetSessionVars().StmtCtx
+		insertPlan, ok := sc.GetPlan().(*core.Insert)
+		if ok && sc.TruncateAsWarning && len(insertPlan.OnDuplicate) > 0 {
+			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
+			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
+			// We should allow the SQL to be executed successfully.
+			return nil
+		}
+		// The truncated ID is possible to duplicate with an existing ID.
 		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
 		return autoid.ErrAutoincReadFailed
 	}
@@ -1132,11 +1142,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	replace bool) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("InsertValues.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
 	start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)

@@ -83,10 +83,14 @@ func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName
 	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
-		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+		if !ok || constant.DeferredExpr != nil {
 			return "", nil
 		}
-		results = append(results, constant.Value)
+		v := constant.Value
+		if constant.ParamMarker != nil {
+			v = constant.ParamMarker.GetUserVar()
+		}
+		results = append(results, v)
 	}
 	return name.ColName.L, results
 }
@@ -117,10 +121,14 @@ func (extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.Fie
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
+	if !ok || constant.DeferredExpr != nil {
 		return "", nil
 	}
-	return name.ColName.L, []types.Datum{constant.Value}
+	v := constant.Value
+	if constant.ParamMarker != nil {
+		v = constant.ParamMarker.GetUserVar()
+	}
+	return name.ColName.L, []types.Datum{v}
 }
 
 // extract the OR expression, e.g:
@@ -202,6 +210,7 @@ func (helper extractHelper) extractCol(
 	for _, expr := range predicates {
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
+			remained = append(remained, expr)
 			continue
 		}
 		var colName string
@@ -998,6 +1007,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
+	//nolint: ineffassign
 	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
 	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip
@@ -1393,39 +1403,100 @@ type StatementsSummaryExtractor struct {
 	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
 	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
 	Digests set.StringSet
-	// Enable is true means the executor should use digest to locate statement summary.
-	// Enable is false, means the executor should keep the behavior compatible with before.
-	Enable bool
+
+	// Coarse time range predicate extracted from the where clause as:
+	// SELECT ... WHERE summary_begin_time <= endTime AND summary_end_time >= startTime
+	//
+	// N.B. it's only used by v2, so we should keep predicates not changed when extracting time range, or it will
+	// affect the correctness with v1.
+	CoarseTimeRange *TimeRange
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *StatementsSummaryExtractor) Extract(
-	_ sessionctx.Context,
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
 	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
-	e.SkipRequest = skip
-	if e.SkipRequest {
+	if skip {
+		e.SkipRequest = true
 		return nil
 	}
-	if digests.Count() > 0 {
-		e.Enable = true
+	if !digests.Empty() {
 		e.Digests = digests
 	}
+
+	tr := e.findCoarseTimeRange(sctx, schema, names, remained)
+	if tr == nil {
+		return remained
+	}
+
+	if tr.StartTime.After(tr.EndTime) {
+		e.SkipRequest = true
+		return nil
+	}
+	e.CoarseTimeRange = tr
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	if !e.Enable {
-		return ""
+	buf := bytes.NewBuffer(nil)
+	if !e.Digests.Empty() {
+		buf.WriteString(fmt.Sprintf("digests: [%s], ", extractStringFromStringSet(e.Digests)))
 	}
-	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+	if e.CoarseTimeRange != nil && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
+		stmtCtx := p.ctx.GetSessionVars().StmtCtx
+		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone)
+		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
+		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
+		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		buf.WriteString(fmt.Sprintf("start_time:%v, end_time:%v, ", startTimeStr, endTimeStr))
+	}
+	// remove the last ", " in the message info
+	s := buf.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+func (e *StatementsSummaryExtractor) findCoarseTimeRange(
+	sctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) *TimeRange {
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	return e.buildTimeRange(startTime, endTime)
+}
+
+func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
+	const defaultStatementsDuration = time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return nil
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultStatementsDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultStatementsDuration)
+	}
+	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
 
 // TikvRegionPeersExtractor is used to extract some predicates of cluster table.

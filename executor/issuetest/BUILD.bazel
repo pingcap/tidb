@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "issuetest_test",
+    timeout = "short",
     srcs = [
         "executor_issue_test.go",
         "main_test.go",
@@ -9,6 +10,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//autoid_service",
         "//config",
         "//kv",
         "//meta/autoid",
