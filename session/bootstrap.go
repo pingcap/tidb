@@ -788,11 +788,11 @@ const (
 	version108 = 108
 	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
-	// version110 add column source to mysql.stats_meta_history
-	version110 = 110
 	// ...
-	// [version111, version130] is the version range reserved for patches of 6.5.x
+	// [version110, version129] is the version range reserved for patches of 6.5.x
 	// ...
+	// version130 add column source to mysql.stats_meta_history
+	version130 = 130
 	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
 	version131 = 131
 	// version132 modifies the view tidb_mdl_view
@@ -925,7 +925,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
-		upgradeToVer110,
+		upgradeToVer130,
 		upgradeToVer131,
 		upgradeToVer132,
 		upgradeToVer133,
@@ -2275,8 +2275,8 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
-func upgradeToVer110(s Session, ver int64) {
-	if ver >= version110 {
+func upgradeToVer130(s Session, ver int64) {
+	if ver >= version130 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
