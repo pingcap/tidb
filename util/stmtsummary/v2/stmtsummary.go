@@ -325,10 +325,10 @@ func (s *StmtSummary) flush() {
 
 	if window.lru.Size() > 0 {
 		s.storage.persist(window, now)
-		err := s.storage.sync()
-		if err != nil {
-			logutil.BgLogger().Error("sync stmt summary failed", zap.Error(err))
-		}
+	}
+	err := s.storage.sync()
+	if err != nil {
+		logutil.BgLogger().Error("sync stmt summary failed", zap.Error(err))
 	}
 }
 
