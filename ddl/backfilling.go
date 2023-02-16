@@ -1057,7 +1057,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}
 
 	for {
-		if startKey.Cmp(endKey) > 0 {
+		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
