@@ -3356,3 +3356,15 @@ func TestIssue40114(t *testing.T) {
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
 }
+
+func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where a = 1 for update")
+	tk.MustExec("commit")
+}
