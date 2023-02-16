@@ -599,6 +599,12 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return nil
 		}
 
+		sql, args = createJobHistorySQL(jobID, table, expireTime, now)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
+		}
+
 		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
 		if err != nil {
 			return errors.Wrap(err, "split scan ranges")
