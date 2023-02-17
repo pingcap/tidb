@@ -1986,7 +1986,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		require.Equal(t, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", err.Error())
+		require.Equal(t, "Error 8130 (HY000): client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", err.Error())
 
 		// Change to WARN (legacy mode)
 		dbt.MustExec("SET tidb_multi_statement_mode='WARN'")

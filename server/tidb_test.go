@@ -1687,7 +1687,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	execFn = func(db *sql.DB) {
 		_, err = db.Query(execFailedQuery)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1105: mock handleTaskOnce error", err.Error())
+		require.Equal(t, "Error 1105 (HY000): mock handleTaskOnce error", err.Error())
 	}
 	check = func() {
 		checkFn(execFailedQuery, "")
@@ -2181,11 +2181,11 @@ func TestTopSQLStatementStats2(t *testing.T) {
 
 		_, err := db.Exec(multiStatement6)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
 
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
 
 		for _, ca := range cases8 {
 			dbt.MustExec(ca)
