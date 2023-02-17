@@ -290,10 +290,12 @@ PARTITIONS 4`)
 	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 2"))
 
 	tk.MustExec("insert into t1 values (3, 3), (3, 3), (3, 3)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa")
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt order by 1 LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("1 3"))
 
 	tk.MustExec("insert into t1 values (4, 4), (4, 4), (4, 4), (4, 4)")
-	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("4 4"))
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa")
+	tk.MustQuery("SELECT (SELECT tt.a FROM t1  tt order by 1 desc LIMIT 1) aa, COUNT(DISTINCT b) FROM t1  GROUP BY aa").Check(testkit.Rows("4 4"))
 }
 
 func TestIssue22898(t *testing.T) {

@@ -998,7 +998,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
 		"create table t (a bigint) partition by list (a) (partition p0 values in (1, default),partition p1 values in (0, 22,3))",
-		generatePartitionTableByNum(ddl.PartitionCountLimit),
+		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
 
 	for id, sql := range validCases {
@@ -1177,7 +1177,10 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
 			dbterror.ErrSameNamePartition,
 		},
-		// TODO: Add tests for DEFAULT partition!
+		{
+			"create table t (a int) partition by list (a) (partition p1, partition p2, partition p2);",
+			dbterror.ErrSameNamePartition,
+		},
 	}
 	for i, tt := range cases {
 		_, err := tk.Exec(tt.sql)
