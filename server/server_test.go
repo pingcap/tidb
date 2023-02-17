@@ -1037,10 +1037,10 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		// can't insert into views (in TiDB) or sequences. issue #20880
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table v1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table s1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
 
 		rs, err1 := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test", path))
 		require.NoError(t, err1)
@@ -1787,7 +1787,7 @@ func (cli *testServerClient) runTestIssue3662(t *testing.T) {
 	// is valid, call Ping."
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1049: Unknown database 'non_existing_schema'", err.Error())
+	require.Equal(t, "Error 1049 (42000): Unknown database 'non_existing_schema'", err.Error())
 }
 
 func (cli *testServerClient) runTestIssue3680(t *testing.T) {
@@ -1805,7 +1805,7 @@ func (cli *testServerClient) runTestIssue3680(t *testing.T) {
 	// is valid, call Ping."
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
+	require.Equal(t, "Error 1045 (28000): Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
 }
 
 func (cli *testServerClient) runTestIssue22646(t *testing.T) {
@@ -1842,7 +1842,7 @@ func (cli *testServerClient) runTestIssue3682(t *testing.T) {
 	}()
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
+	require.Equal(t, "Error 1045 (28000): Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
 func (cli *testServerClient) runTestAccountLock(t *testing.T) {
@@ -1863,7 +1863,7 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, err)
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 3118: Access denied for user 'test1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.Equal(t, "Error 3118 (HY000): Access denied for user 'test1'@'127.0.0.1'. Account is locked.", err.Error())
 	require.NoError(t, db.Close())
 
 	// 2. test1 can connect after unlocked
@@ -1896,8 +1896,8 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE ROLE role1;`)
 		dbt.MustExec(`GRANT ALL on test.* to 'role1'`)
-		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 Y")
+		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 Y Y")
 	})
 	// When created, the role is locked by default and cannot log in to TiDB
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
@@ -1906,13 +1906,14 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	require.NoError(t, err)
 	err = db.Ping()
 	require.Error(t, err)
-	require.Equal(t, "Error 3118: Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
+	require.Equal(t, "Error 3118 (HY000): Access denied for user 'role1'@'127.0.0.1'. Account is locked.", err.Error())
 	require.NoError(t, db.Close())
 	// After unlocked by the ALTER USER statement, the role can connect to server like a user
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
-		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 N")
+		dbt.MustExec(`ALTER USER role1 IDENTIFIED BY ''`)
+		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 N N")
 	})
 	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`DROP ROLE role1;`)
@@ -1986,7 +1987,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(t *testing.T) {
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		require.Equal(t, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", err.Error())
+		require.Equal(t, "Error 8130 (HY000): client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", err.Error())
 
 		// Change to WARN (legacy mode)
 		dbt.MustExec("SET tidb_multi_statement_mode='WARN'")
