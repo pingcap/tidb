@@ -1896,8 +1896,8 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`CREATE ROLE role1;`)
 		dbt.MustExec(`GRANT ALL on test.* to 'role1'`)
-		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 Y")
+		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 Y Y")
 	})
 	// When created, the role is locked by default and cannot log in to TiDB
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
@@ -1911,8 +1911,9 @@ func (cli *testServerClient) runTestAccountLock(t *testing.T) {
 	// After unlocked by the ALTER USER statement, the role can connect to server like a user
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`ALTER USER role1 ACCOUNT UNLOCK;`)
-		rows := dbt.MustQuery(`SELECT user, account_locked FROM mysql.user WHERE user = 'role1';`)
-		cli.checkRows(t, rows, "role1 N")
+		dbt.MustExec(`ALTER USER role1 IDENTIFIED BY ''`)
+		rows := dbt.MustQuery(`SELECT user, account_locked, password_expired FROM mysql.user WHERE user = 'role1';`)
+		cli.checkRows(t, rows, "role1 N N")
 	})
 	defer cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec(`DROP ROLE role1;`)
