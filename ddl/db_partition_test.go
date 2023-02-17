@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -4534,6 +4535,43 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
+}
+
+func TestIssue40135Ver2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	one := true
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			tk3.MustExec("delete from t40135 where a = 1")
+		}
+		if one {
+			one = false
+			go func() {
+				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				wg.Done()
+			}()
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("admin check table t40135")
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
