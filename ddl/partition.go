@@ -517,7 +517,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	partCols, err := getPartitionColSlices(ctx, tbInfo, s)
-	if err != nil || partCols == nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -541,7 +541,9 @@ func getPartitionColSlices(sctx sessionctx.Context, tblInfo *model.TableInfo, s 
 	} else if len(s.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.ColumnNames)
 	}
-	// TODO: Check keys constraints for list, key partition type and so on.
+	if partCols == nil {
+		return nil, errors.Errorf("Table partition metadata not correct, neither partition expression or list of partition columns")
+	}
 	return partCols, nil
 }
 
@@ -3138,7 +3140,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	}
 
 	partCols, err := getPartitionColSlices(sctx, tblInfo, s.Partition)
-	if err != nil || partCols == nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -3162,7 +3164,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 			Length: types.UnspecifiedLength,
 		}}
 		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 		}
 	}
 	return nil
