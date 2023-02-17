@@ -207,7 +207,6 @@ const (
 	LblRollback       = "rollback"
 	LblType           = "type"
 	LblDb             = "db"
-	LblTable          = "table"
 	LblResult         = "result"
 	LblSQLType        = "sql_type"
 	LblCoprType       = "copr_type"
