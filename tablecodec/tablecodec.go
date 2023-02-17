@@ -1156,7 +1156,7 @@ const IndexIDMask = 0xffffffffffff
 
 // IndexKey2TempIndexKey generates a temporary index key.
 func IndexKey2TempIndexKey(key []byte) {
-	idxIDBytes := key[prefixLen : prefixLen+8]
+	idxIDBytes := key[prefixLen : prefixLen+idLen]
 	idxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(idxIDBytes))
 	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | idxID)
 	binary.BigEndian.PutUint64(key[prefixLen:], eid)
@@ -1164,7 +1164,7 @@ func IndexKey2TempIndexKey(key []byte) {
 
 // TempIndexKey2IndexKey generates an index key from temporary index key.
 func TempIndexKey2IndexKey(tempIdxKey []byte) {
-	tmpIdxIDBytes := tempIdxKey[prefixLen : prefixLen+8]
+	tmpIdxIDBytes := tempIdxKey[prefixLen : prefixLen+idLen]
 	tempIdxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(tmpIdxIDBytes))
 	eid := codec.EncodeIntToCmpUint(tempIdxID & IndexIDMask)
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
@@ -1345,8 +1345,8 @@ func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 	case TempIndexValueFlagDeleted:
 		hLen := (uint16(b[0]) << 8) + uint16(b[1])
 		b = b[2:]
-		if hLen == 8 {
-			v.Handle = decodeIntHandleInIndexValue(b[:8])
+		if hLen == idLen {
+			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
 		} else {
 			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
 		}
