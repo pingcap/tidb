@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // TestTableCodec  tests some functions in package tablecodec
@@ -617,26 +618,102 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.NoError(t, err)
 	encodedValueCopy := make([]byte, len(encodedValue))
 	copy(encodedValueCopy, encodedValue)
-	tempIdxVal := EncodeTempIndexValue(encodedValue, 'b')
-	originVal, handle, isDelete, unique, keyVer := DecodeTempIndexValue(tempIdxVal, false)
-	require.Nil(t, handle)
-	require.False(t, isDelete || unique)
-	require.Equal(t, keyVer, byte('b'))
-	require.EqualValues(t, encodedValueCopy, originVal)
 
-	tempIdxVal = EncodeTempIndexValueDeletedUnique(kv.IntHandle(100), 'm')
-	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
-	require.Equal(t, handle.IntValue(), int64(100))
-	require.True(t, isDelete)
-	require.True(t, unique)
-	require.Equal(t, keyVer, byte('m'))
-	require.Empty(t, originVal)
+	tempIdxVal := TempIndexValueElem{
+		Value:  encodedValue,
+		KeyVer: 'b',
+	}
+	val := tempIdxVal.Encode(nil)
+	var newTempIdxVal TempIndexValueElem
+	remain, err := newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 
-	tempIdxVal = EncodeTempIndexValueDeleted('b')
-	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
-	require.Nil(t, handle)
-	require.True(t, isDelete)
-	require.False(t, unique)
-	require.Equal(t, keyVer, byte('b'))
-	require.Empty(t, originVal)
+	idxVal := EncodeHandleInUniqueIndexValue(kv.IntHandle(100), false)
+	tempIdxVal = TempIndexValueElem{
+		Value:    idxVal,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.Equal(t, newTempIdxVal.Handle.IntValue(), int64(100))
+	newTempIdxVal.Handle = nil
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	tempIdxVal = TempIndexValueElem{
+		Delete: true,
+		KeyVer: 'b',
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	tempIdxVal = TempIndexValueElem{
+		Delete:   true,
+		KeyVer:   'b',
+		Distinct: true,
+		Handle:   kv.IntHandle(100),
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	// Test multiple temp index value elements.
+	idxVal = EncodeHandleInUniqueIndexValue(kv.IntHandle(100), false)
+	tempIdxVal = TempIndexValueElem{
+		Value:    idxVal,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	tempIdxVal2 := TempIndexValueElem{
+		Handle:   kv.IntHandle(100),
+		KeyVer:   'm',
+		Distinct: true,
+		Delete:   true,
+	}
+	idxVal3 := EncodeHandleInUniqueIndexValue(kv.IntHandle(101), false)
+	tempIdxVal3 := TempIndexValueElem{
+		Value:    idxVal3,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	val = tempIdxVal.Encode(nil)
+	val = tempIdxVal2.Encode(val)
+	val = tempIdxVal3.Encode(val)
+	var result TempIndexValue
+	result, err = DecodeTempIndexValue(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, result[0].Handle.IntValue(), int64(100))
+	require.Equal(t, result[1].Handle.IntValue(), int64(100))
+	require.Equal(t, result[2].Handle.IntValue(), int64(101))
+}
+
+func TestV2TableCodec(t *testing.T) {
+	const tableID int64 = 31415926
+	key := EncodeTablePrefix(tableID)
+	c, err := tikv.NewCodecV2(tikv.ModeTxn, 271828)
+	require.NoError(t, err)
+	key = c.EncodeKey(key)
+	tbid := DecodeTableID(key)
+	require.Equal(t, tableID, tbid)
+
+	key = []byte("x001HelloWorld")
+	tbid = DecodeTableID(key)
+	require.Equal(t, int64(0), tbid)
+
+	key = []byte("x001x001t123")
+	tbid = DecodeTableID(key)
+	require.Equal(t, int64(0), tbid)
 }

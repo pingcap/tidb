@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -44,8 +45,6 @@ const (
 	retryTimeout = 3 * time.Second
 
 	defaultMaxRetry = 3
-
-	dbTimeout = 30 * time.Second
 )
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
@@ -76,8 +75,6 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.Params["charset"] = "utf8mb4"
 	cfg.Params["sql_mode"] = fmt.Sprintf("'%s'", param.SQLMode)
 	cfg.MaxAllowedPacket = int(param.MaxAllowedPacket)
-	cfg.ReadTimeout = dbTimeout
-	cfg.WriteTimeout = dbTimeout
 
 	cfg.TLS = param.TLSConfig
 	cfg.AllowFallbackToPlaintext = param.AllowFallbackToPlaintext
@@ -419,4 +416,23 @@ func StringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// GetAutoRandomColumn return the column with auto_random, return nil if the table doesn't have it.
+// todo: better put in ddl package, but this will cause import cycle since ddl package import lightning
+func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
+	if !tblInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	if tblInfo.PKIsHandle {
+		return tblInfo.GetPkColInfo()
+	} else if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		if pk == nil {
+			return nil
+		}
+		offset := pk.Columns[0].Offset
+		return tblInfo.Columns[offset]
+	}
+	return nil
 }

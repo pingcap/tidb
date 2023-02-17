@@ -109,11 +109,28 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
+		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
+		// the current filter into a Selection after partial paths.
+		shouldKeepCurrentFilter := false
 		var partialPaths = make([]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths := ds.accessPathsForConds(cnfItems, usedIndexCount)
+
+			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+			for _, cnfItem := range cnfItems {
+				if expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx,
+					[]expression.Expression{cnfItem},
+					ds.ctx.GetClient(),
+					kv.TiKV,
+				) {
+					pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+				} else {
+					shouldKeepCurrentFilter = true
+				}
+			}
+
+			itemPaths := ds.accessPathsForConds(pushedDownCNFItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				partialPaths = nil
 				break
@@ -140,7 +157,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
@@ -308,28 +325,32 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(
+	filters []expression.Expression,
+	partialPaths []*util.AccessPath,
+	current int,
+	shouldKeepCurrentFilter bool,
+) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
 		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
 		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
-			addCurrentFilter = true
+			shouldKeepCurrentFilter = true
 			path.TableFilters = nil
 		}
 	}
-	if addCurrentFilter {
+	if shouldKeepCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
@@ -587,8 +608,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 		}
 
 		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
-		if len(accessFilters) == 0 && // cannot use any filter on this MVIndex
-			!ds.possibleAccessPaths[idx].Forced { // whether this index is forced by use-index hint
+		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
 
@@ -669,7 +689,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], jsonType)
-		if !ok {
+		if !ok || len(virColVals) == 0 { // json_contains(JSON, '[]') is TRUE
 			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
@@ -683,7 +703,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		}
 		var ok bool
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], jsonType)
-		if !ok {
+		if !ok || len(virColVals) == 0 { // forbid empty array for safety
 			return nil, false, false, nil
 		}
 	default:

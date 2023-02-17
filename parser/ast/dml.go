@@ -358,8 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
-	HintKeepOrder
-	HintNoKeepOrder
+	HintOrderIndex
+	HintNoOrderIndex
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -390,10 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
-	case HintKeepOrder:
-		indexHintType = "KEEP ORDER"
-	case HintNoKeepOrder:
-		indexHintType = "NO KEEP ORDER"
+	case HintOrderIndex:
+		indexHintType = "ORDER INDEX"
+	case HintNoOrderIndex:
+		indexHintType = "NO ORDER INDEX"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
@@ -1804,29 +1804,30 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 type FileLocRefTp int
 
 const (
-	// FileLocServer is used when there's no keywords in SQL, which means the data file should be located on the tidb-server.
-	FileLocServer FileLocRefTp = iota
+	// FileLocServerOrRemote is used when there's no keywords in SQL, which means the data file should be located on the
+	// tidb-server or on remote storage (S3 for example).
+	FileLocServerOrRemote FileLocRefTp = iota
 	// FileLocClient is used when there's LOCAL keyword in SQL, which means the data file should be located on the MySQL
 	// client.
 	FileLocClient
-	// FileLocRemote is used when there's REMOTE keyword in SQL, which means the data file should be located on a remote
-	// server, such as a cloud storage.
-	FileLocRemote
 )
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
-// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data.
+// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data, see
+// https://github.com/pingcap/tidb/issues/40499
 type LoadDataStmt struct {
 	dmlNode
 
 	FileLocRef        FileLocRefTp
 	Path              string
+	Format            string // empty only when it's CSV-like
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
+	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
 
@@ -1837,14 +1838,16 @@ type LoadDataStmt struct {
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
 	switch n.FileLocRef {
-	case FileLocServer:
+	case FileLocServerOrRemote:
 	case FileLocClient:
 		ctx.WriteKeyWord("LOCAL ")
-	case FileLocRemote:
-		ctx.WriteKeyWord("REMOTE ")
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.Format != "" {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(n.Format)
+	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1854,8 +1857,15 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
 	}
-	n.FieldsInfo.Restore(ctx)
-	n.LinesInfo.Restore(ctx)
+	if n.FieldsInfo != nil {
+		n.FieldsInfo.Restore(ctx)
+	}
+	if n.LinesInfo != nil {
+		n.LinesInfo.Restore(ctx)
+	}
+	if n.NullInfo != nil {
+		n.NullInfo.Restore(ctx)
+	}
 	if n.IgnoreLines != 0 {
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WritePlainf("%d", n.IgnoreLines)
@@ -1995,6 +2005,21 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// NullDefinedBy represent a syntax that extends MySQL's standard
+type NullDefinedBy struct {
+	NullDef     string
+	OptEnclosed bool
+}
+
+// Restore for NullDefinedBy
+func (n *NullDefinedBy) Restore(ctx *format.RestoreCtx) {
+	ctx.WriteKeyWord(" NULL DEFINED BY ")
+	ctx.WriteString(n.NullDef)
+	if n.OptEnclosed {
+		ctx.WriteKeyWord(" OPTIONALLY ENCLOSED")
+	}
 }
 
 // CallStmt represents a call procedure query node.

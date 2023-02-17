@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/client"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util/logutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -97,7 +99,7 @@ func TestParallelLockNewJob(t *testing.T) {
 					successCounter.Add(1)
 					successJob = job
 				} else {
-					logutil.BgLogger().Error("lock new job with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
@@ -131,6 +133,14 @@ func TestFinishJob(t *testing.T) {
 
 	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
 	require.NoError(t, err)
+	tk.MustQuery("select * from mysql.tidb_ttl_job_history").Check(testkit.Rows(strings.Join([]string{
+		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		startTime.Format(timeFormat),
+		time.Unix(1, 0).Format(timeFormat),
+		expireTime.Format(timeFormat),
+		"<nil>", "<nil>", "<nil>", "<nil>",
+		"running",
+	}, " ")))
 
 	summary := &ttlworker.TTLSummary{
 		ScanTaskErr: "\"'an error message contains both single and double quote'\"",
@@ -259,6 +269,46 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	waitTTLJobFinished(t, tk, tblID)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+}
+
+func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/task-manager-loop-interval")
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.time_zone='Asia/Shanghai'")
+	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+
+	tk.MustExec("create table t1(id int primary key, t datetime) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
+	tbl1, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblID1 := tbl1.Meta().ID
+	tk.MustExec("insert into t1 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
+
+	tk.MustExec("create table t2(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
+	tbl2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblID2 := tbl2.Meta().ID
+	tk.MustExec("insert into t2 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
+
+	tk.MustExec("set @@global.time_zone='UTC'")
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustExec("alter table t1 TTL_ENABLE='ON'")
+	tk.MustExec("alter table t2 TTL_ENABLE='ON'")
+
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
+	defer cancel()
+	cli := do.TTLJobManager().GetCommandCli()
+	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t1")
+	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t2")
+
+	waitTTLJobFinished(t, tk, tblID1)
+	tk.MustQuery("select id from t1 order by id asc").Check(testkit.Rows("1", "2"))
+
+	waitTTLJobFinished(t, tk, tblID2)
+	tk.MustQuery("select id from t2 order by id asc").Check(testkit.Rows("1"))
 }
 
 func waitTTLJobFinished(t *testing.T, tk *testkit.TestKit, tableID int64) {
@@ -573,4 +623,42 @@ func TestGCTTLHistory(t *testing.T) {
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	ttlworker.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func TestJobMetrics(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	waitAndStopTTLManager(t, dom)
+
+	now := time.Now()
+	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+
+	se := sessionFactory()
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m.TaskManager().ResizeWorkersWithSysVar()
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	// schedule jobs
+	m.RescheduleJobs(se, now)
+	// set the worker to be empty, so none of the tasks will be scheduled
+	m.TaskManager().SetScanWorkers4Test([]ttlworker.Worker{})
+
+	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	rows, err := se.ExecuteSQL(ctx, sql, args...)
+	require.NoError(t, err)
+	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	require.NoError(t, err)
+
+	require.NotEmpty(t, tableStatus.CurrentJobID)
+	require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
+	require.Equal(t, cache.JobStatusRunning, tableStatus.CurrentJobStatus)
+
+	m.ReportMetrics()
+	out := &dto.Metric{}
+	require.NoError(t, metrics.RunningJobsCnt.Write(out))
+	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -52,7 +51,8 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
+	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule, restore.RewriteModeLegacy)
+	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
 }
@@ -230,7 +230,11 @@ func TestPaginateScanRegion(t *testing.T) {
 	regionMap := make(map[uint64]*split.RegionInfo)
 	var regions []*split.RegionInfo
 	var batch []*split.RegionInfo
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer", "return(true)"))
+	backup := split.ScanRegionAttemptTimes
+	split.ScanRegionAttemptTimes = 3
+	defer func() {
+		split.ScanRegionAttemptTimes = backup
+	}()
 	_, err := split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
@@ -293,8 +297,6 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/scanRegionBackoffer"))
 }
 
 func TestRewriteFileKeys(t *testing.T) {

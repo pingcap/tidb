@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -224,6 +225,7 @@ func TestEnforceMVIndex(t *testing.T) {
 	var output []struct {
 		SQL  string
 		Plan []string
+		Err  string
 	}
 	planSuiteData := core.GetIndexMergeSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
@@ -232,11 +234,21 @@ func TestEnforceMVIndex(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = query
 		})
-		result := tk.MustQuery("explain format = 'brief' " + query)
-		testdata.OnRecord(func() {
-			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
-		})
-		result.Check(testkit.Rows(output[i].Plan...))
+		rs, err := tk.Exec("explain format = 'brief' " + query)
+		if err != nil {
+			testdata.OnRecord(func() {
+				output[i].Err = err.Error()
+				output[i].Plan = nil
+			})
+			require.Equal(t, output[i].Err, err.Error())
+		} else {
+			result := tk.ResultSetToResultWithCtx(context.Background(), rs, "")
+			testdata.OnRecord(func() {
+				output[i].Err = ""
+				output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+			})
+			result.Check(testkit.Rows(output[i].Plan...))
+		}
 	}
 }
 
@@ -270,6 +282,51 @@ func TestMVIndexInvisible(t *testing.T) {
 		`  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 }
 
+func TestMVIndexFullScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t(j json, index kj((cast(j as signed array))))`)
+	tk.MustExec(`insert into t values ('[1]')`)
+	tk.MustExec(`insert into t values ('[1, 2]')`)
+	tk.MustExec(`insert into t values ('[]')`)
+	tk.MustExec(`insert into t values (NULL)`)
+
+	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t`).Check(testkit.Rows("4"))
+	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where (1 member of (j))`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_contains((j), '[1]')`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select /*+ use_index_merge(t, kj) */ count(*) from t where json_overlaps((j), '[1]')`).Check(testkit.Rows("2"))
+
+	// Forbid IndexMerge+IndexFullScan since IndexFullScan on MVIndex cannot read all rows some cases.
+	tk.MustGetErrMsg(`select /*+ use_index(t, kj) */ count(*) from t`, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+}
+
+func TestMVIndexEmptyArray(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(j json, index kj((cast(j as signed array))))`)
+	tk.MustExec(`insert into t values ('[1]')`)
+	tk.MustExec(`insert into t values ('[1, 2]')`)
+	tk.MustExec(`insert into t values ('[]')`)
+	tk.MustExec(`insert into t values (NULL)`)
+
+	for _, cond := range []string{
+		"json_contains(j, '[]')",
+		"json_contains(j, '[1]')",
+		"json_contains(j, '[1, 2]')",
+		"json_contains(j, '[1, 10]')",
+		"json_overlaps(j, '[]')",
+		"json_overlaps(j, '[1]')",
+		"json_overlaps(j, '[1, 2]')",
+		"json_overlaps(j, '[1, 10]')",
+	} {
+		tk.MustQuery(fmt.Sprintf("select /*+ use_index_merge(t) */ * from t where %v", cond)).Sort().Check(
+			tk.MustQuery(fmt.Sprintf("select /*+ ignore_index(t, kj) */ * from t where %v", cond)).Sort().Rows())
+	}
+}
+
 func TestMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -284,8 +341,8 @@ func TestMVIndexRandom(t *testing.T) {
 		{"unsigned", randMVIndexValOpts{"unsigned", 0, 3}, randMVIndexValOpts{"unsigned", 0, 3}}, // unsigned-index + unsigned-values
 		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 3, 3}},
 		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 1, 3}},
-		//{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 5, 3}},
-		//{"date", randMVIndexValOpts{"date", 0, 3}, randMVIndexValOpts{"date", 0, 3}},
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 5, 3}},
+		{"date", randMVIndexValOpts{"date", 0, 3}, randMVIndexValOpts{"date", 0, 3}},
 	} {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
@@ -306,7 +363,7 @@ func TestMVIndexRandom(t *testing.T) {
 		for i := 0; i < nQueries; i++ {
 			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
-			tk.MustQuery("select /*+ use_index(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
+			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
 		}
 	}
 }
@@ -332,12 +389,21 @@ func randMVIndexCond(condType int, valOpts randMVIndexValOpts) string {
 	case 0: // member_of
 		return fmt.Sprintf(`(%v member of (j))`, randMVIndexValue(valOpts))
 	case 1: // json_contains
-		return fmt.Sprintf(`json_contains(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+		return fmt.Sprintf(`json_contains(j, '%v')`, randArray(valOpts))
 	case 2: // json_overlaps
-		return fmt.Sprintf(`json_overlaps(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+		return fmt.Sprintf(`json_overlaps(j, '%v')`, randArray(valOpts))
 	default: // others
 		return fmt.Sprintf(`a < %v`, rand.Intn(valOpts.distinct))
 	}
+}
+
+func randArray(opts randMVIndexValOpts) string {
+	n := rand.Intn(5) // n can be 0
+	var vals []string
+	for i := 0; i < n; i++ {
+		vals = append(vals, randMVIndexValue(opts))
+	}
+	return "[" + strings.Join(vals, ", ") + "]"
 }
 
 type randMVIndexValOpts struct {

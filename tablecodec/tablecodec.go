@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -277,7 +279,16 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
 	if !key.HasPrefix(tablePrefix) {
-		return 0
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return 0
+		}
+		key = k
+		if !key.HasPrefix(tablePrefix) {
+			return 0
+		}
 	}
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
@@ -1152,8 +1163,8 @@ func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
 }
 
-// IsTempIndexKey check whether the input key is for a temp index.
-func IsTempIndexKey(indexKey []byte) bool {
+// CheckTempIndexKey checks whether the input key is for a temp index.
+func CheckTempIndexKey(indexKey []byte) (isTemp bool, originIdxID int64) {
 	var (
 		indexIDKey  []byte
 		indexID     int64
@@ -1163,101 +1174,206 @@ func IsTempIndexKey(indexKey []byte) bool {
 	indexIDKey = indexKey[prefixLen : prefixLen+8]
 	indexID = codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
 	tempIndexID = int64(TempIndexPrefix) | indexID
-	return tempIndexID == indexID
+	return tempIndexID == indexID, indexID & IndexIDMask
 }
 
 // TempIndexValueFlag is the flag of temporary index value.
 type TempIndexValueFlag byte
 
 const (
-	// TempIndexValueFlagNormal means the following value is the normal index value.
+	// TempIndexValueFlagNormal means the following value is a distinct the normal index value.
 	TempIndexValueFlagNormal TempIndexValueFlag = iota
-	// TempIndexValueFlagDeleted means this is a representation of a "delete" operation.
+	// TempIndexValueFlagNonDistinctNormal means the following value is the non-distinct normal index value.
+	TempIndexValueFlagNonDistinctNormal
+	// TempIndexValueFlagDeleted means the following value is the distinct and deleted index value.
 	TempIndexValueFlagDeleted
+	// TempIndexValueFlagNonDistinctDeleted means the following value is the non-distinct deleted index value.
+	TempIndexValueFlagNonDistinctDeleted
 )
 
-// EncodeTempIndexValue encodes the value of temporary index.
-// Note: this function changes the input value.
-func EncodeTempIndexValue(value []byte, keyVer byte) []byte {
-	value = append(value, 0)
-	copy(value[1:], value[:len(value)-1])
-	value[0] = byte(TempIndexValueFlagNormal) // normal flag + value + tempKeyVer
-	value = append(value, keyVer)
-	return value
+// TempIndexValue is the value of temporary index.
+// It contains one or more element, each element represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+//
+// The temp index value is encoded as:
+//   - [element 1][element 2]...[element n] {for distinct values}
+//   - [element 1]                          {for non-distinct values}
+type TempIndexValue []*TempIndexValueElem
+
+// IsEmpty checks whether the value is empty.
+func (v TempIndexValue) IsEmpty() bool {
+	return len(v) == 0
 }
 
-// EncodeTempIndexValueDeletedUnique encodes the value of temporary index for unique index.
-func EncodeTempIndexValueDeletedUnique(handle kv.Handle, keyVer byte) []byte {
-	var hEncoded []byte
-	var hLen int
-	if handle.IsInt() {
-		var data [8]byte
-		binary.BigEndian.PutUint64(data[:], uint64(handle.IntValue()))
-		hEncoded = data[:]
-		hLen = 8
-	} else {
-		hEncoded = handle.Encoded()
-		hLen = len(hEncoded)
+// Current returns the current latest temp index value.
+func (v TempIndexValue) Current() *TempIndexValueElem {
+	return v[len(v)-1]
+}
+
+// FilterOverwritten is used by the temp index merge process to remove the overwritten index operations.
+// For example, the value {temp_idx_key -> [h2, h2d, h3, h1d]} recorded four operations on the original index.
+// Since 'h2d' overwrites 'h2', we can remove 'h2' from the value.
+func (v TempIndexValue) FilterOverwritten() TempIndexValue {
+	if len(v) <= 1 || !v[0].Distinct {
+		return v
 	}
-	val := make([]byte, 0, 1+hLen+1) // deleted flag + handle + tempKeyVer
-	val = append(val, byte(TempIndexValueFlagDeleted))
-	val = append(val, hEncoded...)
-	val = append(val, keyVer)
-	return val
-}
-
-// EncodeTempIndexValueDeleted encodes the delete operation on origin index to a value for temporary index.
-func EncodeTempIndexValueDeleted(keyVer byte) []byte {
-	// Handle is not needed because it is already in the key.
-	val := make([]byte, 0, 2) // deleted flag + tempKeyVer
-	val = append(val, byte(TempIndexValueFlagDeleted))
-	val = append(val, keyVer)
-	return val
-}
-
-// DecodeTempIndexValue decodes the value of temporary index.
-func DecodeTempIndexValue(value []byte, isCommonHandle bool) (originVal []byte, handle kv.Handle, isDelete bool, isUnique bool, keyVer byte) {
-	if len(value) == 0 {
-		return nil, nil, false, false, 0
-	}
-	switch TempIndexValueFlag(value[0]) {
-	case TempIndexValueFlagNormal:
-		originVal = value[1 : len(value)-1]
-		keyVer = value[len(value)-1]
-	case TempIndexValueFlagDeleted:
-		isDelete = true
-		if len(value) == 2 {
-			keyVer = value[1]
+	occurred := kv.NewHandleMap()
+	for i := len(v) - 1; i >= 0; i-- {
+		if _, ok := occurred.Get(v[i].Handle); !ok {
+			occurred.Set(v[i].Handle, struct{}{})
 		} else {
-			isUnique = true
-			if isCommonHandle {
-				handle, _ = kv.NewCommonHandle(value[1 : len(value)-1])
-			} else {
-				handle = decodeIntHandleInIndexValue(value[1 : len(value)-1])
-			}
-			keyVer = value[len(value)-1]
+			v[i] = nil
 		}
 	}
-	return
+	ret := v[:0]
+	for _, elem := range v {
+		if elem != nil {
+			ret = append(ret, elem)
+		}
+	}
+	return ret
 }
 
-// CheckTempIndexValueIsDelete checks whether the value is a delete operation.
-func CheckTempIndexValueIsDelete(value []byte) bool {
-	if len(value) == 0 {
-		return false
-	}
-	return TempIndexValueFlag(value[0]) == TempIndexValueFlagDeleted
+// TempIndexValueElem represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+type TempIndexValueElem struct {
+	Value    []byte
+	Handle   kv.Handle
+	KeyVer   byte
+	Delete   bool
+	Distinct bool
 }
 
-// DecodeTempIndexOriginValue decodes the value of origin index from a temp index value.
-func DecodeTempIndexOriginValue(value []byte) []byte {
-	if len(value) == 0 {
-		return nil
+// Encode encodes the temp index value.
+func (v *TempIndexValueElem) Encode(buf []byte) []byte {
+	if v.Delete {
+		if v.Distinct {
+			handle := v.Handle
+			var hEncoded []byte
+			var hLen uint16
+			if handle.IsInt() {
+				hEncoded = codec.EncodeUint(hEncoded, uint64(handle.IntValue()))
+				hLen = 8
+			} else {
+				hEncoded = handle.Encoded()
+				hLen = uint16(len(hEncoded))
+			}
+			// flag + handle length + handle + temp key version
+			if buf == nil {
+				buf = make([]byte, 0, hLen+4)
+			}
+			buf = append(buf, byte(TempIndexValueFlagDeleted))
+			buf = append(buf, byte(hLen>>8), byte(hLen))
+			buf = append(buf, hEncoded...)
+			buf = append(buf, v.KeyVer)
+			return buf
+		}
+		// flag + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, 2)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNonDistinctDeleted))
+		buf = append(buf, v.KeyVer)
+		return buf
 	}
-	if TempIndexValueFlag(value[0]) == TempIndexValueFlagNormal {
-		return value[1 : len(value)-1]
+	if v.Distinct {
+		// flag + value length + value + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, len(v.Value)+4)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNormal))
+		vLen := uint16(len(v.Value))
+		buf = append(buf, byte(vLen>>8), byte(vLen))
+		buf = append(buf, v.Value...)
+		buf = append(buf, v.KeyVer)
+		return buf
 	}
-	return nil
+	// flag + value + temp key version
+	if buf == nil {
+		buf = make([]byte, 0, len(v.Value)+2)
+	}
+	buf = append(buf, byte(TempIndexValueFlagNonDistinctNormal))
+	buf = append(buf, v.Value...)
+	buf = append(buf, v.KeyVer)
+	return buf
+}
+
+// DecodeTempIndexValue decodes the temp index value.
+func DecodeTempIndexValue(value []byte, isCommonHandle bool) (TempIndexValue, error) {
+	var (
+		values []*TempIndexValueElem
+		err    error
+	)
+	for len(value) > 0 {
+		v := &TempIndexValueElem{}
+		value, err = v.DecodeOne(value, isCommonHandle)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// DecodeOne decodes one temp index value element.
+func (v *TempIndexValueElem) DecodeOne(b []byte, isCommonHandle bool) (remain []byte, err error) {
+	flag := TempIndexValueFlag(b[0])
+	b = b[1:]
+	switch flag {
+	case TempIndexValueFlagNormal:
+		vLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		v.Value = b[:vLen]
+		b = b[vLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		v.Handle, err = DecodeHandleInUniqueIndexValue(v.Value, isCommonHandle)
+		return b, err
+	case TempIndexValueFlagNonDistinctNormal:
+		v.Value = b[:len(b)-1]
+		v.KeyVer = b[len(b)-1]
+		return nil, nil
+	case TempIndexValueFlagDeleted:
+		hLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		if isCommonHandle {
+			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
+		} else {
+			v.Handle = decodeIntHandleInIndexValue(b[:hLen])
+		}
+		b = b[hLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		v.Delete = true
+		return b, nil
+	case TempIndexValueFlagNonDistinctDeleted:
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Delete = true
+		return b, nil
+	default:
+		return nil, errors.New("invalid temp index value")
+	}
+}
+
+// TempIndexValueIsUntouched returns true if the value is untouched.
+// All the temp index value has the suffix of temp key version.
+// All the temp key versions differ from the uncommitted KV flag.
+func TempIndexValueIsUntouched(b []byte) bool {
+	if len(b) > 0 && b[len(b)-1] == kv.UnCommitIndexKVFlag {
+		return true
+	}
+	return false
 }
 
 // GenIndexValuePortal is the portal for generating index value.

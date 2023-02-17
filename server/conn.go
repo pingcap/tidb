@@ -54,7 +54,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -89,6 +88,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -171,6 +171,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -214,6 +215,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -621,6 +625,21 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -668,12 +687,12 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	switch resp.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
+		resp.Auth, err = cc.authSha(ctx, resp)
 		if err != nil {
 			return err
 		}
 	case mysql.AuthTiDBSM3Password:
-		resp.Auth, err = cc.authSM3(ctx)
+		resp.Auth, err = cc.authSM3(ctx, resp)
 		if err != nil {
 			return err
 		}
@@ -727,13 +746,20 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 }
 
 // authSha implements the caching_sha2_password specific part of the protocol.
-func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
+func (cc *clientConn) authSha(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
 	const (
 		shaCommand       = 1
 		requestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
 		fastAuthOk       = 3
 		fastAuthFail     = 4
 	)
+
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
 
 	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
 	// This triggers the client to send the full response.
@@ -757,8 +783,16 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 }
 
 // authSM3 implements the tidb_sm3_password specific part of the protocol.
-func (cc *clientConn) authSM3(ctx context.Context) ([]byte, error) {
-	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4})
+// tidb_sm3_password is very similar to caching_sha2_password.
+func (cc *clientConn) authSM3(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
+
+	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4}) // fastAuthFail
 	if err != nil {
 		logutil.Logger(ctx).Error("authSM3 packet write failed", zap.Error(err))
 		return nil, err
@@ -823,7 +857,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -866,7 +901,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -938,9 +974,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -1275,10 +1319,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
-	span := opentracing.StartSpan("server.dispatch")
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
-		ctx = opentracing.ContextWithSpan(ctx, span)
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		defer r.End()
 	}
 
 	var cancelFunc context.CancelFunc
@@ -1325,7 +1370,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 
 		cc.server.releaseToken(token)
-		span.Finish()
 		cc.lastActive = time.Now()
 	}()
 
@@ -1611,12 +1655,46 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	err = loadDataInfo.Load(ctx, cc.readPacket)
+	// use Pipe to convert cc.readPacket to io.Reader
+	r, w := io.Pipe()
+	go func() {
+		//nolint: errcheck
+		defer w.Close()
+
+		var (
+			data []byte
+			err2 error
+		)
+		for {
+			if len(data) == 0 {
+				data, err2 = cc.readPacket()
+				if err2 != nil {
+					w.CloseWithError(err2)
+					return
+				}
+				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+				if len(data) == 0 {
+					loadDataInfo.Drained = true
+					return
+				}
+			}
+
+			n, err3 := w.Write(data)
+			if err3 != nil {
+				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
+				return
+			}
+			data = data[n:]
+		}
+	}()
+
+	err = loadDataInfo.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
 	if err != nil {
 		if !loadDataInfo.Drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !loadDataInfo.Drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
 			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
@@ -2009,7 +2087,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		return false, nil
 	}
 
-	handled, err := cc.handleQuerySpecial(ctx, status)
+	handled, err := cc.handleFileTransInConn(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
@@ -2023,7 +2101,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
@@ -2089,14 +2167,8 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	for _, column := range columns {
-		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
-		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
-		// TODO: fill the right DefaultValues.
-		column.DefaultValueLength = 0
-		column.DefaultValue = []byte{}
-
 		data = data[0:4]
-		data = column.Dump(data, cc.rsEncoder)
+		data = column.DumpWithDefault(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
