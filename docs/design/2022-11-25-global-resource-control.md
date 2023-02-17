@@ -141,7 +141,7 @@ Storage(TiKV/Tiflash) cluster sharing with QoS guarantee is more challenging. In
 #### QoS Metadata management
 Resource Manager  keeps the persisted metadata of resource groups. Resource Manager will translate that metadata information from abstract RUs into system resources like vCPU, read bandwidth, write bandwidth, etc to TiKV/Tiflash nodes.
 
-Metadata sync-up is bidirectional. Resource Manager notifies TiKV on resource group metadata change at DDL execution time via http API interface. And TiKV nodes inquire  Resource Manager when local metadata is missing or might be stale.  Resource group metadata is in memory only at TiKV nodes.
+Metadata sync-up is bidirectional. Resource Manager notifies TiKV on resource group metadata change at DDL execution time via http API interface. And TiKV nodes inquire Resource Manager when local metadata is missing or might be stale.  Resource group metadata is in memory only at TiKV nodes.
 #### Soft quota limiters
 We can specify the quota limits for some resource groups to prevent the overrun and for TiKV node protection, by reusing the front-end quota limiter (token bucket algorithm) framework of TiKV. With the quota limiter capping, requests from some resource group might be throttled even when the TiKV instance is not saturated.
 
