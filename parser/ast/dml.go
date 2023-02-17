@@ -1960,7 +1960,7 @@ type FieldsClause struct {
 
 // Restore for FieldsClause
 func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Terminated != "\t" || (n.Escaped != nil && *n.Escaped != '\\') {
+	if n.Terminated != "\t" || (n.Escaped == nil || *n.Escaped != '\\') {
 		ctx.WriteKeyWord(" FIELDS")
 		if n.Terminated != "\t" {
 			ctx.WriteKeyWord(" TERMINATED BY ")
@@ -1973,9 +1973,9 @@ func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" ENCLOSED BY ")
 			ctx.WriteString(string(*n.Enclosed))
 		}
-		if n.Escaped != nil && *n.Escaped != '\\' {
+		if n.Escaped == nil || *n.Escaped != '\\' {
 			ctx.WriteKeyWord(" ESCAPED BY ")
-			if *n.Escaped == 0 {
+			if n.Escaped == nil {
 				ctx.WritePlain("''")
 			} else {
 				ctx.WriteString(string(*n.Escaped))
