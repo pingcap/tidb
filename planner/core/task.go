@@ -1082,9 +1082,10 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		return nil, false
 	}
 	var (
-		selOnIdxScan   *PhysicalSelection
-		selOnTblScan   *PhysicalSelection
-		selSelectivity float64
+		selOnIdxScan                *PhysicalSelection
+		selOnTblScan                *PhysicalSelection
+		selSelectivity              float64
+		selSelectivityOnPartialScan []float64
 
 		idxScan           *PhysicalIndexScan
 		tblScan           *PhysicalTableScan
@@ -1121,15 +1122,22 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	}
 	if len(copTsk.idxMergePartPlans) > 0 {
 		partialFinalScan = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
-		for _, scan := range copTsk.idxMergePartPlans {
+		selSelectivityOnPartialScan = make([]float64, len(copTsk.idxMergePartPlans))
+		for i, scan := range copTsk.idxMergePartPlans {
+			selSelectivityOnPartialScan[i] = 1
 			clonedScan, err := scan.Clone()
 			if err != nil {
 				return nil, false
 			}
 			partialClonedScan = append(partialClonedScan, clonedScan)
 			finalScan := clonedScan
+			var partialSel *PhysicalSelection
 			for len(finalScan.Children()) > 0 {
+				partialSel, _ = finalScan.(*PhysicalSelection)
 				finalScan = finalScan.Children()[0]
+			}
+			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
+				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
 			partialFinalScan = append(partialFinalScan, finalScan)
 		}
@@ -1157,7 +1165,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				// If there's one used index cannot match the prop.
 				return nil, false
 			}
-			newCopSubPlans := p.addPartialLimitForSubScans(isDesc, partialClonedScan)
+			newCopSubPlans := p.addPartialLimitForSubScans(partialClonedScan, partialFinalScan, selSelectivityOnPartialScan)
 			copTsk.idxMergePartPlans = newCopSubPlans
 			clonedTblScan, err := copTsk.tablePlan.Clone()
 			if err != nil {
@@ -1181,26 +1189,17 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 			pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 			copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
-		}
-		idxScan.Desc = isDesc
-		childProfile := copTsk.plan().statsInfo()
-		newCount := p.Offset + p.Count
-		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedLimit := PhysicalLimit{
-			Count: newCount,
-		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
-		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 
-		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
-		child := pushedLimit.Children()[0]
-		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
-		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
-		// The Limit->Selection->IndexScan case:
-		// adjust the row count of IndexScan according to the selectivity of the Selection.
-		if selSelectivity > 0 && selSelectivity < 1 {
-			scaledRowCount := child.Stats().RowCount / selSelectivity
-			idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+			// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+			child := pushedLimit.Children()[0]
+			// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+			child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+			// The Limit->Selection->IndexScan case:
+			// adjust the row count of IndexScan according to the selectivity of the Selection.
+			if selSelectivity > 0 && selSelectivity < 1 {
+				scaledRowCount := child.Stats().RowCount / selSelectivity
+				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+			}
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
@@ -1312,9 +1311,9 @@ func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc
 	return true
 }
 
-func (p *PhysicalTopN) addPartialLimitForSubScans(isDesc bool, copSubPlans []PhysicalPlan) []PhysicalPlan {
+func (p *PhysicalTopN) addPartialLimitForSubScans(copSubPlans []PhysicalPlan, finalPartialScans []PhysicalPlan, selSelectivities []float64) []PhysicalPlan {
 	limitAddedPlan := make([]PhysicalPlan, 0, len(copSubPlans))
-	for _, copSubPlan := range copSubPlans {
+	for i, copSubPlan := range copSubPlans {
 		childProfile := copSubPlan.statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1323,6 +1322,16 @@ func (p *PhysicalTopN) addPartialLimitForSubScans(isDesc bool, copSubPlans []Phy
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copSubPlan.Schema())
 		pushedLimit.SetChildren(copSubPlan)
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->IndexScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivities[i] > 0 && selSelectivities[i] < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivities[i]
+			finalPartialScans[i].SetStats(finalPartialScans[i].Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 		limitAddedPlan = append(limitAddedPlan, pushedLimit)
 	}
 	return limitAddedPlan
