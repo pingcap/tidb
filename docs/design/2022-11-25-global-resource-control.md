@@ -38,7 +38,7 @@ CREATE RESOURCE GROUP small_application RU_PER_SEC=20000;
 (CPU=2 core, READ_IO_RATE=200 MB/s, WRITE_IO_RATE=100 MB/s)
 /* bind resource group via DCL */
 ALTER USER user_name RESOURCE GROUP resouce_group_name;
-CREATE USER user_name IDENTIFIED BY ‘password’ RESOURCE GROUP resource_group_name;
+CREATE USER user_name IDENTIFIED BY 'password' RESOURCE GROUP resource_group_name;
 
 /* bind resource group to the current session */
 SET CURRENT RESOURCE GROUP resouce_group_name
