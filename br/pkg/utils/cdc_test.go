@@ -52,7 +52,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test],",
-		nameSet.String())
+		nameSet.MessageToUser())
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)
@@ -71,5 +71,5 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test],",
-		nameSet.String())
+		nameSet.MessageToUser())
 }

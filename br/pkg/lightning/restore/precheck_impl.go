@@ -785,7 +785,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	}
 
 	if !nameSet.Empty() {
-		errorMsg = append(errorMsg, nameSet.String())
+		errorMsg = append(errorMsg, nameSet.MessageToUser())
 	}
 
 	if len(errorMsg) > 0 {

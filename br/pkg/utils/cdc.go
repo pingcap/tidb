@@ -19,15 +19,19 @@ const (
 	CDCPrefixV61   = "/tidb/cdc/changefeed/info/"
 )
 
+// CDCNameSet saves CDC changefeed's information.
+// nameSet maps `cluster/namespace` to `changefeed`s
 type CDCNameSet struct {
 	nameSet map[string][]string
 }
 
+// that the nameSet is empty means no changefeed exists.
 func (s *CDCNameSet) Empty() bool {
 	return len(s.nameSet) == 0
 }
 
-func (s *CDCNameSet) String() string {
+// MessageToUser convert the map `nameSet` to a readable message to user.
+func (s *CDCNameSet) MessageToUser() string {
 	var changefeedMsgBuf strings.Builder
 	changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
 	isFirst := true
@@ -45,6 +49,9 @@ func (s *CDCNameSet) String() string {
 	return changefeedMsgBuf.String()
 }
 
+// GetCDCChangefeedNameSet gets CDC changefeed information and wraps them to a map
+// for CDC >= v6.2, the etcd key format is /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
+// for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
 func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	nameSet := make(map[string][]string, 1)
 	// check etcd KV of CDC >= v6.2
