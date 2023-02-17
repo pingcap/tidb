@@ -15,6 +15,7 @@
 package tablecodec
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"testing"
@@ -589,6 +590,11 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+	IndexKey2TempIndexKey(untouchedIndexKey)
+	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+	elem := TempIndexValueElem{Handle: kv.IntHandle(1), Delete: true, Distinct: true}
+	tmpIdxVal := elem.Encode(nil)
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, tmpIdxVal))
 }
 
 func TestTempIndexKey(t *testing.T) {
@@ -598,14 +604,14 @@ func TestTempIndexKey(t *testing.T) {
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
-	IndexKey2TempIndexKey(indexID, indexKey)
+	IndexKey2TempIndexKey(indexKey)
 	tid, iid, _, err := DecodeKeyHead(indexKey)
 	require.NoError(t, err)
 	require.Equal(t, tid, tableID)
 	require.NotEqual(t, indexID, iid)
 	require.Equal(t, indexID, iid&IndexIDMask)
 
-	TempIndexKey2IndexKey(indexID, indexKey)
+	TempIndexKey2IndexKey(indexKey)
 	tid, iid, _, err = DecodeKeyHead(indexKey)
 	require.NoError(t, err)
 	require.Equal(t, tid, tableID)
@@ -625,7 +631,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	}
 	val := tempIdxVal.Encode(nil)
 	var newTempIdxVal TempIndexValueElem
-	remain, err := newTempIdxVal.DecodeOne(val, false)
+	remain, err := newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
@@ -638,11 +644,12 @@ func TestTempIndexValueCodec(t *testing.T) {
 	}
 	newTempIdxVal = TempIndexValueElem{}
 	val = tempIdxVal.Encode(nil)
-	remain, err = newTempIdxVal.DecodeOne(val, false)
+	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
-	require.Equal(t, newTempIdxVal.Handle.IntValue(), int64(100))
-	newTempIdxVal.Handle = nil
+	handle, err := DecodeHandleInUniqueIndexValue(newTempIdxVal.Value, false)
+	require.NoError(t, err)
+	require.Equal(t, handle.IntValue(), int64(100))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 
 	tempIdxVal = TempIndexValueElem{
@@ -651,7 +658,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	}
 	newTempIdxVal = TempIndexValueElem{}
 	val = tempIdxVal.Encode(nil)
-	remain, err = newTempIdxVal.DecodeOne(val, false)
+	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
@@ -664,7 +671,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	}
 	newTempIdxVal = TempIndexValueElem{}
 	val = tempIdxVal.Encode(nil)
-	remain, err = newTempIdxVal.DecodeOne(val, false)
+	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
@@ -692,12 +699,23 @@ func TestTempIndexValueCodec(t *testing.T) {
 	val = tempIdxVal2.Encode(val)
 	val = tempIdxVal3.Encode(val)
 	var result TempIndexValue
-	result, err = DecodeTempIndexValue(val, false)
+	result, err = DecodeTempIndexValue(val)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
+	for i := 0; i < 3; i++ {
+		if result[i].Handle == nil {
+			uv := binary.BigEndian.Uint64(result[i].Value)
+			result[i].Handle = kv.IntHandle(int64(uv))
+		}
+	}
 	require.Equal(t, result[0].Handle.IntValue(), int64(100))
 	require.Equal(t, result[1].Handle.IntValue(), int64(100))
 	require.Equal(t, result[2].Handle.IntValue(), int64(101))
+
+	elem := TempIndexValueElem{Handle: kv.IntHandle(100), KeyVer: 'b', Delete: true, Distinct: true}
+	val = elem.Encode(nil)
+	isUnique := IndexKVIsUnique(val)
+	require.False(t, isUnique)
 }
 
 func TestV2TableCodec(t *testing.T) {

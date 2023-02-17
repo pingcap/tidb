@@ -153,7 +153,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
-				if isTemp, _ := tablecodec.CheckTempIndexKey(uk.newKey); isTemp {
+				if tablecodec.IsTempIndexKey(uk.newKey) {
 					// If it is a temp index, the value cannot be decoded by DecodeHandleInUniqueIndexValue.
 					// Since this function is an optimization, we can skip prefetching the rows referenced by
 					// temp indexes.

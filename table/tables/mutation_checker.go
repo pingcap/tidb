@@ -159,7 +159,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 				continue
 			}
 			var tempIdxVal tablecodec.TempIndexValue
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value, tblInfo.IsCommonHandle)
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value)
 			if err != nil {
 				return err
 			}
@@ -171,7 +171,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 				continue
 			}
 			orgKey = append(orgKey, m.key...)
-			tablecodec.TempIndexKey2IndexKey(idxID, orgKey)
+			tablecodec.TempIndexKey2IndexKey(orgKey)
 			indexHandle, err = tablecodec.DecodeIndexHandle(orgKey, value, len(indexInfo.Columns))
 		} else {
 			indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
@@ -227,7 +227,7 @@ func checkIndexKeys(
 				// We never commit the untouched key values to the storage. Skip this check.
 				continue
 			}
-			tmpVal, err := tablecodec.DecodeTempIndexValue(m.value, t.Meta().IsCommonHandle)
+			tmpVal, err := tablecodec.DecodeTempIndexValue(m.value)
 			if err != nil {
 				return err
 			}
