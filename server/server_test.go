@@ -1037,10 +1037,10 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		// can't insert into views (in TiDB) or sequences. issue #20880
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table v1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table s1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
 
 		rs, err1 := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test", path))
 		require.NoError(t, err1)
