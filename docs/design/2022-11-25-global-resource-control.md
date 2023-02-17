@@ -123,7 +123,7 @@ In this protocol, there are some key fields:
 Bucket Tokens have two parts.
 - `burst`: it is an accumulated value, it absorbs temporal spikes in workloads of the tenant user. Moreover, if the system is elastic enough, such a cluster can be auto-scale in the cloud. It can be used as the budget for users to pay. If the burst is enough, customers feel free to use resources without limitation, which matches the main idea of the serverless product.
 - `refill rate`: rate-limit resource consumption. grant the tokens over a specified period of time, according to a fraction of the global refill rate
-Once a request with a token bucket server is completed, the node adjusts its local token bucket according to the response. either adding burst tokens or setting up a refill rate.
+Once a request with a token bucket server is completed, the node adjusts its local token bucket according to the response. Either adding burst tokens or setting up a refill rate.
 #### Debt
 The token buckets can be "debt", as we mentioned, due to some statistics only being accounted for after the fact (eg, the read size of coprocess request, the CPUSecs usage). When a local bucket is in debt, KV operations are blocked until the debt is paid. This may lead to the latency not being stable . There is an improvement that allows the debt to be paid over a time period from the refill rate.
 #### Adaptive Capacity
