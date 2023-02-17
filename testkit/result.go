@@ -132,7 +132,7 @@ func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
 }
 
 // CheckContains checks whether the result contains the expected string
-func (res *Result) CheckContains(expected string) {
+func (res *Result) CheckContain(expected string) {
 	for _, row := range res.rows {
 		for _, colValue := range row {
 			if strings.Contains(colValue, expected) {
@@ -142,6 +142,13 @@ func (res *Result) CheckContains(expected string) {
 	}
 	comment := fmt.Sprintf("the result doesn't contain the exepected %s", expected)
 	res.require.Equal(true, false, comment)
+}
+
+// CheckContains checks whether the result contains the expected string
+func (res *Result) CheckContainMore(expecteds []string) {
+	for _, expected := range expecteds {
+		res.CheckContain(expected)
+	}
 }
 
 // CheckNotContain checks whether the result contains the expected string

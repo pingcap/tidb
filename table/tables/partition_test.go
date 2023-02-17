@@ -736,14 +736,14 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
 				if selInfo.point {
-					result.CheckContains("Point_Get")
+					result.CheckContain("Point_Get")
 				}
 				if selInfo.batchPoint {
-					result.CheckContains("Batch_Point_Get")
+					result.CheckContain("Batch_Point_Get")
 				}
 				if selInfo.pruned {
 					for _, part := range selInfo.usedPartition {
-						result.CheckContains(part)
+						result.CheckContain(part)
 					}
 					for _, part := range selInfo.notUsedPartition {
 						result.CheckNotContain(part)
@@ -1171,14 +1171,14 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
 				if selInfo.point {
-					result.CheckContains("Point_Get")
+					result.CheckContain("Point_Get")
 				}
 				if selInfo.batchPoint {
-					result.CheckContains("Batch_Point_Get")
+					result.CheckContain("Batch_Point_Get")
 				}
 				if selInfo.pruned {
 					for _, part := range selInfo.usedPartition {
-						result.CheckContains(part)
+						result.CheckContain(part)
 					}
 				}
 			}
@@ -2061,7 +2061,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	// It doesn't support LINEAR KEY partition
 	tk.MustExec("CREATE TABLE tkey_linear (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY LINEAR KEY(col3) PARTITIONS 5")
 	result := tk.MustQuery("show warnings")
-	result.CheckContains("LINEAR KEY is not supported, using non-linear KEY instead")
+	result.CheckContain("LINEAR KEY is not supported, using non-linear KEY instead")
 
 	// It will ignore ALGORITHM=1|2
 	tk.MustExec("CREATE TABLE tkey_algorithm1 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=1 (col3) PARTITIONS 5")
@@ -2081,7 +2081,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"PARTITION p2 VALUES LESS THAN MAXVALUE\n" +
 		")")
 	result = tk.MustQuery("show warnings")
-	result.CheckContains("Unsupported partition type RANGE, treat as normal table")
+	result.CheckContain("Unsupported partition type RANGE, treat as normal table")
 
 	// It ignores /*!50100 */ format
 	tk.MustExec("CREATE TABLE tkey10 (`col1` int, `col2` char(5),`col3` date)" +
@@ -2153,15 +2153,30 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM tkey14 WHERE col3 = NULL").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT count(*) FROM tkey14 WHERE col3 IS NULL").Check(testkit.Rows("4"))
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey14 WHERE col3 IS NULL")
-	result.CheckContains("partition:p2")
+	result.CheckContain("partition:p2")
 	result.CheckNotContainMore([]string{"partition:p0", "partition:p1", "partition:p3"})
 
 	tk.MustExec("CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)\n" +
 		"PARTITION BY KEY (col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey15 VALUES(1, SYSDATE(), 'linpin', 1), (2, SYSDATE(), NULL, 2), (3, SYSDATE(), 'anqila', 3), (4, SYSDATE(), NULL, 4)")
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey15 WHERE col3 IS NULL")
-	result.CheckContains("partition:p2")
+	result.CheckContain("partition:p2")
 	result.CheckNotContainMore([]string{"partition:p0", "partition:p1", "partition:p3"})
+
+	tk.MustExec("CREATE TABLE tkey12_2 (col1 INT, col2 INT ,col3 INT ,col4 INT , UNIQUE KEY(col2, col3)" +
+		") PARTITION BY KEY(col2, col3) PARTITIONS 4")
+	tk.MustExec("INSERT INTO tkey12_2 values(20,1,1,1),(1,2,NULL,2),(3,3,3,3),(3,3,NULL,3),(4,4,4,4)," +
+		"(5,5,5,5), (6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12)," +
+		"(13,13,13,13),(14,14,null,14)")
+	result = tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL")
+	result.CheckNotContainMore([]string{"partition:p1", "partition:p2", "partition:p3"})
+	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL").Check(testkit.Rows("1 2 <nil> 2"))
+	result = tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2")
+	result.CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 = 2").Check(testkit.Rows("1 2 <nil> 2"))
+	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 IS NULL")
+	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 IS NULL").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
 
 	// This tests caculating the boundary partition ID when it prunes partition table
 	tk.MustExec("create table tkey16 (a int) partition by key (a) partitions 12")
@@ -2257,7 +2272,7 @@ func TestKeyPartitionTableDDL(t *testing.T) {
 		"PARTITION BY KEY()" +
 		"PARTITIONS 2")
 	result := tk.MustQuery("show warnings")
-	result.CheckContains("Unsupported partition type KEY, treat as normal table")
+	result.CheckContain("Unsupported partition type KEY, treat as normal table")
 }
 
 func TestPruneModeWarningInfo(t *testing.T) {

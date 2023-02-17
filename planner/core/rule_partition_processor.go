@@ -256,12 +256,11 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 
 	for _, r := range ranges {
 		if r.IsPointNullable(ctx) {
-			if !r.HighVal[0].IsNull() {
-				if len(r.HighVal) != len(partCols) {
-					used = []int{-1}
-					break
-				}
+			if len(r.HighVal) != len(partCols) {
+				used = []int{FullRange}
+				break
 			}
+
 			colVals := make([]types.Datum, 0, len(r.HighVal))
 			colVals = append(colVals, r.HighVal...)
 			idx, err := partExpr.LocateKeyPartition(pi, partCols, colVals)
@@ -336,7 +335,9 @@ func (s *partitionProcessor) getUsedPartitions(ctx sessionctx.Context, tbl table
 	return s.getUsedKeyPartitions(ctx, tbl, partitionNames, columns, conds, names)
 }
 
-// findUsedPartitions is used to get used partitions for hash or key partition tables
+// findUsedPartitions is used to get used partitions for hash or key partition tables.
+// The first returning is the used partition index set pruned by `conds`.
+// The second returning is the filter conditions which should be kept after pruning.
 func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context,
 	tbl table.Table, partitionNames []model.CIStr, conds []expression.Expression,
 	columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
