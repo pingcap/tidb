@@ -3092,6 +3092,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	}()
 	_, err := tk0.Exec(sql)
+	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
 }
