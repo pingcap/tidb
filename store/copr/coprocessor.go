@@ -217,7 +217,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
 		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
 			oldConcurrency := it.concurrency
+			partitionNum := req.KeyRanges.PartitionNum()
+			if partitionNum > it.concurrency {
+				partitionNum = it.concurrency
+			}
 			it.concurrency = 2
+			if it.concurrency < partitionNum {
+				it.concurrency = partitionNum
+			}
 
 			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 				if val.(bool) {
