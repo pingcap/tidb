@@ -223,7 +223,7 @@ Backend requests scheduling is also taken into account. They can be assigned to 
 ### On-demand provisioning
 Because the concept of request units is new to customers, it may be challenging to forecast the provisioned throughput. Also, the application's data distribution and workload non-uniform access may lead to not all data across all storage nodes. Although from the global perspective of the entire cluster, there remain many resources, the application setting may still be inappropriate. Hence, we should let the cluster have a capacity to burst at the node level, and it may need to do something about balancing the consumed capacity mentioned above.
 
-###Diagnostics
+### Diagnostics
 Metrics on # of blocked requests due to out of token,  per user, per tenant.
 HWM of RU for slow queries, for individual users and tenants
 LWM, HWM, Average rate for individual resource group
