@@ -2122,7 +2122,7 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 
 func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
-		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)),"DBStatementCount")
+		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)), "DBStatementCount")
 
 		dbt.MustExec("create table test (a int)")
 

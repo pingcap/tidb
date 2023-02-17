@@ -87,7 +87,7 @@ func TestDBStmtCount(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
-	ts := createTidbTestSuiteWithCfg(t,cfg)
+	ts := createTidbTestSuiteWithCfg(t, cfg)
 
 	ts.runTestDBStmtCount(t)
 }
