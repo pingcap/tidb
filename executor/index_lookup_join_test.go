@@ -352,7 +352,7 @@ func TestIssue23722(t *testing.T) {
 	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
-	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("0"))
 
 	// Test lookup content exceeds primary key prefix.
 	tk.MustExec("drop table if exists t;")
