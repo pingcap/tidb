@@ -3162,7 +3162,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 			Length: types.UnspecifiedLength,
 		}}
 		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED KEY")
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
 	return nil
