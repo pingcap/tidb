@@ -25,6 +25,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -285,10 +286,18 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	// For capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command, we directly dump stats in storage
 	if task.IsCapture {
-		if !task.IsContinuesCapture && variable.EnableHistoricalStatsForCapture.Load() {
-			// Dump stats
-			if err = dumpStats(zw, pairs, do); err != nil {
-				return err
+		if !task.IsContinuesCapture {
+			if variable.EnableHistoricalStatsForCapture.Load() {
+				// Dump stats
+				if err = dumpStats(zw, pairs, do); err != nil {
+					return err
+				}
+			} else {
+				failpoint.Inject("shouldDumpStats", func(val failpoint.Value) {
+					if val.(bool) {
+						panic("shouldDumpStats")
+					}
+				})
 			}
 		}
 	} else {
