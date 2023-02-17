@@ -149,7 +149,7 @@ We can specify the quota limits for some resource groups to prevent the overrun 
 TiDB needs to inject into gRPC requests a resource group related information, like the resource group id,  in the protobuf message.
 
 #### Front-end requests scheduling
-Resource consumption on vCPU, read bandwidth and write bandwidth needs to be normalized into internal “Shares” represented as a number.  At different modules and different phases, the normalization formulas are different.
+Resource consumption on vCPU, read bandwidth and write bandwidth needs to be normalized into internal "Shares" represented as a number. At different modules and different phases, the normalization formulas are different.
 
 Read request and write request handling are quite different in TiKV. Read request handling in TiKV is already in fine grain,  and we can almost directly use request elapsed time as resource consumption, while write path handling is rather complex.
 
