@@ -757,9 +757,9 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		if testCase.cacheAble == "0" {
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			if testCase.isDecorrelated {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has decorrelated sub-queries is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
 			} else {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the plan with PhysicalApply is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
 			}
 		}
 	}

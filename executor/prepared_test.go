@@ -1117,7 +1117,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	// The subquery plan with PhysicalApply can't be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the plan with PhysicalApply is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
 
 	// test for apply cache
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
