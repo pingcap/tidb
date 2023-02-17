@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: parser_yacc check-parallel lint tidy testSuite errdoc license check-bazel-prepare
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -409,12 +409,12 @@ bazel_test: failpoint-enable bazel_ci_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 
-bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_keep_going=false \
+bazel_coverage_test: check-bazel-prepare failpoint-enable bazel_ci_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,distributereorg \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...

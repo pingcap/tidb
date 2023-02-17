@@ -160,7 +160,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 
-	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // for point query plan
+	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -287,7 +287,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		checkPlanCacheability(sctx, p, len(paramTypes), len(limitParams))
+		if cacheable, reason := isPlanCacheable(sctx, p, len(paramTypes), len(limitParams)); !cacheable {
+			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
+		}
 	}
 
 	// put this plan into the plan cache.
@@ -309,60 +311,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
-}
-
-// checkPlanCacheability checks whether this plan is cacheable and set to skip plan cache if it's uncacheable.
-func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitParamNum int) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	var pp PhysicalPlan
-	switch x := p.(type) {
-	case *Insert:
-		pp = x.SelectPlan
-	case *Update:
-		pp = x.SelectPlan
-	case *Delete:
-		pp = x.SelectPlan
-	case PhysicalPlan:
-		pp = x
-	default:
-		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String()))
-		return
-	}
-	if pp == nil { // simple DML statements
-		return
-	}
-
-	if useTiFlash(pp) {
-		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
-		return
-	}
-
-	// We only cache the tableDual plan when the number of parameters are zero.
-	if containTableDual(pp) && paramNum > 0 {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
-		return
-	}
-
-	if containShuffleOperator(pp) {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a Shuffle plan"))
-		return
-	}
-
-	if accessMVIndexWithIndexMerge(pp) {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
-		return
-	}
-
-	// before cache the param limit plan, check switch
-	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
-	}
-
-	// we won't cache the plan with PhysicalApply, which has low profit and high risk
-	if containApplyOperator(pp) {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with PhysicalApply is un-cacheable"))
-		return
-	}
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -732,63 +680,6 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	}
 	return err
-}
-
-func containTableDual(p PhysicalPlan) bool {
-	_, isTableDual := p.(*PhysicalTableDual)
-	if isTableDual {
-		return true
-	}
-	childContainTableDual := false
-	for _, child := range p.Children() {
-		childContainTableDual = childContainTableDual || containTableDual(child)
-	}
-	return childContainTableDual
-}
-
-func containShuffleOperator(p PhysicalPlan) bool {
-	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
-		return true
-	}
-	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
-		return true
-	}
-	return false
-}
-
-func accessMVIndexWithIndexMerge(p PhysicalPlan) bool {
-	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
-		if idxMerge.AccessMVIndex {
-			return true
-		}
-	}
-
-	for _, c := range p.Children() {
-		if accessMVIndexWithIndexMerge(c) {
-			return true
-		}
-	}
-	return false
-}
-
-// useTiFlash used to check whether the plan use the TiFlash engine.
-func useTiFlash(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		switch x.StoreType {
-		case kv.TiFlash:
-			return true
-		default:
-			return false
-		}
-	default:
-		if len(p.Children()) > 0 {
-			for _, plan := range p.Children() {
-				return useTiFlash(plan)
-			}
-		}
-	}
-	return false
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.

@@ -770,6 +770,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
 
+	d.mu.RLock()
+	d.mu.hook.OnJobRunAfter(job)
+	d.mu.RUnlock()
+
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.reset()
@@ -1134,7 +1138,7 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
+func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
@@ -1153,7 +1157,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		return
 	}
 
-	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
@@ -1164,7 +1168,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 	}
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return
@@ -1189,7 +1193,7 @@ func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64
 
 	timeStart := time.Now()
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return err
@@ -1231,7 +1235,7 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		}
 	})
 
-	waitSchemaChanged(context.Background(), d, waitTime, latestSchemaVersion, job)
+	waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
 	return nil
 }
 

@@ -1388,7 +1388,7 @@ column %s id %d does not exist, this column may have been updated by other DDL r
 
 ["ddl:8246"]
 error = '''
-Error happened when enable/disable DDL: %s
+Error happened when %s DDL: %s
 '''
 
 ["ddl:8247"]

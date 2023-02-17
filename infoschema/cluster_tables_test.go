@@ -226,9 +226,12 @@ func TestSelectClusterTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-slow0.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
@@ -1019,15 +1022,14 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 
 func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.store = testkit.CreateMockStore(t, withMockTiFlash(2))
+	_, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.store = testkit.CreateMockStore(t, withMockTiFlash(1))
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1040,7 +1042,7 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 
 	sql := "select * from t"
 	tk.MustExec(sql)
-	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
 }
 

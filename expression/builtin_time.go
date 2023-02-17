@@ -3581,6 +3581,9 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	argTps := []types.EvalType{dateEvalTp, intervalEvalTp, types.ETString}
 	var bf baseBuiltinFunc
 	bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resultEvalTp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.SetType(resultTp)
 
 	var resultFsp int

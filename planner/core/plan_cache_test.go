@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -100,6 +101,123 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
 		testkit.Rows("ee -9605492323393070105 0850-03-15"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
+func TestNonPreparedPlanCacheSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t add index idx_a(a)")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit since the schema changed
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedCacheWithPreparedCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`prepare st from 'select * from t where a=1'`)
+	tk.MustExec(`execute st`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`select * from t where a=1`) // cannot hit since these 2 plan cache are separated
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tk.MustExec(`select * from t where a=1`) // the session-level switch can take effect in real time
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @@sql_mode=''") // cannot hit since sql-mode changed
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t")
+	tk.MustExec(`select * from t where a=1`) // stats changes won't affect non-prep cache hit
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("select /*+ use_index(t, a) */ * from t where a=1")
+	tk.MustExec("select /*+ use_index(t, a) */ * from t where a=1") // cannot hit since it has a hint
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("create binding for select * from t where a=1 using select /*+ use_index(t, a) */ * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("drop binding for select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
@@ -201,6 +319,43 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
 	}
+}
+
+func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	tk.MustExecWithContext(ctx, "select * from t where a=1")
+	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.Session().GetSessionVars().InRestrictedSQL = false
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheSelectLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue38269(t *testing.T) {

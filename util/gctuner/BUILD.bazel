@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util",
+        "//util/intest",
         "//util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
@@ -20,6 +21,7 @@ go_library(
 
 go_test(
     name = "gctuner_test",
+    timeout = "short",
     srcs = [
         "finalizer_test.go",
         "mem_test.go",

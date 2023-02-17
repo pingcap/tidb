@@ -463,8 +463,10 @@ var defaultSysVars = []*SysVar{
 			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
 			if oldVal != newVal {
 				err := switchDDL(newVal)
+				if err != nil {
+					return err
+				}
 				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
-				return err
 			}
 			return nil
 		},
@@ -2498,7 +2500,7 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
-	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
+	// TiDBEnableDDL indicates whether the tidb-server campaigns the DDL owner,
 	TiDBEnableDDL = "tidb_enable_ddl"
 	// Port is the name for 'port' system variable.
 	Port = "port"
