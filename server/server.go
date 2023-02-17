@@ -981,3 +981,37 @@ func (s *Server) KillNonFlashbackClusterConn() {
 		s.Kill(id, false)
 	}
 }
+
+// GetMinStartTS implements SessionManager interface.
+func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	// sys processes
+	if s.dom != nil {
+		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}
+	// user sessions
+	func() {
+		s.rwlock.RLock()
+		defer s.rwlock.RUnlock()
+		for _, client := range s.clients {
+			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}()
+	// internal sessions
+	func() {
+		s.sessionMapMutex.Lock()
+		defer s.sessionMapMutex.Unlock()
+		analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
+		for se := range s.internalSessions {
+			if thisTS, processInfoID := session.GetStartTSFromSession(se); processInfoID != analyzeProcID && thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}()
+	return
+}
