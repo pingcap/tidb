@@ -8,7 +8,7 @@ A Global Resource Control mechanism that limits multiple applications' resource 
 ## Background and Motivation
 A TiDB cluster for multiple applications to share the same data service, and there are several Aurora or MySQL, or other database instances as the data service backend. TiDB has the advantage of scalability but also has some challenges in the big-size cluster. How to make the shared cluster provide stable, predictable performance for different Applications? Part of what needs to be done is to control the resource usage of each application.
 
-Currently, TiDB lack of global admission control limits the request from the SQL layer to the storage layer, and different users or applications may influence each other in the shared environment. Use a global admission control to ensure that the cluster doesn’t become overloaded, avoid interference between applications, and enforce the throughput limits requested by customers.
+Currently, TiDB lack of global admission control limits the request from the SQL layer to the storage layer, and different users or applications may influence each other in the shared environment. Use a global admission control to ensure that the cluster doesn't become overloaded, avoid interference between applications, and enforce the throughput limits requested by customers.
 
 Moreover, this resource control mechanism can be used by Resource Manage in the future of TiDB Cloud. Users can pay for the actual usage.  So, consider scenarios. It supports two models.
 
