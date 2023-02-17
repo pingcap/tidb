@@ -1038,6 +1038,9 @@ func IsUntouchedIndexKValue(k, v []byte) bool {
 		return false
 	}
 	vLen := len(v)
+	if IsTempIndexKey(k) {
+		return vLen > 0 && v[vLen-1] == kv.UnCommitIndexKVFlag
+	}
 	if vLen <= MaxOldEncodeValueLen {
 		return (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag
 	}
@@ -1132,29 +1135,27 @@ const TempIndexPrefix = 0x7fff000000000000
 const IndexIDMask = 0xffffffffffff
 
 // IndexKey2TempIndexKey generates a temporary index key.
-func IndexKey2TempIndexKey(indexID int64, key []byte) {
-	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)
+func IndexKey2TempIndexKey(key []byte) {
+	idxIDBytes := key[prefixLen : prefixLen+idLen]
+	idxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(idxIDBytes))
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | idxID)
 	binary.BigEndian.PutUint64(key[prefixLen:], eid)
 }
 
 // TempIndexKey2IndexKey generates an index key from temporary index key.
-func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
-	eid := codec.EncodeIntToCmpUint(originIdxID)
+func TempIndexKey2IndexKey(tempIdxKey []byte) {
+	tmpIdxIDBytes := tempIdxKey[prefixLen : prefixLen+idLen]
+	tempIdxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(tmpIdxIDBytes))
+	eid := codec.EncodeIntToCmpUint(tempIdxID & IndexIDMask)
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
 }
 
-// CheckTempIndexKey checks whether the input key is for a temp index.
-func CheckTempIndexKey(indexKey []byte) (isTemp bool, originIdxID int64) {
-	var (
-		indexIDKey  []byte
-		indexID     int64
-		tempIndexID int64
-	)
-	// Get encoded indexID from key, Add uint64 8 byte length.
-	indexIDKey = indexKey[prefixLen : prefixLen+8]
-	indexID = codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
-	tempIndexID = int64(TempIndexPrefix) | indexID
-	return tempIndexID == indexID, indexID & IndexIDMask
+// IsTempIndexKey checks whether the input key is for a temp index.
+func IsTempIndexKey(indexKey []byte) (isTemp bool) {
+	indexIDKey := indexKey[prefixLen : prefixLen+8]
+	indexID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
+	tempIndexID := int64(TempIndexPrefix) | indexID
+	return tempIndexID == indexID
 }
 
 // TempIndexValueFlag is the flag of temporary index value.
@@ -1287,14 +1288,14 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 }
 
 // DecodeTempIndexValue decodes the temp index value.
-func DecodeTempIndexValue(value []byte, isCommonHandle bool) (TempIndexValue, error) {
+func DecodeTempIndexValue(value []byte) (TempIndexValue, error) {
 	var (
 		values []*TempIndexValueElem
 		err    error
 	)
 	for len(value) > 0 {
 		v := &TempIndexValueElem{}
-		value, err = v.DecodeOne(value, isCommonHandle)
+		value, err = v.DecodeOne(value)
 		if err != nil {
 			return nil, err
 		}
@@ -1304,7 +1305,7 @@ func DecodeTempIndexValue(value []byte, isCommonHandle bool) (TempIndexValue, er
 }
 
 // DecodeOne decodes one temp index value element.
-func (v *TempIndexValueElem) DecodeOne(b []byte, isCommonHandle bool) (remain []byte, err error) {
+func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 	flag := TempIndexValueFlag(b[0])
 	b = b[1:]
 	switch flag {
@@ -1316,7 +1317,6 @@ func (v *TempIndexValueElem) DecodeOne(b []byte, isCommonHandle bool) (remain []
 		v.KeyVer = b[0]
 		b = b[1:]
 		v.Distinct = true
-		v.Handle, err = DecodeHandleInUniqueIndexValue(v.Value, isCommonHandle)
 		return b, err
 	case TempIndexValueFlagNonDistinctNormal:
 		v.Value = b[:len(b)-1]
@@ -1325,10 +1325,10 @@ func (v *TempIndexValueElem) DecodeOne(b []byte, isCommonHandle bool) (remain []
 	case TempIndexValueFlagDeleted:
 		hLen := (uint16(b[0]) << 8) + uint16(b[1])
 		b = b[2:]
-		if isCommonHandle {
-			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
+		if hLen == idLen {
+			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
 		} else {
-			v.Handle = decodeIntHandleInIndexValue(b[:hLen])
+			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
 		}
 		b = b[hLen:]
 		v.KeyVer = b[0]
