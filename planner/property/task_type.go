@@ -41,7 +41,7 @@ func (t TaskType) String() string {
 	case CopSingleReadTaskType:
 		return "copSingleReadTask"
 	case CopMultiReadTaskType:
-		return "copDoubleReadTask"
+		return "copMultiReadTask"
 	case MppTaskType:
 		return "mppTask"
 	}
