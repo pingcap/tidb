@@ -1886,6 +1886,10 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
 	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.p_b'")
 
+	// NULL will not get 'duplicate key' error here
+	tk.MustExec("insert into test_global(a,c) values (1,2)")
+	tk.MustExec("insert into test_global(a,c) values (11,2)")
+
 	tk.MustExec("drop table if exists test_global")
 	tk.MustGetErrCode(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
 	partition by range( a ) (
