@@ -2120,6 +2120,41 @@ func (cli *testServerClient) runTestStmtCount(t *testing.T) {
 	})
 }
 
+func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "DBStatementCount", func(dbt *testkit.DBTestKit) {
+		originStmtCnt := getDBStmtCnt(string(cli.getMetrics(t)),"DBStatementCount")
+
+		dbt.MustExec("create table test (a int)")
+
+		dbt.MustExec("insert into test values(1)")
+		dbt.MustExec("insert into test values(2)")
+		dbt.MustExec("insert into test values(3)")
+		dbt.MustExec("insert into test values(4)")
+		dbt.MustExec("insert into test values(5)")
+
+		dbt.MustExec("delete from test where a = 3")
+		dbt.MustExec("update test set a = 2 where a = 1")
+		dbt.MustExec("select * from test")
+		dbt.MustExec("select 2")
+
+		dbt.MustExec("prepare stmt1 from 'update test set a = 1 where a = 2'")
+		dbt.MustExec("execute stmt1")
+		dbt.MustExec("prepare stmt2 from 'select * from test'")
+		dbt.MustExec("execute stmt2")
+		dbt.MustExec("replace into test(a) values(6);")
+
+		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
+		require.Equal(t, originStmtCnt["CreateTable"]+1, currentStmtCnt["CreateTable"])
+		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
+		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
+		require.Equal(t, originStmtCnt["Update"]+2, currentStmtCnt["Update"])
+		require.Equal(t, originStmtCnt["Select"]+3, currentStmtCnt["Select"])
+		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
+		require.Equal(t, originStmtCnt["Execute"]+0, currentStmtCnt["Execute"])
+		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])
+	})
+}
+
 func (cli *testServerClient) runTestTLSConnection(t *testing.T, overrider configOverrider) error {
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
@@ -2199,7 +2234,18 @@ func (cli *testServerClient) getMetrics(t *testing.T) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	matchResult := r.FindAllStringSubmatch(content, -1)
+	for _, v := range matchResult {
+		cnt, _ := strconv.Atoi(v[2])
+		stmtCnt[v[1]] = cnt
+	}
+	return stmtCnt
+}
+
+func getDBStmtCnt(content, dbName string) (stmtCnt map[string]int) {
+	stmtCnt = make(map[string]int)
+	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
