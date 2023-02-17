@@ -80,14 +80,12 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
-
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = false
 	cfg.Performance.TCPKeepAlive = true
-
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
 
