@@ -1614,7 +1614,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
-	if oldPi != nil && oldPi.Info == pi.Info {
+	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
 		pi.Time = oldPi.Time
 	}
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
@@ -3359,7 +3359,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[9])
 	dom.StartHistoricalStatsWorker()
-
+	if runBootstrapSQLFile {
+		pm := &privileges.UserPrivileges{
+			Handle: dom.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(ses[9], pm)
+		doBootstrapSQLFile(ses[9])
+	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
 	syncStatsCtxs, err := createSessions(store, cnt)
