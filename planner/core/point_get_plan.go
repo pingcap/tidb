@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -608,7 +609,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			if !sessVars.IsAutocommit() || sessVars.InTxn() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
