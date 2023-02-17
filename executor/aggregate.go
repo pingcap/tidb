@@ -254,6 +254,7 @@ func (e *HashAggExec) Close() error {
 		e.partialResultMap = nil
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
+			e.memTracker.Detach()
 		}
 		if e.listInDisk != nil {
 			firstErr = e.listInDisk.Close()
@@ -288,6 +289,9 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
+	}
+	if e.memTracker != nil {
+		e.memTracker.Detach()
 	}
 	return e.baseExecutor.Close()
 }
@@ -1305,6 +1309,9 @@ func (e *StreamAggExec) Close() error {
 		e.childResult = nil
 	}
 	e.groupChecker.reset()
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return e.baseExecutor.Close()
 }
 

@@ -1629,6 +1629,9 @@ func (e *SelectionExec) Close() error {
 		e.childResult = nil
 	}
 	e.selected = nil
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return e.baseExecutor.Close()
 }
 

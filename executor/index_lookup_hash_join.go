@@ -307,6 +307,9 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
 	e.prepared = false
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return e.baseExecutor.Close()
 }
 

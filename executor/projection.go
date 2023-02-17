@@ -327,6 +327,9 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return e.baseExecutor.Close()
 }
 
