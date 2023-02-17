@@ -1178,8 +1178,8 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 			dbterror.ErrSameNamePartition,
 		},
 		{
-			"create table t (a int) partition by list (a) (partition p1, partition p2, partition p2);",
-			dbterror.ErrSameNamePartition,
+			"create table t (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2, default), partition p3 values in (3, default));",
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 	}
 	for i, tt := range cases {
