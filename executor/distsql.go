@@ -226,6 +226,9 @@ func (e *IndexReaderExecutor) Close() (err error) {
 		return nil
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return err
 }
 

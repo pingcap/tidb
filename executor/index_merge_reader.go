@@ -795,6 +795,9 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	e.processWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
+	if e.memTracker != nil {
+		e.memTracker = nil
+	}
 	// TODO: how to store e.feedbacks
 	return nil
 }

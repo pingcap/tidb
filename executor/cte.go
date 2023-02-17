@@ -223,6 +223,9 @@ func (e *CTEExec) Close() (err error) {
 		}
 	}
 
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	return e.baseExecutor.Close()
 }
 

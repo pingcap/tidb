@@ -187,6 +187,9 @@ func (e *HashJoinExec) Close() error {
 	if e.stats != nil {
 		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+	if e.memTracker != nil {
+		e.memTracker.Detach()
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
