@@ -162,7 +162,7 @@ Because the current yatp's scheduler is a FIFO queue, a new task is always put a
 $$P_i = \max(P{i-1} + w, V_t)$$
 $P_{i-1}$ is the accumulated weight of executed tasks. Vt is the minimum priority of all non-empty queues, it is used when queue i is empty.
 `w` is a number that represents the resource consumed by this task.
-It's easy to prove that by using the mclock algorithm, we can ensure a resource group can obtain its share of resources with reasonable latency.
+It's easy to prove that by using the mclock algorithm, we can ensure a resource group to obtain its share of resources with reasonable latency.
 **Implement**
 Because the standard mclock algorithm needs a FIFO queue for each resource group and a global priority queue to sort between these queues, it is not easy to implement a high-performance scheduler with the similar performance of yatp.
 we make a few changes to the algorithm to make it easy for our usage and better performance.
