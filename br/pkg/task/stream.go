@@ -17,6 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"net/http"
@@ -29,9 +30,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
@@ -57,6 +60,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 )
 
 const (
@@ -367,6 +372,64 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
+// checkRestoreRunning checks whether restore task is running.
+// For stream restore, it checks gc.ratio-threshold;
+// For snapshot restore, it checks gc-safepoint;
+// For lightning, it checks import mode.
+func (s *streamMgr) checkRestoreRunning(ctx context.Context) error {
+	// check gc-safepoint for snapshot restore
+	ids, err := s.mgr.GetServiceGcSafePointID(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get service-gc-safepoint")
+	}
+	for _, id := range ids {
+		if strings.Contains(id, utils.GetRestoreSafePointPrefix()) {
+			return errors.Errorf("there may a snapshot restore task running, please check the task which has set gc-safepoint `%s`", id)
+		}
+	}
+
+	// check import mode
+	stores, err := util.GetAllTiKVStores(ctx, s.mgr.GetPDClient(), util.SkipTiFlash)
+	if err != nil {
+		return errors.Annotate(err, "failed to get tikv stores")
+	}
+
+	var tlsConf *tls.Config
+	if s.cfg.TLS.IsEnabled() {
+		tlsConf, err = s.cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return errors.Annotate(err, "failed generate tls config")
+		}
+	}
+	for _, store := range stores {
+		bfConf := backoff.DefaultConfig
+		bfConf.MaxDelay = time.Second * 3
+		connection, err := utils.GRPCConn(ctx, store.GetAddress(), tlsConf,
+			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+			grpc.WithKeepaliveParams(s.mgr.GetKeepalive()),
+		)
+		if err != nil {
+			return errors.Annotate(err, "failed to create grpc connection")
+		}
+		client := import_sstpb.NewImportSSTClient(connection)
+		resp, err := client.GetMode(ctx, &import_sstpb.GetModeRequest{})
+		errConn := connection.Close()
+		if errConn != nil {
+			log.Error("close grpc connection failed in switch mode", zap.Error(err))
+		}
+		if err != nil {
+			return errors.Annotate(err, "failed to get mode")
+		}
+		if resp.Mode == import_sstpb.SwitchMode_Import {
+			return errors.Errorf("The store %s is in import mode, "+
+				"there may be a lightning/restore task runing, "+
+				"please stop or wait finishing at first", store.GetAddress())
+		}
+	}
+
+	return nil
+}
+
 // setGCSafePoint sets the server safe point to PD.
 func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
 	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
@@ -545,6 +608,9 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.checkRestoreRunning(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1194,7 +1260,7 @@ func restoreStream(
 	}
 	client.SetCurrentTS(currentTS)
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

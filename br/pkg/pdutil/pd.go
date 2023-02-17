@@ -34,19 +34,20 @@ import (
 )
 
 const (
-	clusterVersionPrefix = "pd/api/v1/config/cluster-version"
-	regionCountPrefix    = "pd/api/v1/stats/region"
-	storePrefix          = "pd/api/v1/store"
-	schedulerPrefix      = "pd/api/v1/schedulers"
-	resetTSPrefix        = "pd/api/v1/admin/reset-ts"
-	recoveringMarkPrefix = "pd/api/v1/admin/cluster/markers/snapshot-recovering"
-	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
-	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
-	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
-	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
-	scheduleConfigPrefix = "pd/api/v1/config/schedule"
-	configPrefix         = "pd/api/v1/config"
-	pauseTimeout         = 5 * time.Minute
+	clusterVersionPrefix     = "pd/api/v1/config/cluster-version"
+	regionCountPrefix        = "pd/api/v1/stats/region"
+	storePrefix              = "pd/api/v1/store"
+	schedulerPrefix          = "pd/api/v1/schedulers"
+	resetTSPrefix            = "pd/api/v1/admin/reset-ts"
+	recoveringMarkPrefix     = "pd/api/v1/admin/cluster/markers/snapshot-recovering"
+	baseAllocIDPrefix        = "pd/api/v1/admin/base-alloc-id"
+	minResolvedTSPrefix      = "pd/api/v1/min-resolved-ts"
+	regionLabelPrefix        = "pd/api/v1/config/region-label/rule"
+	maxMsgSize               = int(128 * units.MiB) // pd.ScanRegion may return a large response
+	scheduleConfigPrefix     = "pd/api/v1/config/schedule"
+	configPrefix             = "pd/api/v1/config"
+	serviceGCSafepointPrefix = "pd/api/v1/gc/safepoint"
+	pauseTimeout             = 5 * time.Minute
 
 	// pd request retry time when connection fail
 	pdRequestRetryTime = 10
@@ -343,6 +344,39 @@ func (p *PdController) getClusterVersionWith(ctx context.Context, get pdHTTPRequ
 	}
 
 	return "", errors.Trace(err)
+}
+
+func (p *PdController) GetServiceGcSafePointID(ctx context.Context) ([]string, error) {
+	return p.getServiceGcSafePointIDWith(ctx, pdRequest)
+}
+
+func (p *PdController) getServiceGcSafePointIDWith(ctx context.Context, get pdHTTPRequest) ([]string, error) {
+	type serviceSafePoint struct {
+		ServiceID string `json:"service_id"`
+	}
+	type listServiceGCSafepoint struct {
+		ServiceGCSafepoints []*serviceSafePoint `json:"service_gc_safe_points"`
+	}
+	var err error
+	for _, addr := range p.addrs {
+		v, e := get(ctx, addr, serviceGCSafepointPrefix, p.cli, http.MethodGet, nil)
+		if e != nil {
+			err = e
+			continue
+		}
+		list := &listServiceGCSafepoint{}
+		e = json.Unmarshal(v, list)
+		if e != nil {
+			err = e
+			continue
+		}
+		ids := make([]string, 0, len(list.ServiceGCSafepoints))
+		for _, safepoint := range list.ServiceGCSafepoints {
+			ids = append(ids, safepoint.ServiceID)
+		}
+		return ids, nil
+	}
+	return nil, err
 }
 
 // GetRegionCount returns the region count in the specified range.

@@ -19,9 +19,11 @@ import (
 )
 
 const (
-	brServiceSafePointIDFormat      = "br-%s"
-	preUpdateServiceSafePointFactor = 3
-	checkGCSafePointGapTime         = 5 * time.Second
+	brServiceSafePointIDFormat        = "br-%s"
+	brRestoreServiceSafePointPrefix   = "br-restore-"
+	brRestoreServiceSafePointIDFormat = brRestoreServiceSafePointPrefix + "%s"
+	preUpdateServiceSafePointFactor   = 3
+	checkGCSafePointGapTime           = 5 * time.Second
 	// DefaultBRGCSafePointTTL means PD keep safePoint limit at least 5min.
 	DefaultBRGCSafePointTTL = 5 * 60
 	// DefaultStreamStartSafePointTTL specifies keeping the server safepoint 30 mins when start task.
@@ -61,6 +63,15 @@ func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
 // MakeSafePointID makes a unique safe point ID, for reduce name conflict.
 func MakeSafePointID() string {
 	return fmt.Sprintf(brServiceSafePointIDFormat, uuid.New())
+}
+
+// MakeRestoreSafePointID makes a unique safe point ID for restore, to reduce name conflict.
+func MakeRestoreSafePointID() string {
+	return fmt.Sprintf(brRestoreServiceSafePointIDFormat, uuid.New())
+}
+
+func GetRestoreSafePointPrefix() string {
+	return brRestoreServiceSafePointPrefix
 }
 
 // CheckGCSafePoint checks whether the ts is older than GC safepoint.
