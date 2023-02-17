@@ -373,9 +373,8 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 }
 
 // checkRestoreRunning checks whether restore task is running.
-// For stream restore, it checks gc.ratio-threshold;
 // For snapshot restore, it checks gc-safepoint;
-// For lightning, it checks import mode.
+// For lightning/stream restore, it checks import mode.
 func (s *streamMgr) checkRestoreRunning(ctx context.Context) error {
 	// check gc-safepoint for snapshot restore
 	ids, err := s.mgr.GetServiceGcSafePointID(ctx)

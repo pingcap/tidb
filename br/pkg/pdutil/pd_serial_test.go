@@ -105,6 +105,64 @@ func TestGetClusterVersion(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestServiceGcSafePointID(t *testing.T) {
+	type serviceSafePoint struct {
+		ServiceID string `json:"service_id"`
+	}
+	type listServiceGCSafepoint struct {
+		ServiceGCSafepoints []*serviceSafePoint `json:"service_gc_safe_points"`
+	}
+
+	cases := []struct {
+		pass              bool
+		serviceSafePoints []*serviceSafePoint
+	}{
+		{
+			pass: false,
+			serviceSafePoints: []*serviceSafePoint{
+				{
+					ServiceID: "br-9ed4e632-846a-4b42-8d7f-96483782b7d4",
+				},
+				{
+					ServiceID: "br-restore-9ed4e632-846a-4b42-8d7f-96483782b7d4",
+				},
+				{
+					ServiceID: "gc_worker",
+				},
+			},
+		},
+		{
+			pass: true,
+			serviceSafePoints: []*serviceSafePoint{
+				{
+					ServiceID: "br-9ed4e632-846a-4b42-8d7f-96483782b7d4",
+				},
+				{
+					ServiceID: "gc_worker",
+				},
+			},
+		},
+	}
+	for _, cs := range cases {
+		cs := cs
+		mock := func(
+			_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
+		) ([]byte, error) {
+			resp := &listServiceGCSafepoint{
+				ServiceGCSafepoints: cs.serviceSafePoints,
+			}
+			ret, err := json.Marshal(resp)
+			require.NoError(t, err)
+			return ret, nil
+		}
+		pdController := &PdController{addrs: []string{"http://mock"}}
+		ctx := context.Background()
+		resp, err := pdController.getServiceGcSafePointIDWith(ctx, mock)
+		require.NoError(t, err)
+		require.Equal(t, len(cs.serviceSafePoints), len(resp))
+	}
+}
+
 func TestRegionCount(t *testing.T) {
 	regions := &pdtypes.RegionTree{}
 	regions.SetRegion(pdtypes.NewRegionInfo(&metapb.Region{
