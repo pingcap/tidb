@@ -309,7 +309,6 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 		for i, c := range row {
 			strs[i] = c.(string)
 		}
-		fmt.Println(strs)
 		require.Equal(t, expected[id], strs[actRowsCol], fmt.Sprintf("error comparing %s", sql))
 	}
 }
