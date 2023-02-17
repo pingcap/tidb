@@ -145,7 +145,11 @@ func extractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 		}
 		valueStr = append(valueStr, str)
 	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+	var nonUnicodeValueStr []string
+	for i := 0; i < len(valueStr); i++ {
+		nonUnicodeValueStr[i] = fmt.Sprintf("\\u%X", valueStr[i])
+	}
+	return genKeyExistsError(name, strings.Join(nonUnicodeValueStr, "-"), nil)
 }
 
 func extractKeyErr(err error) error {
