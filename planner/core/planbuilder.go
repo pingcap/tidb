@@ -4170,6 +4170,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
+		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,

@@ -209,15 +209,15 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
 	}
 	if len(parser.quote) == 0 || !parser.quotedNullIsText {
-		isNull = parser.escFlavor != escapeFlavorMySQLWithNull &&
-			!parser.cfg.NotNull &&
+		isNull = !parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.Null, unescaped)
 	} else if !input.quoted {
+		// this branch represents "quote is configured && quotedNullIsText && this field has no quote"
 		// quoted string can never be NULL except for \N, which must be escapeFlavorMySQLWithNull
 		isNull = !parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.Null, unescaped)
 		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
-			// avoid \\N
+			// avoid \\N becomes NULL
 			isNull = false
 		}
 	}
