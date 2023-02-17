@@ -228,7 +228,7 @@ Metrics on # of blocked requests due to out of token,  per user, per tenant.
 HWM of RU for slow queries, for individual users and tenants
 LWM, HWM, Average rate for individual resource group
 
-###Reference
+### Reference
 - Resource Abstract in other systems:
   - DynamoDB:  https://aws.amazon.com/dynamodb/pricing/provisioned/
   - MongoDB:https://www.mongodb.com/docs/atlas/billing/serverless-instance-costs/
