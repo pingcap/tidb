@@ -1622,7 +1622,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'topsql.t_not_exist' doesn't exist", err.Error())
 	}
 	check = func() {
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
@@ -1673,7 +1673,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("alter table t drop index if exists idx_b")
 		_, err := db.Exec(addIndexStr)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1062: Duplicate entry '1' for key 't.idx_b'", err.Error())
+		require.Equal(t, "Error 1062 (23000): Duplicate entry '1' for key 't.idx_b'", err.Error())
 	}
 	check = func() {
 		checkFn(addIndexStr, "")
