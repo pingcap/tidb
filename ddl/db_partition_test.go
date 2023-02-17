@@ -1891,11 +1891,18 @@ func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
 	tk.MustExec("insert into test_global(a,c) values (11,2)")
 
 	tk.MustExec("drop table if exists test_global")
-	tk.MustGetErrCode(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
 	partition by range( a ) (
 		partition p1 values less than (10),
 		partition p2 values less than (20)
-	);`, errno.ErrUniqueKeyNeedAllFieldsInPf)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
 
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
