@@ -69,19 +69,11 @@ func TestCTEPreviewAndReport(t *testing.T) {
 		res, err := telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
 		require.NoError(t, err)
 
-<<<<<<< HEAD
-	jsonParsed, err := gabs.ParseJSON([]byte(res))
-	require.NoError(t, err)
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
-	require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-	require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
-=======
 		jsonParsed, err := gabs.ParseJSON([]byte(res))
 		require.NoError(t, err)
-		require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
+		require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)))
 		require.Equal(t, 1, int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)))
-		require.Equal(t, 4, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
->>>>>>> dde0c6c8495 (telemetry: set switch default to false (#41336))
+		require.Equal(t, 2, int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)))
 
 		err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
 		require.NoError(t, err)
