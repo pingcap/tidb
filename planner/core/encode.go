@@ -95,7 +95,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 }
 
 func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
-	for _, op := range flatTree {
+	for i := 0; i < len(flatTree); {
+		op := flatTree[i]
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
@@ -119,14 +120,19 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 			buf,
 		)
 
-		// If NeedReverseDriverSide is true, we stop using the order of the slice and switch to recursively
-		// call encodeFlatPlanTree to keep build side before probe side.
 		if op.NeedReverseDriverSide {
-			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx-offset]
+			// If NeedReverseDriverSide is true, we don't rely on the order of flatTree.
+			// Instead, we manually slice the build and probe side children from flatTree and recursively call
+			// encodeFlatPlanTree to keep build side before probe side.
+			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx+1-offset]
 			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
 			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
 			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
-			break
+			// Skip the children plan tree of the current operator.
+			i = op.ChildrenEndIdx + 1 - offset
+		} else {
+			// Normally, we just go to the next element in the slice.
+			i++
 		}
 	}
 }
