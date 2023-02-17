@@ -261,6 +261,9 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// InitializeSQLFile is a file that will be executed after first bootstrap only.
+	// It can be used to set GLOBAL system variable values
+	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
