@@ -151,7 +151,7 @@ TiDB needs to inject into gRPC requests a resource group related information, li
 #### Front-end requests scheduling
 Resource consumption on vCPU, read bandwidth and write bandwidth needs to be normalized into internal "Shares" represented as a number. At different modules and different phases, the normalization formulas are different.
 
-Read request and write request handling are quite different in TiKV. Read request handling in TiKV is already in fine grain,  and we can almost directly use request elapsed time as resource consumption, while write path handling is rather complex.
+Read request and write request handling are quite different in TiKV. Read request handling in TiKV is already in fine grain, and we can almost directly use request elapsed time as resource consumption, while write path handling is rather complex.
 
 ##### Read path
 Currently, all read requests are executed by the yatp thread pool, whose scheduler is a multi-level feedback queue, and each level is a FIFO queue.
