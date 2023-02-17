@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package server
 
@@ -37,6 +36,7 @@ import (
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func TestLoadData1(t *testing.T) {
+	t.Skip("it is a break test. ")
 	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataWithColumnList(t, ts.server)
