@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "bootstraptest_test",
+    timeout = "short",
+    srcs = [
+        "bootstrap_upgrade_test.go",  #keep
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//config",
+        "//session",  #keep
+        "//testkit",  #keep
+        "//testkit/testmain",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",  #keep
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

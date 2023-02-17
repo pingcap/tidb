@@ -7,6 +7,7 @@ go_library(
         "bootstrap.go",
         "nontransactional.go",
         "session.go",
+        "testutil.go",  #keep
         "tidb.go",
         "txn.go",
         "txnmanager.go",
@@ -111,7 +112,6 @@ go_test(
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
-        "bootstrap_upgrade_test.go",
         "clustered_index_test.go",
         "index_usage_sync_lease_test.go",
         "main_test.go",
