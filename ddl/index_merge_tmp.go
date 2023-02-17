@@ -223,12 +223,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-<<<<<<< HEAD
-	isCommonHandle := w.table.Meta().IsCommonHandle
 	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
-=======
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
->>>>>>> bc95a4f022 (*: lock the temp index key properly in DML (#41516))
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)

@@ -190,52 +190,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
 			}
-<<<<<<< HEAD
 			err = txn.GetMemBuffer().Set(tempKey, val)
-=======
-			err = txn.GetMemBuffer().Set(key, val)
-			if err != nil {
-				return nil, err
-			}
-			if len(tempKey) > 0 {
-				if !opt.Untouched { // Untouched key-values never occur in the storage.
-					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
-					val = tempVal.Encode(nil)
-				}
-				err = txn.GetMemBuffer().Set(tempKey, val)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if !opt.IgnoreAssertion && (!opt.Untouched) {
-				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
-				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
-				}
-			}
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		var value []byte
-		if c.tblInfo.TempTableType != model.TempTableNone {
-			// Always check key for temporary table because it does not write to TiKV
-			value, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
-			value, err = txn.GetMemBuffer().Get(ctx, key)
-		} else {
-			value, err = txn.Get(ctx, key)
-		}
-		if err != nil && !kv.IsErrNotFound(err) {
-			return nil, err
-		}
-		var tempIdxVal tablecodec.TempIndexValue
-		if len(value) > 0 && keyIsTempIdxKey {
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
->>>>>>> bc95a4f022 (*: lock the temp index key properly in DML (#41516))
 			if err != nil {
 				return nil, err
 			}
@@ -274,7 +229,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	var tempIdxVal tablecodec.TempIndexValue
 	if len(value) > 0 && keyIsTempIdxKey {
-		tempIdxVal, err = tablecodec.DecodeTempIndexValue(value, c.tblInfo.IsCommonHandle)
+		tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
 		if err != nil {
 			return nil, err
 		}
