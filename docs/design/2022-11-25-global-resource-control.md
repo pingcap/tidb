@@ -158,7 +158,7 @@ Currently, all read requests are executed by the yatp thread pool, whose schedul
 Because the current yatp's scheduler is a FIFO queue, a new task is always put at the end of the queue, thus the latency of all tasks are high when there are a lot of tasks.
 
 **mClock based scheduling**
-`Mclock` is a priority-based scheduling algorithm. Each resource group maintains a separate task queue, the schedule always pops and executes a task for the queue whose next task has the minimum priority value. The
+`mClock` is a priority-based scheduling algorithm. Each resource group maintains a separate task queue, the schedule always pops and executes a task for the queue whose next task has the minimum priority value. The
 $$P_i = \max(P{i-1} + w, V_t)$$
 $P_{i-1}$ is the accumulated weight of executed tasks. Vt is the minimum priority of all non-empty queues, it is used when queue i is empty.
 `w` is a number that represents the resource consumed by this task.
