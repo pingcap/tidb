@@ -154,6 +154,7 @@ func (t *copTask) finishIndexPlan() {
 	}
 	t.indexPlanFinished = true
 	// index merge case is specially handled for now.
+	// We need a elegant way to solve the stats of index merge in this case.
 	if t.tablePlan != nil && t.indexPlan != nil {
 		ts := t.tablePlan.(*PhysicalTableScan)
 		originStats := ts.stats
@@ -852,7 +853,9 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				}
 				cop.idxMergePartPlans = limitChildren
 			}
-			cop.indexPlanFinished = true
+			t = cop.convertToRootTask(p.ctx)
+		} else {
+			// Whatever the remained case is, we directly convert to it to root task.
 			t = cop.convertToRootTask(p.ctx)
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
@@ -953,7 +956,9 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 //
 //	there's no prefix index column.
 func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
+	// So we directly return false.
 	if indexPlan == nil {
 		return false
 	}
@@ -1089,8 +1094,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 
 		idxScan           *PhysicalIndexScan
 		tblScan           *PhysicalTableScan
-		partialFinalScan  []PhysicalPlan
-		partialClonedScan []PhysicalPlan
+		partialScans      []PhysicalPlan
+		clonedPartialPlan []PhysicalPlan
 		tblInfo           *model.TableInfo
 		err               error
 	)
@@ -1121,7 +1126,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblInfo = tblScan.Table
 	}
 	if len(copTsk.idxMergePartPlans) > 0 {
-		partialFinalScan = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
+		partialScans = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
 		selSelectivityOnPartialScan = make([]float64, len(copTsk.idxMergePartPlans))
 		for i, scan := range copTsk.idxMergePartPlans {
 			selSelectivityOnPartialScan[i] = 1
@@ -1129,7 +1134,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if err != nil {
 				return nil, false
 			}
-			partialClonedScan = append(partialClonedScan, clonedScan)
+			clonedPartialPlan = append(clonedPartialPlan, clonedScan)
 			finalScan := clonedScan
 			var partialSel *PhysicalSelection
 			for len(finalScan.Children()) > 0 {
@@ -1139,7 +1144,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
 				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
 			}
-			partialFinalScan = append(partialFinalScan, finalScan)
+			partialScans = append(partialScans, finalScan)
 		}
 	}
 
@@ -1160,12 +1165,12 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
 			// Deal with index merge case.
-			propMatched := p.checkSubScans(colsProp, isDesc, partialFinalScan...)
+			propMatched := p.checkSubScans(colsProp, isDesc, partialScans...)
 			if !propMatched {
 				// If there's one used index cannot match the prop.
 				return nil, false
 			}
-			newCopSubPlans := p.addPartialLimitForSubScans(partialClonedScan, partialFinalScan, selSelectivityOnPartialScan)
+			newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
 			copTsk.idxMergePartPlans = newCopSubPlans
 			clonedTblScan, err := copTsk.tablePlan.Clone()
 			if err != nil {
