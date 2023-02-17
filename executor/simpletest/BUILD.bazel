@@ -7,6 +7,7 @@ go_test(
         "main_test.go",
         "password_management_test.go",
         "simple_test.go",
+        "chunk_reuse_test.go",
     ],
     flaky = True,
     race = "on",
