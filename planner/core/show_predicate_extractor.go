@@ -27,10 +27,11 @@ import (
 )
 
 const (
-	fieldKey     = "field"
-	tableKey     = "table"
-	databaseKey  = "database"
-	collationKey = "collation"
+	fieldKey        = "field"
+	tableKey        = "table"
+	databaseKey     = "database"
+	collationKey    = "collation"
+	databaseNameKey = "db_name"
 )
 
 var (
@@ -107,6 +108,8 @@ func (e *ShowBaseExtractor) explainInfo() string {
 		key = databaseKey
 	case ast.ShowCollation:
 		key = collationKey
+	case ast.ShowStatsHealthy:
+		key = databaseNameKey
 	}
 
 	r := new(bytes.Buffer)
