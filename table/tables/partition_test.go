@@ -2177,12 +2177,17 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
 	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 IS NULL")
 	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 IS NULL").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	// Get the partition information from information_schema.partitions
+	result = tk.MustQuery("select PARTITION_NAME,PARTITION_ORDINAL_POSITION,PARTITION_METHOD,PARTITION_EXPRESSION " +
+		"FROM information_schema.partitions where TABLE_NAME = 'tkey12_2'")
+	result.Check(testkit.Rows("p0 1 KEY `col2`,`col3`", "p1 2 KEY `col2`,`col3`", "p2 3 KEY `col2`,`col3`", "p3 4 KEY `col2`,`col3`"))
 
 	// This tests caculating the boundary partition ID when it prunes partition table
 	tk.MustExec("create table tkey16 (a int) partition by key (a) partitions 12")
 	tk.MustExec("insert into tkey16 values (0), (1), (2), (3)")
 	tk.MustExec("insert into tkey16 select a + 4 from tkey16")
 	tk.MustExec("insert into tkey16 select a + 8 from tkey16")
+	tk.MustExec("select * from information_schema.partitions where partition_name is not null")
 }
 
 func TestIssue31721(t *testing.T) {
