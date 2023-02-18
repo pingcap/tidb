@@ -31,6 +31,7 @@ go_test(
     embed = [":gctuner"],
     flaky = True,
     race = "on",
+    shard_count = 5,
     deps = [
         "//util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
