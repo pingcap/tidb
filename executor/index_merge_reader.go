@@ -360,12 +360,12 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
-
+			forLabel:
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
 					case <-e.finished:
-						break
+						break forLabel
 					default:
 					}
 
@@ -474,12 +474,12 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
-
+			forLabel:
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
 					case <-e.finished:
-						break
+						break forLabel
 					default:
 					}
 
