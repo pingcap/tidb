@@ -825,7 +825,6 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 
 		// In test and job is cancelling we can ignore the sleep
 		if !(intest.InTest && job.IsCancelling()) {
-			// fmt.Println(time.Now(), "runDDLJob got error sleep", GetWaitTimeWhenErrorOccurred(), job.State, runJobErr)
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 	}
