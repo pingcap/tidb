@@ -151,7 +151,7 @@ type Domain struct {
 		sctxs map[sessionctx.Context]bool
 	}
 
-	mdlCheckCh chan struct{}
+	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
 }
 
