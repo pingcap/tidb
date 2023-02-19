@@ -159,6 +159,19 @@
           "        └─HashAgg 8000.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#15",
           "          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from (select row_number() over (partition by a+1) as rownumber from td) DT where rownumber <= 1 -- pattern is not applicable with expression in partition by",
+        "Plan": [
+          "Projection 8000.00 root  Column#5",
+          "└─Selection 8000.00 root  le(Column#5, 1)",
+          "  └─Shuffle 10000.00 root  execution info: concurrency:5, data sources:[Projection]",
+          "    └─Window 10000.00 root  row_number()->Column#5 over(partition by Column#4 rows between current row and current row)",
+          "      └─Sort 10000.00 root  Column#4",
+          "        └─Projection 10000.00 root  plus(test.td.a, 1)->Column#4",
+          "          └─TableReader 10000.00 root  data:TableFullScan",
+          "            └─TableFullScan 10000.00 cop[tikv] table:td keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -430,6 +443,21 @@
           "            └─TableRangeScan 33.33 cop[tikv] table:customer range:[0x0002 0x0001,0x0002 +inf], keep order:false, stats:pseudo"
         ],
         "Res": null
+      },
+      {
+        "SQL": "select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key",
+        "Plan": [
+          "Projection 0.80 root  Column#4",
+          "└─Selection 0.80 root  le(Column#4, 1)",
+          "  └─Window 1.00 root  row_number()->Column#4 over(partition by test.td.b rows between current row and current row)",
+          "    └─Sort 1.00 root  test.td.b",
+          "      └─TableReader 1.00 root  data:Limit",
+          "        └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "          └─TableFullScan 1.00 cop[tikv] table:td keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
       }
     ]
   }

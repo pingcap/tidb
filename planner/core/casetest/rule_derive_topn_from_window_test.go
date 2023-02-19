@@ -51,6 +51,8 @@ func TestPushDerivedTopnNegative(t *testing.T) {
 	tk.MustExec("create table tt(a int, b int, c int, primary key(b,a) nonclustered)")
 	tk.MustExec("drop table if exists ti")
 	tk.MustExec("create table ti(a int, b int, c int unique)")
+	tk.MustExec("drop table if exists td")
+	tk.MustExec("create table td(a int, b int as (a+1) stored, primary key(b,a));")
 	var input Input
 	var output []struct {
 		SQL  string
@@ -110,6 +112,10 @@ func TestPushDerivedTopnPositive(t *testing.T) {
 	tk.MustExec("create table tt(a int, b int, c int, primary key(b,a) nonclustered)")
 	tk.MustExec("drop table if exists ti")
 	tk.MustExec("create table ti(a int, b int, c int unique)")
+	tk.MustExec("drop table if exists customer")
+	tk.MustExec("create table customer(primary_key VARBINARY(1024), secondary_key VARBINARY(1024), c_timestamp BIGINT, value MEDIUMBLOB, PRIMARY KEY (primary_key, secondary_key, c_timestamp) clustered);")
+	tk.MustExec("drop table if exists td")
+	tk.MustExec("create table td(a int, b int as (a+1) stored, primary key(b,a));")
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("insert into t values(2,1)")
 	tk.MustExec("insert into t values(3,2)")
@@ -117,7 +123,7 @@ func TestPushDerivedTopnPositive(t *testing.T) {
 	tk.MustExec("insert into t values(5,2)")
 	tk.MustExec("insert into tt select *,55 from t")
 	tk.MustExec("insert into ti select *,a from t")
-	tk.MustExec("create table customer(primary_key VARBINARY(1024), secondary_key VARBINARY(1024), c_timestamp BIGINT, value MEDIUMBLOB, PRIMARY KEY (primary_key, secondary_key, c_timestamp) clustered);")
+	tk.MustExec("insert into td(a) select a from t")
 	var input Input
 	var output []struct {
 		SQL  string

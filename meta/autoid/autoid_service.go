@@ -134,6 +134,7 @@ retry:
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
 	})
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			time.Sleep(backoffDuration)
@@ -186,7 +187,10 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Rebase")
 	defer r.End()
 
-	return sp.rebase(ctx, newBase, false)
+	start := time.Now()
+	err := sp.rebase(ctx, newBase, false)
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	return err
 }
 
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {

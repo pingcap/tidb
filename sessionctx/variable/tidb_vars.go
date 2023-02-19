@@ -789,8 +789,8 @@ const (
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 
-	// TiDBEnablePlanReplayerContinuesCapture indicates whether to enable continues capture
-	TiDBEnablePlanReplayerContinuesCapture = "tidb_enable_plan_replayer_continues_capture"
+	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
+	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 

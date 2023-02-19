@@ -3934,7 +3934,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return err
 		}
 		if idx < 0 {
-			return errors.Errorf("Can't find column %s", assign.Column)
+			return dbterror.ErrBadField.GenWithStackByArgs(assign.Column, "field list")
 		}
 		colNames = append(colNames, assign.Column.Name.L)
 		exprCols = append(exprCols, insertPlan.tableSchema.Columns[idx])

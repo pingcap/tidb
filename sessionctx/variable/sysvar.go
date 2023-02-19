@@ -1208,14 +1208,14 @@ var defaultSysVars = []*SysVar{
 		}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuesCapture, Value: BoolToOnOff(false), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			historicalStatsEnabled, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableHistoricalStats)
 			if err != nil {
 				return err
 			}
 			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(val) {
-				return errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuesCapture)
+				return errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuousCapture)
 			}
 			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
 			return nil
@@ -1229,7 +1229,7 @@ var defaultSysVars = []*SysVar{
 				return "", err
 			}
 			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(s) {
-				return "", errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuesCapture)
+				return "", errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuousCapture)
 			}
 			return s, nil
 		},

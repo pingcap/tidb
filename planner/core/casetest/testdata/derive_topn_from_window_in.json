@@ -16,7 +16,8 @@
       "select * from (select row_number() over (partition by a) as rownumber from tt) DT where rownumber <= 3 -- pattern is not applicable with no clustered index on table",
       "select * from (select row_number() over (partition by a) as rownumber from ti) DT where rownumber <= 3 -- pattern is not applicable. ti clustered on 'c' and partition by 'a'",
       "select * from (select a, row_number() over (partition by c) as rownumber from ti) DT where rownumber <= 1 -- pattern is applicable. ti clustered on 'c' and partition by 'c' - not supported yet",
-      "with agg_t as (select count(*) cnt, a from t group by a) select * from (select row_number() over () as rownumber from agg_t) DT where rownumber <= 3 -- pattern on non-data source"
+      "with agg_t as (select count(*) cnt, a from t group by a) select * from (select row_number() over () as rownumber from agg_t) DT where rownumber <= 3 -- pattern on non-data source",
+      "select * from (select row_number() over (partition by a+1) as rownumber from td) DT where rownumber <= 1 -- pattern is not applicable with expression in partition by"
     ]
   },
   {
@@ -48,7 +49,8 @@
       "select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with order by, partition by prefix",
       "select * from (select row_number() over (partition by b) as rownumber from t where a >= 2) DT where rownumber <= 3 order by rownumber  -- pattern is applicable with partition by prefix and filter on data source",
       "select * from (select row_number() over () as rownumber from tt) DT where rownumber <= 3 -- pattern is applicable with no partition on a non-clustered table",
-      "select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;"
+      "select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;",
+      "select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key"
     ]
   }
 ]

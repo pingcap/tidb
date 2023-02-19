@@ -47,7 +47,7 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 		return true
 	}
 
-	// Table not clustered and window has partition by. Can not do the TopN piush down.
+	// Table not clustered and window has partition by. Can not do the TopN push down.
 	if d.handleCols == nil {
 		return false
 	}
