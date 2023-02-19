@@ -953,7 +953,7 @@ func (do *Domain) Close() {
 		do.onClose()
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
-  close(do.mdlCheckCh)
+	close(do.mdlCheckCh)
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
