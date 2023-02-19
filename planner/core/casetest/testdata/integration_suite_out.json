@@ -2099,7 +2099,7 @@
           "  └─TableRowIDScan_14(Probe) 0.00 186.61 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
-          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
+          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}"
         ]
       },
       {
@@ -2111,7 +2111,7 @@
           "└─TableRowIDScan_11(Probe) 0.00 186.61 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
-          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
+          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}"
         ]
       }
     ]
