@@ -1126,5 +1126,19 @@
       "select a, count(*) from t group by a -- shouldn't be rewritten",
       "select sum(a) from t -- sum shouldn't be rewritten"
     ]
+  },
+  {
+    "name": "TestIndexMergeOrderPushDown",
+    "cases": [
+      "select * from t where a = 1 or b = 1 order by c limit 2",
+      "select * from t where a = 1 or b in (1, 2, 3) order by c limit 2",
+      "select * from t where a in (1, 2, 3) or b = 1 order by c limit 2",
+      "select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2",
+      "select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2",
+      "select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2",
+      "select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2"
+    ]
   }
 ]
