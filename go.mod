@@ -124,7 +124,7 @@ require (
 	google.golang.org/api v0.103.0
 	google.golang.org/grpc v1.52.3
 	gopkg.in/yaml.v2 v2.4.0
-	honnef.co/go/tools v0.4.0
+	honnef.co/go/tools v0.4.2
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
