@@ -25,9 +25,9 @@ const (
 	// executed in the coprocessor layer.
 	CopSingleReadTaskType
 
-	// CopDoubleReadTaskType stands for the a IndexLookup tasks executed in the
+	// CopMultiReadTaskType stands for the a IndexLookup tasks executed in the
 	// coprocessor layer.
-	CopDoubleReadTaskType
+	CopMultiReadTaskType
 
 	// MppTaskType stands for task that would run on Mpp nodes, currently meaning the tiflash node.
 	MppTaskType
@@ -40,8 +40,8 @@ func (t TaskType) String() string {
 		return "rootTask"
 	case CopSingleReadTaskType:
 		return "copSingleReadTask"
-	case CopDoubleReadTaskType:
-		return "copDoubleReadTask"
+	case CopMultiReadTaskType:
+		return "copMultiReadTask"
 	case MppTaskType:
 		return "mppTask"
 	}
