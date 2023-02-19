@@ -1126,7 +1126,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblInfo = tblScan.Table
 	}
 	if len(copTsk.idxMergePartPlans) > 0 {
-	// calculate selectivities for each partial plan in advance and clone partial plans since we may modify their stats later.
+		// calculate selectivities for each partial plan in advance and clone partial plans since we may modify their stats later.
 		partialScans = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
 		selSelectivityOnPartialScan = make([]float64, len(copTsk.idxMergePartPlans))
 		for i, scan := range copTsk.idxMergePartPlans {

@@ -2192,7 +2192,6 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	}
 }
 
-
 func TestIndexMergeOrderPushDown(t *testing.T) {
 	var (
 		input  []string
