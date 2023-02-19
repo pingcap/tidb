@@ -4166,8 +4166,8 @@ def go_deps():
         name = "com_github_twmb_murmur3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/twmb/murmur3",
-        sum = "h1:D83U0XYKcHRYwYIpBKf3Pks91Z0Byda/9SJ8B6EMRcA=",
-        version = "v1.1.3",
+        sum = "h1:mqrRot1BRxm+Yct+vavLMou2/iJt0tNVTTC0QoIjaZg=",
+        version = "v1.1.6",
     )
     go_repository(
         name = "com_github_uber_jaeger_client_go",
