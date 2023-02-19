@@ -1126,6 +1126,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblInfo = tblScan.Table
 	}
 	if len(copTsk.idxMergePartPlans) > 0 {
+	// calculate selectivities for each partial plan in advance and clone partial plans since we may modify their stats later.
 		partialScans = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
 		selSelectivityOnPartialScan = make([]float64, len(copTsk.idxMergePartPlans))
 		for i, scan := range copTsk.idxMergePartPlans {
@@ -1253,6 +1254,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	return attachPlan2Task(p, rootTask), true
 }
 
+// checkOrderPropForSubIndexScan checks whether these index columns can meet the specified order property.
 func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
 	// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
 	if len(idxCols) < len(colsProp.SortItems) {
@@ -1279,6 +1281,7 @@ func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Colum
 	return true
 }
 
+// checkSubScans checks whether all these Scans can meet the specified order property.
 func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc bool, scans ...PhysicalPlan) bool {
 	for _, scan := range scans {
 		switch x := scan.(type) {
