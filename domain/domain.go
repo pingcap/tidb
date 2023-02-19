@@ -945,13 +945,13 @@ func (do *Domain) Close() {
 	if do.cancel != nil {
 		do.cancel()
 	}
-	close(do.mdlCheckCh)
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
 		do.onClose()
 	}
+	close(do.mdlCheckCh)
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
