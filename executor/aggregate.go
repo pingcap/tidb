@@ -859,8 +859,7 @@ func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.Wa
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
 	fetchChildWorkerWaitGroup.Add(1)
-	ctx = sched.WithSchedInfo(ctx)
-	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
+	go e.fetchChildData(sched.WithSchedInfo(ctx), fetchChildWorkerWaitGroup)
 
 	// We get the pointers here instead of when we are all finished and adding the time because:
 	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
@@ -877,8 +876,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		ctx = sched.WithSchedInfo(ctx)
-		go e.partialWorkers[i].run(ctx, e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+		go e.partialWorkers[i].run(sched.WithSchedInfo(ctx), e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -890,8 +888,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		ctx = sched.WithSchedInfo(ctx)
-		go e.finalWorkers[i].run(ctx, e.ctx, finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(sched.WithSchedInfo(ctx), e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()

@@ -585,7 +585,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
-	sched.Go(ctx, func(ctx context.Context) {
+	go func(ctx context.Context) {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
@@ -669,7 +669,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-	})
+	}(sched.WithSchedInfo(ctx))
 	return nil
 }
 
@@ -690,12 +690,12 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
-		sched.Go(ctx1, func(ctx context.Context) {
+		go func(ctx context.Context) {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
 			worker.pickAndExecTask(ctx)
 			cancel()
 			e.tblWorkerWg.Done()
-		})
+		}(sched.WithSchedInfo(ctx))
 	}
 }
 

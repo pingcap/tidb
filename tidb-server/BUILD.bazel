@@ -61,7 +61,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/push",
-        "@com_github_tiancaiamao_sched//:go_default_library",
+        "@com_github_tiancaiamao_sched//:sched",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@com_github_tikv_pd_client//:client",

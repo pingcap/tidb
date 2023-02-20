@@ -434,6 +434,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	if elapsed > time.Millisecond {
 		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
 	}
+	if opt.elapsed != nil {
+		*opt.elapsed = *opt.elapsed + elapsed
+	}
 	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
 	return tasks, nil
 }
@@ -821,8 +824,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			storeBatchedNum:            &it.storeBatchedNum,
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
 		}
-		ctx = sched.WithSchedInfo(ctx)
-		go worker.run(ctx)
+		go worker.run(sched.WithSchedInfo(ctx))
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,

@@ -16,12 +16,7 @@ package executor
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"hash/crc32"
-	mathrand "math/rand"
-	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/tiancaiamao/sched"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -217,17 +211,6 @@ func (e *PointGetExecutor) Close() error {
 	return nil
 }
 
-var glCrc32bs = make([]byte, 1024*256)
-
-func cpuIntensiveTaskWithCheckpoint(ctx context.Context, amt int) uint32 {
-	var ck uint32
-	for range make([]struct{}, amt) {
-		ck = crc32.ChecksumIEEE(glCrc32bs)
-		sched.CheckPoint(ctx)
-	}
-	return ck
-}
-
 // Next implements the Executor interface.
 func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -235,31 +218,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-
-	if _, ok := e.ctx.GetSessionVars().GetUserVarVal("hack"); ok {
-		rand.Read(glCrc32bs)
-		var wg sync.WaitGroup
-		ch := make(chan struct{})
-		NUM := 20
-		wg.Add(NUM)
-		for i := 0; i < NUM; i++ {
-			go func(ctx context.Context) {
-				done := false
-				for !done {
-					select {
-					case <-ch:
-						done = true
-					default:
-						cpuIntensiveTaskWithCheckpoint(ctx, 10000+mathrand.Intn(10000))
-					}
-				}
-				wg.Done()
-			}(sched.WithSchedInfo(ctx))
-		}
-		time.Sleep(30 * time.Second)
-		close(ch)
-		wg.Wait()
-	}
 
 	var tblID int64
 	var err error

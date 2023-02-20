@@ -160,8 +160,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() {
-		ctx := sched.WithSchedInfo(workerCtx)
-		ow.run(ctx)
+		ow.run(sched.WithSchedInfo(workerCtx))
 	}, e.finishJoinWorkers)
 
 	for i := 0; i < concurrency; i++ {
@@ -180,8 +179,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		workerID := i
 		go util.WithRecovery(func() {
-			ctx := sched.WithSchedInfo(workerCtx)
-			e.newInnerWorker(innerCh, workerID).run(ctx, cancelFunc)
+			e.newInnerWorker(innerCh, workerID).run(sched.WithSchedInfo(workerCtx), cancelFunc)
 		}, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
@@ -647,8 +645,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
-			ctx = sched.WithSchedInfo(ctx)
-			iw.buildHashTableForOuterResult(ctx, task, h)
+			iw.buildHashTableForOuterResult(sched.WithSchedInfo(ctx), task, h)
 		},
 		func(r interface{}) {
 			var err error

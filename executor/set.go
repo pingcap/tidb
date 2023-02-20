@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
-	"github.com/tiancaiamao/sched"
 	"go.uber.org/zap"
 )
 
@@ -90,13 +89,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
-				if name == "with_sched" {
-					sched.Disable()
-				}
 			} else {
-				if name == "with_sched" {
-					sched.Enable()
-				}
 				sessionVars.SetUserVarVal(name, value)
 				sessionVars.SetUserVarType(name, v.Expr.GetType())
 			}
