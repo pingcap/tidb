@@ -242,6 +242,10 @@ func TestShowPartitionStats(t *testing.T) {
 		result.Check(testkit.Rows("test t p0 100"))
 		result = tk.MustQuery("show stats_healthy like 'TEST%'")
 		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'test'")
+		result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy like 'TEST'")
+		result.Check(testkit.Rows("test t p0 100"))
 	})
 }
 
