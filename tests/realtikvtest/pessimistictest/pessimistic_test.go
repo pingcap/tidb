@@ -3238,4 +3238,15 @@ func TestRCUpdateWithPointGet(t *testing.T) {
 	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
 	tk1.MustExec("commit")
 	tk2.MustQuery("select count(1) from t").Check(testkit.Rows("1"))
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(6, 6)")
+	tk1.MustQuery("(select * from t where a = 6 for update) union all (select * from t where a = 7 for update)").Check(testkit.Rows("6 6"))
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(7, 7)")
+	tk1.MustExec("delete from t where a = 7;")
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
+	tk1.MustExec("commit")
 }
