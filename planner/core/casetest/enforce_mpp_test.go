@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
@@ -492,7 +494,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -503,6 +505,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
@@ -525,7 +528,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 		Plan []string
 		Warn []string
 	}
-	enforceMPPSuiteData := plannercore.GetEnforceMPPSuiteData()
+	enforceMPPSuiteData := GetEnforceMPPSuiteData()
 	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {

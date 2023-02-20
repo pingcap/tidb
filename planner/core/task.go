@@ -1887,7 +1887,7 @@ func (p *basePhysicalAgg) scale3StageForDistinctAgg() (bool, expression.Grouping
 
 // canUse3Stage4MultiDistinctAgg returns true if this agg can use 3 stage for multi distinct aggregation
 func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss expression.GroupingSets) {
-	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
+	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || !p.ctx.GetSessionVars().Enable3StageMultiDistinctAgg || len(p.GroupByItems) > 0 {
 		return false, nil
 	}
 	defer func() {
