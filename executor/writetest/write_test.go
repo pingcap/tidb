@@ -2192,7 +2192,8 @@ func TestLoadData(t *testing.T) {
 
 	// test line terminator in field quoter
 	ld.LinesInfo.Terminated = "\n"
-	ld.FieldsInfo.Enclosed = '"'
+	tt := byte('"')
+	ld.FieldsInfo.Enclosed = &tt
 	tests = []testCase{
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}

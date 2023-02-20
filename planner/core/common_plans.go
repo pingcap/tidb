@@ -558,6 +558,7 @@ type LoadData struct {
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
 	IgnoreLines uint64
 
 	ColumnAssignments  []*ast.Assignment
