@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM hub.pingcap.net/wangweizhen/base_image:go11920230111
+FROM hub.pingcap.net/wangweizhen/base_image:go12020230220
 USER root
 WORKDIR /root
 COPY .ci_bazel /data/bazel
