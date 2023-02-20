@@ -943,6 +943,7 @@ import (
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
+	PlanChangeCaptureStmt      "Plan Change Capture Statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -13875,16 +13876,18 @@ LocalOpt:
 
 Fields:
 	{
+		defaultEscaped := byte('\\')
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
+		defaultEscaped := byte('\\')
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
@@ -13892,18 +13895,20 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = item.Value
 			case ast.Enclosed:
-				var enclosed byte
+				var enclosed *byte = nil
 				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
+					b := item.Value[0]
+					enclosed = &b
 				}
 				fieldsClause.Enclosed = enclosed
 				if item.OptEnclosed {
 					fieldsClause.OptEnclosed = true
 				}
 			case ast.Escaped:
-				var escaped byte
+				var escaped *byte = nil
 				if len(item.Value) > 0 {
-					escaped = item.Value[0]
+					b := item.Value[0]
+					escaped = &b
 				}
 				fieldsClause.Escaped = escaped
 			}
@@ -14728,6 +14733,23 @@ PlanReplayerStmt:
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,
+		}
+
+		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Plan Chnage Capture Statement
+ *
+ * PLAN REPLAYER Change 'begin_time' 'end_time'
+ *******************************************************************/
+PlanChangeCaptureStmt:
+	"PLAN" "CHANGE" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanChangeCaptureStmt{
+			Begin: $4,
+			End:   $5,
 		}
 
 		$$ = x

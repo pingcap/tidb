@@ -953,6 +953,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Table:              tbl,
 		FieldsInfo:         v.FieldsInfo,
 		LinesInfo:          v.LinesInfo,
+		NullInfo:           v.NullInfo,
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
@@ -1014,6 +1015,25 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 			Ctx:         b.ctx,
 		},
 	}
+	return e
+}
+
+func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
+	e := &PlanChangeCaptureExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+	}
+	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	end, err := time.Parse("2006-01-02 15:04:05", v.End)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	e.Begin = begin
+	e.End = end
 	return e
 }
 
