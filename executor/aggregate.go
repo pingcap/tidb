@@ -1295,7 +1295,6 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-
 		// bytesLimit <= 0 means no limit, for now we just track the memory footprint
 		e.memTracker = memory.NewTracker(e.id, -1)
 	}
