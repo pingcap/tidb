@@ -315,7 +315,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
-
 		e.memTracker = memory.NewTracker(e.id, -1)
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
