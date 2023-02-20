@@ -199,7 +199,11 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
-	e.hashJoinCtx.memTracker = memory.NewTracker(e.id, -1)
+	if e.hashJoinCtx.memTracker != nil {
+		e.hashJoinCtx.memTracker.Reset()
+	} else {
+		e.hashJoinCtx.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.hashJoinCtx.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.diskTracker = disk.NewTracker(e.id, -1)
