@@ -565,13 +565,21 @@ type CSVConfig struct {
 	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
 	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
 	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
+
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
 	StartingBy     string `toml:"-" json:"-"`
 	AllowEmptyLine bool   `toml:"-" json:"-"`
 	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
 	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
-	QuotedNullIsText bool
+	QuotedNullIsText bool `toml:"-" json:"-"`
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+	// > If the field begins with the ENCLOSED BY character, instances of that character are recognized as terminating a
+	// > field value only if followed by the field or line TERMINATED BY sequence.
+	// This means we will meet unescaped quote in a quoted field
+	// > The "BIG" boss      -> The "BIG" boss
+	// This means we will meet unescaped quote in a unquoted field
+	UnescapedQuote bool `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {
