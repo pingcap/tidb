@@ -3213,3 +3213,29 @@ func TestPessimisticLockOnPartition(t *testing.T) {
 	require.Equal(t, int32(0), <-ch)
 	<-ch // wait for goroutine to quit.
 }
+
+func TestRCUpdateWithPointGet(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set global tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int key, b int)")
+
+	// Try to cover https://github.com/pingcap/tidb/issues/41581.
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values(5, 5)")
+	tk1.MustExec("update t set b = 22 where a = 5;")
+	require.Equal(t, uint64(1), tk1.Session().AffectedRows())
+	tk1.MustExec("commit")
+	tk2.MustQuery("select count(1) from t").Check(testkit.Rows("1"))
+}
