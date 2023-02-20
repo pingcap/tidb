@@ -522,8 +522,6 @@ github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANyt
 github.com/inconshreveable/mousetrap v1.0.1 h1:U3uMjPSQEBMNp1lFxmllqCPM6P5u/Xq7Pgzkat/bFNc=
 github.com/inconshreveable/mousetrap v1.0.1/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/influxdata/influxdb v0.0.0-20170331210902-15e594fc09f1/go.mod h1:qZna6X/4elxqT3yI9iZYdZrWWdeFOOprn86kgg4+IzY=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230216072334-4ec124ea5a02 h1:NOdRTcyTS6Or5a3kqRQB//H3BQKkWFZNHSqw8DbpB60=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230216072334-4ec124ea5a02/go.mod h1:tuWgAhOHisHqYlZe0FqUO1RZGziohuHrykG9FDPk2jw=
 github.com/iris-contrib/blackfriday v2.0.0+incompatible/go.mod h1:UzZ2bDEoaSGPbkg6SAB4att1aAwTmVIx/5gCVqeyUdI=
 github.com/iris-contrib/go.uuid v2.0.0+incompatible/go.mod h1:iz2lgM/1UnEf1kP0L/+fafWORmlnuysV2EMP8MW+qe0=
 github.com/iris-contrib/i18n v0.0.0-20171121225848-987a633949d0/go.mod h1:pMCz62A0xJL6I+umB2YTlFRwWXaDFA0jy+5HzGiJjqI=
@@ -933,6 +931,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.6-0.20230220051003-e0e6019f8ac7 h1:FYyqGriZ0yeCB6Zt2pZytGZuPbr9mzNOYzHHJtDRuq4=
+github.com/tikv/client-go/v2 v2.0.6-0.20230220051003-e0e6019f8ac7/go.mod h1:Kw6+qOCoLSymJLtOPTym6wkH97Ej0Yna4pDv0ak3hMc=
 github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be h1:hauBQBHSyrUxAI0zvkTiBKd472c+Iy+aY0Jd+b9VOJ8=
 github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be/go.mod h1:ryhYHDwupsZHeOOF/N7So+1hbtAnuw0K2A+pKOElSVs=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
