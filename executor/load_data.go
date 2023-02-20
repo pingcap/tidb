@@ -784,6 +784,7 @@ func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
 		AllowEmptyLine: true,
 		// TODO: set it through NULL DEFINED BY OPTIONALLY ENCLOSED
 		QuotedNullIsText: true,
+		UnescapedQuote:   true,
 	}
 }
 

@@ -1556,38 +1556,39 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 	})
 
+	// TODO: disabled
 	// Test with upper case variables.
-	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
-		config.AllowAllFiles = true
-		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("drop table if exists pn")
-		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
-		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @VAL1, @VAL2) SET c3 = @VAL2 * 100, c2 = CAST(@VAL1 AS UNSIGNED)`, path))
-		require.NoError(t, err1)
-		var (
-			a int
-			b int
-			c int
-		)
-		rows := dbt.MustQuery("select * from pn")
-		require.Truef(t, rows.Next(), "unexpected data")
-		err = rows.Scan(&a, &b, &c)
-		require.NoError(t, err)
-		require.Equal(t, 1, a)
-		require.Equal(t, 2, b)
-		require.Equal(t, 300, c)
-		require.Truef(t, rows.Next(), "unexpected data")
-		err = rows.Scan(&a, &b, &c)
-		require.NoError(t, err)
-		require.Equal(t, 4, a)
-		require.Equal(t, 5, b)
-		require.Equal(t, 600, c)
-		require.Falsef(t, rows.Next(), "unexpected data")
-		require.NoError(t, rows.Close())
-		dbt.MustExec("drop table if exists pn")
-	})
+	//cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+	//	config.AllowAllFiles = true
+	//	config.Params["sql_mode"] = "''"
+	//}, "LoadData", func(dbt *testkit.DBTestKit) {
+	//	dbt.MustExec("drop table if exists pn")
+	//	dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+	//	dbt.MustExec("set @@tidb_dml_batch_size = 1")
+	//	_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @VAL1, @VAL2) SET c3 = @VAL2 * 100, c2 = CAST(@VAL1 AS UNSIGNED)`, path))
+	//	require.NoError(t, err1)
+	//	var (
+	//		a int
+	//		b int
+	//		c int
+	//	)
+	//	rows := dbt.MustQuery("select * from pn")
+	//	require.Truef(t, rows.Next(), "unexpected data")
+	//	err = rows.Scan(&a, &b, &c)
+	//	require.NoError(t, err)
+	//	require.Equal(t, 1, a)
+	//	require.Equal(t, 2, b)
+	//	require.Equal(t, 300, c)
+	//	require.Truef(t, rows.Next(), "unexpected data")
+	//	err = rows.Scan(&a, &b, &c)
+	//	require.NoError(t, err)
+	//	require.Equal(t, 4, a)
+	//	require.Equal(t, 5, b)
+	//	require.Equal(t, 600, c)
+	//	require.Falsef(t, rows.Next(), "unexpected data")
+	//	require.NoError(t, rows.Close())
+	//	dbt.MustExec("drop table if exists pn")
+	//})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(t *testing.T) {

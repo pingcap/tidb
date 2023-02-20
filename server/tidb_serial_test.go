@@ -36,7 +36,6 @@ import (
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func TestLoadData1(t *testing.T) {
-	t.Skip("it is a break test. ")
 	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataWithColumnList(t, ts.server)
