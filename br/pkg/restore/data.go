@@ -307,6 +307,9 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 		func() error {
 			handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 				stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, startTS, r)
+				if err != nil {
+					log.Warn("region may not ready to serve, retry it...", zap.Error(err))
+				}
 				return stats, err
 			}
 
@@ -320,7 +323,7 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 			log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
 			return nil
 		},
-		utils.NewFlashBackBackoffer(),
+		utils.NewFixedBackoffer(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval),
 	)
 
 	recovery.progress.Inc()

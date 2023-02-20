@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -336,7 +337,17 @@ func (exec *Executor) Execute(
 		//
 		// It is useful in TiDB, however, it's a place holder in BR.
 		killed := uint32(0)
-		resp, err := sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+		var (
+			resp *tipb.ChecksumResponse
+			err  error
+		)
+		err = utils.WithRetry(ctx, func() error {
+			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}, utils.NewFixedBackoffer(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

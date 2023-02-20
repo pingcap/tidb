@@ -35,9 +35,13 @@ const (
 	resetTSMaxWaitIntervalExt = 300 * time.Second
 
 	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
-	flashbackRetryTime       = 3
-	flashbackWaitInterval    = 3000 * time.Millisecond
-	flashbackMaxWaitInterval = 15 * time.Second
+	FlashbackRetryTime       = 3
+	FlashbackWaitInterval    = 3 * time.Second
+	FlashbackMaxWaitInterval = 15 * time.Second
+
+	ChecksumRetryTime       = 8
+	ChecksumWaitInterval    = 1 * time.Second
+	ChecksumMaxWaitInterval = 30 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -210,26 +214,25 @@ func (bo *pdReqBackoffer) Attempt() int {
 	return bo.attempt
 }
 
-type flashbackBackoffer struct {
+type fixedBackoffer struct {
 	attempt      int
 	delayTime    time.Duration
 	maxDelayTime time.Duration
 }
 
-// NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewFlashBackBackoffer() Backoffer {
-	return &flashbackBackoffer{
-		attempt:      flashbackRetryTime,
-		delayTime:    flashbackWaitInterval,
-		maxDelayTime: flashbackMaxWaitInterval,
+// NewFixedBackoffer creates a new controller regulating a truncated exponential backoff.
+func NewFixedBackoffer(attempt int, delayTime time.Duration, maxDelayTime time.Duration) Backoffer {
+	return &fixedBackoffer{
+		attempt:      attempt,
+		delayTime:    delayTime,
+		maxDelayTime: maxDelayTime,
 	}
 }
 
 // retry 3 times when prepare flashback failure.
-func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
+func (bo *fixedBackoffer) NextBackoff(err error) time.Duration {
 	bo.delayTime = 2 * bo.delayTime
 	bo.attempt--
-	log.Warn("region may not ready to serve, retry it...", zap.Error(err))
 
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
@@ -237,6 +240,6 @@ func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
 	return bo.delayTime
 }
 
-func (bo *flashbackBackoffer) Attempt() int {
+func (bo *fixedBackoffer) Attempt() int {
 	return bo.attempt
 }
