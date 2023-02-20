@@ -506,6 +506,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1")
+	defer tk.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=0")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
