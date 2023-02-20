@@ -88,12 +88,16 @@ select 6;`
 select 7;`
 	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
+	fileName0 := "tidb-slow-query-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-query-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-query-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-query-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow-query.log"
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName4
+	})
 
 	prepareLogs(t, logData, fileNames)
 	defer func() {
@@ -200,12 +204,16 @@ select 9
 select 10;`
 	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
+	fileName0 := "tidb-slow-20236-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-20236-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-20236-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-20236-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow-20236.log"
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName4
+	})
 	prepareLogs(t, logData, fileNames)
 	defer func() {
 		removeFiles(t, fileNames)
