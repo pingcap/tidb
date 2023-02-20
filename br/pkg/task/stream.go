@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -388,6 +389,10 @@ func (s *streamMgr) checkRestoreRunning(ctx context.Context) error {
 	}
 
 	// check import mode
+	if err = version.CheckClusterVersion(ctx, s.mgr.GetPDClient(), version.CheckVersionForGetModeRPC()); err != nil {
+		log.Warn("failed to check whether stream restore or lightning is running", zap.Error(err))
+		return nil
+	}
 	stores, err := util.GetAllTiKVStores(ctx, s.mgr.GetPDClient(), util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to get tikv stores")

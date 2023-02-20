@@ -124,6 +124,18 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 	}
 }
 
+// CheckVersionFroGetModeRPC checks whether the version of tikv-server supports import_sstpb.GetMode rpc.
+func CheckVersionForGetModeRPC() VerChecker {
+	return func(store *metapb.Store, tikvVersion *semver.Version) error {
+		// < v6.7
+		if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 7) {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s doesn't support import_sstpb.GetMode rpc",
+				store.Address, tikvVersion)
+		}
+		return nil
+	}
+}
+
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
