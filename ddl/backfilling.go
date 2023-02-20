@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -48,7 +47,6 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -61,20 +59,7 @@ const (
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
 	typeReorgPartitionWorker   backfillerType = 4
-
-	// InstanceLease is the instance lease.
-	InstanceLease                = 1 * time.Minute
-	updateInstanceLease          = 25 * time.Second
-	genTaskBatch                 = 4096
-	genPhysicalTableTaskBatch    = 256
-	minGenTaskBatch              = 1024
-	minGenPhysicalTableTaskBatch = 64
-	minDistTaskCnt               = 64
-	retrySQLTimes                = 10
 )
-
-// RetrySQLInterval is export for test.
-var RetrySQLInterval = 300 * time.Millisecond
 
 func (bT backfillerType) String() string {
 	switch bT {
@@ -91,57 +76,6 @@ func (bT backfillerType) String() string {
 	default:
 		return "unknown"
 	}
-}
-
-// BackfillJob is for a tidb_background_subtask table's record.
-type BackfillJob struct {
-	ID              int64
-	JobID           int64
-	EleID           int64
-	EleKey          []byte
-	PhysicalTableID int64
-	Tp              backfillerType
-	State           model.JobState
-	InstanceID      string
-	InstanceLease   types.Time
-	StartTS         uint64
-	StateUpdateTS   uint64
-	Meta            *model.BackfillMeta
-}
-
-// PrefixKeyString returns the BackfillJob's prefix key.
-func (bj *BackfillJob) PrefixKeyString() string {
-	return fmt.Sprintf("%d_%s_%d_%%", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
-}
-
-// AbbrStr returns the BackfillJob's info without the Meta info.
-func (bj *BackfillJob) AbbrStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
-		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
-}
-
-// GetOracleTimeWithStartTS returns the current time with txn's startTS.
-func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
-	txn, err := se.Txn(true)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
-}
-
-// GetOracleTime returns the current time from TS without txn.
-func GetOracleTime(store kv.Storage) (time.Time, error) {
-	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		return time.Time{}, errors.Trace(err)
-	}
-	return oracle.GetTimeFromTS(currentVer.Ver).UTC(), nil
-}
-
-// GetLeaseGoTime returns a types.Time by adding a lease.
-func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
-	leaseTime := currTime.Add(lease)
-	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
 }
 
 // By now the DDL jobs that need backfilling include:
@@ -1138,100 +1072,6 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 			}
 		}
 	})
-	return nil
-}
-
-func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, phyTblID int64, notDistTask bool,
-	batchTasks []*reorgBackfillTask, bJobs []*BackfillJob) error {
-	bJobs = bJobs[:0]
-	instanceID := ""
-	if notDistTask {
-		instanceID = reorgInfo.d.uuid
-	}
-
-	// TODO: Adjust the number of ranges(region) for each task.
-	for _, task := range batchTasks {
-		bm := &model.BackfillMeta{
-			IsUnique:   sJobCtx.isUnique,
-			EndInclude: task.endInclude,
-			ReorgTp:    reorgInfo.Job.ReorgMeta.ReorgTp,
-			SQLMode:    reorgInfo.ReorgMeta.SQLMode,
-			Location:   reorgInfo.ReorgMeta.Location,
-			JobMeta: &model.JobMeta{
-				SchemaID: reorgInfo.Job.SchemaID,
-				TableID:  reorgInfo.Job.TableID,
-				Type:     reorgInfo.Job.Type,
-				Query:    reorgInfo.Job.Query,
-			},
-			StartKey: task.startKey,
-			EndKey:   task.endKey,
-		}
-		bj := &BackfillJob{
-			ID:              sJobCtx.currBackfillJobID.Add(1),
-			JobID:           reorgInfo.Job.ID,
-			EleID:           reorgInfo.currElement.ID,
-			EleKey:          reorgInfo.currElement.TypeKey,
-			PhysicalTableID: phyTblID,
-			Tp:              sJobCtx.bfWorkerType,
-			State:           model.JobStateNone,
-			InstanceID:      instanceID,
-			Meta:            bm,
-		}
-		bj.Meta.CurrKey = task.startKey
-		bJobs = append(bJobs, bj)
-	}
-	if err := AddBackfillJobs(sess, bJobs); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, pTblMeta *BackfillJobRangeMeta) error {
-	isFirstOps := !sJobCtx.isMultiPhyTbl
-	batchSize := sJobCtx.batchSize
-	startKey, endKey := pTblMeta.StartKey, pTblMeta.EndKey
-	bJobs := make([]*BackfillJob, 0, batchSize)
-	for {
-		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
-		if len(batchTasks) == 0 {
-			break
-		}
-		notNeedDistProcess := isFirstOps && (len(kvRanges) < minDistTaskCnt)
-		if err = addBatchBackfillJobs(sess, reorgInfo, sJobCtx, pTblMeta.PhyTblID, notNeedDistProcess, batchTasks, bJobs); err != nil {
-			return errors.Trace(err)
-		}
-		isFirstOps = false
-
-		remains := kvRanges[len(batchTasks):]
-		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
-		logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
-			zap.Int64("physicalID", pTblMeta.PhyTblID),
-			zap.Int("batchTasksCnt", len(batchTasks)),
-			zap.Int("totalRegionCnt", len(kvRanges)),
-			zap.Int("remainRegionCnt", len(remains)),
-			zap.String("startHandle", hex.EncodeToString(startKey)),
-			zap.String("endHandle", hex.EncodeToString(endKey)))
-
-		if len(remains) == 0 {
-			break
-		}
-
-		for {
-			bJobCnt, err := checkBackfillJobCount(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if bJobCnt < sJobCtx.minBatchSize {
-				break
-			}
-			time.Sleep(RetrySQLInterval)
-		}
-		startKey = remains[0].StartKey
-	}
 	return nil
 }
 
