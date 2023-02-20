@@ -361,6 +361,13 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
 
+				selectResults := make([]distsql.SelectResult, 0, len(keyRanges))
+				defer func() {
+					// Goroutine may panic and SelectResult.Close() will be ignored unexpectedly.
+					for _, s := range selectResults {
+						terror.Call(s.Close)
+					}
+				}()
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
@@ -384,6 +391,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
+					selectResults = append(selectResults, result)
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -401,6 +409,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					if err := result.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
+					selectResults = selectResults[:len(selectResults)-1]
 					cancel()
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 					if fetchErr != nil {
@@ -475,6 +484,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
+				var tableReaderClosed bool
+				defer func() {
+					// Goroutine may panic and SelectResult.Close() will be ignored unexpectedly.
+					if !tableReaderClosed {
+						terror.Call(worker.tableReader.Close)
+					}
+				}()
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
@@ -490,6 +506,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
+					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -510,6 +527,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
+					tableReaderClosed = true
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 					if fetchErr != nil {
 						break
