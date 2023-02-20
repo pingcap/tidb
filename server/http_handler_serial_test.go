@@ -605,15 +605,18 @@ func TestTTL(t *testing.T) {
 		}
 
 		rs := dbt.MustQuery(selectSQL)
-		require.NoError(t, rs.Err())
 		defer func() {
 			require.NoError(t, rs.Close())
 		}()
 
 		cnt := -1
-		require.True(t, rs.Next())
+		rowNum := 0
+		for rs.Next() {
+			rowNum++
+			require.Equal(t, 1, rowNum)
+			require.NoError(t, rs.Scan(&cnt))
+		}
 		require.NoError(t, rs.Err())
-		require.NoError(t, rs.Scan(&cnt))
 		return cnt
 	}
 
@@ -654,6 +657,7 @@ func TestTTL(t *testing.T) {
 		require.Equal(t, expectedJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
 		obj, err = doTrigger()
+		require.NoError(t, err)
 		expectedJobCnt++
 	}
 
