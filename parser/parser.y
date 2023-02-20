@@ -943,7 +943,6 @@ import (
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
-	PlanChangeCaptureStmt      "Plan Change Capture Statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -14729,23 +14728,6 @@ PlanReplayerStmt:
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,
-		}
-
-		$$ = x
-	}
-
-/********************************************************************
- *
- * Plan Chnage Capture Statement
- *
- * PLAN REPLAYER Change 'begin_time' 'end_time'
- *******************************************************************/
-PlanChangeCaptureStmt:
-	"PLAN" "CHANGE" "CAPTURE" stringLit stringLit
-	{
-		x := &ast.PlanChangeCaptureStmt{
-			Begin: $4,
-			End:   $5,
 		}
 
 		$$ = x

@@ -1017,25 +1017,6 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
-	e := &PlanChangeCaptureExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-	}
-	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	end, err := time.Parse("2006-01-02 15:04:05", v.End)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	e.Begin = begin
-	e.End = end
-	return e
-}
-
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{

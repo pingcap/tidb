@@ -587,13 +587,6 @@ type UnlockStats struct {
 	Tables []*ast.TableName
 }
 
-// PlanChangeCapture represents a plan change capture stmt
-type PlanChangeCapture struct {
-	baseSchemaProducer
-	Begin string
-	End   string
-}
-
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
