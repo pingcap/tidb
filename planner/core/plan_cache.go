@@ -753,18 +753,3 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 	}
 	return ok, err
 }
-
-func containApplyOperator(p PhysicalPlan) bool {
-	if _, isApply := p.(*PhysicalApply); isApply {
-		return true
-	}
-
-	hashApply := false
-	for _, child := range p.Children() {
-		hashApply = hashApply || containApplyOperator(child)
-		if hashApply {
-			return true
-		}
-	}
-	return hashApply
-}

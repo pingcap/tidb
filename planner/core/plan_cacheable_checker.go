@@ -367,7 +367,7 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 	case *PhysicalApply:
-		return false, "skip plan_cache: PhysicalApply plan is un-cacheable"
+		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
 	}
 
 	for _, c := range p.Children() {
