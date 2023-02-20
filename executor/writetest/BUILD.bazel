@@ -11,6 +11,7 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
+        "//br/pkg/lightning/mydump",
         "//config",
         "//executor",
         "//kv",

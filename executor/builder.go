@@ -972,7 +972,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		loadDataInfo: loadDataInfo,
 	}
 	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
-	loadDataExec.loadDataInfo.InitQueues()
+	loadDataExec.loadDataInfo.initQueues()
 	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
 	return loadDataExec
@@ -1014,6 +1014,25 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 			Ctx:         b.ctx,
 		},
 	}
+	return e
+}
+
+func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
+	e := &PlanChangeCaptureExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+	}
+	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	end, err := time.Parse("2006-01-02 15:04:05", v.End)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	e.Begin = begin
+	e.End = end
 	return e
 }
 

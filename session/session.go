@@ -1938,7 +1938,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if err != nil {
 		return nil, nil, err
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+	var dbName string
+	if config.GetGlobalConfig().Status.RecordDBLabel {
+		dbName = se.GetSessionVars().CurrentDB
+	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2110,7 +2116,12 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		if err != nil {
 			return nil, nil, err
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+		var dbName string
+		if config.GetGlobalConfig().Status.RecordDBLabel {
+			dbName = se.GetSessionVars().CurrentDB
+		}
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }

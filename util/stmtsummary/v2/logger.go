@@ -66,6 +66,10 @@ func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 	w.evicted.Unlock()
 }
 
+func (s *stmtLogStorage) sync() error {
+	return s.logger.Sync()
+}
+
 func (s *stmtLogStorage) log(r *StmtRecord) {
 	b, err := json.Marshal(r)
 	if err != nil {
