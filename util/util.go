@@ -28,6 +28,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -282,4 +284,39 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 		lines = append(lines, line)
 	}
 	return lines, nil
+}
+
+// FieldSlice is the slice of the types.FieldType
+type FieldSlice []*types.FieldType
+
+func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
+	if len(s) != len(tps) {
+		return false
+	}
+	for i := range tps {
+		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
+		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
+			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
+			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar)
+		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
+			return false
+		}
+		// When the type is decimal, we should compare the Flen and Decimal.
+		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
+		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
+		if tpEqual && s[i].GetType() == mysql.TypeNewDecimal && !(s[i].GetFlen() >= tps[i].GetFlen() && s[i].GetDecimal() >= tps[i].GetDecimal()) {
+			return false
+		}
+	}
+	return true
+}
+
+type PlanCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	ParamTypes FieldSlice
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	LimitOffsetAndCount []uint64
 }

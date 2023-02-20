@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
@@ -54,8 +53,11 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
+	Get(key kvcache.Key, opts *util.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, opts *util.PlanCacheMatchOpts)
+	//Puta(key kvcache.Key, opts util.PlanCacheMatchOpts)
+	//Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
+	//Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int
