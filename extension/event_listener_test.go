@@ -327,7 +327,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 
 	for i, c := range cases {
 		h.Reset()
-		conn.Context().SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+		conn.Context().SetProcessInfo(context.Background(), "", time.Now(), mysql.ComSleep, 0)
 
 		var err error
 		switch {
