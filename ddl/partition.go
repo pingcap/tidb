@@ -515,7 +515,35 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
+
+	partCols, err := getPartitionColSlices(ctx, tbInfo, s)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, index := range tbInfo.Indices {
+		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
+			index.Global = config.GetGlobalConfig().EnableGlobalIndex
+		}
+	}
 	return nil
+}
+
+func getPartitionColSlices(sctx sessionctx.Context, tblInfo *model.TableInfo, s *ast.PartitionOptions) (partCols stringSlice, err error) {
+	if s.Expr != nil {
+		extractCols := newPartitionExprChecker(sctx, tblInfo)
+		s.Expr.Accept(extractCols)
+		partColumns, err := extractCols.columns, extractCols.err
+		if err != nil {
+			return nil, err
+		}
+		partCols = columnInfoSlice(partColumns)
+	} else if len(s.ColumnNames) > 0 {
+		partCols = columnNameSlice(s.ColumnNames)
+	} else {
+		return nil, errors.Errorf("Table partition metadata not correct, neither partition expression or list of partition columns")
+	}
+	return partCols, nil
 }
 
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
@@ -3110,20 +3138,9 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 		return nil
 	}
 
-	var partCols stringSlice
-	if s.Partition.Expr != nil {
-		extractCols := newPartitionExprChecker(sctx, tblInfo)
-		s.Partition.Expr.Accept(extractCols)
-		partColumns, err := extractCols.columns, extractCols.err
-		if err != nil {
-			return err
-		}
-		partCols = columnInfoSlice(partColumns)
-	} else if len(s.Partition.ColumnNames) > 0 {
-		partCols = columnNameSlice(s.Partition.ColumnNames)
-	} else {
-		// TODO: Check keys constraints for list, key partition type and so on.
-		return nil
+	partCols, err := getPartitionColSlices(sctx, tblInfo, s.Partition)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// Checks that the partitioning key is included in the constraint.
@@ -3132,7 +3149,13 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	for _, index := range tblInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
 			if index.Primary {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+				// not support global index with clustered index
+				if tblInfo.IsCommonHandle {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+				}
+				if !config.GetGlobalConfig().EnableGlobalIndex {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+				}
 			}
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
@@ -3146,7 +3169,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 			Length: types.UnspecifiedLength,
 		}}
 		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
 	return nil
