@@ -332,6 +332,7 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 	}, nil
 }
 
+// handleEstablishMPPConnection handle the mock mpp collection came from root or peers.
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
 	err := c.usSvr.EstablishMPPConnectionWithStoreID(r, mockServer, storeID)
@@ -348,6 +349,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	_, cancel := context.WithCancel(ctx)
 	streamResp.Lease.Cancel = cancel
 	streamResp.Timeout = timeout
+	// mock the stream resp from the server's resp slice
 	first, err := streamResp.Recv()
 	if err != nil {
 		if errors.Cause(err) != io.EOF {
