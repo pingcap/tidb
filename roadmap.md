@@ -21,7 +21,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td rowspan="3">Scalability &amp; Stability</td>
-    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>✅ Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>Support resource management framework.</ul></td>
+    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>✅ Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>✅ Support resource management framework.</ul></td>
     <td><ul><li>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</li><li>Refine resource management in the multi-service aggregation scenario.</li></ul></td>
   </tr>
   <tr>
@@ -34,7 +34,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td rowspan="6">SQL</td>
-    <td>Support the JSON function.<ul><li>✅ Expression index</li><li>Multi-value index</li><li>✅ TiFlash supports JSON function pushdown</li></ul></td>
+    <td>Support the JSON function.<ul><li>✅ Expression index</li><li>✅ Multi-valued index</li><li>✅ TiFlash supports JSON function pushdown</li></ul></td>
     <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
   </tr>
   <tr>
@@ -46,7 +46,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>This feature enables automatic data cleanup in limited data archiving scenarios.</td>
   </tr>
   <tr>
-    <td>Support foreign key constraints.</td>
+    <td>✅ Support foreign key constraints.</td>
     <td>Supports foreign key constraints compatible with MySQL syntax, and provides DB-level referential integrity check capabilities.</td>
   </tr>
   <tr>
