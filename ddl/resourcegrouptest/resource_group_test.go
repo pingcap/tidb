@@ -91,6 +91,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
+	tk.MustContainErrMsg("create resource group large_rg RU_PER_SEC=20000000", "RU_PER_SEC must be an integer in")
 
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
