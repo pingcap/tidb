@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"golang.org/x/exp/slices"
 )
@@ -405,4 +406,20 @@ func ConvertPosInUtf8(str *string, pos int64) int64 {
 	preStr := (*str)[:pos]
 	preStrNum := utf8.RuneCountInString(preStr)
 	return int64(preStrNum + 1)
+}
+
+func lowerAlphaAscii(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int) {
+	lowered_col.ReserveString(elem_num)
+	for i := 0; i < elem_num; i++ {
+		if src_col.IsNull(i) {
+			lowered_col.AppendString("")
+			lowered_col.SetNull(i, true)
+			continue
+		}
+
+		src_str := src_col.GetString(i)
+		lowerOneString(src_str)
+		lowered_col.AppendString(src_col)
+		lowered_col.SetNull(i, false)
+	}
 }

@@ -1608,3 +1608,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 	r.updateDigestInfo(queryResult)
 	return nil
 }
+
+func lowerAlphaAscii(col *chunk.Column) {
+	
+}
