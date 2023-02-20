@@ -708,6 +708,7 @@ func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
 		StartingBy:       e.LinesInfo.Starting,
 		AllowEmptyLine:   true,
 		QuotedNullIsText: quotedNullIsText,
+		UnescapedQuote:   true,
 	}
 }
 
