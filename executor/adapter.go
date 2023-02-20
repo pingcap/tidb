@@ -103,7 +103,7 @@ var (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte, uint64)
+	SetProcessInfo(context.Context, string, time.Time, byte, uint64)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -363,7 +363,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		sql := a.OriginText()
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		pi.SetProcessInfo(ctx, sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
 			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
@@ -576,7 +576,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
 			maxExecutionTime = 0
 		}
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		pi.SetProcessInfo(ctx, sql, time.Now(), cmd, maxExecutionTime)
 		sched.CheckPoint(ctx)
 	}
 
