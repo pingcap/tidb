@@ -16,6 +16,7 @@ package gctuner
 
 import (
 	"runtime"
+	"runtime/debug"
 	"sync/atomic"
 	"testing"
 
@@ -27,11 +28,14 @@ type testState struct {
 }
 
 func TestFinalizer(t *testing.T) {
+	debug.SetGCPercent(1000)
 	maxCount := int32(16)
 	state := &testState{}
+	var stopped atomic.Bool
+	defer stopped.Store(true)
 	f := newFinalizer(func() {
 		n := atomic.AddInt32(&state.count, 1)
-		if n > maxCount {
+		if n > maxCount && stopped.Load() {
 			t.Fatalf("cannot exec finalizer callback after f has been gc")
 		}
 	})
