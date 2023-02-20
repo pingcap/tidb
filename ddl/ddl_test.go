@@ -85,7 +85,7 @@ var NewSession = newSession
 // GetJobWithoutPartition is only used for test.
 const GetJobWithoutPartition = getJobWithoutPartition
 
-// BackfillJobPrefixKeyString is onley used for test.
+// BackfillJobPrefixKeyString is only used for test.
 func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
 	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
 }
