@@ -364,6 +364,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
+					case <-ctx.Done():
+						break
 					case <-e.finished:
 						break
 					default:
@@ -478,6 +480,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
+					case <-ctx.Done():
+						break
 					case <-e.finished:
 						break
 					default:
@@ -754,6 +758,7 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 			defer close(ch)
 		}
 		if r == nil {
+			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -816,7 +821,16 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 	failpoint.Inject("testIndexMergePanicProcessWorkerUnion", nil)
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
-	for task := range fetchCh {
+	for {
+		var task *indexMergeTableTask
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case task = <-fetchCh:
+		}
+
 		select {
 		case err := <-task.doneCh:
 			// If got error from partialIndexWorker/partialTableWorker, stop processing.
@@ -852,7 +866,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		if len(fhs) == 0 {
 			continue
 		}
-		task := &indexMergeTableTask{
+		task = &indexMergeTableTask{
 			lookupTableTask: lookupTableTask{
 				handles: fhs,
 				doneCh:  make(chan error, 1),
@@ -869,7 +883,13 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		case <-finished:
 			return
 		case workCh <- task:
-			resultCh <- task
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case resultCh <- task:
+			}
 		}
 	}
 }
@@ -975,7 +995,13 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		case <-finished:
 			return
 		case workCh <- task:
-			resultCh <- task
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case resultCh <- task:
+			}
 		}
 	}
 }
@@ -1035,7 +1061,16 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		workers = append(workers, worker)
 	}
 loop:
-	for task := range fetchCh {
+	for {
+		var task *indexMergeTableTask
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case task = <-fetchCh:
+		}
+
 		select {
 		case err := <-task.doneCh:
 			// If got error from partialIndexWorker/partialTableWorker, stop processing.
@@ -1047,6 +1082,10 @@ loop:
 		}
 
 		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case <-errCh:
 			// If got error from intersectionProcessWorker, stop processing.
@@ -1205,12 +1244,14 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	for {
 		waitStart := time.Now()
 		select {
+		case <-ctx.Done():
+			return
+		case <-w.finished:
+			return
 		case *task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
-		case <-w.finished:
-			return
 		}
 		// Make sure panic failpoint is after fetch task from workCh.
 		// Otherwise cannot send error to task.doneCh.
@@ -1231,13 +1272,20 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
 		failpoint.Inject("testIndexMergePickAndExecTaskPanic", nil)
-		(*task).doneCh <- err
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.finished:
+			return
+		case (*task).doneCh <- err:
+		}
 	}
 }
 
 func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
+			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
