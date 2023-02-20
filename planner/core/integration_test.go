@@ -472,7 +472,7 @@ func TestSplitJoinHint(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=1`)
 	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints are conflict after join reorder phase, you can only specify one type of join"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"))
 
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 }
