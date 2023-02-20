@@ -484,7 +484,7 @@ func TestMySQL(t *testing.T) {
 	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
-			types.NewStringDatum(`a"b"`),
+			types.NewStringDatum(`a"b`),
 			types.NewStringDatum(`c"d"e`),
 		},
 		Length: 8,

@@ -281,7 +281,7 @@ func (parser *CSVParser) skipBytes(n int) {
 // tryPeekExact peeks the bytes ahead, and if it matches `content` exactly will
 // return (true, false, nil). If meet EOF it will return (false, true, nil).
 // For other errors it will return (false, false, err).
-func (parser *CSVParser) tryPeekExact(content []byte) (bool, bool, error) {
+func (parser *CSVParser) tryPeekExact(content []byte) (matched bool, eof bool, err error) {
 	if len(content) == 0 {
 		return true, false, nil
 	}
