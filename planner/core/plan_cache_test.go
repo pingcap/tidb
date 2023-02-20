@@ -290,6 +290,71 @@ func TestNonPreparedPlanCacheFallback(t *testing.T) {
 	require.NotNil(t, err)
 }
 
+func TestNonPreparedPlanCacheFastPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int primary key, b int, unique key(b))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// fast plans have a higher priority than non-prep cache plan
+	tk.MustQuery(`explain format='brief' select a from t where a in (1, 2)`).Check(testkit.Rows(
+		`Batch_Point_Get 2.00 root table:t handle:[1 2], keep order:false, desc:false`))
+	tk.MustQuery(`select a from t where a in (1, 2)`).Check(testkit.Rows())
+	tk.MustQuery(`select a from t where a in (1, 2)`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustQuery(`explain format='brief' select b from t where b = 1`).Check(testkit.Rows(
+		`Point_Get 1.00 root table:t, index:b(b) `))
+	tk.MustQuery(`select b from t where b = 1`).Check(testkit.Rows())
+	tk.MustQuery(`select b from t where b = 1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheSetOperations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// queries with set operations cannot hit the cache
+	for _, q := range []string{
+		`select * from t union select * from t`,
+		`select * from t union distinct select * from t`,
+		`select * from t union all select * from t`,
+		`select * from t except select * from t`,
+		`select * from t intersect select * from t`,
+	} {
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanCacheSpecialTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create definer='root'@'localhost' view t_v as select * from t`)
+	tk.MustExec(`create table t_p (a int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create temporary table t_t (a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// queries that access partitioning tables, view, temporary tables or contain CTE cannot hit the cache.
+	for _, q := range []string{
+		`select * from t_v`,
+		`select * from t_p`,
+		`select * from t_t`,
+		`with t_cte as (select * from t) select * from t_cte`,
+	} {
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	}
+}
+
 func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
