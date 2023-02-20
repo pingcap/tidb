@@ -1374,8 +1374,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%d_%s_%d_%d'",
-			bfJob.JobID, hex.EncodeToString(bfJob.EleKey), bfJob.EleID, bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
 		if err != nil {
 			return err
 		}
