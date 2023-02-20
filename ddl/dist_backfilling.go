@@ -79,7 +79,7 @@ type BackfillJob struct {
 
 // PrefixKeyString returns the BackfillJob's prefix key.
 func (bj *BackfillJob) PrefixKeyString() string {
-	return fmt.Sprintf(backfillJobPrefixKey, bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
+	return backfillJobPrefixKeyString(bj.JobID, bj.EleKey, bj.EleID)
 }
 
 func (bj *BackfillJob) keyString() string {
