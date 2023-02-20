@@ -551,27 +551,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	return
 }
 
-// IsTLSExpiredError checks error is caused by TLS expired.
-func IsTLSExpiredError(err error) bool {
-	err = errors.Cause(err)
-	switch inval := err.(type) {
-	case x509.CertificateInvalidError:
-		if inval.Reason != x509.Expired {
-			return false
-		}
-		// TODO: remove it after upgrading 1.20
-		// case *tls.CertificateVerificationError:
-		// 	invali, ok := inval.Err.(x509.CertificateInvalidError)
-		// 	if !ok || invali.Reason != x509.Expired {
-		// 		return false
-		// 	}
-		// 	return true
-	default:
-		return false
-	}
-	return true
-}
-
 var (
 	internalClientInit sync.Once
 	internalHTTPClient *http.Client
