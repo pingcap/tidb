@@ -244,8 +244,6 @@ github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 h1:YEetp8
 github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21/go.mod h1:+020luEh2TKB4/GOp8oxxtq0Daoen/Cii55CzbTV6DU=
 github.com/eapache/queue v1.1.0 h1:YOEu7KNc61ntiQlcEeUIoDTJ2o8mQznoNvUhiigpIqc=
 github.com/eapache/queue v1.1.0/go.mod h1:6eCeP0CKFpHLu8blIFXhExK/dRa7WDZfr6jVFPTqq+I=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20230216162745-b5208457bdac h1:3xQ8vK60Vn+oiefNmu3N5smjYVS0jQrBU7DAk2jx5FI=
-github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20230216162745-b5208457bdac/go.mod h1:KMEFxpYwZ3MIvW4lrSy9dXgtrLojw9c9//2XlS5TGzw=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385/go.mod h1:0vRUJqYpeSZifjYj7uP3BG/gKcuzL9xWVV/Y+cK33KM=
 github.com/elastic/gosigar v0.9.0/go.mod h1:cdorVVzy1fhmEqmtgqkoE3bYtCfSCkVyjTyCIo22xvs=
 github.com/elazarl/go-bindata-assetfs v1.0.0/go.mod h1:v+YaWX3bdea5J/mo8dSETolEo7R71Vk1u8bnjau5yw4=
@@ -770,8 +768,8 @@ github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059/go.mod h1:fMRU1BA1y+r89
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 h1:surzm05a8C9dN8dIUmo4Be2+pMRb6f55i+UIYrluu2E=
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20191211054548-3c6b38ea5107/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
-github.com/pingcap/kvproto v0.0.0-20230206112125-0561adc37543 h1:QcC52K9hhsP6eVmQBnSMI/b8TiOUVztbaeduTXspmeQ=
-github.com/pingcap/kvproto v0.0.0-20230206112125-0561adc37543/go.mod h1:+on3Lfk/fb1lXkud3XvskJumhSIEEgN2TTbMObUlrxE=
+github.com/pingcap/kvproto v0.0.0-20230216153817-c6df78cc9dea h1:Qt8xe4CWgA/pPfYLHwCl8Mz0g7Mbnbhx4l0gVf9eH1w=
+github.com/pingcap/kvproto v0.0.0-20230216153817-c6df78cc9dea/go.mod h1:+on3Lfk/fb1lXkud3XvskJumhSIEEgN2TTbMObUlrxE=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuRurdGxZXBz0At+9avep+ub7U1AGYLIMM=
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
@@ -933,6 +931,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.6-0.20230220051003-e0e6019f8ac7 h1:FYyqGriZ0yeCB6Zt2pZytGZuPbr9mzNOYzHHJtDRuq4=
+github.com/tikv/client-go/v2 v2.0.6-0.20230220051003-e0e6019f8ac7/go.mod h1:Kw6+qOCoLSymJLtOPTym6wkH97Ej0Yna4pDv0ak3hMc=
 github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be h1:hauBQBHSyrUxAI0zvkTiBKd472c+Iy+aY0Jd+b9VOJ8=
 github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be/go.mod h1:ryhYHDwupsZHeOOF/N7So+1hbtAnuw0K2A+pKOElSVs=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
