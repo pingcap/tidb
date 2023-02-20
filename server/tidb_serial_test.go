@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"path/filepath"
@@ -32,6 +33,26 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
+
+// isTLSExpiredError checks error is caused by TLS expired.
+func isTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	switch inval := err.(type) {
+	case x509.CertificateInvalidError:
+		if inval.Reason != x509.Expired {
+			return false
+		}
+	case *tls.CertificateVerificationError:
+		invalid, ok := inval.Err.(x509.CertificateInvalidError)
+		if !ok || invalid.Reason != x509.Expired {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+	return true
+}
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
@@ -263,9 +284,9 @@ func TestTLSVerify(t *testing.T) {
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
 
-	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
-	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
-	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
+	require.False(t, isTLSExpiredError(errors.New("unknown test")))
+	require.False(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
+	require.True(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
 
 	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
 	require.Error(t, err)
@@ -553,6 +574,6 @@ func TestReloadTLS(t *testing.T) {
 	}
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
-	require.Truef(t, util.IsTLSExpiredError(err), "real error is %+v", err)
+	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
 	server.Close()
 }
