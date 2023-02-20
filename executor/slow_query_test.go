@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -351,10 +352,14 @@ select 6;
 select 7;`
 	logData := []string{logData0, logData1, logData2, logData3}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow.log"
+	fileName0 := "tidb-slow-retriever-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-retriever-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-retriever-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-retriever.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName3
+	})
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3}
 	prepareLogs(t, logData, fileNames)
 	defer func() {
@@ -554,11 +559,15 @@ select 7;
 select 9;`
 	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T19-04-05.01.log"
-	fileName4 := "tidb-slow.log"
+	fileName0 := "tidb-slow-reverse-scan-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-reverse-scan-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-reverse-scan-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-reverse-scan-2020-02-17T19-04-05.01.log"
+	fileName4 := "tidb-slow-reverse-scan.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName4
+	})
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
 	prepareLogs(t, logData, fileNames)
 	defer func() {

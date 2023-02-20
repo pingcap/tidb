@@ -733,7 +733,11 @@ func TestColumnStatistics(t *testing.T) {
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
 	store := testkit.CreateMockStore(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-table-has-column-slow.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
