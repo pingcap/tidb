@@ -151,6 +151,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
 	for _, task := range tasks {
 		addr := task.Meta.GetAddress()
+		// for upper fragment, the task num is equal to address num covered by lower tasks
 		_, ok := addressMap[addr]
 		if !ok {
 			mppTask := &kv.MPPTask{
@@ -193,7 +194,7 @@ func (f *Fragment) init(p PhysicalPlan) error {
 
 // We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
 // This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
-// a new ioslated tree (and also a fragment) without union all. These trees (fragments then tasks) will
+// a new isolated tree (and also a fragment) without union all. These trees (fragments then tasks) will
 // finally be gathered to TiDB or be exchanged to upper tasks again.
 // For instance, given a plan "select c1 from t union all select c1 from s"
 // after untwist, there will be two plans in `forest` slice:
@@ -278,6 +279,7 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 	}
 	results := make([]*kv.MPPTask, 0, len(frags))
 	for _, f := range frags {
+		// from the bottom up
 		tasks, err := e.generateMPPTasksForFragment(f)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -291,6 +293,7 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, r := range f.ExchangeReceivers {
+		// chain call: to get lower fragments and tasks
 		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)

@@ -953,6 +953,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Table:              tbl,
 		FieldsInfo:         v.FieldsInfo,
 		LinesInfo:          v.LinesInfo,
+		NullInfo:           v.NullInfo,
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,

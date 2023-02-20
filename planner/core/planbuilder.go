@@ -3262,6 +3262,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+		if show.Tp == ast.ShowStatsHealthy {
+			if extractor := newShowBaseExtractor(*show); extractor.Extract() {
+				p.Extractor = extractor
+				buildPattern = false
+			}
+		}
 	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsLocked:
 		var err error
 		if user := b.ctx.GetSessionVars().User; user != nil {
@@ -4172,6 +4178,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
+		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,

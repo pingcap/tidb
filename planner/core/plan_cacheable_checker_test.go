@@ -34,6 +34,7 @@ func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	mockCtx := mock.NewContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -79,9 +80,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.DeleteStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt := &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -90,7 +92,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -134,9 +136,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.UpdateStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -187,9 +190,10 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
-		Where: &ast.ExistsSubqueryExpr{},
+		Where: &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},

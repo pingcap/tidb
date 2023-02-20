@@ -105,10 +105,18 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+
+	case *ast.VariableExpr:
 		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
+		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
+		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
@@ -358,6 +366,8 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		if x.AccessMVIndex {
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
+	case *PhysicalApply:
+		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
 	}
 
 	for _, c := range p.Children() {

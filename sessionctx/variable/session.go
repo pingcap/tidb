@@ -778,6 +778,9 @@ type SessionVars struct {
 	// Enable3StageDistinctAgg indicates whether to allow 3 stage distinct aggregate
 	Enable3StageDistinctAgg bool
 
+	// Enable3StageMultiDistinctAgg indicates whether to allow 3 stage multi distinct aggregate
+	Enable3StageMultiDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -1275,6 +1278,9 @@ type SessionVars struct {
 
 	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
 	EnablePlanCacheForParamLimit bool
+
+	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
+	EnablePlanCacheForSubquery bool
 
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
