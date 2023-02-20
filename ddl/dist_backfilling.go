@@ -41,6 +41,7 @@ import (
 
 const (
 	getJobWithoutPartition = -1
+	backfillJobPrefixKey   = "%d_%s_%d_%%"
 
 	// InstanceLease is the instance lease.
 	InstanceLease                = 1 * time.Minute
@@ -55,6 +56,10 @@ const (
 
 // RetrySQLInterval is export for test.
 var RetrySQLInterval = 300 * time.Millisecond
+
+func backfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return fmt.Sprintf(backfillJobPrefixKey, ddlJobID, hex.EncodeToString(eleKey), eleID)
+}
 
 // BackfillJob is for a tidb_background_subtask table's record.
 type BackfillJob struct {
@@ -74,7 +79,11 @@ type BackfillJob struct {
 
 // PrefixKeyString returns the BackfillJob's prefix key.
 func (bj *BackfillJob) PrefixKeyString() string {
-	return fmt.Sprintf("%d_%s_%d_%%", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
+	return fmt.Sprintf(backfillJobPrefixKey, bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
+}
+
+func (bj *BackfillJob) keyString() string {
+	return fmt.Sprintf("%d_%s_%d_%d", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID, bj.ID)
 }
 
 // AbbrStr returns the BackfillJob's info without the Meta info.

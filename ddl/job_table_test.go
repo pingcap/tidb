@@ -597,9 +597,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(" 0000-00-00 00:00:00"))
 	// test GetBackfillMetas
-	bfErr := ddl.GetBackfillErr(se, jobID1, eleID1, eleKey)
+	bfErr := ddl.GetBackfillErr(se, getIdxConditionStr(jobID1, eleID1))
 	require.Error(t, bfErr, dbterror.ErrCancelledDDLJob)
-	bfErr = ddl.GetBackfillErr(se, jobID2, eleID2, eleKey)
+	bfErr = ddl.GetBackfillErr(se, getIdxConditionStr(jobID2, eleID2))
 	require.NoError(t, bfErr)
 
 	bJobs1[0].State = model.JobStateNone

@@ -634,8 +634,8 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
-	sql := fmt.Sprintf("update mysql.%s set state = '%s' where task_key like \"%d_%s_%d_%%\" and exec_id = '%s' limit 1;",
-		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, uuid)
+	sql := fmt.Sprintf("update mysql.%s set state = '%s' where task_key like '%s' and exec_id = '%s' limit 1;",
+		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.PrefixKeyString(), uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
 }
@@ -654,8 +654,8 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		if i != 0 {
 			sqlBuilder.WriteString(", ")
 		}
-		sqlBuilder.WriteString(fmt.Sprintf("('%d_%s_%d_%d', %d, %d, '%s', '%s', '%s', %s, %d, %d, %s)",
-			bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID, bj.ID, bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State.String(), wrapKey2String(bj.Meta.CurrKey),
+		sqlBuilder.WriteString(fmt.Sprintf("('%s', %d, %d, '%s', '%s', '%s', %s, %d, %d, %s)",
+			bj.keyString(), bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State.String(), wrapKey2String(bj.Meta.CurrKey),
 			bj.StartTS, bj.StateUpdateTS, wrapKey2String(mateByte)))
 	}
 	return sqlBuilder.String(), nil
@@ -789,8 +789,8 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 
 // GetInterruptedBackfillJobForOneEle gets an interrupted backfill job that contains only one element.
 func GetInterruptedBackfillJobForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
-	bJobs, err := GetBackfillJobs(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like \"%d_%s_%d_%%\" and state = \"%s\" limit 1",
-		jobID, hex.EncodeToString(eleKey), eleID, model.JobStateCancelled.String()), "get_interrupt_backfill_job")
+	bJobs, err := GetBackfillJobs(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like '%s' and state = \"%s\" limit 1",
+		backfillJobPrefixKeyString(jobID, eleKey, eleID), model.JobStateCancelled.String()), "get_interrupt_backfill_job")
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
@@ -940,9 +940,9 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := "delete from mysql.tidb_background_subtask"
 	if !isOneEle {
-		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%d\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
+		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.keyString())
 	} else {
-		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%%\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID)
+		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.PrefixKeyString())
 	}
 	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
 	return err
@@ -953,9 +953,8 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_expired = '%s', state = '%s', checkpoint = %s, meta = %s where task_key = '%d_%s_%d_%d'",
-		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State.String(), wrapKey2String(backfillJob.Meta.CurrKey),
-		wrapKey2String(mate), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
+	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_expired = '%s', state = '%s', checkpoint = %s, meta = %s where task_key = '%s'",
+		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State.String(), wrapKey2String(backfillJob.Meta.CurrKey), wrapKey2String(mate), backfillJob.keyString())
 	_, err = sess.execute(context.Background(), sql, label)
 	return err
 }
