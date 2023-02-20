@@ -154,6 +154,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
+<<<<<<< HEAD
 	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
 	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
 		limit := dag.Executors[1].GetLimit()
@@ -164,7 +165,17 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 				builder.Request.Concurrency = 1
 			}
 		}
+=======
+	if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		limit := dag.Executors[execCnt-1].GetLimit()
+>>>>>>> f950007b97 (distsql: refine code for setting LimitSize of kvRequest (#41601))
 		builder.Request.LimitSize = limit.GetLimit()
+		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+		if execCnt == 2 {
+			if limit.Limit < estimatedRegionRowCount {
+				builder.Request.Concurrency = 1
+			}
+		}
 	}
 	return builder
 }
