@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -68,10 +69,6 @@ func (b *builtinIlikeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIlikeSig) getCICollator() collate.Collator {
-	return collate.ConvertAndGetCICollation(b.collation)
-}
-
 // evalInt evals a builtinIlikeSig.
 func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -83,14 +80,20 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
 	escape, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	if !collate.IsCICollation(b.collationInfo.collation) {
+		valStr = stringutil.LowerOneString(valStr)
+		patternStr = stringutil.LowerOneString(patternStr)
+	}
+
 	memorization := func() {
 		if b.pattern == nil {
-			// b.pattern = b.collator().Pattern()
-			b.pattern = b.getCICollator().Pattern()
+			b.pattern = b.collator().Pattern()
 			if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 				b.pattern.Compile(patternStr, byte(escape))
 				b.isMemorizedPattern = true
@@ -101,8 +104,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	b.once.Do(memorization)
 	if !b.isMemorizedPattern {
 		// Must not use b.pattern to avoid data race
-		// pattern := b.collator().Pattern()
-		pattern := b.getCICollator().Pattern()
+		pattern := b.collator().Pattern()
 		pattern.Compile(patternStr, byte(escape))
 		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}

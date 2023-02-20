@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -95,4 +97,28 @@ func TestIlike(t *testing.T) {
 			testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 		}
 	}
+}
+
+var vecBuiltinIlikeCases = map[string][]vecExprBenchCase{
+	ast.Ilike: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners: []dataGenerator{
+				&selectStringGener{
+					candidates: []string{"aaa", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ"},
+					randGen:    newDefaultRandGen(),
+				},
+				&selectStringGener{
+					candidates: []string{"aaa", "啊啊啊啊", "üÜ"},
+					randGen:    newDefaultRandGen(),
+				},
+				newRangeInt64Gener(int('\\'), int('\\')+1)},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+		},
+	},
+}
+
+func TestVectorizedBuiltinIlikeFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinIlikeCases)
 }

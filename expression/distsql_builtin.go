@@ -662,6 +662,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base, nil, false, sync.Once{}}
+	// case tipb.ScalarFuncSig_IlikeSig:
+	// 	f = &builtinIlikeSig{base, nil, false, sync.Once{}}
 	case tipb.ScalarFuncSig_RegexpSig:
 		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:

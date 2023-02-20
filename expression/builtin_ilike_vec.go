@@ -15,15 +15,34 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/stringutil"
 )
+
+func LowerAlphaAsciiAndStoreInNewColumn(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int) {
+	lowered_col.ReserveString(elem_num)
+	for i := 0; i < elem_num; i++ {
+		if src_col.IsNull(i) {
+			lowered_col.AppendString("")
+			lowered_col.SetNull(i, true)
+			continue
+		}
+
+		src_str := src_col.GetString(i)
+		lowered_col.AppendString(stringutil.LowerOneString(src_str))
+		lowered_col.SetNull(i, false)
+	}
+}
 
 func (b *builtinIlikeSig) vectorized() bool {
 	return true
 }
 
 func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
+	row_num := input.NumRows()
 	bufVal, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -52,12 +71,21 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	escapes := bufEscape.Int64s()
 
 	// Must not use b.pattern to avoid data race
-	pattern := b.getCICollator().Pattern()
+	pattern := b.collator().Pattern()
 
-	result.ResizeInt64(n, false)
+	if !(collate.IsCICollation(b.collation)) {
+		tmp_val_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+		tmp_pattern_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+		LowerAlphaAsciiAndStoreInNewColumn(bufVal, tmp_val_col, row_num)
+		LowerAlphaAsciiAndStoreInNewColumn(bufPattern, tmp_pattern_col, row_num)
+		bufVal = tmp_val_col
+		bufPattern = tmp_pattern_col
+	}
+
+	result.ResizeInt64(row_num, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := 0; i < row_num; i++ {
 		if result.IsNull(i) {
 			continue
 		}
