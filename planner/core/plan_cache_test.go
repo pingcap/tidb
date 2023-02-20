@@ -340,6 +340,7 @@ func TestNonPreparedPlanCacheSpecialTables(t *testing.T) {
 	tk.MustExec(`create definer='root'@'localhost' view t_v as select * from t`)
 	tk.MustExec(`create table t_p (a int) partition by hash(a) partitions 4`)
 	tk.MustExec(`create temporary table t_t (a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 
 	// queries that access partitioning tables, view, temporary tables or contain CTE cannot hit the cache.
 	for _, q := range []string{
