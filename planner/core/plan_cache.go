@@ -331,24 +331,10 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 		return
 	}
 
-<<<<<<< HEAD
-	// TODO: plans accessing MVIndex are un-cacheable
-=======
 	if containShuffleOperator(pp) {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a Shuffle plan"))
 		return
 	}
-
-	if accessMVIndexWithIndexMerge(pp) {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
-		return
-	}
-
-	// before cache the param limit plan, check switch
-	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
-	}
->>>>>>> 71b7dc0cd3 (planner: skip plan cache if the plan contains Shuffle operators (#41185))
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -732,29 +718,12 @@ func containTableDual(p PhysicalPlan) bool {
 	return childContainTableDual
 }
 
-<<<<<<< HEAD
-=======
 func containShuffleOperator(p PhysicalPlan) bool {
 	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
 		return true
 	}
 	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
 		return true
-	}
-	return false
-}
-
-func accessMVIndexWithIndexMerge(p PhysicalPlan) bool {
-	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
-		if idxMerge.AccessMVIndex {
-			return true
-		}
-	}
-
-	for _, c := range p.Children() {
-		if accessMVIndexWithIndexMerge(c) {
-			return true
-		}
 	}
 	return false
 }
@@ -779,7 +748,6 @@ func useTiFlash(p PhysicalPlan) bool {
 	return false
 }
 
->>>>>>> 71b7dc0cd3 (planner: skip plan cache if the plan contains Shuffle operators (#41185))
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string, bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
