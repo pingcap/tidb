@@ -2321,11 +2321,15 @@ func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {
 	prepare := func(createTableStmt string) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec(createTableStmt)
-		tk.MustExec("insert into t values (36.4), (24.1);")
+		tk.MustExec("insert into t values (36.43), (24.1);")
 	}
 
 	prepare("create table t (a float(6,2));")
 	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.43", "24.1"))
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a float(6,1)")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 
 	prepare("create table t (a double(6,2));")
