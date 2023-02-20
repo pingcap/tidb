@@ -308,7 +308,15 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		return buildTiDBMemCopTasks(ranges, req)
 	}
 
+	hints := req.FixedRowCountHint
 	rangesLen := ranges.Len()
+	// Since ranges from multi partitions may be pushed to one cop iterator,
+	// the relationship between hints and ranges is probably broken.
+	// But multi-partitioned ranges and hints should not exist in the same time,
+	// this check only guarantees there is no out-of-range use.
+	if len(hints) != rangesLen {
+		hints = nil
+	}
 
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
@@ -345,7 +353,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			hint := -1
 			// calculate the row count hint
-			if req.FixedRowCountHint != nil {
+			if hints != nil {
 				startKey, endKey := loc.Ranges.At(i).StartKey, loc.Ranges.At(nextI-1).EndKey
 				// move to the previous range if startKey of current range is lower than endKey of previous location.
 				// In the following example, task1 will move origRangeIdx to region(i, z).
@@ -362,7 +370,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 						origRangeIdx = nextOrigRangeIdx
 						break
 					}
-					hint += req.FixedRowCountHint[nextOrigRangeIdx]
+					hint += hints[nextOrigRangeIdx]
 				}
 			}
 			task := &copTask{
@@ -1160,13 +1168,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return remains, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.BatchResponses, task, ch)
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp.BatchResponses, task, ch)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1255,16 +1263,16 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	batchResps := resp.pbResp.BatchResponses
 	worker.sendToRespCh(resp, ch, true)
-	return worker.handleBatchCopResponse(bo, batchResps, task.batchTaskList, ch)
+	return worker.handleBatchCopResponse(bo, rpcCtx, batchResps, task.batchTaskList, ch)
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
 	if len(task.batchTaskList) == 0 {
 		return remains, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	batchedRemains, err := worker.handleBatchCopResponse(bo, batchResp, batchedTasks, ch)
+	batchedRemains, err := worker.handleBatchCopResponse(bo, rpcCtx, batchResp, batchedTasks, ch)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,9 +1280,16 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains 
 }
 
 // handle the batched cop response.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
 	if len(tasks) == 0 {
 		return nil, nil
+	}
+	// need Addr for recording details.
+	var dummyRPCCtx *tikv.RPCContext
+	if rpcCtx != nil {
+		dummyRPCCtx = &tikv.RPCContext{
+			Addr: rpcCtx.Addr,
+		}
 	}
 	var remainTasks []*copTask
 	for _, batchResp := range batchResps {
@@ -1284,7 +1299,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 		}
 		resp := &copResponse{
 			pbResp: &coprocessor.Response{
-				Data: batchResp.Data,
+				Data:          batchResp.Data,
+				ExecDetailsV2: batchResp.ExecDetailsV2,
 			},
 		}
 		task := batchedTask.task
@@ -1331,8 +1347,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			}
 			return nil, errors.Trace(err)
 		}
+		worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp)
 		// TODO: check OOM
-		worker.sendToRespCh(resp, ch, false)
+		worker.sendToRespCh(resp, ch, true)
 	}
 	return remainTasks, nil
 }
