@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ttlcient "github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -2218,4 +2219,37 @@ func (h labelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)
+}
+
+// ttlJobTriggerHandler is used to trigger a TTL job manually
+type ttlJobTriggerHandler struct {
+	store kv.Storage
+}
+
+// ServeHTTP handles request of triger a ttl job
+func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := strings.ToLower(params["db"])
+	tableName := strings.ToLower(params["table"])
+
+	ctx := req.Context()
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error("failed to get session domain", zap.Error(err))
+		writeError(w, err)
+	}
+
+	cli := dom.TTLJobManager().GetCommandCli()
+	resp, err := ttlcient.TriggerNewTTLJob(ctx, cli, dbName, tableName)
+	if err != nil {
+		log.Error("failed to trigger new TTL job", zap.Error(err))
+		writeError(w, err)
+	}
+	writeData(w, resp)
+	logutil.Logger(ctx).Info("trigger TTL job manually successfully", zap.String("dbName", dbName), zap.String("tableName", tableName), zap.Any("response", resp))
 }

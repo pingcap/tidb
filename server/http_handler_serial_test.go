@@ -581,3 +581,71 @@ func TestGetSchemaStorage(t *testing.T) {
 		tables[0].DataFree,
 	})
 }
+
+func TestTTL(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database test_ttl")
+	dbt.MustExec("use test_ttl")
+	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
+
+	getJobCnt := func(status string) int {
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		if status != "" {
+			selectSQL += " where status = '" + status + "'"
+		}
+
+		rs := dbt.MustQuery(selectSQL)
+		defer func() {
+			require.NoError(t, rs.Close())
+		}()
+
+		cnt := -1
+		require.True(t, rs.Next())
+		require.NoError(t, rs.Err())
+		require.NoError(t, rs.Scan(&cnt))
+		return cnt
+	}
+
+	waitAllJobsFinish := func() {
+		start := time.Now()
+		for time.Since(start) < time.Minute {
+			cnt := getJobCnt("running")
+			if cnt == 0 {
+				return
+			}
+		}
+		require.Fail(t, "timeout for waiting job finished")
+	}
+
+	expectedJobCnt := 1
+	resp, err := ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+	if err != nil {
+		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
+		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		waitAllJobsFinish()
+		resp, err = ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+		require.NoError(t, err)
+		expectedJobCnt++
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.NoError(t, err)
+	log.Info("trigger ttl resp", zap.ByteString("response", body))
+
+	var obj map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &obj))
+	_, ok := obj["table_result"]
+	require.True(t, ok)
+	require.Equal(t, expectedJobCnt, getJobCnt(""))
+}

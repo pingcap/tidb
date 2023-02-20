@@ -66,6 +66,7 @@ go_library(
         "//table",
         "//table/tables",
         "//tablecodec",
+        "//ttl/client",
         "//types",
         "//util",
         "//util/arena",
