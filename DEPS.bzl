@@ -3448,6 +3448,14 @@ def go_deps():
         version = "v0.0.0-20210106213030-5aafc221ea8c",
     )
     go_repository(
+        name = "com_github_prashantv_gostub",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/prashantv/gostub",
+        sum = "h1:BTyx3RfQjRHnUWaGF9oQos79AlQ5k8WNktv7VGvVH4g=",
+        version = "v1.1.0",
+    )
+
+    go_repository(
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_golang",
@@ -4073,6 +4081,14 @@ def go_deps():
         sum = "h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=",
         version = "v0.0.0-20221230034425-4025bc8a4d4a",
     )
+    go_repository(
+        name = "com_github_tiancaiamao_sched",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tiancaiamao/sched",
+        sum = "h1:hLp/TpTA5wFeklJx2/4D91B4ww6rsDtnNLTlMIXGydE=",
+        version = "v0.0.0-20230218171000-2df8cf220ac5",
+    )
+
     go_repository(
         name = "com_github_tidwall_gjson",
         build_file_proto_mode = "disable",
@@ -6069,8 +6085,8 @@ def go_deps():
         name = "org_uber_go_automaxprocs",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/automaxprocs",
-        sum = "h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=",
-        version = "v1.4.0",
+        sum = "h1:e1YG66Lrk73dn4qhg8WFSvhF0JuFQF0ERIp4rpuV8Qk=",
+        version = "v1.5.1",
     )
     go_repository(
         name = "org_uber_go_dig",

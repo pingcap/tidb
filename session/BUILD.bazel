@@ -96,6 +96,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tiancaiamao_sched//:go_default_library",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",
