@@ -534,9 +534,6 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, key(a), key(b))")
 
-	tk.MustExec("prepare stmt from 'select * from t where a in (select a from t)'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
-
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
 
@@ -724,4 +721,62 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+}
+
+func TestPlanCacheWithSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	testCases := []struct {
+		sql            string
+		params         []int
+		cacheAble      string
+		isDecorrelated bool
+	}{
+		{"select * from t t1 where exists (select 1 from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}, "1", false},      // exist
+		{"select * from t t1 where t1.a in (select a from t t2 where t2.b < ?)", []int{1}, "1", false},                     // in
+		{"select * from t t1 where t1.a > (select max(a) from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}, "0", false}, // scala
+		{"select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)", []int{1}, "0", true},                         // uncorrelated
+	}
+
+	// switch on
+	for _, testCase := range testCases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(testCase.cacheAble))
+		if testCase.cacheAble == "0" {
+			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+			if testCase.isDecorrelated {
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
+			} else {
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+			}
+		}
+	}
+	// switch off
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 0")
+	for _, testCase := range testCases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
 }

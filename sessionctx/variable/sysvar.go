@@ -2372,6 +2372,10 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForSubquery, Value: BoolToOnOff(DefTiDBEnablePlanCacheForSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
