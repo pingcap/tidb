@@ -98,7 +98,11 @@ func (e *ProjectionExec) open(_ context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	// For now a Projection can not be executed vectorially only because it
@@ -326,9 +330,6 @@ func (e *ProjectionExec) Close() error {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
-	}
-	if e.memTracker != nil {
-		e.memTracker.Detach()
 	}
 	return e.baseExecutor.Close()
 }

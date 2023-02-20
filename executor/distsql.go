@@ -229,9 +229,6 @@ func (e *IndexReaderExecutor) Close() (err error) {
 		return nil
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
-	if e.memTracker != nil {
-		e.memTracker.Detach()
-	}
 	return err
 }
 
@@ -318,7 +315,12 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return nil
 	}
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
