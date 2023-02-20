@@ -559,13 +559,12 @@ func IsTLSExpiredError(err error) bool {
 		if inval.Reason != x509.Expired {
 			return false
 		}
-		// TODO: remove it after upgrading 1.20
-		// case *tls.CertificateVerificationError:
-		// 	invali, ok := inval.Err.(x509.CertificateInvalidError)
-		// 	if !ok || invali.Reason != x509.Expired {
-		// 		return false
-		// 	}
-		// 	return true
+	case *tls.CertificateVerificationError:
+		invalid, ok := inval.Err.(x509.CertificateInvalidError)
+		if !ok || invalid.Reason != x509.Expired {
+			return false
+		}
+		return true
 	default:
 		return false
 	}
