@@ -605,6 +605,7 @@ func TestTTL(t *testing.T) {
 		}
 
 		rs := dbt.MustQuery(selectSQL)
+		require.NoError(t, rs.Err())
 		defer func() {
 			require.NoError(t, rs.Close())
 		}()
@@ -627,24 +628,35 @@ func TestTTL(t *testing.T) {
 		require.Fail(t, "timeout for waiting job finished")
 	}
 
+	doTrigger := func() (map[string]interface{}, error) {
+		resp, err := ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		var obj map[string]interface{}
+		require.NoError(t, json.Unmarshal(body, &obj))
+		return obj, nil
+	}
+
 	expectedJobCnt := 1
-	resp, err := ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+	obj, err := doTrigger()
+	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
 		require.Equal(t, expectedJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
-		resp, err = ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
-		require.NoError(t, err)
+		obj, err = doTrigger()
 		expectedJobCnt++
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, resp.Body.Close())
-	require.NoError(t, err)
-	log.Info("trigger ttl resp", zap.ByteString("response", body))
-
-	var obj map[string]interface{}
-	require.NoError(t, json.Unmarshal(body, &obj))
 	_, ok := obj["table_result"]
 	require.True(t, ok)
 	require.Equal(t, expectedJobCnt, getJobCnt(""))
