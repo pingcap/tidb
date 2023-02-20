@@ -804,6 +804,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildUnlockStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
+	case *ast.PlanChangeCaptureStmt:
+		return b.buildPlanChangeCapture(x), nil
 	case *ast.PlanReplayerStmt:
 		return b.buildPlanReplayer(x), nil
 	case *ast.PrepareStmt:
@@ -5194,6 +5196,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		schema.Append(col)
 	}
 	return
+}
+
+func (b *PlanBuilder) buildPlanChangeCapture(pc *ast.PlanChangeCaptureStmt) Plan {
+	p := &PlanChangeCapture{Begin: pc.Begin, End: pc.End}
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
+	p.SetSchema(schema.col2Schema())
+	p.names = schema.names
+	return p
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
