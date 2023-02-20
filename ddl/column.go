@@ -689,7 +689,12 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	needTruncationOrToggleSign := func() bool {
+<<<<<<< HEAD
 		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
+=======
+		return (newCol.GetFlen() > 0 && (newCol.GetFlen() < oldCol.GetFlen() || newCol.GetDecimal() < oldCol.GetDecimal())) ||
+			(toUnsigned != originUnsigned)
+>>>>>>> 109b3b6bf1 (ddl: fix double/float data not being truncated for column modification operations when the number of decimal places is reduced. (#41555))
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
 	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
