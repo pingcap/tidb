@@ -2371,6 +2371,26 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
+func TestLoadDataWithUppercaseUserVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (a int, b int);")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (@V1)" +
+		" set a = @V1, b = @V1*100")
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{[]byte("1\n2\n"), []string{"1|100", "2|200"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+}
+
 func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
