@@ -363,7 +363,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 				selectResults := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
-					// Goroutine may panic and SelectResult.Close() will be ignored unexpectedly.
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
 					for _, s := range selectResults {
 						terror.Call(s.Close)
 					}
@@ -486,7 +486,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 				var tableReaderClosed bool
 				defer func() {
-					// Goroutine may panic and SelectResult.Close() will be ignored unexpectedly.
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
 					if !tableReaderClosed {
 						terror.Call(worker.tableReader.Close)
 					}
