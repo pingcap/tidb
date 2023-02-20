@@ -265,6 +265,10 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
 			continue
 		}
+		// check subquery switch
+		if matchOpts.HasSubQuery && !l.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			continue
+		}
 		return k, true
 	}
 	return nil, false

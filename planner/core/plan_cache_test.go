@@ -673,6 +673,72 @@ func TestIssue41032(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestSetPlanCacheLimitSwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = 1;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = off;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = ON;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
+
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = '';", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of ''")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = 11;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of '11'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = enabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'enabled'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = disabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'disabled'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_param_limit = open;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_param_limit' can't be set to the value of 'open'")
+}
+
+func TestPlanCacheLimitSwitchEffective(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+
+	checkIfCached := func(res string) {
+		tk.MustExec("set @a = 1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(res))
+	}
+
+	// before prepare
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+	checkIfCached("0")
+	tk.MustExec("deallocate prepare stmt")
+
+	// after prepare
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = ON")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
+	checkIfCached("0")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
+	tk.MustExec("deallocate prepare stmt")
+
+	// after execute
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = ON")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	checkIfCached("1")
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
+	checkIfCached("0")
+	tk.MustExec("deallocate prepare stmt")
+}
+
 func TestPlanCacheWithLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -721,6 +787,72 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+}
+
+func TestSetPlanCacheSubquerySwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 1;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_subquery = off;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_subquery = ON;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_subquery").Check(testkit.Rows("1"))
+
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = '';", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of ''")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = 11;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of '11'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = enabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'enabled'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = disabled;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'disabled'")
+	tk.MustGetErrMsg("set @@global.tidb_enable_plan_cache_for_subquery = open;", "[variable:1231]Variable 'tidb_enable_plan_cache_for_subquery' can't be set to the value of 'open'")
+}
+
+func TestPlanCacheSubQuerySwitchEffective(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("create table s(a int, key(a))")
+
+	checkIfCached := func(res string) {
+		tk.MustExec("execute stmt")
+		tk.MustExec("execute stmt")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(res))
+	}
+
+	// before prepare
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF")
+	tk.MustExec("prepare stmt from 'select * from t where a in (select a from s)'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+	checkIfCached("0")
+	tk.MustExec("deallocate prepare stmt")
+
+	// after prepare
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = ON")
+	tk.MustExec("prepare stmt from 'select * from t where a in (select a from s)'")
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF")
+	checkIfCached("0")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the switch 'tidb_enable_plan_cache_for_subquery' is off"))
+	tk.MustExec("deallocate prepare stmt")
+
+	// after execute
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = ON")
+	tk.MustExec("prepare stmt from 'select * from t where a in (select a from s)'")
+	checkIfCached("1")
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF")
+	checkIfCached("0")
+	tk.MustExec("deallocate prepare stmt")
 }
 
 func TestPlanCacheWithSubquery(t *testing.T) {
