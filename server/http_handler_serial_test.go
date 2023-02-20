@@ -604,7 +604,8 @@ func TestTTL(t *testing.T) {
 			selectSQL += " where status = '" + status + "'"
 		}
 
-		rs := dbt.MustQuery(selectSQL)
+		rs, err := db.Query(selectSQL)
+		require.NoError(t, err)
 		defer func() {
 			require.NoError(t, rs.Close())
 		}()
