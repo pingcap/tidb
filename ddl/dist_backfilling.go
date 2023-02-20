@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 
@@ -22,19 +24,88 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-const getJobWithoutPartition = -1
+const (
+	getJobWithoutPartition = -1
+
+	// InstanceLease is the instance lease.
+	InstanceLease                = 1 * time.Minute
+	updateInstanceLease          = 25 * time.Second
+	genTaskBatch                 = 4096
+	genPhysicalTableTaskBatch    = 256
+	minGenTaskBatch              = 1024
+	minGenPhysicalTableTaskBatch = 64
+	minDistTaskCnt               = 64
+	retrySQLTimes                = 10
+)
+
+// RetrySQLInterval is export for test.
+var RetrySQLInterval = 300 * time.Millisecond
+
+// BackfillJob is for a tidb_background_subtask table's record.
+type BackfillJob struct {
+	ID              int64
+	JobID           int64
+	EleID           int64
+	EleKey          []byte
+	PhysicalTableID int64
+	Tp              backfillerType
+	State           model.JobState
+	InstanceID      string
+	InstanceLease   types.Time
+	StartTS         uint64
+	StateUpdateTS   uint64
+	Meta            *model.BackfillMeta
+}
+
+// PrefixKeyString returns the BackfillJob's prefix key.
+func (bj *BackfillJob) PrefixKeyString() string {
+	return fmt.Sprintf("%d_%s_%d_%%", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID)
+}
+
+// AbbrStr returns the BackfillJob's info without the Meta info.
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
+}
+
+// GetOracleTimeWithStartTS returns the current time with txn's startTS.
+func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
+	txn, err := se.Txn(true)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
+}
+
+// GetOracleTime returns the current time from TS without txn.
+func GetOracleTime(store kv.Storage) (time.Time, error) {
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return time.Time{}, errors.Trace(err)
+	}
+	return oracle.GetTimeFromTS(currentVer.Ver).UTC(), nil
+}
+
+// GetLeaseGoTime returns a types.Time by adding a lease.
+func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
+	leaseTime := currTime.Add(lease)
+	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
+}
 
 type backfillWorkerContext struct {
 	currID          int
