@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -231,8 +231,7 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 }
 
 func getIdxConditionStr(jobID, eleID int64) string {
-	return fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
-		jobID, hex.EncodeToString(meta.IndexElementKey), eleID)
+	return fmt.Sprintf("task_key like '%s'", ddl.BackfillJobPrefixKeyString(jobID, kv.Key(meta.IndexElementKey), eleID))
 }
 
 func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
@@ -597,11 +596,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(" 0000-00-00 00:00:00"))
 	// test GetBackfillMetas
-	bfErr := ddl.GetBackfillErr(se, getIdxConditionStr(jobID1, eleID1))
+	bfErr := ddl.GetBackfillErr(se, ddl.BackfillJobPrefixKeyString(jobID1, kv.Key(meta.IndexElementKey), eleID1))
 	require.Error(t, bfErr, dbterror.ErrCancelledDDLJob)
-	bfErr = ddl.GetBackfillErr(se, getIdxConditionStr(jobID2, eleID2))
+	bfErr = ddl.GetBackfillErr(se, ddl.BackfillJobPrefixKeyString(jobID2, kv.Key(meta.IndexElementKey), eleID2))
 	require.NoError(t, bfErr)
-
 	bJobs1[0].State = model.JobStateNone
 	bJobs1[0].ID = 5
 	bJobs1[1].State = model.JobStateNone

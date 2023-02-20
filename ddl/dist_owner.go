@@ -500,7 +500,7 @@ func GetBackfillErr(sess *session, bjPrefixKey string) error {
 	var err error
 	var metas []*model.BackfillMeta
 	for i := 0; i < retrySQLTimes; i++ {
-		metas, err = GetBackfillMetas(sess, BackgroundSubtaskHistoryTable, bjPrefixKey, "get_backfill_job_metas")
+		metas, err = GetBackfillMetas(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like '%s'", bjPrefixKey), "get_backfill_job_metas")
 		if err == nil {
 			for _, m := range metas {
 				if m.Error != nil {

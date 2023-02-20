@@ -85,6 +85,11 @@ var NewSession = newSession
 // GetJobWithoutPartition is only used for test.
 const GetJobWithoutPartition = getJobWithoutPartition
 
+// BackfillJobPrefixKeyString is onley used for test.
+func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
+}
+
 // GetDDLCtx returns ddlCtx for test.
 func GetDDLCtx(d DDL) *ddlCtx {
 	return d.(*ddl).ddlCtx
