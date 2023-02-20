@@ -259,6 +259,32 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PlanChangeCaptureStmt is a statement to dump or load information for recreating plans
+type PlanChangeCaptureStmt struct {
+	stmtNode
+	Begin string
+	End   string
+}
+
+// Restore implements Node interface.
+func (n *PlanChangeCaptureStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PLAN CHANGE CAPTURE ")
+	ctx.WriteString(n.Begin)
+	ctx.WriteKeyWord(" ")
+	ctx.WriteString(n.End)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *PlanChangeCaptureStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PlanChangeCaptureStmt)
+	return v.Leave(n)
+}
+
 // PlanReplayerStmt is a statement to dump or load information for recreating plans
 type PlanReplayerStmt struct {
 	stmtNode
