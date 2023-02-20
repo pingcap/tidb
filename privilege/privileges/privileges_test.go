@@ -1911,3 +1911,25 @@ func (s *testPrivilegeSuite) TestGrantOptionAndRevoke(c *C) {
 		"GRANT USAGE ON test.testgrant TO 'u3'@'%' WITH GRANT OPTION",
 	))
 }
+
+func (s *testPrivilegeSuite) TestGrantReferences(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE SCHEMA reftestdb")
+	tk.MustExec("USE reftestdb")
+	tk.MustExec("CREATE TABLE reftest (a int)")
+	tk.MustExec("CREATE USER referencesUser")
+	tk.MustExec("GRANT REFERENCES ON *.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.reftest TO referencesUser")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR referencesUser").Check(testkit.Rows(
+		`GRANT REFERENCES ON *.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
+	tk.MustExec("DROP USER referencesUser")
+	tk.MustExec("DROP SCHEMA reftestdb")
+}

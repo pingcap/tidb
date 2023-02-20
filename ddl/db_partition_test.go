@@ -507,6 +507,14 @@ create table log_message_1 (
 			ddl.ErrRangeNotIncreasing,
 		},
 		{
+			"create table t(d datetime)" +
+				"partition by range columns (d) (" +
+				"partition p0 values less than ('2022-01-01')," +
+				"partition p1 values less than (MAXVALUE), " +
+				"partition p2 values less than (MAXVALUE));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
 			ddl.ErrPartitionFunctionIsNotAllowed,
 		},

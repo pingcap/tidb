@@ -114,7 +114,9 @@ type hashjoinWorkerResult struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
-	close(e.closeCh)
+	if e.closeCh != nil {
+		close(e.closeCh)
+	}
 	e.finished.Store(true)
 	if e.prepared {
 		if e.buildFinished != nil {
@@ -216,9 +218,13 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 		if !hasWaitedForBuild {
+			failpoint.Inject("issue30289", func(val failpoint.Value) {
+				if val.(bool) {
+					probeSideResult.Reset()
+				}
+			})
 			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
 				e.finished.Store(true)
-				return
 			}
 			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
@@ -260,6 +266,13 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
+	failpoint.Inject("issue30289", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.Errorf("issue30289 build return error")
+			e.buildFinished <- errors.Trace(err)
+			return
+		}
+	})
 	for {
 		if e.finished.Load().(bool) {
 			return
