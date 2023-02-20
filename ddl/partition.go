@@ -540,8 +540,7 @@ func getPartitionColSlices(sctx sessionctx.Context, tblInfo *model.TableInfo, s 
 		partCols = columnInfoSlice(partColumns)
 	} else if len(s.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.ColumnNames)
-	}
-	if partCols == nil {
+	} else {
 		return nil, errors.Errorf("Table partition metadata not correct, neither partition expression or list of partition columns")
 	}
 	return partCols, nil
