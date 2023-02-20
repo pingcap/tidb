@@ -331,7 +331,10 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 		return
 	}
 
-	// TODO: plans accessing MVIndex are un-cacheable
+	if containShuffleOperator(pp) {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a Shuffle plan"))
+		return
+	}
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -713,6 +716,36 @@ func containTableDual(p PhysicalPlan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+func containShuffleOperator(p PhysicalPlan) bool {
+	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
+		return true
+	}
+	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
+		return true
+	}
+	return false
+}
+
+// useTiFlash used to check whether the plan use the TiFlash engine.
+func useTiFlash(p PhysicalPlan) bool {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true
+		default:
+			return false
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				return useTiFlash(plan)
+			}
+		}
+	}
+	return false
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
