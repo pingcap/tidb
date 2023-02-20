@@ -195,7 +195,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 		if !ok {
 			continue
 		}
-		if row.GetInt64(1) > 0 {
+		if row.GetInt64(1) > 0 { // is index
 			idx, ok := table.Indices[row.GetInt64(2)]
 			if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 				continue
