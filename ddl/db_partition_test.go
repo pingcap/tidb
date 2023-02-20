@@ -1866,13 +1866,61 @@ func TestMultiPartitionDropAndTruncate(t *testing.T) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	store := testkit.CreateMockStore(t)
+func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.p_b'")
+
+	// NULL will not get 'duplicate key' error here
+	tk.MustExec("insert into test_global(a,c) values (1,2)")
+	tk.MustExec("insert into test_global(a,c) values (11,2)")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.PRIMARY'")
+}
+
+func TestDropPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -1902,9 +1950,6 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 2, cnt)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
-	})
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
