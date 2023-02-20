@@ -275,6 +275,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
 			}
+			if isView(checker.schema, node) {
+				checker.cacheable = false
+			}
 		}
 		return in, !checker.cacheable
 	}
@@ -299,6 +302,10 @@ func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 		}
 	}
 	return false
+}
+
+func isView(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	return schema.TableIsView(tn.Schema, tn.Name)
 }
 
 func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
