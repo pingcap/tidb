@@ -39,3 +39,16 @@ func AllOf(s interface{}, p func(int) bool) bool {
 	}
 	return NoneOf(s, np)
 }
+
+// Copy is a deep copy of the slice.
+func Copy[T any](a []*T) []*T {
+	b := make([]*T, len(a))
+	for i, p := range a {
+		if p == nil {
+			continue
+		}
+		v := *p
+		b[i] = &v
+	}
+	return b
+}

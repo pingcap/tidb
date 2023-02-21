@@ -32,6 +32,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -122,6 +124,8 @@ type Engine struct {
 
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
+
+	dupDetectOpt dupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -981,7 +985,33 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
+	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+}
+
+func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	opt := &pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+
+	iter := e.newKVIter(context.Background(), opt)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		return nil, nil, nil
+	}
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	lastKey := append([]byte{}, iter.Key()...)
+	return firstKey, lastKey, nil
 }
 
 type sstMeta struct {
@@ -1017,6 +1047,8 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+
+	tikvCodec tikv.Codec
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1097,6 +1129,10 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 
 	if w.engine.closed.Load() {
 		return errorEngineClosed
+	}
+
+	for i := range kvs {
+		kvs[i].Key = w.tikvCodec.EncodeKey(kvs[i].Key)
 	}
 
 	w.Lock()
@@ -1189,6 +1225,15 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		_ = common.KillMySelf()
+		// mimic we meet context cancel error when `addSST`
+		<-ctx.Done()
+		time.Sleep(5 * time.Second)
+		failpoint.Return(errors.Trace(ctx.Err()))
+	})
+
 	err = w.addSST(ctx, meta)
 	if err != nil {
 		return errors.Trace(err)

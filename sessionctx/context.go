@@ -54,8 +54,8 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int
@@ -134,9 +134,10 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit()
-	// StmtRollback provides statement level rollback.
-	StmtRollback()
+	StmtCommit(ctx context.Context)
+	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
+	// for auto-retrying execution of DMLs in pessimistic transactions.
+	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.

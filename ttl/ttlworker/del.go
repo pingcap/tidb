@@ -111,6 +111,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				zap.Error(err),
 				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
 			)
+			return
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
@@ -255,7 +256,10 @@ func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool sessionPool) *ttlDele
 
 func (w *ttlDeleteWorker) loop() error {
 	tracer := metrics.NewDeleteWorkerPhaseTracer()
-	defer tracer.EndPhase()
+	defer func() {
+		tracer.EndPhase()
+		logutil.BgLogger().Info("ttlDeleteWorker loop exited.")
+	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
 	se, err := getSession(w.sessionPool)

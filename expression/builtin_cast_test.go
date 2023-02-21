@@ -1650,20 +1650,6 @@ func TestCastArrayFunc(t *testing.T) {
 			false,
 			true,
 		},
-		{
-			[]interface{}{"1", "2"},
-			nil,
-			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
-			false,
-			true,
-		},
-		{
-			[]interface{}{int64(-1), 2.1, int64(3)},
-			[]interface{}{int64(-1), 2.1, int64(3)},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
-			true,
-			true,
-		},
 	}
 	for _, tt := range tbl {
 		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)

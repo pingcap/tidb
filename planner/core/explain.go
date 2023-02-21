@@ -247,7 +247,13 @@ func (p *PhysicalTableScan) isFullScan() bool {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID().String()
+	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
+
+	if p.ReadReqType == MPP {
+		return fmt.Sprintf("MppVersion: %d, %s", p.ctx.GetSessionVars().ChooseMppVersion(), tablePlanInfo)
+	}
+
+	return tablePlanInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -354,6 +360,18 @@ func (p *PhysicalLimit) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
+func (p *PhysicalExpand) ExplainInfo() string {
+	var str strings.Builder
+	str.WriteString("group set num:")
+	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
+	str.WriteString(", groupingID:")
+	str.WriteString(p.GroupingIDCol.String())
+	str.WriteString(", ")
+	str.WriteString(p.GroupingSets.String())
+	return str.String()
+}
+
+// ExplainInfo implements Plan interface.
 func (p *basePhysicalAgg) ExplainInfo() string {
 	return p.explainInfo(false)
 }
@@ -384,6 +402,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		if i+1 < len(p.AggFuncs) {
 			builder.WriteString(", ")
 		}
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		builder.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return builder.String()
 }
@@ -542,6 +563,9 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
 		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return buffer.String()
 }
@@ -799,6 +823,11 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
+	}
+	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
+	}
+	if p.ExchangeType == tipb.ExchangeType_Hash {
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
 	if len(p.Tasks) > 0 {

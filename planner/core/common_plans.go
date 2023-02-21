@@ -551,13 +551,15 @@ type Analyze struct {
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal     bool
+	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
+	Format      string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
 	IgnoreLines uint64
 
 	ColumnAssignments  []*ast.Assignment
@@ -587,6 +589,13 @@ type UnlockStats struct {
 	Tables []*ast.TableName
 }
 
+// PlanChangeCapture represents a plan change capture stmt
+type PlanChangeCapture struct {
+	baseSchemaProducer
+	Begin string
+	End   string
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
@@ -596,6 +605,7 @@ type PlanReplayer struct {
 	File     string
 
 	Capture    bool
+	Remove     bool
 	SQLDigest  string
 	PlanDigest string
 }

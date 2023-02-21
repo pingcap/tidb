@@ -700,3 +700,18 @@ func TestRRWaitTSTimeInSlowLog(t *testing.T) {
 	require.NotEqual(t, waitTS1, waitTS3)
 	require.NotEqual(t, waitTS2, waitTS3)
 }
+
+func TestIssue41194(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("analyze table t")
+}

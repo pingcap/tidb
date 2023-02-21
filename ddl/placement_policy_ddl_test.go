@@ -121,6 +121,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
+		nil,
 		1,
 	)
 	require.NoError(t, err)

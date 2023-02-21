@@ -32,8 +32,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-const dateTimeFormat = "2006-01-02 15:04:05.999999"
-
 func writeHex(in io.Writer, d types.Datum) error {
 	_, err := fmt.Fprintf(in, "x'%s'", hex.EncodeToString(d.GetBytes()))
 	return err
@@ -43,7 +41,7 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	switch ft.GetType() {
 	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
 		return writeHex(restoreCtx.In, d)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeEnum, mysql.TypeSet:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
@@ -183,9 +181,9 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
 	b.restoreCtx.WritePlain(" < ")
-	b.restoreCtx.WritePlain("'")
-	b.restoreCtx.WritePlain(expire.Format(dateTimeFormat))
-	b.restoreCtx.WritePlain("'")
+	b.restoreCtx.WritePlain("FROM_UNIXTIME(")
+	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
+	b.restoreCtx.WritePlain(")")
 	b.hasWriteExpireCond = true
 	return nil
 }

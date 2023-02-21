@@ -75,8 +75,10 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
-	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) {
+	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
+		sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		sctx.GetSessionVars().StmtCtx.InRestrictedSQL || // is internal SQL
+		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) { // not support
 		return nil, nil, false, nil
 	}
 	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
@@ -215,6 +217,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
+			// update session var by hint /set_var/
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				err := sessVars.SetStmtVar(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
@@ -243,6 +252,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+			}
+			if len(tableHints) > 0 {
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.

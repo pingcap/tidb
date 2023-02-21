@@ -18,12 +18,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,22 +31,8 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/replayer"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
-)
-
-var (
-	stmtNodeCounterUse       = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow      = metrics.StmtNodeCounter.WithLabelValues("Show")
-	stmtNodeCounterBegin     = metrics.StmtNodeCounter.WithLabelValues("Begin")
-	stmtNodeCounterCommit    = metrics.StmtNodeCounter.WithLabelValues("Commit")
-	stmtNodeCounterRollback  = metrics.StmtNodeCounter.WithLabelValues("Rollback")
-	stmtNodeCounterInsert    = metrics.StmtNodeCounter.WithLabelValues("Insert")
-	stmtNodeCounterReplace   = metrics.StmtNodeCounter.WithLabelValues("Replace")
-	stmtNodeCounterDelete    = metrics.StmtNodeCounter.WithLabelValues("Delete")
-	stmtNodeCounterUpdate    = metrics.StmtNodeCounter.WithLabelValues("Update")
-	stmtNodeCounterSelect    = metrics.StmtNodeCounter.WithLabelValues("Select")
-	stmtNodeCounterSavepoint = metrics.StmtNodeCounter.WithLabelValues("Savepoint")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -59,11 +42,9 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecStmt, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "executor.Compile")
+	defer r.End()
+
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -157,109 +138,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
-
-	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
-		if err != nil {
-			return nil, err
-		}
-		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
-			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
-		} else {
-			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
-		}
-	}
 	return stmt, nil
-}
-
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
-	dom := domain.GetDomain(sctx)
-	if dom == nil {
-		return
-	}
-	handle := dom.GetPlanReplayerHandle()
-	if handle == nil {
-		return
-	}
-	captured := false
-	tasks := handle.GetTasks()
-	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
-	defer func() {
-		logutil.BgLogger().Debug("[plan-replayer-capture] check capture task",
-			zap.String("sql-digest", sqlDigest.String()),
-			zap.String("plan-digest", planDigest.String()),
-			zap.Int("tasks", len(tasks)),
-			zap.Bool("captured", captured))
-	}()
-	key := replayer.PlanReplayerTaskKey{
-		SQLDigest:  sqlDigest.String(),
-		PlanDigest: planDigest.String(),
-	}
-	for _, task := range tasks {
-		if task.SQLDigest == sqlDigest.String() {
-			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				captured = sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
-				return
-			}
-		}
-	}
-}
-
-func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
-	dom := domain.GetDomain(sctx)
-	if dom == nil {
-		return
-	}
-	handle := dom.GetPlanReplayerHandle()
-	if handle == nil {
-		return
-	}
-	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
-	key := replayer.PlanReplayerTaskKey{
-		SQLDigest:  sqlDigest.String(),
-		PlanDigest: planDigest.String(),
-	}
-	captured := false
-	defer func() {
-		logutil.BgLogger().Debug("[plan-replayer-capture] check continues capture task",
-			zap.String("sql-digest", sqlDigest.String()),
-			zap.String("plan-digest", planDigest.String()),
-			zap.Bool("captured", captured))
-	}()
-
-	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
-	if existed {
-		return
-	}
-	captured = sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
-	if captured {
-		sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
-	}
-}
-
-func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
-	startTS uint64, isContinuesCapture bool) bool {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	dumpTask := &domain.PlanReplayerDumpTask{
-		PlanReplayerTaskKey: key,
-		StartTS:             startTS,
-		EncodePlan:          GetEncodedPlan,
-		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     handle.GetAllBindRecord(),
-		SessionVars:         sctx.GetSessionVars(),
-		ExecStmts:           []ast.StmtNode{stmtNode},
-		Analyze:             false,
-		IsCapture:           true,
-		IsContinuesCapture:  isContinuesCapture,
-	}
-	return domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority
@@ -311,40 +193,21 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := ast.GetStmtLabel(stmtNode)
-	switch typeLabel {
-	case "Use":
-		stmtNodeCounterUse.Inc()
-	case "Show":
-		stmtNodeCounterShow.Inc()
-	case "Begin":
-		stmtNodeCounterBegin.Inc()
-	case "Commit":
-		stmtNodeCounterCommit.Inc()
-	case "Rollback":
-		stmtNodeCounterRollback.Inc()
-	case "Insert":
-		stmtNodeCounterInsert.Inc()
-	case "Replace":
-		stmtNodeCounterReplace.Inc()
-	case "Delete":
-		stmtNodeCounterDelete.Inc()
-	case "Update":
-		stmtNodeCounterUpdate.Inc()
-	case "Select":
-		stmtNodeCounterSelect.Inc()
-	case "Savepoint":
-		stmtNodeCounterSavepoint.Inc()
-	default:
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
-	}
 
-	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
-		return
-	}
-
-	dbLabels := getStmtDbLabel(stmtNode)
-	for dbLabel := range dbLabels {
-		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
+		dbLabels := getStmtDbLabel(stmtNode)
+		switch {
+		case config.GetGlobalConfig().Status.RecordQPSbyDB:
+			for dbLabel := range dbLabels {
+				metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+			}
+		case config.GetGlobalConfig().Status.RecordDBLabel:
+			for dbLabel := range dbLabels {
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+			}
+		}
+	} else {
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
 	}
 }
 

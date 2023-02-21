@@ -26,11 +26,15 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	mockCtx := mock.NewContext()
+	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -76,9 +80,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.DeleteStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt := &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -87,7 +92,8 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -96,14 +102,16 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.DeleteStmt{
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(core.HintIgnorePlanCache),
@@ -128,9 +136,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.UpdateStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -139,7 +148,8 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -148,14 +158,16 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.UpdateStmt{
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(core.HintIgnorePlanCache),
@@ -178,9 +190,10 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
-		Where: &ast.ExistsSubqueryExpr{},
+		Where: &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -188,7 +201,8 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -196,13 +210,15 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	paramExpr := &driver.ParamMarkerExpr{}
 	orderByClause := &ast.OrderByClause{Items: []*ast.ByItem{{Expr: paramExpr}}}
