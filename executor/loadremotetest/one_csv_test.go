@@ -91,7 +91,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-csv",
+			BucketName: "test-bucket",
 			Name:       "ignore-lines-bad-syntax.csv",
 		},
 		Content: []byte(`"bad syntax"1
@@ -121,7 +121,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-csv",
+			BucketName: "test-bucket",
 			Name:       "count-terminator-inside-quotes.csv",
 		},
 		Content: []byte(`"a
@@ -150,7 +150,7 @@ func (s *mockGCSSuite) TestCustomizeNULL() {
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-csv",
+			BucketName: "test-bucket",
 			Name:       "customize-null.csv",
 		},
 		Content: []byte(`\N,"\N"
@@ -238,7 +238,7 @@ mynull,"mynull"
 	ascii0 := string([]byte{0})
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
-			BucketName: "test-load-csv",
+			BucketName: "test-bucket",
 			Name:       "ascii-0.csv",
 		},
 		Content: []byte(fmt.Sprintf(`\0,"\0"
