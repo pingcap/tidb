@@ -355,6 +355,102 @@ func TestNonPreparedPlanCacheSpecialTables(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanParameterType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustQuery(`select * from t where a=1`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a=1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1.1' may be converted to INT`))
+
+	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1' may be converted to INT`))
+}
+
+func TestNonPreparedPlanTypeRandomly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, key(a))`)
+	tk.MustExec(`create table t2 (a varchar(8), b varchar(8), key(a))`)
+	tk.MustExec(`create table t3 (a double, b double, key(a))`)
+	tk.MustExec(`create table t4 (a decimal(4, 2), b decimal(4, 2), key(a))`)
+	tk.MustExec(`create table t5 (a year, b year, key(a))`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
+
+	n := 30
+	for i := 0; i < n; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (%v, %v)`, randNonPrepTypeVal(t, n, "int"), randNonPrepTypeVal(t, n, "int")))
+		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
+		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
+		tk.MustExec(fmt.Sprintf(`insert into t4 values (%v, %v)`, randNonPrepTypeVal(t, n, "decimal"), randNonPrepTypeVal(t, n, "decimal")))
+		// TODO: fix it later
+		//tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
+		tk.MustExec(fmt.Sprintf(`insert into t6 values (%v, %v)`, randNonPrepTypeVal(t, n, "date"), randNonPrepTypeVal(t, n, "date")))
+		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
+	}
+
+	for i := 0; i < 200; i++ {
+		q := fmt.Sprintf(`select * from t%v where %v`, rand.Intn(7)+1, randNonPrepFilter(t, n))
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+		r0 := tk.MustQuery(q).Sort()            // the first execution
+		tk.MustQuery(q).Sort().Check(r0.Rows()) // may hit the cache
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+		tk.MustQuery(q).Sort().Check(r0.Rows()) // disable the non-prep cache
+	}
+}
+
+func randNonPrepFilter(t *testing.T, scale int) string {
+	switch rand.Intn(4) {
+	case 0: // >=
+		return fmt.Sprintf(`a >= %v`, randNonPrepVal(t, scale))
+	case 1: // <
+		return fmt.Sprintf(`a < %v`, randNonPrepVal(t, scale))
+	case 2: // =
+		return fmt.Sprintf(`a = %v`, randNonPrepVal(t, scale))
+	case 3: // in
+		return fmt.Sprintf(`a in (%v, %v)`, randNonPrepVal(t, scale), randNonPrepVal(t, scale))
+	}
+	require.Error(t, errors.New(""))
+	return ""
+}
+
+func randNonPrepVal(t *testing.T, scale int) string {
+	return randNonPrepTypeVal(t, scale, [7]string{"int", "varchar", "double",
+		"decimal", "year", "datetime", "date"}[rand.Intn(7)])
+}
+
+func randNonPrepTypeVal(t *testing.T, scale int, typ string) string {
+	switch typ {
+	case "int":
+		return fmt.Sprintf("%v", rand.Intn(scale)-(scale/2))
+	case "varchar":
+		return fmt.Sprintf("'%v'", rand.Intn(scale)-(scale/2))
+	case "double", "decimal":
+		return fmt.Sprintf("%v", float64(rand.Intn(scale)-(scale/2))/float64(10))
+	case "year":
+		return fmt.Sprintf("%v", 2000+rand.Intn(scale))
+	case "date":
+		return fmt.Sprintf("'2023-01-%02d'", rand.Intn(scale)+1)
+	case "timestamp", "datetime":
+		return fmt.Sprintf("'2023-01-01 00:00:%02d'", rand.Intn(scale))
+	default:
+		require.Error(t, errors.New(typ))
+		return ""
+	}
+}
+
 func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -421,6 +517,18 @@ func TestNonPreparedPlanCacheSelectLimit(t *testing.T) {
 	tk.MustExec("set @@session.sql_select_limit=1")
 	tk.MustExec("select * from t where a=1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue41626(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a year)`)
+	tk.MustExec(`insert into t values (2000)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=12`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
 }
 
 func TestIssue38269(t *testing.T) {
