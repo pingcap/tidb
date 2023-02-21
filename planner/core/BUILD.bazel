@@ -43,6 +43,7 @@ go_library(
         "point_get_plan.go",
         "preprocess.go",
         "property_cols_prune.go",
+        "push_down_predicate.go",
         "resolve_indices.go",
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",

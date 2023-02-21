@@ -818,6 +818,9 @@ const (
 
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBEnableLateMaterialization indicates whether to enable late materialization
+	TiDBEnableLateMaterialization = "tidb_enable_late_materialization"
 )
 
 // TiDB vars that have only global scope
@@ -1204,6 +1207,7 @@ const (
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBEnableLateMaterialization                       = false
 )
 
 // Process global variables.

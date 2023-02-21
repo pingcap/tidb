@@ -22,6 +22,7 @@ go_test(
         "rule_join_reorder_test.go",
         "rule_result_reorder_test.go",
         "stats_test.go",
+        "tiflash_late_materialization_test.go",
         "window_push_down_test.go",
     ],
     data = glob(["testdata/**"]),

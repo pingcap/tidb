@@ -219,6 +219,13 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	keepOrder := p.KeepOrder
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
+	// sc := ctx.GetSessionVars().StmtCtx
+	// client := ctx.GetClient()
+	// conditions, err := expression.ExpressionsToPBList(sc, p.pushedDownFilterCondition, client)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// tsExec.PushedDownFilterConditions = conditions
 
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
@@ -232,6 +239,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 			telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 		}
 	}
+	// err = tables.SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	err := tables.SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
