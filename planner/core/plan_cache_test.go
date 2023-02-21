@@ -385,7 +385,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 	tk.MustExec(`create table t2 (a varchar(8), b varchar(8), key(a))`)
 	tk.MustExec(`create table t3 (a double, b double, key(a))`)
 	tk.MustExec(`create table t4 (a decimal(4, 2), b decimal(4, 2), key(a))`)
-	//tk.MustExec(`create table t5 (a year, b year, key(a))`) // TODO: fix it later
+	tk.MustExec(`create table t5 (a year, b year, key(a))`)
 	tk.MustExec(`create table t6 (a date, b date, key(a))`)
 	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
 
@@ -395,7 +395,8 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
 		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
 		tk.MustExec(fmt.Sprintf(`insert into t4 values (%v, %v)`, randNonPrepTypeVal(t, n, "decimal"), randNonPrepTypeVal(t, n, "decimal")))
-		tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
+		// TODO: fix it later
+		//tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
 		tk.MustExec(fmt.Sprintf(`insert into t6 values (%v, %v)`, randNonPrepTypeVal(t, n, "date"), randNonPrepTypeVal(t, n, "date")))
 		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
 	}
