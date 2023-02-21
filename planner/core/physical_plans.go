@@ -794,9 +794,9 @@ type PhysicalTableScan struct {
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
-	// pushedDownFilterCondition is used to record the filter conditions
-	// that are pushed down to table scan from selection.
-	pushedDownFilterCondition []expression.Expression
+	// prewhereFilterCondition is used to record the filter conditions
+	// that are pushed down to table scan from selection by late materialization.
+	prewhereFilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo

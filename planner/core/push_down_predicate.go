@@ -29,7 +29,7 @@ const (
 	// selectivity = (row count after filter) / (row count before filter), smaller is better
 	selectivityThreshold = 0.7
 	// income = (1 - selectivity) * restColumnCount, greater is better
-	incomeImproveThreshold = 0.1
+	incomeImproveThreshold = 0.3
 )
 
 // expressionGroup is used to store
@@ -222,16 +222,21 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		mergedConds := append(selectedConds, exprGroup.exprs...)
 		selectivity, _, err := physicalTableScan.tblColHists.Selectivity(sctx, mergedConds, nil)
 		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Info("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, mergedConds, nil)
-		colCnt := len(cols)
+		// Remove the duplicated columns
+		colSet := make(map[int64]struct{}, len(cols))
+		for _, col := range cols {
+			colSet[col.UniqueID] = struct{}{}
+		}
+		colCnt := len(colSet)
 		income := (1 - selectivity) * (float64(totalColumnCount) - float64(colCnt))
 		// If selectedColumnCount does not change,
 		// or the income increase larger than the threshold after pushing down the group, push down it.
-		if colCnt == selectedColumnCount || income-selectedIncome > incomeImproveThreshold {
+		if colCnt == selectedColumnCount || income-selectedIncome >= incomeImproveThreshold {
 			selectedConds = mergedConds
 			selectedColumnCount = colCnt
 			selectedIncome = income
@@ -245,5 +250,5 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.pushedDownFilterCondition = append(physicalTableScan.pushedDownFilterCondition, selectedConds...)
+	physicalTableScan.prewhereFilterCondition = append(physicalTableScan.prewhereFilterCondition, selectedConds...)
 }
