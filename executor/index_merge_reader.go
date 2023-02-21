@@ -365,9 +365,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					// check if this executor is closed
 					select {
 					case <-ctx.Done():
-						break
+						return
 					case <-e.finished:
-						break
+						return
 					default:
 					}
 
@@ -481,9 +481,9 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					// check if this executor is closed
 					select {
 					case <-ctx.Done():
-						break
+						return
 					case <-e.finished:
-						break
+						return
 					default:
 					}
 
