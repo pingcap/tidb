@@ -689,9 +689,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	}
 }
 
-// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
-// This information is used for selecting the physical operator.
-func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+// setPreferredJoinType generates hint information for the logicalJoin based on the hint information of its left and right children.
+func (p *LogicalJoin) setPreferredJoinType() {
 	leftHintInfo := p.leftPreferJoinType
 	rightHintInfo := p.rightPreferJoinType
 	if leftHintInfo == 0 && rightHintInfo == 0 {
@@ -710,8 +709,8 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
 			p.preferJoinType = rightHintInfo
 		}
 		preferJoinType := uint(0)
-		// Some implementations of physical operators are dependent on the direction,
-		// and adjustments need to be made based on the direction.
+		// Some implementations of physical joins are dependent on the direction,
+		// so adjustments need to be made based on the direction.
 		switch p.preferJoinType {
 		case preferINLJ:
 			if leftHintInfo != 0 {
@@ -753,9 +752,6 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
 		}
 		p.preferJoinType = preferJoinType
 	}
-	// Clear information from left and right child nodes to prevent multiple calls to this function.
-	p.leftPreferJoinType = 0
-	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
