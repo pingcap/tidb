@@ -442,9 +442,10 @@ func TestInsertForMultiValuedIndex(t *testing.T) {
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
 	tk.MustExec(`insert into t1 values ('[2]', 2) on duplicate key update b = 10;`)
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 10`))
-	tk.MustGetErrMsg(`insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
-	tk.MustGetErrMsg(`insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
-	tk.MustGetErrMsg(`insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[22, 11]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1]' for key 't1.idx'")
 }
 
 func TestInsertDateTimeWithTimeZone(t *testing.T) {

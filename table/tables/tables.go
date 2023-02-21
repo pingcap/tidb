@@ -552,7 +552,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 
 		if oldVs, ok := idxExceptMap[idx.Meta().ID]; ok {
 			for i := range oldVs {
-				if oldVs[i].Kind() == types.KindMysqlJSON {
+				if oldVs[i].Kind() == types.KindMysqlJSON && newVs[i].Kind() == types.KindMysqlJSON {
 					oj, nj := oldVs[i].GetMysqlJSON(), newVs[i].GetMysqlJSON()
 					oj, nj = buildExceptSet(oj, nj)
 					oldVs[i].SetMysqlJSON(oj)

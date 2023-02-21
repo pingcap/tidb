@@ -227,6 +227,8 @@ func TestMultiValuedIndexDML(t *testing.T) {
 		tk.MustExec(`admin check table t`)
 		tk.MustExec(`update t set a = '[2,3,-1]'`)
 		tk.MustExec(`admin check table t`)
+		tk.MustExec(`update t set a = null`)
+		tk.MustExec(`admin check table t`)
 	}
 }
 
