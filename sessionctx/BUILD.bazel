@@ -12,7 +12,6 @@ go_library(
         "//parser/model",
         "//sessionctx/sessionstates",
         "//sessionctx/variable",
-        "//types",
         "//util",
         "//util/kvcache",
         "//util/sli",
