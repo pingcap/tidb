@@ -5020,7 +5020,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		fieldDB := "Database"
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldDB = fmt.Sprintf("%s (%s)", fieldDB, patternName)
 		}
 		names = []string{fieldDB}
@@ -5029,7 +5029,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		fieldTable := fmt.Sprintf("Tables_in_%s", s.DBName)
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldTable = fmt.Sprintf("%s (%s)", fieldTable, patternName)
 		}
 		names = []string{fieldTable}
@@ -5262,7 +5262,7 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 	return p, nil
 }
 
-func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
+func extractPatternLikeOrIlikeName(patternLike *ast.PatternLikeOrIlikeExpr) string {
 	if patternLike == nil {
 		return ""
 	}

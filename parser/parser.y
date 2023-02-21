@@ -179,6 +179,7 @@ import (
 	leading           "LEADING"
 	left              "LEFT"
 	like              "LIKE"
+	ilike             "ILIKE"
 	limit             "LIMIT"
 	lines             "LINES"
 	linear            "LINEAR"
@@ -1324,6 +1325,7 @@ import (
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
 	LikeOrNotOp                            "Like predicate"
+	IlikeOrNotOp                           "Ilike predicate"
 	RegexpOrNotOp                          "Regexp predicate"
 	NumericType                            "Numeric types"
 	IntegerType                            "Integer Types types"
@@ -1508,7 +1510,7 @@ import (
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like in
+%left eq ge le neq neqSynonym '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -5777,6 +5779,16 @@ LikeOrNotOp:
 		$$ = false
 	}
 
+IlikeOrNotOp:
+	"ILIKE"
+	{
+		$$ = true
+	}
+|	NotSym "ILIKE"
+	{
+		$$ = false
+	}
+
 RegexpOrNotOp:
 	RegexpSym
 	{
@@ -5830,11 +5842,29 @@ PredicateExpr:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
 			Escape:  escape[0],
+			IsLike:  true,
+		}
+	}
+|	BitExpr IlikeOrNotOp SimpleExpr LikeEscapeOpt
+	{
+		escape := $4
+		if len(escape) > 1 {
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &ast.PatternLikeOrIlikeExpr{
+			Expr:    $1,
+			Pattern: $3,
+			Not:     !$2.(bool),
+			Escape:  escape[0],
+			IsLike:  false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -10732,7 +10762,7 @@ ShowStmt:
 	{
 		stmt := $2.(*ast.ShowStmt)
 		if $3 != nil {
-			if x, ok := $3.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+			if x, ok := $3.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
@@ -11253,9 +11283,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
+			IsLike: true,
 		}
 	}
 |	"WHERE" Expression
