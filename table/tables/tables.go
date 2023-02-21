@@ -596,12 +596,12 @@ func buildExceptSet(left, right types.BinaryJSON) (r, i types.BinaryJSON) {
 		}
 	}
 
-	ra := make([]types.BinaryJSON, 0, len(leftMap))
+	ra := make([]any, 0, len(leftMap))
 	for _, e := range leftMap {
 		ra = append(ra, e)
 	}
 
-	ia := make([]types.BinaryJSON, 0, len(rightMap))
+	ia := make([]any, 0, len(rightMap))
 	for _, e := range rightMap {
 		ia = append(ia, e)
 	}
