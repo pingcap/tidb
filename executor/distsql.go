@@ -373,6 +373,7 @@ type IndexLookUpExecutor struct {
 	// fields about accessing partition tables
 	partitionTableMode bool                  // if this executor is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
+	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
 	partitionRangeMap  map[int64][]*ranger.Range
 	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
@@ -989,6 +990,11 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, err
+			}
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
+					continue
+				}
 			}
 			handles = append(handles, h)
 		}
