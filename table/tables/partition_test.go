@@ -2208,7 +2208,6 @@ func TestKeyPartitionWithGeneralci(t *testing.T) {
 	err := tk.ExecToErr("INSERT INTO tkey6_1 VALUES(1, SYSDATE(), 'linpin', 1), (1, SYSDATE(), 'linpin', 5)")
 	require.Error(t, err)
 	require.Regexp(t, "Duplicate entry 'linpin' for key 'tkey6_1.col3'", err)
-
 }
 
 func TestIssue31721(t *testing.T) {
