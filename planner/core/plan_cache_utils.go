@@ -349,14 +349,17 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.matchOpts.ParamTypes))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
+	if v.matchOpts != nil {
+		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
+		for _, ft := range v.matchOpts.ParamTypes {
+			sum += ft.MemoryUsage()
+		}
+	}
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
-	}
-	for _, ft := range v.matchOpts.ParamTypes {
-		sum += ft.MemoryUsage()
 	}
 	v.memoryUsage = sum
 	return
@@ -476,9 +479,9 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error, bool) {
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, bool, error) {
 	if node == nil {
-		return nil, nil, false
+		return nil, false, nil
 	}
 	checker := limitExtractor{
 		cacheable:      true,
@@ -486,16 +489,16 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, erro
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
-		return nil, checker.paramTypeErr, checker.hasSubQuery
+		return nil, checker.hasSubQuery, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
 	}
-	return checker.offsetAndCount, nil, checker.hasSubQuery
+	return checker.offsetAndCount, checker.hasSubQuery, nil
 }
 
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*util.PlanCacheMatchOpts, error) {
-	limitParams, err, hasSubQuery := ExtractLimitFromAst(node, sctx)
+	limitParams, hasSubQuery, err := ExtractLimitFromAst(node, sctx)
 	if err != nil {
 		return nil, err
 	}

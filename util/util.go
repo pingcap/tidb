@@ -289,6 +289,9 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 // FieldSlice is the slice of the types.FieldType
 type FieldSlice []*types.FieldType
 
+// CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to check whether the types of parameters are compatible.
+// If the types of parameters are compatible, we can use the cached plan.
 func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
@@ -313,6 +316,7 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 	return true
 }
 
+// PlanCacheMatchOpts store some property used to fetch plan from plan cache
 type PlanCacheMatchOpts struct {
 	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
 	ParamTypes FieldSlice
