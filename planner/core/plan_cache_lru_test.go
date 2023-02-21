@@ -14,6 +14,7 @@
 package core
 
 import (
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -21,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
 		Plan:      plans[random.Int()%len(plans)],
-		matchOpts: &util.PlanCacheMatchOpts{ParamTypes: types},
+		matchOpts: &utilpc.PlanCacheMatchOpts{ParamTypes: types},
 	}
 }
 
@@ -75,7 +75,7 @@ func TestLRUPCPut(t *testing.T) {
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -113,7 +113,7 @@ func TestLRUPCPut(t *testing.T) {
 
 		bucket, exist := lru.buckets[string(hack.String(keys[i].Hash()))]
 		require.True(t, exist)
-		matchOpts := &util.PlanCacheMatchOpts{
+		matchOpts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -153,7 +153,7 @@ func TestLRUPCGet(t *testing.T) {
 	// 5 bucket
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i%4), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -165,7 +165,7 @@ func TestLRUPCGet(t *testing.T) {
 
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -175,7 +175,7 @@ func TestLRUPCGet(t *testing.T) {
 	}
 
 	for i := 2; i < 5; i++ {
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -215,7 +215,7 @@ func TestLRUPCDelete(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
 		}
@@ -228,7 +228,7 @@ func TestLRUPCDelete(t *testing.T) {
 
 	lru.Delete(keys[1])
 
-	value, exists := lru.Get(keys[1], &util.PlanCacheMatchOpts{
+	value, exists := lru.Get(keys[1], &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          pTypes[1],
 		LimitOffsetAndCount: limitParams[1],
 	})
@@ -236,13 +236,13 @@ func TestLRUPCDelete(t *testing.T) {
 	require.Nil(t, value)
 	require.Equal(t, 2, int(lru.size))
 
-	_, exists = lru.Get(keys[0], &util.PlanCacheMatchOpts{
+	_, exists = lru.Get(keys[0], &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          pTypes[0],
 		LimitOffsetAndCount: limitParams[0],
 	})
 	require.True(t, exists)
 
-	_, exists = lru.Get(keys[2], &util.PlanCacheMatchOpts{
+	_, exists = lru.Get(keys[2], &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          pTypes[2],
 		LimitOffsetAndCount: limitParams[2],
 	})
@@ -260,7 +260,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: []uint64{},
 		}
@@ -274,7 +274,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 	lru.DeleteAll()
 
 	for i := 0; i < 3; i++ {
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: []uint64{},
 		}
@@ -305,7 +305,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: []uint64{},
 		}
@@ -359,7 +359,7 @@ func TestIssue37914(t *testing.T) {
 
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	key := &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
-	opts := &util.PlanCacheMatchOpts{
+	opts := &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          pTypes,
 		LimitOffsetAndCount: []uint64{},
 	}
@@ -386,7 +386,7 @@ func TestIssue38244(t *testing.T) {
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: []uint64{},
 		}
@@ -412,7 +412,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		k := randomPlanCacheKey()
 		v := randomPlanCacheValue(pTypes)
-		opts := &util.PlanCacheMatchOpts{
+		opts := &utilpc.PlanCacheMatchOpts{
 			ParamTypes:          pTypes,
 			LimitOffsetAndCount: []uint64{},
 		}
@@ -424,7 +424,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	p := &PhysicalTableScan{}
 	k := &planCacheKey{database: "3"}
 	v := &PlanCacheValue{Plan: p}
-	opts := &util.PlanCacheMatchOpts{
+	opts := &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          pTypes,
 		LimitOffsetAndCount: []uint64{},
 	}

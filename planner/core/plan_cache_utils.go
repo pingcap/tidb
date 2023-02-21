@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"math"
 	"strconv"
 	"time"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -316,7 +316,7 @@ type PlanCacheValue struct {
 	memoryUsage       int64
 
 	// matchOpts stores some fields help to choose a suitable plan
-	matchOpts *util.PlanCacheMatchOpts
+	matchOpts *utilpc.PlanCacheMatchOpts
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -367,7 +367,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *util.PlanCacheMatchOpts) *PlanCacheValue {
+	matchOpts *utilpc.PlanCacheMatchOpts) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -499,13 +499,13 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, erro
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
-func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*util.PlanCacheMatchOpts, error) {
+func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
 	limitParams, err := ExtractLimitFromAst(node, sctx)
 	if err != nil {
 		return nil, err
 	}
 	paramTypes := parseParamTypes(sctx, params)
-	return &util.PlanCacheMatchOpts{
+	return &utilpc.PlanCacheMatchOpts{
 		ParamTypes:          paramTypes,
 		LimitOffsetAndCount: limitParams,
 	}, nil

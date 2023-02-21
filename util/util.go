@@ -28,7 +28,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/types"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -283,13 +282,4 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 		lines = append(lines, line)
 	}
 	return lines, nil
-}
-
-// PlanCacheMatchOpts store some property used to fetch plan from plan cache
-type PlanCacheMatchOpts struct {
-	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
-	ParamTypes []*types.FieldType
-	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
-	// only used for cache and pick plan with parameters in limit
-	LimitOffsetAndCount []uint64
 }
