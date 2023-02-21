@@ -69,6 +69,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -1619,6 +1620,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
+		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+			needSplit = true
+		})
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -1706,13 +1710,18 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
+	tableIDs := physicalTableIDs(tbl.Meta())
+	keyInTable := func(key []byte) bool {
+		return slices.Contains(tableIDs, tablecodec.DecodeTableID(key))
+	}
+
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
 			for {
-				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
 				if err == nil {
 					return nil
 				}
@@ -1735,7 +1744,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	return errors.Trace(err)
 }
 
-func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
+func (local *local) deleteDuplicateRows(
+	ctx context.Context,
+	logger *log.Task,
+	handleRows [][2][]byte,
+	decoder *kv.TableKVDecoder,
+	keyInTable func(key []byte) bool,
+) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
@@ -1760,6 +1775,12 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 	// (if the number of duplicates is small this should fit entirely in memory)
 	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
 	for _, handleRow := range handleRows {
+		// Skip the row key if it's not in the table.
+		// This can happen if the table has been recreated or truncated,
+		// and the duplicate key is from the old table.
+		if !keyInTable(handleRow[0]) {
+			continue
+		}
 		logger.Debug("[resolve-dupe] found row to resolve",
 			logutil.Key("handle", handleRow[0]),
 			logutil.Key("row", handleRow[1]))
@@ -2008,7 +2029,8 @@ func nextKey(key []byte) []byte {
 
 	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
 	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
-	if tablecodec.IsRecordKey(key) {
+	// we only do this for IntHandle, which is checked by length
+	if tablecodec.IsRecordKey(key) && len(key) == tablecodec.RecordRowKeyLen {
 		tableID, handle, _ := tablecodec.DecodeRecordKey(key)
 		nextHandle := handle.Next()
 		// int handle overflow, use the next table prefix as nextKey
@@ -2018,7 +2040,7 @@ func nextKey(key []byte) []byte {
 		return tablecodec.EncodeRowKeyWithHandle(tableID, nextHandle)
 	}
 
-	// if key is an index, directly append a 0x00 to the key.
+	// for index key and CommonHandle, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)

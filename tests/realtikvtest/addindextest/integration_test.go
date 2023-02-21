@@ -334,3 +334,26 @@ func TestAddIndexIngestUniqueKey(t *testing.T) {
 	tk.MustExec("split table t by ('m');")
 	tk.MustGetErrMsg("alter table t add unique index idx(b, c);", "[kv:1062]Duplicate entry '1-c1' for key 't.idx'")
 }
+
+func TestAddIndexSplitTableRanges(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+
+	ddl.SetBackfillTaskChanSizeForTest(4)
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(7)
+	tk.MustExec("alter table t add index idx_2(b);")
+	tk.MustExec("admin check table t;")
+	ddl.SetBackfillTaskChanSizeForTest(1024)
+}

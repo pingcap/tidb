@@ -36,10 +36,11 @@ grep -Fq 'table(s) [`cpeng`.`a`, `cpeng`.`b`] are not empty' $TEST_DIR/lightning
 
 
 # First, verify that inject with not leader error is fine.
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=1*return("notleader")'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/FailIngestMeta=1*return("notleader");github.com/pingcap/tidb/br/pkg/lightning/backend/local/failToSplit=2*return("")'
 rm -f "$TEST_DIR/lightning-local.log"
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
-run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml"
+run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml" -L debug
+grep -Eq "split regions.*retryable error" "$TEST_DIR/lightning-local.log"
 
 # Check that everything is correctly imported
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'

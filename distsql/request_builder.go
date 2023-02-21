@@ -154,11 +154,18 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
-	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
-		limit := dag.Executors[1].GetLimit()
-		if limit != nil && limit.Limit < estimatedRegionRowCount {
-			builder.Request.Concurrency = 1
+	if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		limit := dag.Executors[execCnt-1].GetLimit()
+		builder.Request.LimitSize = limit.GetLimit()
+		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+		if execCnt == 2 {
+			if limit.Limit < estimatedRegionRowCount {
+				if kr := builder.Request.KeyRanges; kr != nil {
+					builder.Request.Concurrency = kr.PartitionNum()
+				} else {
+					builder.Request.Concurrency = 1
+				}
+			}
 		}
 	}
 	return builder
@@ -264,9 +271,13 @@ func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead", "ResourceGroupTagger".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
+	distsqlConcurrency := sv.DistSQLScanConcurrency()
 	if builder.Request.Concurrency == 0 {
-		// Concurrency may be set to 1 by SetDAGRequest
-		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+		// Concurrency unset.
+		builder.Request.Concurrency = distsqlConcurrency
+	} else if builder.Request.Concurrency > distsqlConcurrency {
+		// Concurrency is set in SetDAGRequest, check the upper limit.
+		builder.Request.Concurrency = distsqlConcurrency
 	}
 	replicaReadType := sv.GetReplicaRead()
 	if sv.StmtCtx.WeakConsistency {
@@ -781,21 +792,6 @@ func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 
 	if !ran.HighExclude {
 		high = kv.Key(high).PrefixNext()
-	}
-
-	var hasNull bool
-	for _, highVal := range ran.HighVal {
-		if highVal.IsNull() {
-			hasNull = true
-			break
-		}
-	}
-
-	// NOTE: this is a hard-code operation to avoid wrong results when accessing unique index with NULL;
-	// Please see https://github.com/pingcap/tidb/issues/29650 for more details
-	if hasNull {
-		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = kv.Key(high).Next()
 	}
 	return low, high, nil
 }
