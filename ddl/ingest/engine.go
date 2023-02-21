@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync/atomic"
 
@@ -182,6 +183,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------engine:%#v, workerID:%d", ei.openedEngine, workerID))
 		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{})
 		if err != nil {
 			return nil, err

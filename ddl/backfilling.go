@@ -108,8 +108,8 @@ type BackfillJob struct {
 
 // AbbrStr returns the BackfillJob's info without the Meta info.
 func (bj *BackfillJob) AbbrStr() string {
-	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
-		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, PID:%d, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.PhysicalTableID, bj.State, bj.InstanceID, bj.InstanceLease)
 }
 
 // GetOracleTimeWithStartTS returns the current time with txn's startTS.

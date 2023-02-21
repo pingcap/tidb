@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	lg "github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -411,6 +412,7 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 }
 
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (*LocalEngineWriter, error) {
+	lg.BgLogger().Info(fmt.Sprintf("xxx-----------------------------------id:%v", engine.uuid))
 	w, err := engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 	if err != nil {
 		return nil, err
