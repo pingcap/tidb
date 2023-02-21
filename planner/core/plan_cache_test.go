@@ -112,45 +112,6 @@ func TestGeneralPlanCacheBasically(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
-func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int, index(a))")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("select * from t where a=1")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	tk.Session().GetSessionVars().InRestrictedSQL = true
-	tk.MustExecWithContext(ctx, "select * from t where a=1")
-	tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.Session().GetSessionVars().InRestrictedSQL = false
-	tk.MustExec("select * from t where a=1")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
-func TestNonPreparedPlanCacheSelectLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int, index(a))")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("select * from t where a=1")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.sql_select_limit=1")
-	tk.MustExec("select * from t where a=1")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-}
-
 func TestIssue41626(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -163,7 +124,6 @@ func TestIssue41626(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
 }
 
->>>>>>> b9fcb73a81 (planner: skip plan cache if the query has filters like `year <cmp> const` (#41628))
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
