@@ -2190,6 +2190,27 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	tk.MustExec("select * from information_schema.partitions where partition_name is not null")
 }
 
+func TestKeyPartitionWithGeneralci(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitiondb4")
+	defer tk.MustExec("drop database partitiondb4")
+	tk.MustExec("use partitiondb4")
+	tk.MustExec("CREATE TABLE tkey6_1 (" +
+		"col1 INT NOT NULL," +
+		"col2 DATE NOT NULL," +
+		"col3 VARCHAR(12) NOT NULL," +
+		"col4 INT NOT NULL," +
+		"UNIQUE KEY (col3)" +
+		") CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci " +
+		"PARTITION BY KEY(col3) " +
+		"PARTITIONS 4")
+	err := tk.ExecToErr("INSERT INTO tkey6_1 VALUES(1, SYSDATE(), 'linpin', 1), (1, SYSDATE(), 'linpin', 5)")
+	require.Error(t, err)
+	require.Regexp(t, "Duplicate entry 'linpin' for key 'tkey6_1.col3'", err)
+
+}
+
 func TestIssue31721(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
