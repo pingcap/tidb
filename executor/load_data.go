@@ -45,8 +45,16 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
+	// mydumper-format DML file
+	LoadDataFormatSQLDump = "sqldumpfile"
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is
+	// parquet
+	LoadDataFormatParquet = "parquet"
+)
+
 var (
-	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 	// InTest is a flag that bypass gcs authentication in unit tests.
 	InTest bool
@@ -64,19 +72,24 @@ type LoadDataExec struct {
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	// TODO: support lines terminated is "".
-	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return errors.New("Load Data: don't support load data terminated is nil")
-	}
+
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
 	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
 		return errors.New("can only load data into base tables")
 	}
-	if e.loadDataInfo.NullInfo != nil && e.loadDataInfo.NullInfo.OptEnclosed &&
-		(e.loadDataInfo.FieldsInfo == nil || e.loadDataInfo.FieldsInfo.Enclosed == nil) {
-		return errors.New("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+
+	// CSV-like
+	if e.loadDataInfo.Format == "" {
+		if e.loadDataInfo.NullInfo != nil && e.loadDataInfo.NullInfo.OptEnclosed &&
+			(e.loadDataInfo.FieldsInfo == nil || e.loadDataInfo.FieldsInfo.Enclosed == nil) {
+			return errors.New("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+		}
+		// TODO: support lines terminated is "".
+		if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+			return errors.New("Load Data: don't support load data terminated is nil")
+		}
 	}
 
 	switch e.FileLocRef {
@@ -127,6 +140,10 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	defer fileReader.Close()
 
+	e.loadDataInfo.loadRemoteInfo = loadRemoteInfo{
+		store: s,
+		path:  filename,
+	}
 	return e.loadDataInfo.Load(ctx, fileReader)
 }
 
@@ -154,6 +171,11 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
+type loadRemoteInfo struct {
+	store storage.ExternalStorage
+	path  string
+}
+
 // LoadDataInfo saves the information of loading data operation.
 // TODO: rename it and remove unnecessary public methods.
 type LoadDataInfo struct {
@@ -161,6 +183,7 @@ type LoadDataInfo struct {
 
 	row         []types.Datum
 	Path        string
+	Format      string
 	Table       table.Table
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
@@ -178,9 +201,11 @@ type LoadDataInfo struct {
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
 	OnDuplicate     ast.OnDuplicateKeyHandlingType
+
+	loadRemoteInfo loadRemoteInfo
 }
 
-// FieldMapping inticates the relationship between input field and table column or user variable
+// FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
@@ -209,8 +234,8 @@ func (e *LoadDataInfo) Load(ctx context.Context, reader io.ReadSeekCloser) error
 // processStream process input stream from network
 func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
 	var (
-		csvParser *mydump.CSVParser
-		err       error
+		parser mydump.Parser
+		err    error
 	)
 	defer func() {
 		r := recover()
@@ -218,6 +243,10 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 			logutil.Logger(ctx).Error("process routine panicked",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
+		}
+		if err != nil {
+			logutil.Logger(ctx).Error("process routine meet error",
+				zap.Error(err))
 		}
 		if err != nil || r != nil {
 			loadDataInfo.forceQuit()
@@ -227,21 +256,49 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		wg.Done()
 	}()
 
-	// TODO: use parser interface
-	csvParser, err = mydump.NewCSVParser(
-		ctx,
-		loadDataInfo.GenerateCSVConfig(),
-		reader,
-		int64(config.ReadBlockSize),
-		nil,
-		false,
-		// TODO: support charset conversion
-		nil)
-	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+	switch strings.ToLower(loadDataInfo.Format) {
+	case "":
+		// CSV-like
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			loadDataInfo.GenerateCSVConfig(),
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+			false,
+			// TODO: support charset conversion
+			nil)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			loadDataInfo.Ctx.GetSessionVars().SQLMode,
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+		)
+	case LoadDataFormatParquet:
+		if loadDataInfo.loadRemoteInfo.store == nil {
+			err = errors.New("parquet format requires remote storage")
+			return
+		}
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			loadDataInfo.loadRemoteInfo.store,
+			reader,
+			loadDataInfo.loadRemoteInfo.path,
+		)
+	default:
+		err = errors.Errorf("unsupported format: %s", loadDataInfo.Format)
+	}
+	if err != nil {
+		return
+	}
+
+	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
 	for {
 		// prepare batch and enqueue task
-		err = loadDataInfo.ReadRows(ctx, csvParser)
+		err = loadDataInfo.ReadRows(ctx, parser)
 		if err != nil {
 			logutil.Logger(ctx).Error("load data process stream error in ReadRows", zap.Error(err))
 			return
@@ -524,9 +581,17 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 // will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) error {
+func (e *LoadDataInfo) ReadRows(ctx context.Context, parser mydump.Parser) error {
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
 	for e.IgnoreLines > 0 {
-		_, _, err := parser.ReadUntilTerminator()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				return nil

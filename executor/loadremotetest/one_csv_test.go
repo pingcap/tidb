@@ -29,8 +29,10 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	// no-new-line-at-end
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-load-csv",
-		Name:       "no-new-line-at-end.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "no-new-line-at-end.csv",
+		},
 		Content: []byte(`i,s
 100,"test100"
 101,"\""
@@ -53,8 +55,10 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	// new-line-at-end
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-load-csv",
-		Name:       "new-line-at-end.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "new-line-at-end.csv",
+		},
 		Content: []byte(`i,s
 100,"test100"
 101,"\""
@@ -86,8 +90,10 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("CREATE TABLE load_csv.t (s varchar(32), i INT);")
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "ignore-lines-bad-syntax.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "ignore-lines-bad-syntax.csv",
+		},
 		Content: []byte(`"bad syntax"1
 "b",2
 "c",3
@@ -114,8 +120,10 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "count-terminator-inside-quotes.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "count-terminator-inside-quotes.csv",
+		},
 		Content: []byte(`"a
 ",1
 "b
@@ -141,8 +149,10 @@ func (s *mockGCSSuite) TestCustomizeNULL() {
 	s.tk.MustExec("CREATE TABLE load_csv.t (c varchar(32), c2 varchar(32));")
 
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "customize-null.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "customize-null.csv",
+		},
 		Content: []byte(`\N,"\N"
 !N,"!N"
 NULL,"NULL"
@@ -227,8 +237,10 @@ mynull,"mynull"
 
 	ascii0 := string([]byte{0})
 	s.server.CreateObject(fakestorage.Object{
-		BucketName: "test-bucket",
-		Name:       "ascii-0.csv",
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-load-csv",
+			Name:       "ascii-0.csv",
+		},
 		Content: []byte(fmt.Sprintf(`\0,"\0"
 %s,"%s"`, ascii0, ascii0)),
 	})

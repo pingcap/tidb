@@ -28,6 +28,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net.(*netFD).connect.func2"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).readLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
