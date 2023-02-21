@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -75,6 +73,10 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
 		return errors.New("can only load data into base tables")
+	}
+	if e.loadDataInfo.NullInfo != nil && e.loadDataInfo.NullInfo.OptEnclosed &&
+		(e.loadDataInfo.FieldsInfo == nil || e.loadDataInfo.FieldsInfo.Enclosed == nil) {
+		return errors.New("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 	}
 
 	switch e.FileLocRef {
@@ -162,6 +164,7 @@ type LoadDataInfo struct {
 	Table       table.Table
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
@@ -516,101 +519,6 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.curBatchCnt = 0
 }
 
-// getValidData returns curData that starts from starting symbol.
-// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
-func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
-	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
-	if idx == -1 {
-		return curData[len(curData)-len(e.LinesInfo.Starting)+1:], false
-	}
-
-	return curData[idx:], true
-}
-
-// indexOfTerminator return index of terminator, if not, return -1.
-// normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
-	fieldTerm := []byte(e.FieldsInfo.Terminated)
-	fieldTermLen := len(fieldTerm)
-	lineTerm := []byte(e.LinesInfo.Terminated)
-	lineTermLen := len(lineTerm)
-	type termType int
-	const (
-		notTerm termType = iota
-		fieldTermType
-		lineTermType
-	)
-	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
-	cmpTerm := func(restLen int, bs []byte) (typ termType) {
-		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-			typ = fieldTermType
-			return
-		}
-		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-			typ = lineTermType
-			return
-		}
-		return
-	}
-	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
-		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
-		cmpTerm = func(restLen int, bs []byte) (typ termType) {
-			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-				typ = lineTermType
-				return
-			}
-			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-				typ = fieldTermType
-				return
-			}
-			return
-		}
-	}
-	atFieldStart := true
-	inQuoter := false
-loop:
-	for i := 0; i < len(bs); i++ {
-		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			inQuoter = !inQuoter
-			atFieldStart = false
-			continue
-		}
-		restLen := len(bs) - i - 1
-		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen, bs[i+1:]) {
-			case lineTermType:
-				return i + 1
-			case fieldTermType:
-				i += fieldTermLen
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		if !inQuoter {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen+1, bs[i:]) {
-			case lineTermType:
-				return i
-			case fieldTermType:
-				i += fieldTermLen - 1
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		// if it is escaped char, skip next char.
-		if bs[i] == e.FieldsInfo.Escaped {
-			i++
-		}
-		atFieldStart = false
-	}
-	return -1
-}
-
 // ReadRows reads rows from parser. When parser's reader meet EOF, it will return
 // nil. For other errors it will return directly. When the rows batch is full it
 // will also return nil.
@@ -766,27 +674,44 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataInfo.
 func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
-	var nullDef []string
-	if e.FieldsInfo.Enclosed != 0 {
+	var (
+		nullDef          []string
+		quotedNullIsText = true
+	)
+
+	if e.NullInfo != nil {
+		nullDef = append(nullDef, e.NullInfo.NullDef)
+		quotedNullIsText = !e.NullInfo.OptEnclosed
+	} else if e.FieldsInfo.Enclosed != nil {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.FieldsInfo.Escaped != 0 {
-		nullDef = append(nullDef, string([]byte{e.FieldsInfo.Escaped, 'N'}))
+	if e.FieldsInfo.Escaped != nil {
+		nullDef = append(nullDef, string([]byte{*e.FieldsInfo.Escaped, 'N'}))
 	}
+
+	enclosed := ""
+	if e.FieldsInfo.Enclosed != nil {
+		enclosed = string([]byte{*e.FieldsInfo.Enclosed})
+	}
+	escaped := ""
+	if e.FieldsInfo.Escaped != nil {
+		escaped = string([]byte{*e.FieldsInfo.Escaped})
+	}
+
 	return &config.CSVConfig{
 		Separator: e.FieldsInfo.Terminated,
 		// ignore optionally enclosed
-		Delimiter:      string([]byte{e.FieldsInfo.Enclosed}),
-		Terminator:     e.LinesInfo.Terminated,
-		NotNull:        false,
-		Null:           nullDef,
-		Header:         false,
-		TrimLastSep:    false,
-		EscapedBy:      string([]byte{e.FieldsInfo.Escaped}),
-		StartingBy:     e.LinesInfo.Starting,
-		AllowEmptyLine: true,
-		// TODO: set it through NULL DEFINED BY OPTIONALLY ENCLOSED
-		QuotedNullIsText: true,
+		Delimiter:        enclosed,
+		Terminator:       e.LinesInfo.Terminated,
+		NotNull:          false,
+		Null:             nullDef,
+		Header:           false,
+		TrimLastSep:      false,
+		EscapedBy:        escaped,
+		StartingBy:       e.LinesInfo.Starting,
+		AllowEmptyLine:   true,
+		QuotedNullIsText: quotedNullIsText,
+		UnescapedQuote:   true,
 	}
 }
 

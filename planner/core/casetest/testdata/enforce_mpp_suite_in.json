@@ -132,5 +132,31 @@
       "EXPLAIN select count(distinct c+a), count(a) from t;",
       "EXPLAIN select sum(b), count(distinct c+a, b, e), count(a+b) from t;"
     ]
+  },
+  {
+    "name": "TestMPPMultiDistinct3Stage",
+    "cases": [
+      "EXPLAIN select count(distinct a) from t",
+      "select count(distinct a) from t",
+      "EXPLAIN select count(distinct a), count(distinct b) from t",
+      "select count(distinct a), count(distinct b) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), count(c) from t",
+      "select count(distinct a), count(distinct b), count(c) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), count(c+1) from t",
+      "select count(distinct a), count(distinct b), count(c+1) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), sum(c) from t",
+      "select count(distinct a), count(distinct b), sum(c) from t",
+      "EXPLAIN select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+      "select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+      "EXPLAIN select count(distinct a+b), sum(c) from t",
+      "select count(distinct a+b), sum(c) from t",
+      "EXPLAIN select count(distinct a+b), count(distinct b+c), count(c) from t",
+      "select count(distinct a+b), count(distinct b+c), count(c) from t",
+      "explain select count(distinct a,c), count(distinct b,c), count(c) from t",
+      "select count(distinct a), count(distinct b), count(*) from t",
+      "explain select count(distinct a), count(distinct b), count(*) from t",
+      "select count(distinct a), count(distinct b), avg(c+d) from t",
+      "explain select count(distinct a), count(distinct b), avg(c+d) from t"
+    ]
   }
 ]

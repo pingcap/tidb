@@ -63,6 +63,9 @@ const (
 	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
 	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
 
+	// TiDBOptEnable3StageMultiDistinctAgg is used to indicate whether to plan and execute the multi distinct agg in 3 stages
+	TiDBOptEnable3StageMultiDistinctAgg = "tidb_opt_enable_three_stage_multi_distinct_agg"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -771,6 +774,9 @@ const (
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 
+	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
+
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
@@ -809,6 +815,9 @@ const (
 
 	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
 	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
+
+	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
+	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 )
 
 // TiDB vars that have only global scope
@@ -1106,6 +1115,7 @@ const (
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
+	DefTiDB3StageMultiDistinctAgg                  = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1155,6 +1165,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
+	DefTiDBOptAdvancedJoinHint                   = false
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1192,6 +1203,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBEnablePlanCacheForSubquery                      = true
 )
 
 // Process global variables.
