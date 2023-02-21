@@ -1556,6 +1556,50 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
+<<<<<<< HEAD
+=======
+// Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
+// needs to decide to whether to skip the refining or skip plan-cache for safety.
+// For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
+// can be broken if the parameter changes to 1 after.
+func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (allowRefining bool) {
+	if !MaybeOverOptimized4PlanCache(ctx, args) {
+		return true // plan-cache disabled or no parameter in these args
+	}
+
+	// For these 2 cases below, we skip the refining:
+	// 1. year-expr <cmp> const
+	// 2. int-expr <cmp> string/float/double/decimal-const
+	for conIdx := 0; conIdx < 2; conIdx++ {
+		if _, isCon := args[conIdx].(*Constant); !isCon {
+			continue // not a constant
+		}
+
+		// case 1: year-expr <cmp> const
+		// refine `year < 12` to `year < 2012` to guarantee the correctness.
+		// see https://github.com/pingcap/tidb/issues/41626 for more details.
+		exprType := args[1-conIdx].GetType()
+		if exprType.GetType() == mysql.TypeYear {
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+
+		// case 2: int-expr <cmp> string/float/double/decimal-const
+		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
+		conType := args[conIdx].GetType().EvalType()
+		if exprType.EvalType() == types.ETInt &&
+			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
+			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+	}
+
+	return false
+}
+
+>>>>>>> b9fcb73a81 (planner: skip plan cache if the query has filters like `year <cmp> const` (#41628))
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
