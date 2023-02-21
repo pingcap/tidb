@@ -34,8 +34,8 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sum = "h1:lyXVV1c8wUBJRKqI8JgIpT8TW1VDagfYYaxbKa/HoL8=",
-        version = "v0.4.0",
+        sum = "h1:6qXr+R5w+ktL5UkwEbPp+fEvfyoMPche6GkOpGHZcLc=",
+        version = "v0.4.2",
     )
     go_repository(
         name = "com_4d63_gocheckcompilerdirectives",
@@ -4166,8 +4166,8 @@ def go_deps():
         name = "com_github_twmb_murmur3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/twmb/murmur3",
-        sum = "h1:D83U0XYKcHRYwYIpBKf3Pks91Z0Byda/9SJ8B6EMRcA=",
-        version = "v1.1.3",
+        sum = "h1:mqrRot1BRxm+Yct+vavLMou2/iJt0tNVTTC0QoIjaZg=",
+        version = "v1.1.6",
     )
     go_repository(
         name = "com_github_uber_jaeger_client_go",
