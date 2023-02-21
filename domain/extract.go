@@ -218,6 +218,28 @@ func (w *extractWorker) packageExtractPlanRecords(records map[stmtSummaryHistory
 	return p
 }
 
+// dumpExtractPlanPackage will dump the information about sqls collected in stmt_summary_history
+// The files will be organized into the following format:
+/*
+ |-meta.txt
+ |-schema
+ |	 |-schema_meta.txt
+ |	 |-db1.table1.schema.txt
+ |	 |-db2.table2.schema.txt
+ |	 |-....
+ |-view
+ | 	 |-db1.view1.view.txt
+ |	 |-db2.view2.view.txt
+ |	 |-....
+ |-stats
+ |   |-stats1.json
+ |   |-stats2.json
+ |   |-....
+ |-table_tiflash_replica.txt
+ |-sql
+ |   |-sqls.sql
+ |   |-skippedSQLs.sql
+*/
 func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name string, err error) {
 	f, name, err := GenerateExtractFile()
 	if err != nil {
