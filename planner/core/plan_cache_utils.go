@@ -470,8 +470,6 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 				}
 			}
 		}
-	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		checker.hasSubQuery = true
 	}
 	return in, false
 }
