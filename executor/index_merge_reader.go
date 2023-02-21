@@ -828,13 +828,17 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
 	for {
+		var ok bool
 		var task *indexMergeTableTask
 		select {
 		case <-ctx.Done():
 			return
 		case <-finished:
 			return
-		case task = <-fetchCh:
+		case task, ok = <-fetchCh:
+			if !ok {
+				return
+			}
 		}
 
 		select {
@@ -1084,13 +1088,17 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	}
 loop:
 	for {
+		var ok bool
 		var task *indexMergeTableTask
 		select {
 		case <-ctx.Done():
-			return
+			break loop
 		case <-finished:
-			return
-		case task = <-fetchCh:
+			break loop
+		case task, ok = <-fetchCh:
+			if !ok {
+				break loop
+			}
 		}
 
 		select {
@@ -1105,9 +1113,9 @@ loop:
 
 		select {
 		case <-ctx.Done():
-			return
+			break loop
 		case <-finished:
-			return
+			break loop
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case <-errCh:
 			// If got error from intersectionProcessWorker, stop processing.
