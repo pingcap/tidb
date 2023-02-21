@@ -16,7 +16,6 @@ package domain_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -58,7 +57,7 @@ func TestExtractHandlePlanTask(t *testing.T) {
 	tk.MustQuery("select * from t")
 	startTime := time.Now()
 	time.Sleep(time.Second)
-	tk.MustQuery(fmt.Sprintf("select COUNT(*) FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE STMT_TYPE = 'Select' AND SCHEMA_NAME = 'test' AND TABLE_NAMES = 'test.t'")).Check(testkit.Rows("1"))
+	tk.MustQuery("select COUNT(*) FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE STMT_TYPE = 'Select' AND SCHEMA_NAME = 'test' AND TABLE_NAMES = 'test.t'").Check(testkit.Rows("1"))
 	time.Sleep(time.Second)
 	end := time.Now()
 	extractHandler := dom.GetExtractHandle()

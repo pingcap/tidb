@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/BurntSushi/toml"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -35,6 +36,16 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// ExtractMetaFile indicates meta file for extract
+	ExtractMetaFile = "meta.txt"
+)
+
+const (
+	// ExtractTaskType indicates type of extract task
+	ExtractTaskType = "taskType"
+)
+
 // ExtractType indicates type
 type ExtractType uint8
 
@@ -42,6 +53,14 @@ const (
 	// ExtractPlanType indicates extract plan task
 	ExtractPlanType ExtractType = iota
 )
+
+func taskTypeToString(t ExtractType) string {
+	switch t {
+	case ExtractPlanType:
+		return "Plan"
+	}
+	return "Unknown"
+}
 
 // extractHandle handles the extractWorker to run extract the information task like Plan or any others.
 // extractHandle will provide 2 mode for extractWorker:
@@ -60,9 +79,6 @@ func NewExtractHandler(sctxs []sessionctx.Context) *extractHandle {
 
 // ExtractTask extract tasks
 func (h *extractHandle) ExtractTask(ctx context.Context, task *ExtractTask, isBackgroundTask bool) (string, error) {
-	if !config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
-		return "", errors.New("tidb_stmt_summary_enable_persistent should be enabled for extract task")
-	}
 	// TODO: support background job later
 	if isBackgroundTask {
 		return "", nil
@@ -79,8 +95,10 @@ type extractWorker struct {
 // ExtractTask indicates task
 type ExtractTask struct {
 	extractType ExtractType
-	Begin       time.Time
-	End         time.Time
+
+	// variables for plan task type
+	Begin time.Time
+	End   time.Time
 }
 
 // NewExtractPlanTask returns extract plan task
@@ -108,6 +126,9 @@ func (w *extractWorker) extractTask(ctx context.Context, task *ExtractTask) (str
 }
 
 func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) (string, error) {
+	if !config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return "", errors.New("tidb_stmt_summary_enable_persistent should be enabled for extract task")
+	}
 	records, err := w.collectRecords(ctx, task)
 	if err != nil {
 		return "", err
@@ -206,6 +227,10 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (string, e
 		}
 	}()
 
+	// dump extract plan task meta
+	if err = dumpExtractMeta(ExtractPlanType, zw); err != nil {
+		return "", err
+	}
 	// Dump Schema and View
 	if err = dumpSchemas(w.sctx, zw, p.tables); err != nil {
 		return "", err
@@ -234,6 +259,19 @@ func dumpExtractPlanSQLs(sqls []string, zw *zip.Writer) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func dumpExtractMeta(t ExtractType, zw *zip.Writer) error {
+	cf, err := zw.Create(ExtractMetaFile)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	varMap := make(map[string]string)
+	varMap[ExtractTaskType] = taskTypeToString(t)
+	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
+		return errors.AddStack(err)
 	}
 	return nil
 }
