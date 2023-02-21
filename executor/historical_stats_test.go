@@ -17,13 +17,13 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
