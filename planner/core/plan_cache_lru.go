@@ -15,7 +15,6 @@ package core
 
 import (
 	"container/list"
-	utilpc "github.com/pingcap/tidb/util/plancache"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.

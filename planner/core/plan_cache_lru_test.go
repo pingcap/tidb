@@ -14,7 +14,6 @@
 package core
 
 import (
-	utilpc "github.com/pingcap/tidb/util/plancache"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/stretchr/testify/require"
 )
 

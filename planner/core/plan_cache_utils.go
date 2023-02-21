@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	utilpc "github.com/pingcap/tidb/util/plancache"
 	"math"
 	"strconv"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
