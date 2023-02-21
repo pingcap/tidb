@@ -734,13 +734,13 @@ const (
 	version108 = 108
 	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
-	// version111 sets tidb_server_memory_limit to "80%"
-	version111 = 111
+	// version110 sets tidb_server_memory_limit to "80%"
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version111
+var currentBootstrapVersion int64 = version110
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -854,7 +854,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
-		upgradeToVer111,
+		upgradeToVer110,
 	}
 )
 
@@ -2206,8 +2206,8 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
-func upgradeToVer111(s Session, ver int64) {
-	if ver >= version111 {
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
 		return
 	}
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
