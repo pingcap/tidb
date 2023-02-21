@@ -17,13 +17,13 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -262,7 +262,9 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 
-	variable.HistoricalStatsDuration.Store(1 * time.Second)
+	tk.MustExec("set @@global.tidb_historical_stats_duration = '1s'")
+	duration := variable.HistoricalStatsDuration.Load()
+	fmt.Println(duration.String())
 	time.Sleep(2 * time.Second)
 	err = dom.StatsHandle().ClearOutdatedHistoryStats()
 	require.NoError(t, err)
