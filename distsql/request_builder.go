@@ -154,17 +154,19 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
-	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
-		limit := dag.Executors[1].GetLimit()
-		if limit != nil && limit.Limit < estimatedRegionRowCount {
-			if kr := builder.Request.KeyRanges; kr != nil {
-				builder.Request.Concurrency = kr.PartitionNum()
-			} else {
-				builder.Request.Concurrency = 1
+	if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+		limit := dag.Executors[execCnt-1].GetLimit()
+		builder.Request.LimitSize = limit.GetLimit()
+		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+		if execCnt == 2 {
+			if limit.Limit < estimatedRegionRowCount {
+				if kr := builder.Request.KeyRanges; kr != nil {
+					builder.Request.Concurrency = kr.PartitionNum()
+				} else {
+					builder.Request.Concurrency = 1
+				}
 			}
 		}
-		builder.Request.LimitSize = limit.GetLimit()
 	}
 	return builder
 }
