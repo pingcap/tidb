@@ -902,7 +902,7 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak"))
 	}()
 
-	sql := fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;")
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
 	res := tk.MustQuery("explain " + sql).Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
