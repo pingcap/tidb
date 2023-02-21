@@ -498,6 +498,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 }
 
 func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
+	idxExceptMap := make(map[int64][]types.Datum)
 	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
@@ -510,8 +511,12 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			if err != nil {
 				return err
 			}
-			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, h, oldVs, idx, txn); err != nil {
-				return err
+			if !IsIndexWritable(idx) || !idx.Meta().MVIndex {
+				if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, h, oldVs, idx, txn); err != nil {
+					return err
+				}
+			} else {
+				idxExceptMap[idx.Meta().ID] = oldVs
 			}
 			break
 		}
@@ -544,11 +549,64 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		if err != nil {
 			return err
 		}
+
+		if oldVs, ok := idxExceptMap[idx.Meta().ID]; ok {
+			for i := range oldVs {
+				if oldVs[i].Kind() == types.KindMysqlJSON {
+					oj, nj := oldVs[i].GetMysqlJSON(), newVs[i].GetMysqlJSON()
+					oj, nj = buildExceptSet(oj, nj)
+					oldVs[i].SetMysqlJSON(oj)
+					newVs[i].SetMysqlJSON(nj)
+					break
+				}
+			}
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, h, oldVs, idx, txn); err != nil {
+				return err
+			}
+		}
+
 		if err := t.buildIndexForRow(ctx, h, newVs, newData, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// buildExceptSet return two array json that `r` contains the elements in left not in right, `i` contains the elements
+// in right but not in left.
+func buildExceptSet(left, right types.BinaryJSON) (r, i types.BinaryJSON) {
+	mapF := func(json types.BinaryJSON) map[string]types.BinaryJSON {
+		m := make(map[string]types.BinaryJSON, json.GetElemCount())
+		var buf []byte
+		for _, elem := range json.ToArray() {
+			buf = buf[:0]
+			m[string(elem.HashValue(buf))] = elem
+		}
+		return m
+	}
+	leftMap, rightMap := mapF(left), mapF(right)
+
+	var buf []byte
+	for _, o := range leftMap {
+		buf = buf[:0]
+		hashVal := string(o.HashValue(buf))
+		if _, ok := rightMap[hashVal]; ok {
+			delete(leftMap, hashVal)
+			delete(rightMap, hashVal)
+		}
+	}
+
+	ra := make([]types.BinaryJSON, 0, len(leftMap))
+	for _, e := range leftMap {
+		ra = append(ra, e)
+	}
+
+	ia := make([]types.BinaryJSON, 0, len(rightMap))
+	for _, e := range rightMap {
+		ia = append(ia, e)
+	}
+
+	return types.CreateBinaryJSON(ra), types.CreateBinaryJSON(ia)
 }
 
 // adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used

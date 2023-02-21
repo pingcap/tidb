@@ -282,6 +282,16 @@ func (bj BinaryJSON) ArrayGetElem(idx int) BinaryJSON {
 	return bj.valEntryGet(headerSize + idx*valEntrySize)
 }
 
+// ToArray return a JSON array of JSONTypeCodeArray.
+func (bj BinaryJSON) ToArray() []BinaryJSON {
+	arr := make([]BinaryJSON, 0, bj.GetElemCount())
+	for i := 0; i < bj.GetElemCount(); i++ {
+		arr = append(arr, bj.ArrayGetElem(i))
+	}
+
+	return arr
+}
+
 func (bj BinaryJSON) objectGetKey(i int) []byte {
 	keyOff := int(jsonEndian.Uint32(bj.Value[headerSize+i*keyEntrySize:]))
 	keyLen := int(jsonEndian.Uint16(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
