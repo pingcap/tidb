@@ -15,17 +15,17 @@
 package loadremotetest
 
 import (
+	_ "embed"
 	"fmt"
-	"os"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
 )
 
-func (s *mockGCSSuite) TestLoadParquet() {
-	content, err := os.ReadFile("test.parquet")
-	s.Require().NoError(err)
+//go:embed test.parquet
+var content []byte
 
+func (s *mockGCSSuite) TestLoadParquet() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("CREATE TABLE load_csv.t (" +

@@ -10,6 +10,7 @@ go_test(
         "one_sqldump_test.go",
         "util_test.go",
     ],
+    embedsrcs = ["test.parquet"],
     flaky = True,
     deps = [
         "//executor",
