@@ -518,6 +518,18 @@ func TestNonPreparedPlanCacheSelectLimit(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestIssue41626(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a year)`)
+	tk.MustExec(`insert into t values (2000)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=12`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

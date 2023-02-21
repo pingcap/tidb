@@ -4188,6 +4188,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
 		Path:               ld.Path,
+		Format:             ld.Format,
 		Table:              ld.Table,
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
