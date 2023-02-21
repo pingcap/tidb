@@ -421,29 +421,25 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), leading(t3, t1) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
-          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-          "    └─ExchangeReceiver(Probe) 12475.01 mpp[tiflash]  ",
-          "      └─ExchangeSender 12475.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "        └─HashJoin 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "          ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "          │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "          │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "          └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "TableReader 124625374.88 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 124625374.88 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 124625374.88 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
+          "    └─HashJoin 124625374.88 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)]",
+          "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
+          "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 99800100.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 99800100.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
+          "          └─HashJoin 99800100.00 mpp[tiflash]  CARTESIAN inner join",
+          "            ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "            │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "            │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint",
-          "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
@@ -470,23 +466,21 @@
         "Plan": [
           "TableReader 15593.77 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-          "    └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "  └─Projection 15593.77 mpp[tiflash]  test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c, test.t.a, test.t.b, test.t.c",
+          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint",
-          "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
@@ -1458,7 +1452,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.d=t2.d and t2.c = 1",
-        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[1 NULL,1 NULL]], Table(t))}(test.t.d,test.t.d)"
+        "Best": "IndexJoin{IndexLookUp(Index(t.c_d_e)[[1 NULL,1 NULL]], Table(t))->TableReader(Table(t))}(test.t.d,test.t.d)->Projection"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.b",
@@ -1506,11 +1500,11 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 2 KindInt64 4])}"
+        "Best": "RightHashJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 2 KindInt64 4])->TableReader(Table(t)->Sel([eq(test.t.b, 1)]))}->Projection"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))}"
+        "Best": "RightHashJoin{IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))->TableReader(Table(t))}->Projection"
       }
     ]
   },
@@ -2135,15 +2129,15 @@
     "Cases": [
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
+        "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t3` ), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), merge_join(@`sel_1` `test`.`t3`)"
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` ), merge_join(@`sel_1` `test`.`t3`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
+        "Best": "MergeInnerJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t3` ), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), merge_join(@`sel_1` `test`.`t3`)"
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` ), merge_join(@`sel_1` `test`.`t3`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
@@ -2153,9 +2147,9 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
-        "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,NULL]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t2.b)",
+        "Best": "IndexJoin{TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))->IndexReader(Index(t2.b)[[NULL,NULL]])}(test.t2.b,test.t2.b)->Projection",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `b`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
+        "Hints": "use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` `b`), inl_join(@`sel_1` `test`.`t1`)"
       }
     ]
   },
@@ -2224,33 +2218,33 @@
     "Cases": [
       {
         "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+        "Plan": "IndexJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+        "Plan": "IndexJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+        "Plan": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+        "Plan": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+        "Plan": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+        "Plan": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`)"
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
@@ -2269,13 +2263,13 @@
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
-        "Plan": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}}(test.t.a,test.t.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), hash_join(@`sel_1` `test`.`t1`)"
+        "Plan": "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->IndexReader(Index(t.f)[[NULL,+inf]])}->Projection",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t1` `f`)"
       },
       {
         "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
-        "Plan": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)",
-        "Hints": "use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_1` `test`.`t2` ), merge_join(@`sel_1` `test`.`t1`)"
+        "Plan": "MergeInnerJoin{TableReader(Table(t))->Sort->LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort}(test.t.b,test.t.b)->Projection",
+        "Hints": "use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`)"
       }
     ]
   },
@@ -2303,14 +2297,15 @@
           "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan(Build) 9990.00 root  not(isnull(test.t.b))",
-          "│ └─TableReader 9990.00 root  data:Selection",
-          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─UnionScan(Probe) 10000.00 root  ",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection 12487.50 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t.b, test.t.a)]",
+          "  ├─UnionScan(Build) 9990.00 root  not(isnull(test.t.b))",
+          "  │ └─TableReader 9990.00 root  data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─UnionScan(Probe) 10000.00 root  ",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2319,14 +2314,15 @@
           "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan(Build) 10000.00 root  ",
-          "│ └─TableReader 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─UnionScan(Probe) 9990.00 root  not(isnull(test.t.b))",
-          "  └─TableReader 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Projection 12487.50 root  test.t.a, test.t.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t.b, test.t.a)]",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─UnionScan(Probe) 9990.00 root  not(isnull(test.t.b))",
+          "    └─TableReader 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4790,21 +4786,27 @@
         "Result": [
           "1 1"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
+        ]
       },
       {
         "SQL": "select /*+ hash_join_probe(t2), hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
           "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
+        ]
       },
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
@@ -5423,7 +5425,7 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"
         ]
       },
       {
@@ -5439,7 +5441,7 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"
         ]
       },
       {
@@ -5477,7 +5479,7 @@
       {
         "SQL": "select /*+ hash_join_build(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
         "Plan": [
-          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -5489,35 +5491,30 @@
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
         "Plan": [
-          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "Projection 15625.00 root  test.t1.a, test.t2.a",
+          "└─HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
         "Plan": [
-          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
@@ -5529,30 +5526,25 @@
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) leading(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
         "Plan": [
-          "HashJoin 15625.00 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "Projection 15625.00 root  test.t1.a, test.t2.a",
+          "└─HashJoin 15625.00 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t2.b, test.t1.b)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) straight_join() */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a",
@@ -5667,7 +5659,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {
@@ -5683,7 +5676,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {
@@ -5731,7 +5725,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {
@@ -5747,7 +5742,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {
@@ -5795,7 +5791,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {
@@ -5811,7 +5808,8 @@
           "1 1"
         ],
         "Warning": [
-          "Warning 1815 Join hints are conflict, you can only specify one type of join"
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join",
+          "Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"
         ]
       },
       {

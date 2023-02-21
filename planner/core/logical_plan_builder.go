@@ -724,28 +724,28 @@ func (p *LogicalJoin) setPreferredJoinType() {
 				preferJoinType |= preferLeftAsINLHJInner
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsINLHJInner
+				preferJoinType |= preferRightAsINLHJInner
 			}
 		case preferINLMJ:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsINLMJInner
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsINLMJInner
+				preferJoinType |= preferRightAsINLMJInner
 			}
 		case preferHJBuild:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsHJBuild
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsHJBuild
+				preferJoinType |= preferRightAsHJBuild
 			}
 		case preferHJProbe:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsHJProbe
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsHJProbe
+				preferJoinType |= preferRightAsHJProbe
 			}
 		default:
 			preferJoinType = p.preferJoinType

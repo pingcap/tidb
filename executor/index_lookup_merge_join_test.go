@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
@@ -159,22 +158,20 @@ func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 		tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
 		tk.MustExec("insert into t1 values (1, 'Alice')")
 		tk.MustExec("insert into t2 values (1, 'Bob')")
+		tk.MustExec("analyze table t1, t2")
 		sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
 		// Partition table can't be inner side of index merge join, because it can't keep order.
-		require.Equal(t, -1, strings.Index(rows[0], "IndexMergeJoin"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable"))
 		require.Equal(t, true, len(tk.MustQuery("show warnings").Rows()) > 0)
 
 		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-		require.Equal(t, 0, strings.Index(rows[0], "IndexHashJoin"))
+		require.Equal(t, 0, len(tk.MustQuery("show warnings").Rows()))
 
 		sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
-		require.Equal(t, 0, strings.Index(rows[0], "IndexJoin"))
+		require.Equal(t, 0, len(tk.MustQuery("show warnings").Rows()))
 	}
 }
 
