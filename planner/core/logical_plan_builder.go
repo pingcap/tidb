@@ -591,49 +591,89 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+		p.leftPreferJoinType |= preferMergeJoin
 	}
-	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
+		p.leftPreferJoinType |= preferBCJoin
 	}
-	if hintInfo.ifPreferShuffleJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
+		p.preferJoinType |= preferBCJoin
+		p.rightPreferJoinType |= preferBCJoin
+	}
+	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
+		p.leftPreferJoinType |= preferShuffleJoin
 	}
-	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
+		p.preferJoinType |= preferShuffleJoin
+		p.rightPreferJoinType |= preferShuffleJoin
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
+		p.leftPreferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferHashJoin(rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+		p.rightPreferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
+		p.leftPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLJInner
+		p.rightPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLHJInner
+		p.leftPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLHJInner
+		p.rightPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLMJInner
+		p.leftPreferJoinType |= preferINLMJ
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
+		p.rightPreferJoinType |= preferINLMJ
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
+		p.leftPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJBuild
+		p.rightPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJProbe
+		p.leftPreferJoinType |= preferHJProbe
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJProbe
+		p.rightPreferJoinType |= preferHJProbe
 	}
-	if containDifferentJoinTypes(p.preferJoinType) {
+	hasConflict := false
+	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+		if containDifferentJoinTypes(p.preferJoinType) {
+			hasConflict = true
+		}
+	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
+			hasConflict = true
+		}
+	}
+	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -647,6 +687,75 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
 	}
+}
+
+// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
+// This information is used for selecting the physical operator.
+func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+	leftHintInfo := p.leftPreferJoinType
+	rightHintInfo := p.rightPreferJoinType
+	if leftHintInfo == 0 && rightHintInfo == 0 {
+		return
+	}
+	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
+		// The hint information on the left and right child nodes is different. It causes the conflict.
+		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	} else {
+		if leftHintInfo != 0 {
+			p.preferJoinType = leftHintInfo
+		} else {
+			p.preferJoinType = rightHintInfo
+		}
+		preferJoinType := uint(0)
+		// Some implementations of physical operators are dependent on the direction,
+		// and adjustments need to be made based on the direction.
+		switch p.preferJoinType {
+		case preferINLJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferRightAsINLJInner
+			}
+		case preferINLHJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+		case preferINLMJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+		case preferHJBuild:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+		case preferHJProbe:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+		default:
+			preferJoinType = p.preferJoinType
+		}
+		p.preferJoinType = preferJoinType
+	}
+	// Clear information from left and right child nodes to prevent multiple calls to this function.
+	p.leftPreferJoinType = 0
+	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
@@ -1031,6 +1140,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
 	b.optFlag |= flagPredicatePushDown
+	b.optFlag |= flagDeriveTopNFromWindow
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}

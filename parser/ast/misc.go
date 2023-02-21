@@ -259,6 +259,32 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PlanChangeCaptureStmt is a statement to dump or load information for recreating plans
+type PlanChangeCaptureStmt struct {
+	stmtNode
+	Begin string
+	End   string
+}
+
+// Restore implements Node interface.
+func (n *PlanChangeCaptureStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PLAN CHANGE CAPTURE ")
+	ctx.WriteString(n.Begin)
+	ctx.WriteKeyWord(" ")
+	ctx.WriteString(n.End)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *PlanChangeCaptureStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PlanChangeCaptureStmt)
+	return v.Leave(n)
+}
+
 // PlanReplayerStmt is a statement to dump or load information for recreating plans
 type PlanReplayerStmt struct {
 	stmtNode
@@ -268,7 +294,10 @@ type PlanReplayerStmt struct {
 	Load    bool
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
-	Capture    bool
+	Capture bool
+	// Remove indicates `plan replayer capture remove <sql_digest> <plan_digest>
+	Remove bool
+
 	SQLDigest  string
 	PlanDigest string
 
@@ -298,6 +327,14 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(n.PlanDigest)
 		return nil
 	}
+	if n.Remove {
+		ctx.WriteKeyWord("PLAN REPLAYER CAPTURE REMOVE ")
+		ctx.WriteString(n.SQLDigest)
+		ctx.WriteKeyWord(" ")
+		ctx.WriteString(n.PlanDigest)
+		return nil
+	}
+
 	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")

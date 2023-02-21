@@ -953,6 +953,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Table:              tbl,
 		FieldsInfo:         v.FieldsInfo,
 		LinesInfo:          v.LinesInfo,
+		NullInfo:           v.NullInfo,
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
@@ -972,7 +973,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		loadDataInfo: loadDataInfo,
 	}
 	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
-	loadDataExec.loadDataInfo.InitQueues()
+	loadDataExec.loadDataInfo.initQueues()
 	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
 	return loadDataExec
@@ -1017,6 +1018,25 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
+func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
+	e := &PlanChangeCaptureExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+	}
+	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	end, err := time.Parse("2006-01-02 15:04:05", v.End)
+	if err != nil {
+		e.err = err
+		return e
+	}
+	e.Begin = begin
+	e.End = end
+	return e
+}
+
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{
@@ -1031,6 +1051,17 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 			CaptureInfo: &PlanReplayerCaptureInfo{
 				SQLDigest:  v.SQLDigest,
 				PlanDigest: v.PlanDigest,
+			},
+		}
+		return e
+	}
+	if v.Remove {
+		e := &PlanReplayerExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			CaptureInfo: &PlanReplayerCaptureInfo{
+				SQLDigest:  v.SQLDigest,
+				PlanDigest: v.PlanDigest,
+				Remove:     true,
 			},
 		}
 		return e
@@ -1108,7 +1139,12 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
 			case ast.AlterTableExchangePartition:
-				b.Ti.UesExchangePartition = true
+				b.Ti.UseExchangePartition = true
+			case ast.AlterTableReorganizePartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseReorganizePartition = true
 			}
 		}
 	case *ast.CreateTableStmt:
@@ -1937,8 +1973,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
-			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
@@ -1993,16 +2027,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.ClusterTableStatementsSummary):
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted):
+			var extractor *plannercore.StatementsSummaryExtractor
+			if v.Extractor != nil {
+				extractor = v.Extractor.(*plannercore.StatementsSummaryExtractor)
+			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
-				retriever: &stmtSummaryTableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
-				},
+				retriever:    buildStmtSummaryRetriever(b.ctx, v.Table, v.Columns, extractor),
 			}
 		case strings.ToLower(infoschema.TableColumns):
 			return &MemTableReaderExec{
@@ -2016,7 +2052,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
 			}
-
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -3550,10 +3585,14 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 		keyColOffsets[i] = offset
 	}
 
-	pe, err := pt.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}).PartitionExpr()
-	if err != nil {
+	t, ok := pt.(interface {
+		PartitionExpr() *tables.PartitionExpr
+	})
+	if !ok {
+		return nil
+	}
+	pe := t.PartitionExpr()
+	if pe == nil {
 		return nil
 	}
 
@@ -3863,6 +3902,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+	if b.Ti != nil {
+		b.Ti.UseTableLookUp.Store(true)
+	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
@@ -4000,6 +4042,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	if b.Ti != nil {
 		b.Ti.UseIndexMerge = true
+		b.Ti.UseTableLookUp.Store(true)
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
@@ -4445,6 +4488,9 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
+	if builder.Ti != nil {
+		builder.Ti.UseTableLookUp.Store(true)
+	}
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err

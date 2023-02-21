@@ -97,7 +97,7 @@ skip-register-to-dashboard = false
 # When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
 # If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
-enable-telemetry = true
+enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
@@ -222,6 +222,9 @@ metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
+
+# Record database name label if it is enabled.
+record-db-label = false
 
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.

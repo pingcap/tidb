@@ -502,6 +502,20 @@ type Instance struct {
 	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
+	// StmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	StmtSummaryEnablePersistent bool `toml:"tidb_stmt_summary_enable_persistent" json:"tidb_stmt_summary_enable_persistent"`
+	// StmtSummaryFilename indicates the file name written by stmtsummary
+	// when StmtSummaryEnablePersistent is true.
+	StmtSummaryFilename string `toml:"tidb_stmt_summary_filename" json:"tidb_stmt_summary_filename"`
+	// StmtSummaryFileMaxDays indicates how many days the files written by
+	// stmtsummary will be kept when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxDays int `toml:"tidb_stmt_summary_file_max_days" json:"tidb_stmt_summary_file_max_days"`
+	// StmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file
+	// written by stmtsummary when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxSize int `toml:"tidb_stmt_summary_file_max_size" json:"tidb_stmt_summary_file_max_size"`
+	// StmtSummaryFileMaxBackups indicates the maximum number of files written
+	// by stmtsummary when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -643,6 +657,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	RecordDBLabel   bool   `toml:"record-db-label" json:"record-db-label"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -751,6 +766,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -901,6 +919,11 @@ var defaultConf = Config{
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		StmtSummaryEnablePersistent: false,
+		StmtSummaryFilename:         "tidb-statements.log",
+		StmtSummaryFileMaxDays:      3,
+		StmtSummaryFileMaxSize:      64,
+		StmtSummaryFileMaxBackups:   0,
 		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 		SlowThreshold:               logutil.DefaultSlowThreshold,
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
@@ -920,6 +943,7 @@ var defaultConf = Config{
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
 		RecordQPSbyDB:         false,
+		RecordDBLabel:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
@@ -960,6 +984,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -990,7 +1015,7 @@ var defaultConf = Config{
 	},
 	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{

@@ -360,6 +360,18 @@ func (p *PhysicalLimit) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
+func (p *PhysicalExpand) ExplainInfo() string {
+	var str strings.Builder
+	str.WriteString("group set num:")
+	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
+	str.WriteString(", groupingID:")
+	str.WriteString(p.GroupingIDCol.String())
+	str.WriteString(", ")
+	str.WriteString(p.GroupingSets.String())
+	return str.String()
+}
+
+// ExplainInfo implements Plan interface.
 func (p *basePhysicalAgg) ExplainInfo() string {
 	return p.explainInfo(false)
 }

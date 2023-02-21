@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 
@@ -23,17 +24,97 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
+
+const (
+	getJobWithoutPartition = -1
+	backfillJobPrefixKey   = "%d_%s_%d_%%"
+
+	// InstanceLease is the instance lease.
+	InstanceLease                = 1 * time.Minute
+	updateInstanceLease          = 25 * time.Second
+	genTaskBatch                 = 4096
+	genPhysicalTableTaskBatch    = 256
+	minGenTaskBatch              = 1024
+	minGenPhysicalTableTaskBatch = 64
+	minDistTaskCnt               = 64
+	retrySQLTimes                = 10
+)
+
+// RetrySQLInterval is export for test.
+var RetrySQLInterval = 300 * time.Millisecond
+
+func backfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return fmt.Sprintf(backfillJobPrefixKey, ddlJobID, hex.EncodeToString(eleKey), eleID)
+}
+
+// BackfillJob is for a tidb_background_subtask table's record.
+type BackfillJob struct {
+	ID              int64
+	JobID           int64
+	EleID           int64
+	EleKey          []byte
+	PhysicalTableID int64
+	Tp              backfillerType
+	State           model.JobState
+	InstanceID      string
+	InstanceLease   types.Time
+	StartTS         uint64
+	StateUpdateTS   uint64
+	Meta            *model.BackfillMeta
+}
+
+// PrefixKeyString returns the BackfillJob's prefix key.
+func (bj *BackfillJob) PrefixKeyString() string {
+	return backfillJobPrefixKeyString(bj.JobID, bj.EleKey, bj.EleID)
+}
+
+func (bj *BackfillJob) keyString() string {
+	return fmt.Sprintf("%d_%s_%d_%d", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID, bj.ID)
+}
+
+// AbbrStr returns the BackfillJob's info without the Meta info.
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
+}
+
+// GetOracleTimeWithStartTS returns the current time with txn's startTS.
+func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
+	txn, err := se.Txn(true)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
+}
+
+// GetOracleTime returns the current time from TS without txn.
+func GetOracleTime(store kv.Storage) (time.Time, error) {
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return time.Time{}, errors.Trace(err)
+	}
+	return oracle.GetTimeFromTS(currentVer.Ver).UTC(), nil
+}
+
+// GetLeaseGoTime returns a types.Time by adding a lease.
+func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
+	leaseTime := currTime.Add(lease)
+	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
+}
 
 type backfillWorkerContext struct {
 	currID          int
@@ -73,7 +154,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		}
 
 		var bf backfiller
-		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl))
+		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl, true))
 		if err != nil {
 			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
 				err = nil
@@ -108,19 +189,12 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
 		return nil, err
 	}
-	se, err := d.sessPool.get()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] run backfill jobs get session failed", zap.Error(err))
-		return nil, err
-	}
-	defer d.sessPool.put(se)
-	sess := newSession(se)
 
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	// TODO: Different worker using different newBackfillerFunc.
@@ -135,9 +209,14 @@ func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, bJob *Back
 		return bfWorker.runTask(task)
 	})
 
+	runningPID := int64(0)
+	// If txn-merge we needn't to claim the backfill job through the partition table
+	if ingestBackendCtx == nil {
+		runningPID = getJobWithoutPartition
+	}
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
-		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt+5)
+		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, &runningPID, workerCnt+5)
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
@@ -220,41 +299,28 @@ func (bwm *backfilWorkerManager) close(d *ddl) error {
 func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBackfillTask, error) {
 	pt := t.(table.PhysicalTable)
 	if tbl, ok := t.(table.PartitionedTable); ok {
-		pt = tbl.GetPartition(bfJob.Meta.PhysicalTableID)
+		pt = tbl.GetPartition(bfJob.PhysicalTableID)
 		if pt == nil {
-			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.Meta.PhysicalTableID, t.Meta().ID)
+			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.PhysicalTableID, t.Meta().ID)
 		}
 	}
-	endKey := bfJob.EndKey
-	// TODO: Check reorgInfo.mergingTmpIdx
-	endK, err := getRangeEndKey(dc.jobContext(bfJob.JobID), dc.store, bfJob.Meta.Priority, pt.RecordPrefix(), bfJob.StartKey, endKey)
-	if err != nil {
-		logutil.BgLogger().Info("[ddl] convert backfill job to task, get reverse key failed", zap.String("backfill job", bfJob.AbbrStr()), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("[ddl] convert backfill job to task, change end key", zap.String("backfill job",
-			bfJob.AbbrStr()), zap.String("current key", hex.EncodeToString(bfJob.StartKey)), zap.Bool("end include", bfJob.Meta.EndInclude),
-			zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
-		endKey = endK
-	}
-
 	return &reorgBackfillTask{
 		bfJob:         bfJob,
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
 		sqlQuery:   bfJob.Meta.Query,
-		startKey:   bfJob.StartKey,
-		endKey:     endKey,
+		startKey:   bfJob.Meta.StartKey,
+		endKey:     bfJob.Meta.EndKey,
 		endInclude: bfJob.Meta.EndInclude,
 		priority:   bfJob.Meta.Priority}, nil
 }
 
 // GetTasks gets the backfill tasks associated with the non-runningJobID.
-func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, concurrency int) ([]*reorgBackfillTask, error) {
+func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, runningPID *int64, concurrency int) ([]*reorgBackfillTask, error) {
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error
-	var bJobs []*BackfillJob
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, InstanceLease)
+		bJobs, err := GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, *runningPID, InstanceLease)
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
@@ -268,6 +334,9 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 			}
 		}
 
+		if *runningPID != getJobWithoutPartition {
+			*runningPID = bJobs[0].PhysicalTableID
+		}
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {
 			task, err := d.backfillJob2Task(tbl, bJ)

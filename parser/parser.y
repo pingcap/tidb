@@ -661,6 +661,7 @@ import (
 	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
+	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
 	exact                 "EXACT"
@@ -936,11 +937,13 @@ import (
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
+	LoadDataWithFormatStmt     "Load data with format statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
+	PlanChangeCaptureStmt      "Plan Change Capture Statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -1120,6 +1123,7 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
+	NullDefinedByClause                    "NULL DEFINED BY clause in LOAD DATA statement"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1599,19 +1603,21 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp {
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
+			return 1
 		}
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp {
-        	yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
-        }
 	}
 
 DirectResourceGroupOption:
@@ -1620,9 +1626,9 @@ DirectResourceGroupOption:
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
-    {
-    	$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
-    }
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -6553,6 +6559,7 @@ NotKeywordToken:
 |	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
+|	"DEFINED"
 |	"DOT"
 |	"DUMP"
 |	"EXTRACT"
@@ -11502,6 +11509,7 @@ Statement:
 |	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	LoadStatsStmt
 |	LockStatsStmt
 |	UnlockStatsStmt
@@ -11575,6 +11583,7 @@ TraceableStmt:
 		$$ = sel
 	}
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	SavepointStmt
@@ -13768,15 +13777,15 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
-			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $13.(uint64),
+			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
+			IgnoreLines:        $14.(uint64),
 		}
 		if $3 != nil {
 			x.FileLocRef = ast.FileLocClient
@@ -13792,8 +13801,45 @@ LoadDataStmt:
 		if $12 != nil {
 			x.LinesInfo = $12.(*ast.LinesClause)
 		}
-		if $15 != nil {
-			x.ColumnAssignments = $15.([]*ast.Assignment)
+		if $13 != nil {
+			x.NullInfo = $13.(*ast.NullDefinedBy)
+		}
+		if $16 != nil {
+			x.ColumnAssignments = $16.([]*ast.Assignment)
+		}
+		columns := []*ast.ColumnName{}
+		for _, v := range x.ColumnsAndUserVars {
+			if v.ColumnName != nil {
+				columns = append(columns, v.ColumnName)
+			}
+		}
+		x.Columns = columns
+
+		$$ = x
+	}
+
+// see https://github.com/pingcap/tidb/issues/40499
+LoadDataWithFormatStmt:
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	{
+		x := &ast.LoadDataStmt{
+			FileLocRef:         ast.FileLocServerOrRemote,
+			Path:               $5,
+			Format:             $7,
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
+		}
+		if $3 != nil {
+			x.FileLocRef = ast.FileLocClient
+			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
+			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
+			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
+				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
+			}
+		}
+		if $14 != nil {
+			x.ColumnAssignments = $14.([]*ast.Assignment)
 		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
@@ -13830,17 +13876,18 @@ LocalOpt:
 
 Fields:
 	{
-		escape := "\\"
+		defaultEscaped := byte('\\')
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    escape[0],
+			Escaped:    &defaultEscaped,
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
+		defaultEscaped := byte('\\')
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    []byte("\\")[0],
+			Escaped:    &defaultEscaped,
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
@@ -13848,18 +13895,20 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = item.Value
 			case ast.Enclosed:
-				var enclosed byte
+				var enclosed *byte = nil
 				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
+					b := item.Value[0]
+					enclosed = &b
 				}
 				fieldsClause.Enclosed = enclosed
 				if item.OptEnclosed {
 					fieldsClause.OptEnclosed = true
 				}
 			case ast.Escaped:
-				var escaped byte
+				var escaped *byte = nil
 				if len(item.Value) > 0 {
-					escaped = item.Value[0]
+					b := item.Value[0]
+					escaped = &b
 				}
 				fieldsClause.Escaped = escaped
 			}
@@ -13966,6 +14015,19 @@ LinesTerminated:
 |	"TERMINATED" "BY" FieldTerminator
 	{
 		$$ = $3
+	}
+
+NullDefinedByClause:
+	{
+		$$ = nil
+	}
+|	"NULL" "DEFINED" "BY" TextString
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value}
+	}
+|	"NULL" "DEFINED" "BY" TextString "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value, OptEnclosed: true}
 	}
 
 LoadDataSetSpecOpt:
@@ -14656,6 +14718,38 @@ PlanReplayerStmt:
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" "REMOVE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Remove:     true,
+			SQLDigest:  $5,
+			PlanDigest: $6,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
+		}
+
+		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Plan Chnage Capture Statement
+ *
+ * PLAN REPLAYER Change 'begin_time' 'end_time'
+ *******************************************************************/
+PlanChangeCaptureStmt:
+	"PLAN" "CHANGE" "CAPTURE" stringLit stringLit
+	{
+		x := &ast.PlanChangeCaptureStmt{
+			Begin: $4,
+			End:   $5,
 		}
 
 		$$ = x

@@ -477,15 +477,15 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '\'
 				backslash-escape = true
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV separator and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
 				[mydumper.csv]
 				delimiter = '\'
-				backslash-escape = true
+				escaped-by = '\'
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV delimiter and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
@@ -528,7 +528,7 @@ func TestInvalidCSV(t *testing.T) {
 		if tc.err != "" {
 			require.EqualError(t, err, tc.err, comment)
 		} else {
-			require.NoError(t, err)
+			require.NoError(t, err, tc.input)
 		}
 	}
 }
@@ -541,6 +541,25 @@ func TestInvalidTOML(t *testing.T) {
 		backslash-escape = true
 	`))
 	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
+}
+
+func TestStringOrStringSlice(t *testing.T) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = '\N'
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 'NULL' ]
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 123 ]
+	`))
+	require.ErrorContains(t, err, "invalid string slice")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
@@ -764,7 +783,7 @@ func TestLoadConfig(t *testing.T) {
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
 	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
-	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?readTimeout=30s&writeTimeout=30s&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
 	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
@@ -1143,4 +1162,18 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 		originalDefaultCfg,
 	))
 	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
+}
+
+func TestCompressionType(t *testing.T) {
+	var ct config.CompressionType
+	require.NoError(t, ct.FromStringValue(""))
+	require.Equal(t, config.CompressionNone, ct)
+	require.NoError(t, ct.FromStringValue("gzip"))
+	require.Equal(t, config.CompressionGzip, ct)
+	require.NoError(t, ct.FromStringValue("gz"))
+	require.Equal(t, config.CompressionGzip, ct)
+	require.EqualError(t, ct.FromStringValue("zstd"), "invalid compression-type 'zstd', please choose valid option between ['gzip']")
+
+	require.Equal(t, "", config.CompressionNone.String())
+	require.Equal(t, "gzip", config.CompressionGzip.String())
 }

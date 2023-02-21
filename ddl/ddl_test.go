@@ -39,9 +39,13 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+// DDLForTest exports for testing.
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
+	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
+	GetReorgCtx(jobID int64) *reorgCtx
+	RemoveReorgCtx(id int64)
 }
 
 // SetInterceptor implements DDL.SetInterceptor interface.
@@ -52,11 +56,39 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.interceptor = i
 }
 
+// IsReorgCanceled exports for testing.
+func (rc *reorgCtx) IsReorgCanceled() bool {
+	return rc.isReorgCanceled()
+}
+
+// NewReorgCtx exports for testing.
+func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
+}
+
+// GetReorgCtx exports for testing.
+func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
+	return d.getReorgCtx(jobID)
+}
+
+// RemoveReorgCtx exports for testing.
+func (d *ddl) RemoveReorgCtx(id int64) {
+	d.removeReorgCtx(id)
+}
+
 // JobNeedGCForTest is only used for test.
 var JobNeedGCForTest = jobNeedGC
 
 // NewSession is only used for test.
 var NewSession = newSession
+
+// GetJobWithoutPartition is only used for test.
+const GetJobWithoutPartition = getJobWithoutPartition
+
+// BackfillJobPrefixKeyString is only used for test.
+func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
+}
 
 // GetDDLCtx returns ddlCtx for test.
 func GetDDLCtx(d DDL) *ddlCtx {

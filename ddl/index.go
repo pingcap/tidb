@@ -101,7 +101,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
 			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
-				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
 			colLenPerUint, err := getIndexColumnLength(col, 1)
@@ -110,7 +110,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			}
 			indexColLen = maxIndexLength / colLenPerUint
 			// produce warning message
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(maxIndexLength))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -149,7 +149,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		return err
 	}
 	if idxLen > config.GetGlobalConfig().MaxIndexLength {
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+		return dbterror.ErrTooLongKey.GenWithStackByArgs(idxLen, config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
 		// return error in strict sql mode
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
 	}
 	return nil
 }
@@ -657,9 +657,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteReorganization
 
 		if job.MultiSchemaInfo == nil {
-			if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
-				return ver, errors.Trace(err)
-			}
+			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
@@ -964,6 +962,15 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+
+	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
+			MockDMLExecutionStateMerging != nil {
+			MockDMLExecutionStateMerging()
+		}
+	})
+
 	sctx, err1 := w.sessPool.get()
 	if err1 != nil {
 		err = err1
@@ -976,7 +983,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
-	if err != nil || reorgInfo.first {
+	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
@@ -1367,8 +1374,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and id = %d",
-			bfJob.JobID, bfJob.EleID, wrapKey2String(bfJob.EleKey), bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
 		if err != nil {
 			return err
 		}
@@ -1384,7 +1390,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 			return err
 		}
 		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(se, BackfillTable, bfJob, "update_backfill_task")
+		return updateBackfillJob(se, BackgroundSubtaskTable, bfJob, "update_backfill_task")
 	})
 }
 
@@ -1395,7 +1401,7 @@ func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		bfJob.FinishTS = txn.StartTS()
+		bfJob.StateUpdateTS = txn.StartTS()
 		err = RemoveBackfillJob(se, false, bfJob)
 		if err != nil {
 			return err
@@ -1791,6 +1797,12 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 // MockDMLExecution is only used for test.
 var MockDMLExecution func()
 
+// MockDMLExecutionMerging is only used for test.
+var MockDMLExecutionMerging func()
+
+// MockDMLExecutionStateMerging is only used for test.
+var MockDMLExecutionStateMerging func()
+
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
@@ -1802,6 +1814,11 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
+	// TODO: Support typeAddIndexMergeTmpWorker.
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
+	}
+
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1814,7 +1831,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				break
 			}
-			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1822,38 +1839,35 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	} else {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
-		// TODO: Support typeAddIndexMergeTmpWorker.
-		if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-			sCtx, err := w.sessPool.get()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer w.sessPool.put(sCtx)
-			return w.controlWritePhysicalTableRecord(newSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
-		}
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
 }
 
-// updateReorgInfo will find the next partition according to current reorgInfo.
-// If no more partitions, or table t is not a partitioned table, returns true to
-// indicate that the reorganize work is finished.
-func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
-		return true, nil
+		return 0, nil, nil, nil
 	}
 
-	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
+	// During data copying, copy data from partitions to be dropped
+	nextPartitionDefs := pi.DroppingDefinitions
+	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
+		// During index re-creation, process data from partitions to be added
+		nextPartitionDefs = pi.AddingDefinitions
+	}
+	if nextPartitionDefs == nil {
+		nextPartitionDefs = pi.Definitions
+	}
+	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
-		return false, errors.Trace(err)
+		return 0, nil, nil, errors.Trace(err)
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
-		return true, nil
+		return 0, nil, nil, nil
 	}
 
 	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
@@ -1866,24 +1880,40 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			time.Sleep(time.Second * 3)
 		}
 	})
+
+	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
 		indexID := reorg.currElement.ID
-		reorg.StartKey, reorg.EndKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+		startKey, endKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
 	} else {
 		currentVer, err := getValidCurrentVersion(reorg.d.store)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, nil, nil, errors.Trace(err)
 		}
-		start, end, err := getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+		startKey, endKey, err = getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, nil, nil, errors.Trace(err)
 		}
-		reorg.StartKey, reorg.EndKey = start, end
 	}
-	reorg.PhysicalTableID = pid
+	return pid, startKey, endKey, nil
+}
+
+// updateReorgInfo will find the next partition according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
+func updateReorgInfo(sessPool *sessionPool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+	pid, startKey, endKey, err := getNextPartitionInfo(reorg, t, reorg.PhysicalTableID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if pid == 0 {
+		// Next partition does not exist, all the job done.
+		return true, nil
+	}
+	reorg.PhysicalTableID, reorg.StartKey, reorg.EndKey = pid, startKey, endKey
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.Stringer("element", reorg.currElement),
@@ -1954,7 +1984,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, false),
 			indexes:       indexes,
 			rowDecoder:    rowDecoder,
 			defaultVals:   make([]types.Datum, len(t.WritableCols())),
@@ -2077,14 +2107,14 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func runBackfillJobsWithLightning(d *ddl, bfJob *BackfillJob, jobCtx *JobContext) error {
+func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) error {
 	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 
-	tbl, err := runBackfillJobs(d, bc, bfJob, jobCtx)
+	tbl, err := runBackfillJobs(d, sess, bc, bfJob, jobCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)

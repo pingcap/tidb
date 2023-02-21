@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -153,10 +154,10 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
 				if tablecodec.IsTempIndexKey(uk.newKey) {
-					if tablecodec.CheckTempIndexValueIsDelete(val) {
-						continue
-					}
-					val = tablecodec.DecodeTempIndexOriginValue(val)
+					// If it is a temp index, the value cannot be decoded by DecodeHandleInUniqueIndexValue.
+					// Since this function is an optimization, we can skip prefetching the rows referenced by
+					// temp indexes.
+					continue
 				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
@@ -251,26 +252,13 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			val, err := txn.Get(ctx, uk.newKey)
-			if err != nil {
-				if kv.IsErrNotFound(err) {
-					continue
-				}
-				return err
-			}
-			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
-			// of value, So if return a key we check and skip deleted key.
-			if tablecodec.IsTempIndexKey(uk.newKey) {
-				if tablecodec.CheckTempIndexValueIsDelete(val) {
-					continue
-				}
-				val = tablecodec.DecodeTempIndexOriginValue(val)
-			}
-			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
+			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 			if err != nil {
 				return err
 			}
-
+			if handle == nil {
+				continue
+			}
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {

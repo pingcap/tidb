@@ -166,4 +166,19 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
+
+	// only small tasks will be batched.
+	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeDAG,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 33, 32}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 2)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)
 }

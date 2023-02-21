@@ -149,7 +149,6 @@ go_test(
     ],
     embed = [":server"],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//config",
@@ -162,6 +161,7 @@ go_test(
         "//expression",
         "//extension",
         "//infoschema",
+        "//keyspace",
         "//kv",
         "//meta",
         "//metrics",

@@ -69,6 +69,10 @@ func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
+	// For partition table, also cached tblInfo with TableID for global index.
+	if info != nil && info.ID != id {
+		txn.idxNameCache[info.ID] = info
+	}
 }
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
@@ -283,6 +287,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
+	case kv.RequestSourceInternal:
+		return txn.RequestSourceInternal
 	case kv.RequestSourceType:
 		return txn.RequestSourceType
 	default:

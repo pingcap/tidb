@@ -228,7 +228,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, err
 	}
 	idxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
-	tablecodec.IndexKey2TempIndexKey(idx.Meta().ID, encodedKey)
+	tablecodec.IndexKey2TempIndexKey(encodedKey)
 	data, err = t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err

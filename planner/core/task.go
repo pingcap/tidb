@@ -153,7 +153,9 @@ func (t *copTask) finishIndexPlan() {
 		return
 	}
 	t.indexPlanFinished = true
-	if t.tablePlan != nil {
+	// index merge case is specially handled for now.
+	// We need a elegant way to solve the stats of index merge in this case.
+	if t.tablePlan != nil && t.indexPlan != nil {
 		ts := t.tablePlan.(*PhysicalTableScan)
 		originStats := ts.stats
 		ts.stats = t.indexPlan.statsInfo()
@@ -819,22 +821,43 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
-		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
-		// because handles would be reordered before being sent to table scan.
-		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
-			// When limit is pushed down, we should remove its offset.
-			newCount := p.Offset + p.Count
-			childProfile := cop.plan().statsInfo()
-			// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
-			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
-			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
-			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		if len(cop.idxMergePartPlans) == 0 {
+			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+			// because handles would be reordered before being sent to table scan.
+			if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
+				// When limit is pushed down, we should remove its offset.
+				newCount := p.Offset + p.Count
+				childProfile := cop.plan().statsInfo()
+				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
+				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
+				stats := deriveLimitStats(childProfile, float64(newCount))
+				pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			}
+			t = cop.convertToRootTask(p.ctx)
+			sunk = p.sinkIntoIndexLookUp(t)
+		} else if !cop.idxMergeIsIntersection {
+			// We only support push part of the order prop down to index merge case.
+			if !cop.keepOrder && !cop.indexPlanFinished && len(cop.rootTaskConds) == 0 {
+				newCount := p.Offset + p.Count
+				limitChildren := make([]PhysicalPlan, 0, len(cop.idxMergePartPlans))
+				for _, partialScan := range cop.idxMergePartPlans {
+					childProfile := partialScan.statsInfo()
+					stats := deriveLimitStats(childProfile, float64(newCount))
+					pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+					pushedDownLimit.SetChildren(partialScan)
+					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+					limitChildren = append(limitChildren, pushedDownLimit)
+				}
+				cop.idxMergePartPlans = limitChildren
+			}
+			t = cop.convertToRootTask(p.ctx)
+		} else {
+			// Whatever the remained case is, we directly convert to it to root task.
+			t = cop.convertToRootTask(p.ctx)
 		}
-		t = cop.convertToRootTask(p.ctx)
-		sunk = p.sinkIntoIndexLookUp(t)
 	} else if mpp, ok := t.(*mppTask); ok {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().statsInfo()
@@ -895,15 +918,6 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	return true
 }
 
-// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
-	exprs := make([]expression.Expression, 0, len(p.ByItems))
-	for _, item := range p.ByItems {
-		exprs = append(exprs, item.Expr)
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
-}
-
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
@@ -942,6 +956,12 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 //
 //	there's no prefix index column.
 func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
+	// Index merge case is specially handled for now. So we directly return false here.
+	// So we directly return false.
+	if indexPlan == nil {
+		return false
+	}
 	schema := indexPlan.Schema()
 	for _, col := range byItemCols {
 		pos := schema.ColumnIndex(col)
@@ -955,6 +975,62 @@ func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*
 	return true
 }
 
+// canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
+func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
+	exprs := make([]expression.Expression, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		exprs = append(exprs, item.Expr)
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
+}
+
+// containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
+func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+	for _, by := range p.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			for _, tCol := range tCols {
+				// A column with ID > 0 indicates that the column can be resolved by data source.
+				if tCol.ID > 0 && tCol.ID == col.ID && tCol.VirtualExpr != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
+func (p *PhysicalTopN) canPushDownToTiKV(copTask *copTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiKV) {
+		return false
+	}
+	if len(copTask.rootTaskConds) != 0 {
+		return false
+	}
+	if !copTask.indexPlanFinished && len(copTask.idxMergePartPlans) > 0 {
+		for _, partialPlan := range copTask.idxMergePartPlans {
+			if p.containVirtualColumn(partialPlan.Schema().Columns) {
+				return false
+			}
+		}
+	} else if p.containVirtualColumn(copTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
+// canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
+func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
+	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+		return false
+	}
+	if p.containVirtualColumn(mppTask.plan().Schema().Columns) {
+		return false
+	}
+	return true
+}
+
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
@@ -962,8 +1038,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
-		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
+	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushPartialTopNDownToCop(copTask)
 		if changed {
 			return newTask
 		}
@@ -974,11 +1050,12 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
+			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
-	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
 	}
@@ -986,11 +1063,11 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p, rootTask)
 }
 
-// pushTopNDownToDynamicPartition is a temp solution for partition table. It actually does the same thing as DataSource's isMatchProp.
+// pushPartialTopNDownToCop is a temp solution for partition table and index merge. It actually does the same thing as DataSource's isMatchProp.
 // We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
-func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
+func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	if copTsk.getStoreType() != kv.TiKV {
 		return nil, false
 	}
@@ -1006,36 +1083,21 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	if !allSameOrder {
 		return nil, false
 	}
-	checkIndexMatchProp := func(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
-		// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
-		if len(idxCols) < len(colsProp.SortItems) {
-			return false
-		}
-		idxPos := 0
-		for _, byItem := range colsProp.SortItems {
-			found := false
-			for ; idxPos < len(idxCols); idxPos++ {
-				if idxColLens[idxPos] == types.UnspecifiedLength && idxCols[idxPos].Equal(p.SCtx(), byItem.Col) {
-					found = true
-					idxPos++
-					break
-				}
-				if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
-					found = false
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-		return true
+	if len(copTsk.idxMergePartPlans) > 0 && copTsk.idxMergeIsIntersection {
+		return nil, false
 	}
 	var (
-		idxScan *PhysicalIndexScan
-		tblScan *PhysicalTableScan
-		tblInfo *model.TableInfo
-		err     error
+		selOnIdxScan                *PhysicalSelection
+		selOnTblScan                *PhysicalSelection
+		selSelectivity              float64
+		selSelectivityOnPartialScan []float64
+
+		idxScan           *PhysicalIndexScan
+		tblScan           *PhysicalTableScan
+		partialScans      []PhysicalPlan
+		clonedPartialPlan []PhysicalPlan
+		tblInfo           *model.TableInfo
+		err               error
 	)
 	if copTsk.indexPlan != nil {
 		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
@@ -1044,6 +1106,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalIdxScanPlan := copTsk.indexPlan
 		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			selOnIdxScan, _ = finalIdxScanPlan.(*PhysicalSelection)
 			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
 		}
 		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
@@ -1056,33 +1119,94 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalTblScanPlan := copTsk.tablePlan
 		for len(finalTblScanPlan.Children()) > 0 {
+			selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
 	}
+	if len(copTsk.idxMergePartPlans) > 0 {
+		// calculate selectivities for each partial plan in advance and clone partial plans since we may modify their stats later.
+		partialScans = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
+		selSelectivityOnPartialScan = make([]float64, len(copTsk.idxMergePartPlans))
+		for i, scan := range copTsk.idxMergePartPlans {
+			selSelectivityOnPartialScan[i] = 1
+			clonedScan, err := scan.Clone()
+			if err != nil {
+				return nil, false
+			}
+			clonedPartialPlan = append(clonedPartialPlan, clonedScan)
+			finalScan := clonedScan
+			var partialSel *PhysicalSelection
+			for len(finalScan.Children()) > 0 {
+				partialSel, _ = finalScan.(*PhysicalSelection)
+				finalScan = finalScan.Children()[0]
+			}
+			if partialSel != nil && finalScan.statsInfo().RowCount > 0 {
+				selSelectivityOnPartialScan[i] = partialSel.statsInfo().RowCount / finalScan.statsInfo().RowCount
+			}
+			partialScans = append(partialScans, finalScan)
+		}
+	}
+
+	// Note that we only need to care about one Selection at most.
+	if selOnIdxScan != nil && idxScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnIdxScan.statsInfo().RowCount / idxScan.statsInfo().RowCount
+	}
+	if idxScan == nil && selOnTblScan != nil && tblScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.statsInfo().RowCount / tblScan.statsInfo().RowCount
+	}
 
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil && len(copTsk.idxMergePartPlans) == 0 {
 		return nil, false
 	}
 
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
+		if len(copTsk.idxMergePartPlans) > 0 {
+			// Deal with index merge case.
+			propMatched := p.checkSubScans(colsProp, isDesc, partialScans...)
+			if !propMatched {
+				// If there's one used index cannot match the prop.
+				return nil, false
+			}
+			newCopSubPlans := p.addPartialLimitForSubScans(clonedPartialPlan, partialScans, selSelectivityOnPartialScan)
+			copTsk.idxMergePartPlans = newCopSubPlans
+			clonedTblScan, err := copTsk.tablePlan.Clone()
+			if err != nil {
+				return nil, false
+			}
+			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+			copTsk.tablePlan = clonedTblScan
+			copTsk.indexPlanFinished = true
+		} else {
+			// The normal index scan cases.(single read and double read)
+			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
+			if !propMatched {
+				return nil, false
+			}
+			idxScan.Desc = isDesc
+			childProfile := copTsk.plan().statsInfo()
+			newCount := p.Offset + p.Count
+			stats := deriveLimitStats(childProfile, float64(newCount))
+			pushedLimit := PhysicalLimit{
+				Count: newCount,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			pushedLimit.SetSchema(copTsk.indexPlan.Schema())
+			copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 
-		propMatched := checkIndexMatchProp(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
-		if !propMatched {
-			return nil, false
+			// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+			child := pushedLimit.Children()[0]
+			// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+			child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+			// The Limit->Selection->IndexScan case:
+			// adjust the row count of IndexScan according to the selectivity of the Selection.
+			if selSelectivity > 0 && selSelectivity < 1 {
+				scaledRowCount := child.Stats().RowCount / selSelectivity
+				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+			}
 		}
-		idxScan.Desc = isDesc
-		childProfile := copTsk.plan().statsInfo()
-		newCount := p.Offset + p.Count
-		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedLimit := PhysicalLimit{
-			Count: newCount,
-		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
-		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1095,7 +1219,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		} else {
 			idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblScan.Columns, tblScan.Schema().Columns, tables.FindPrimaryIndex(tblScan.Table))
-			matched := checkIndexMatchProp(idxCols, idxColLens, nil, colsProp)
+			matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
 			if !matched {
 				return nil, false
 			}
@@ -1111,6 +1235,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalTableScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->TableScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else {
 		return nil, false
 	}
@@ -1119,10 +1254,101 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	return attachPlan2Task(p, rootTask), true
 }
 
+// checkOrderPropForSubIndexScan checks whether these index columns can meet the specified order property.
+func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
+	// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
+	if len(idxCols) < len(colsProp.SortItems) {
+		return false
+	}
+	idxPos := 0
+	for _, byItem := range colsProp.SortItems {
+		found := false
+		for ; idxPos < len(idxCols); idxPos++ {
+			if idxColLens[idxPos] == types.UnspecifiedLength && idxCols[idxPos].Equal(p.SCtx(), byItem.Col) {
+				found = true
+				idxPos++
+				break
+			}
+			if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
+				found = false
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// checkSubScans checks whether all these Scans can meet the specified order property.
+func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc bool, scans ...PhysicalPlan) bool {
+	for _, scan := range scans {
+		switch x := scan.(type) {
+		case *PhysicalIndexScan:
+			propMatched := p.checkOrderPropForSubIndexScan(x.IdxCols, x.IdxColLens, x.constColsByCond, colsProp)
+			if !propMatched {
+				return false
+			}
+			x.KeepOrder = true
+			x.Desc = isDesc
+		case *PhysicalTableScan:
+			if x.HandleCols == nil {
+				return false
+			}
+
+			if x.HandleCols.IsInt() {
+				pk := x.HandleCols.GetCol(0)
+				if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx(), pk) {
+					return false
+				}
+			} else {
+				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				if !matched {
+					return false
+				}
+			}
+			x.KeepOrder = true
+			x.Desc = isDesc
+		default:
+			return false
+		}
+	}
+	// Return true when all sub index plan matched.
+	return true
+}
+
+func (p *PhysicalTopN) addPartialLimitForSubScans(copSubPlans []PhysicalPlan, finalPartialScans []PhysicalPlan, selSelectivities []float64) []PhysicalPlan {
+	limitAddedPlan := make([]PhysicalPlan, 0, len(copSubPlans))
+	for i, copSubPlan := range copSubPlans {
+		childProfile := copSubPlan.statsInfo()
+		newCount := p.Offset + p.Count
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedLimit := PhysicalLimit{
+			Count: newCount,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedLimit.SetSchema(copSubPlan.Schema())
+		pushedLimit.SetChildren(copSubPlan)
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->IndexScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivities[i] > 0 && selSelectivities[i] < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivities[i]
+			finalPartialScans[i].SetStats(finalPartialScans[i].Stats().ScaleByExpectCnt(scaledRowCount))
+		}
+		limitAddedPlan = append(limitAddedPlan, pushedLimit)
+	}
+	return limitAddedPlan
+}
+
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
@@ -1404,6 +1630,11 @@ func BuildFinalModeAggregation(
 				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr, true), Desc: byItem.Desc})
 			}
 
+			if aggFunc.HasDistinct && isMPPTask && aggFunc.GroupingID > 0 {
+				// keep the groupingID as it was, otherwise the new split final aggregate's ganna lost its groupingID info.
+				finalAggFunc.GroupingID = aggFunc.GroupingID
+			}
+
 			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
 			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
@@ -1423,12 +1654,14 @@ func BuildFinalModeAggregation(
 				return
 			}
 			if aggregation.NeedCount(finalAggFunc.Name) {
+				// only Avg and Count need count
 				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
 					// For MPP Task, the final count() is changed to sum().
 					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count() end),
 					// so we do not process it here.
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
+					// avg branch
 					ft := types.NewFieldType(mysql.TypeLonglong)
 					ft.SetFlen(21)
 					ft.SetCharset(charset.CharsetBin)
@@ -1487,6 +1720,7 @@ func BuildFinalModeAggregation(
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
 				}
 			} else {
+				// other agg desc just split into two parts
 				partialFuncDesc := aggFunc.Clone()
 				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
 				if aggFunc.Name == ast.AggFuncFirstRow {
@@ -1561,6 +1795,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
+			// other non-avg agg use the old schema as it did.
 			newAggFuncs = append(newAggFuncs, aggFunc)
 			newSchema.Append(p.schema.Columns[i])
 			exprs = append(exprs, p.schema.Columns[i])
@@ -1639,11 +1874,89 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		MppRunMode:   p.MppRunMode,
 	}.initForHash(p.ctx, p.stats, p.blockOffset, prop)
 	finalAgg.schema = finalPref.Schema
+	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
 }
 
-// canUse3StageDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
-func (p *basePhysicalAgg) canUse3StageDistinctAgg() bool {
+func (p *basePhysicalAgg) scale3StageForDistinctAgg() (bool, expression.GroupingSets) {
+	if p.canUse3Stage4SingleDistinctAgg() {
+		return true, nil
+	}
+	return p.canUse3Stage4MultiDistinctAgg()
+}
+
+// canUse3Stage4MultiDistinctAgg returns true if this agg can use 3 stage for multi distinct aggregation
+func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss expression.GroupingSets) {
+	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || !p.ctx.GetSessionVars().Enable3StageMultiDistinctAgg || len(p.GroupByItems) > 0 {
+		return false, nil
+	}
+	defer func() {
+		// some clean work.
+		if !can {
+			for _, fun := range p.AggFuncs {
+				fun.GroupingID = 0
+			}
+		}
+	}()
+	// groupingSets is alias of []GroupingSet, the below equal to = make([]GroupingSet, 0, 2)
+	groupingSets := make(expression.GroupingSets, 0, 2)
+	for _, fun := range p.AggFuncs {
+		if fun.HasDistinct {
+			if fun.Name != ast.AggFuncCount {
+				// now only for multi count(distinct x)
+				return false, nil
+			}
+			for _, arg := range fun.Args {
+				// bail out when args are not simple column, see GitHub issue #35417
+				if _, ok := arg.(*expression.Column); !ok {
+					return false, nil
+				}
+			}
+			// here it's a valid count distinct agg with normal column args, collecting its distinct expr.
+			groupingSets = append(groupingSets, expression.GroupingSet{fun.Args})
+			// groupingID now is the offset of target grouping in GroupingSets.
+			// todo: it may be changed after grouping set merge in the future.
+			fun.GroupingID = len(groupingSets)
+		} else if len(fun.Args) > 1 {
+			return false, nil
+		}
+		// banned group_concat(x order by y)
+		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
+			return false, nil
+		}
+	}
+	compressed := groupingSets.Merge()
+	if len(compressed) != len(groupingSets) {
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some grouping sets should be merged"))
+		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
+		return false, nil
+	}
+	if groupingSets.NeedCloneColumn() {
+		// todo: column clone haven't implemented.
+		return false, nil
+	}
+	if len(groupingSets) > 1 {
+		// fill the grouping ID for normal agg.
+		for _, fun := range p.AggFuncs {
+			if fun.GroupingID == 0 {
+				// the grouping ID hasn't set. find the targeting grouping set.
+				groupingSetOffset := groupingSets.TargetOne(fun.Args)
+				if groupingSetOffset == -1 {
+					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
+					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("couldn't find a proper group set for normal agg"))
+					return false, nil
+				}
+				// starting with 1
+				fun.GroupingID = groupingSetOffset + 1
+			}
+		}
+		return true, groupingSets
+	}
+	return false, nil
+}
+
+// canUse3Stage4SingleDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
+func (p *basePhysicalAgg) canUse3Stage4SingleDistinctAgg() bool {
 	num := 0
 	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
 		return false
@@ -1747,10 +2060,13 @@ func computePartialCursorOffset(name string) int {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
-		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
-		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+		// We should not push agg down across
+		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
+		//     if the double read needs to keep order. So we just use it to decided
+		//     whether the following plan is double read with order reserved.
+		//  2. the case that there's filters should be calculated on TiDB side.
+		//  3. the case of index merge
+		if (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {
@@ -1818,6 +2134,305 @@ func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
 	return mpp
 }
 
+// scaleStats4GroupingSets scale the derived stats because the lower source has been expanded.
+//
+//	 parent OP   <- logicalAgg   <- children OP    (derived stats)
+//	                    ｜
+//	                    v
+//	parent OP   <-  physicalAgg  <- children OP    (stats  used)
+//	                    |
+//	         +----------+----------+----------+
+//	       Final       Mid     Partial    Expand
+//
+// physical agg stats is reasonable from the whole, because expand operator is designed to facilitate
+// the Mid and Partial Agg, which means when leaving the Final, its output rowcount could be exactly
+// the same as what it derived(estimated) before entering physical optimization phase.
+//
+// From the cost model correctness, for these inserted sub-agg and even expand operator, we should
+// recompute the stats for them particularly.
+//
+// for example: grouping sets {<a>},{<b>}, group by items {a,b,c,groupingID}
+// after expand:
+//
+//	 a,   b,   c,  groupingID
+//	...  null  c    1   ---+
+//	...  null  c    1      +------- replica group 1
+//	...  null  c    1   ---+
+//	null  ...  c    2   ---+
+//	null  ...  c    2      +------- replica group 2
+//	null  ...  c    2   ---+
+//
+// since null value is seen the same when grouping data (groupingID in one replica is always the same):
+//   - so the num of group in replica 1 is equal to NDV(a,c)
+//   - so the num of group in replica 2 is equal to NDV(b,c)
+//
+// in a summary, the total num of group of all replica is equal to = Σ:NDV(each-grouping-set-cols, normal-group-cols)
+func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.GroupingSets, groupingIDCol *expression.Column,
+	childSchema *expression.Schema, childStats *property.StatsInfo) {
+	idSets := groupingSets.AllSetsColIDs()
+	normalGbyCols := make([]*expression.Column, 0, len(p.GroupByItems))
+	for _, gbyExpr := range p.GroupByItems {
+		cols := expression.ExtractColumns(gbyExpr)
+		for _, col := range cols {
+			if !idSets.Has(int(col.UniqueID)) && col.UniqueID != groupingIDCol.UniqueID {
+				normalGbyCols = append(normalGbyCols, col)
+			}
+		}
+	}
+	sumNDV := float64(0)
+	for _, groupingSet := range groupingSets {
+		// for every grouping set, pick its cols out, and combine with normal group cols to get the NDV.
+		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = append(groupingSetCols, normalGbyCols...)
+		NDV, _ := getColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		sumNDV += NDV
+	}
+	// After group operator, all same rows are grouped into one row, that means all
+	// change the sub-agg's stats
+	if p.stats != nil {
+		// equivalence to a new cloned one. (cause finalAgg and partialAgg may share a same copy of stats)
+		cpStats := p.stats.Scale(1)
+		cpStats.RowCount = sumNDV
+		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
+		for k := range cpStats.ColNDVs {
+			cpStats.ColNDVs[k] = sumNDV
+		}
+		// for old groupNDV, if it's containing one more grouping set cols, just plus the NDV where the col is excluded.
+		// for example: old grouping NDV(b,c), where b is in grouping sets {<a>},{<b>}. so when countering the new NDV:
+		// cases:
+		// new grouping NDV(b,c) := old NDV(b,c) + NDV(null, c) = old NDV(b,c) + DNV(c).
+		// new grouping NDV(a,b,c) := old NDV(a,b,c) + NDV(null,b,c) + NDV(a,null,c) = old NDV(a,b,c) + NDV(b,c) + NDV(a,c)
+		allGroupingSetsIDs := groupingSets.AllSetsColIDs()
+		for _, oneGNDV := range cpStats.GroupNDVs {
+			newGNDV := oneGNDV.NDV
+			intersectionIDs := make([]int64, 0, len(oneGNDV.Cols))
+			for i, id := range oneGNDV.Cols {
+				if allGroupingSetsIDs.Has(int(id)) {
+					// when meet an id in grouping sets, skip it (cause its null) and append the rest ids to count the incrementNDV.
+					beforeLen := len(intersectionIDs)
+					intersectionIDs = append(intersectionIDs, oneGNDV.Cols[i:]...)
+					incrementNDV, _ := getColsDNVWithMatchedLenFromUniqueIDs(intersectionIDs, childSchema, childStats)
+					newGNDV += incrementNDV
+					// restore the before intersectionIDs slice.
+					intersectionIDs = intersectionIDs[:beforeLen]
+				}
+				// insert ids one by one.
+				intersectionIDs = append(intersectionIDs, id)
+			}
+			oneGNDV.NDV = newGNDV
+		}
+		p.stats = cpStats
+	}
+}
+
+// adjust3StagePhaseAgg generate 3 stage aggregation for single/multi count distinct if applicable.
+//
+//	select count(distinct a), count(b) from foo
+//
+// will generate plan:
+//
+//	HashAgg sum(#1), sum(#2)                              -> final agg
+//	 +- Exchange Passthrough
+//	     +- HashAgg count(distinct a) #1, sum(#3) #2      -> middle agg
+//	         +- Exchange HashPartition by a
+//	             +- HashAgg count(b) #3, group by a       -> partial agg
+//	                 +- TableScan foo
+//
+//	select count(distinct a), count(distinct b), count(c) from foo
+//
+// will generate plan:
+//
+//	HashAgg sum(#1), sum(#2), sum(#3)                                           -> final agg
+//	 +- Exchange Passthrough
+//	     +- HashAgg count(distinct a) #1, count(distinct b) #2, sum(#4) #3      -> middle agg
+//	         +- Exchange HashPartition by a,b,groupingID
+//	             +- HashAgg count(c) #4, group by a,b,groupingID                -> partial agg
+//	                 +- Expand {<a>}, {<b>}                                     -> expand
+//	                     +- TableScan foo
+func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan, canUse3StageAgg bool,
+	groupingSets expression.GroupingSets, mpp *mppTask) (final, mid, part, proj4Part PhysicalPlan, _ error) {
+	if !(partialAgg != nil && canUse3StageAgg) {
+		// quick path: return the original finalAgg and partiAgg.
+		return finalAgg, nil, partialAgg, nil, nil
+	}
+	if len(groupingSets) == 0 {
+		// single distinct agg mode.
+		clonedAgg, err := finalAgg.Clone()
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		// step1: adjust middle agg.
+		middleHashAgg := clonedAgg.(*PhysicalHashAgg)
+		distinctPos := 0
+		middleSchema := expression.NewSchema()
+		schemaMap := make(map[int64]*expression.Column, len(middleHashAgg.AggFuncs))
+		for i, fun := range middleHashAgg.AggFuncs {
+			col := &expression.Column{
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  fun.RetTp,
+			}
+			if fun.HasDistinct {
+				distinctPos = i
+				fun.Mode = aggregation.Partial1Mode
+			} else {
+				fun.Mode = aggregation.Partial2Mode
+				originalCol := fun.Args[0].(*expression.Column)
+				// mapping the current partial output column with the agg origin arg column. (final agg arg should use this one)
+				schemaMap[originalCol.UniqueID] = col
+			}
+			middleSchema.Append(col)
+		}
+		middleHashAgg.schema = middleSchema
+
+		// step2: adjust final agg.
+		finalHashAgg := finalAgg.(*PhysicalHashAgg)
+		finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
+		for i, fun := range finalHashAgg.AggFuncs {
+			newArgs := make([]expression.Expression, 0, 1)
+			if distinctPos == i {
+				// change count(distinct) to sum()
+				fun.Name = ast.AggFuncSum
+				fun.HasDistinct = false
+				newArgs = append(newArgs, middleSchema.Columns[i])
+			} else {
+				for _, arg := range fun.Args {
+					newCol, err := arg.RemapColumn(schemaMap)
+					if err != nil {
+						return nil, nil, nil, nil, err
+					}
+					newArgs = append(newArgs, newCol)
+				}
+			}
+			fun.Mode = aggregation.FinalMode
+			fun.Args = newArgs
+			finalAggDescs = append(finalAggDescs, fun)
+		}
+		finalHashAgg.AggFuncs = finalAggDescs
+		// partialAgg is im-mutated from args.
+		return finalHashAgg, middleHashAgg, partialAgg, nil, nil
+	}
+	// multi distinct agg mode, having grouping sets.
+	// set the default expression to constant 1 for the convenience to choose default group set data.
+	var groupingIDCol expression.Expression
+	// enforce Expand operator above the children.
+	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
+	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
+	stats := mpp.p.statsInfo().Scale(float64(1))
+	stats.RowCount = stats.RowCount * float64(len(groupingSets))
+	physicalExpand := PhysicalExpand{
+		GroupingSets: groupingSets,
+	}.Init(p.ctx, stats, mpp.p.SelectBlockOffset())
+	// generate a new column as groupingID to identify which this row is targeting for.
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
+	groupingIDCol = &expression.Column{
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  tp,
+	}
+	// append the physical expand op with groupingID column.
+	physicalExpand.SetSchema(mpp.p.Schema().Clone())
+	physicalExpand.schema.Append(groupingIDCol.(*expression.Column))
+	physicalExpand.GroupingIDCol = groupingIDCol.(*expression.Column)
+	// attach PhysicalExpand to mpp
+	attachPlan2Task(physicalExpand, mpp)
+
+	// having group sets
+	clonedAgg, err := finalAgg.Clone()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
+	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
+	cloneHashAgg.basePlan = newBasePlan(cloneHashAgg.ctx, cloneHashAgg.tp, cloneHashAgg.blockOffset)
+	cloneHashAgg.stats = finalAgg.Stats() // reuse the final agg stats here.
+
+	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.
+	// Since we may substitute the first arg of normal agg with case-when expression here, append a
+	// customized proj here rather than depending on postOptimize to insert a blunt one for us.
+	//
+	// proj4Partial output all the base col from lower op + caseWhen proj cols.
+	proj4Partial := new(PhysicalProjection).Init(p.ctx, mpp.p.statsInfo(), mpp.p.SelectBlockOffset())
+	for _, col := range mpp.p.Schema().Columns {
+		proj4Partial.Exprs = append(proj4Partial.Exprs, col)
+	}
+	proj4Partial.SetSchema(mpp.p.Schema().Clone())
+
+	partialHashAgg := partialAgg.(*PhysicalHashAgg)
+	partialHashAgg.GroupByItems = append(partialHashAgg.GroupByItems, groupingIDCol)
+	partialHashAgg.schema.Append(groupingIDCol.(*expression.Column))
+	// it will create a new stats for partial agg.
+	partialHashAgg.scaleStats4GroupingSets(groupingSets, groupingIDCol.(*expression.Column), proj4Partial.Schema(), proj4Partial.statsInfo())
+	for _, fun := range partialHashAgg.AggFuncs {
+		if !fun.HasDistinct {
+			// for normal agg phase1, we should also modify them to target for specified group data.
+			// Expr = (case when groupingID = targeted_groupingID then arg else null end)
+			eqExpr := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), groupingIDCol, expression.NewUInt64Const(fun.GroupingID))
+			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, fun.Args[0].GetType(), eqExpr, fun.Args[0], expression.NewNull())
+			caseWhenProjCol := &expression.Column{
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  fun.Args[0].GetType(),
+			}
+			proj4Partial.Exprs = append(proj4Partial.Exprs, caseWhen)
+			proj4Partial.Schema().Append(caseWhenProjCol)
+			fun.Args[0] = caseWhenProjCol
+		}
+	}
+
+	// step2: adjust middle agg
+	// middleHashAgg shared the same stats with the final agg does.
+	middleHashAgg := cloneHashAgg
+	middleSchema := expression.NewSchema()
+	schemaMap := make(map[int64]*expression.Column, len(middleHashAgg.AggFuncs))
+	for _, fun := range middleHashAgg.AggFuncs {
+		col := &expression.Column{
+			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  fun.RetTp,
+		}
+		if fun.HasDistinct {
+			// let count distinct agg aggregate on whole-scope data rather using case-when expr to target on specified group. (agg null strict attribute)
+			fun.Mode = aggregation.Partial1Mode
+		} else {
+			fun.Mode = aggregation.Partial2Mode
+			originalCol := fun.Args[0].(*expression.Column)
+			// record the origin column unique id down before change it to be case when expr.
+			// mapping the current partial output column with the agg origin arg column. (final agg arg should use this one)
+			schemaMap[originalCol.UniqueID] = col
+		}
+		middleSchema.Append(col)
+	}
+	middleHashAgg.schema = middleSchema
+
+	// step3: adjust final agg
+	finalHashAgg := finalAgg.(*PhysicalHashAgg)
+	finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
+	for i, fun := range finalHashAgg.AggFuncs {
+		newArgs := make([]expression.Expression, 0, 1)
+		if fun.HasDistinct {
+			// change count(distinct) agg to sum()
+			fun.Name = ast.AggFuncSum
+			fun.HasDistinct = false
+			// count(distinct a,b) -> become a single partial result col.
+			newArgs = append(newArgs, middleSchema.Columns[i])
+		} else {
+			// remap final normal agg args to be output schema of middle normal agg.
+			for _, arg := range fun.Args {
+				newCol, err := arg.RemapColumn(schemaMap)
+				if err != nil {
+					return nil, nil, nil, nil, err
+				}
+				newArgs = append(newArgs, newCol)
+			}
+		}
+		fun.Mode = aggregation.FinalMode
+		fun.Args = newArgs
+		fun.GroupingID = 0
+		finalAggDescs = append(finalAggDescs, fun)
+	}
+	finalHashAgg.AggFuncs = finalAggDescs
+	return finalHashAgg, middleHashAgg, partialHashAgg, proj4Partial, nil
+}
+
 func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	t := tasks[0].copy()
 	mpp, ok := t.(*mppTask)
@@ -1879,84 +2494,35 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	case MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !mpp.needEnforceExchanger(prop) {
+			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
+		// On the other hand: try to split the mppScalar agg into multi phases agg **down** to multi nodes since data already distributed across nodes.
 		// we have to check it before the content of p has been modified
-		canUse3StageAgg := p.canUse3StageDistinctAgg()
+		canUse3StageAgg, groupingSets := p.scale3StageForDistinctAgg()
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return invalidTask
 		}
 
-		// generate 3 stage aggregation for single count distinct if applicable.
-		//  select count(distinct a), count(b) from foo
-		// will generate plan:
-		//  HashAgg sum(#1), sum(#2)                              -> final agg
-		//   +- Exchange Passthrough
-		//       +- HashAgg count(distinct a) #1, sum(#3) #2      -> middle agg
-		//           +- Exchange HashPartition by a
-		//               +- HashAgg count(b) #3, group by a       -> partial agg
-		//                   +- TableScan foo
-		var middleAgg *PhysicalHashAgg = nil
-		if partialAgg != nil && canUse3StageAgg {
-			clonedAgg, err := finalAgg.Clone()
-			if err != nil {
-				return invalidTask
-			}
-			middleAgg = clonedAgg.(*PhysicalHashAgg)
-			distinctPos := 0
-			middleSchema := expression.NewSchema()
-			schemaMap := make(map[int64]*expression.Column, len(middleAgg.AggFuncs))
-			for i, fun := range middleAgg.AggFuncs {
-				col := &expression.Column{
-					UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  fun.RetTp,
-				}
-				if fun.HasDistinct {
-					distinctPos = i
-					fun.Mode = aggregation.Partial1Mode
-				} else {
-					fun.Mode = aggregation.Partial2Mode
-					originalCol := fun.Args[0].(*expression.Column)
-					schemaMap[originalCol.UniqueID] = col
-				}
-				middleSchema.Append(col)
-			}
-			middleAgg.schema = middleSchema
+		final, middle, partial, proj4Partial, err := p.adjust3StagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
+		if err != nil {
+			return invalidTask
+		}
 
-			finalHashAgg := finalAgg.(*PhysicalHashAgg)
-			finalAggDescs := make([]*aggregation.AggFuncDesc, 0, len(finalHashAgg.AggFuncs))
-			for i, fun := range finalHashAgg.AggFuncs {
-				newArgs := make([]expression.Expression, 0, 1)
-				if distinctPos == i {
-					// change count(distinct) to sum()
-					fun.Name = ast.AggFuncSum
-					fun.HasDistinct = false
-					newArgs = append(newArgs, middleSchema.Columns[i])
-				} else {
-					for _, arg := range fun.Args {
-						newCol, err := arg.RemapColumn(schemaMap)
-						if err != nil {
-							return invalidTask
-						}
-						newArgs = append(newArgs, newCol)
-					}
-				}
-				fun.Mode = aggregation.FinalMode
-				fun.Args = newArgs
-				finalAggDescs = append(finalAggDescs, fun)
-			}
-			finalHashAgg.AggFuncs = finalAggDescs
+		// partial agg proj would be null if one scalar agg cannot run in two-phase mode
+		if proj4Partial != nil {
+			attachPlan2Task(proj4Partial, mpp)
 		}
 
 		// partial agg would be null if one scalar agg cannot run in two-phase mode
-		if partialAgg != nil {
-			attachPlan2Task(partialAgg, mpp)
+		if partial != nil {
+			attachPlan2Task(partial, mpp)
 		}
 
-		if middleAgg != nil && canUse3StageAgg {
-			items := partialAgg.(*PhysicalHashAgg).GroupByItems
+		if middle != nil && canUse3StageAgg {
+			items := partial.(*PhysicalHashAgg).GroupByItems
 			partitionCols := make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
@@ -1969,14 +2535,15 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				})
 			}
 
-			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-			newMpp := mpp.enforceExchanger(prop)
-			attachPlan2Task(middleAgg, newMpp)
+			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
+			newMpp := mpp.enforceExchanger(exProp)
+			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
 		}
 
+		// prop here still be the first generated single-partition requirement.
 		newMpp := mpp.enforceExchanger(prop)
-		attachPlan2Task(finalAgg, newMpp)
+		attachPlan2Task(final, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
@@ -1997,7 +2564,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	final := p
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 {
+		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if finalAgg != nil {

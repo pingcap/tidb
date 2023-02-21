@@ -328,6 +328,19 @@ func getTaskPlanCost(t task, op *physicalOptimizeOp) (float64, bool, error) {
 	default:
 		return 0, false, errors.New("unknown task type")
 	}
+	if t.plan() == nil {
+		// It's a very special case for index merge case.
+		cost := 0.0
+		copTsk := t.(*copTask)
+		for _, partialScan := range copTsk.idxMergePartPlans {
+			partialCost, err := getPlanCost(partialScan, taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
+			if err != nil {
+				return 0, false, err
+			}
+			cost += partialCost
+		}
+		return cost, false, nil
+	}
 	cost, err := getPlanCost(t.plan(), taskType, NewDefaultPlanCostOption().WithOptimizeTracer(op))
 	return cost, false, err
 }
@@ -388,7 +401,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		return invalidTask, 0, nil
 	}
 
-	bestTask = invalidTask
 	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
@@ -1104,13 +1116,16 @@ func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bo
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
-	if prop.TaskTp != property.RootTaskType || !prop.IsSortItemEmpty() {
+	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType || !prop.IsSortItemEmpty() {
+		return invalidTask, nil
+	}
+	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
-		indexPlanFinished: true,
+		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
 	cop.partitionInfo = PartitionInfo{
@@ -1134,7 +1149,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	ts, remainingFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
-		return nil, err
+		return invalidTask, err
 	}
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
@@ -1143,8 +1158,17 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
-	task = cop.convertToRootTask(ds.ctx)
-	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
+	_, pureTableScan := ts.(*PhysicalTableScan)
+	if prop.TaskTp != property.RootTaskType && (len(remainingFilters) > 0 || !pureTableScan) {
+		return invalidTask, nil
+	}
+	if prop.TaskTp == property.RootTaskType {
+		cop.indexPlanFinished = true
+		task = cop.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
+	} else {
+		task = cop
+	}
 	return task, nil
 }
 
@@ -1433,7 +1457,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
 		}
-	} else if prop.TaskTp == property.CopDoubleReadTaskType {
+	} else if prop.TaskTp == property.CopMultiReadTaskType {
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
@@ -1495,15 +1519,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		}
 	}
 	if candidate.isMatchProp {
-		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-			cop.extraHandleCol = col
-			cop.needExtraProj = cop.needExtraProj || isNew
-		}
 		cop.keepOrder = true
 		// IndexScan on partition table can't keep order.
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			return invalidTask, nil
+		}
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 	}
 	if cop.needExtraProj {
@@ -1981,7 +2005,7 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	// It will be handled in convertToIndexScan.
-	if prop.TaskTp == property.CopDoubleReadTaskType {
+	if prop.TaskTp == property.CopMultiReadTaskType {
 		return invalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
@@ -2001,15 +2025,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	if ts.StoreType == kv.TiFlash {
-		for _, col := range ts.schema.Columns {
-			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
-			// TiDB will fill the virtual column after decoding the cop response(executor.FillVirtualColumnValue), that is to say, the virtual
-			// columns in Cop request is just a placeholder, so TiFlash can support virtual column in cop request mode. However, virtual column
-			// with TiDBShard is special, it can be added using create index statement, TiFlash's ddl does not handle create index statement, so
-			// there is a chance that the TiDBShard's virtual column is not seen by TiFlash, in this case, TiFlash will throw column not found error
-			if ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return invalidTask, nil
+		for _, col := range ts.Columns {
+			if col.IsGenerated() && !col.GeneratedStored {
+				col.AddFlag(mysql.GeneratedColumnFlag)
 			}
 		}
 	}
@@ -2106,7 +2124,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
-	if prop.TaskTp == property.CopDoubleReadTaskType {
+	if prop.TaskTp == property.CopMultiReadTaskType {
 		return invalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
@@ -2133,7 +2151,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
@@ -2211,7 +2229,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
@@ -2434,7 +2452,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounte
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, false}
+	t = &rootTask{p: pcte, isEmpty: false}
 	if prop.CanAddEnforcer {
 		t = enforceProperty(prop, t, p.basePlan.ctx)
 	}
