@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net.(*netFD).connect.func2"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).readLoop"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

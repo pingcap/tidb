@@ -95,7 +95,7 @@ require (
 	github.com/tikv/client-go/v2 v2.0.6-0.20230209044022-95ebf6a86301
 	github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
-	github.com/twmb/murmur3 v1.1.3
+	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
@@ -124,7 +124,7 @@ require (
 	google.golang.org/api v0.106.0
 	google.golang.org/grpc v1.52.3
 	gopkg.in/yaml.v2 v2.4.0
-	honnef.co/go/tools v0.4.0
+	honnef.co/go/tools v0.4.2
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
