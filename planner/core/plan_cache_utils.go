@@ -497,6 +497,7 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, bool
 	return checker.offsetAndCount, checker.hasSubQuery, nil
 }
 
+// GetMatchOpts get options to fetch plan or generate new plan
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*util.PlanCacheMatchOpts, error) {
 	limitParams, hasSubQuery, err := ExtractLimitFromAst(node, sctx)
 	if err != nil {
