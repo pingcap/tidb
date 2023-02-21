@@ -479,6 +479,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
+				fmt.Println("gjt debug in partial table worker")
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
@@ -494,6 +495,12 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
+					fmt.Println("gjt debug before panic-1")
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", func(v failpoint.Value) {
+						time.Sleep(time.Duration(v.(int)))
+						fmt.Println("gjt debug before panic-2")
+						panic("testIndexMergePartialTableWorkerCoprLeak")
+					})
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
