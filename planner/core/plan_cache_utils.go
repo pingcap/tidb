@@ -320,7 +320,7 @@ type PlanCacheValue struct {
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return CheckTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
+	return checkTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -515,7 +515,7 @@ func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Ex
 // Currently this is only used in plan cache to check whether the types of parameters are compatible.
 // If the types of parameters are compatible, we can use the cached plan.
 // tpsExpected is types from cached plan
-func CheckTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool {
+func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool {
 	if len(tpsExpected) != len(tpsActual) {
 		return false
 	}

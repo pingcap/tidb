@@ -251,7 +251,7 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
 		// check param types' compatibility
-		ok1 := CheckTypesCompatibility4PC(plan.matchOpts.ParamTypes, matchOpts.ParamTypes)
+		ok1 := checkTypesCompatibility4PC(plan.matchOpts.ParamTypes, matchOpts.ParamTypes)
 		if !ok1 {
 			continue
 		}
