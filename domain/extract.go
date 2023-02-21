@@ -19,16 +19,17 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/BurntSushi/toml"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -131,6 +132,7 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 	}
 	records, err := w.collectRecords(ctx, task)
 	if err != nil {
+		logutil.BgLogger().Error("collect stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
 	p := w.packageExtractPlanRecords(records)
@@ -146,6 +148,7 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 		return nil, err
 	}
 	collectMap := make(map[stmtSummaryHistoryKey]stmtSummaryHistoryRecord, 0)
+	is := GetDomain(w.sctx).InfoSchema()
 	for _, row := range rows {
 		record := stmtSummaryHistoryRecord{}
 		record.stmtType = row.GetString(0)
@@ -172,8 +175,11 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 			}
 			dbName := names[0]
 			tblName := names[1]
-			// TODO: support check isView here
-			record.tables = append(record.tables, tableNamePair{DBName: dbName, TableName: tblName, IsView: false})
+			t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+			if err != nil {
+				return nil, err
+			}
+			record.tables = append(record.tables, tableNamePair{DBName: dbName, TableName: tblName, IsView: t.Meta().IsView()})
 		}
 		if setRecord {
 			collectMap[key] = record
@@ -212,13 +218,16 @@ func (w *extractWorker) packageExtractPlanRecords(records map[stmtSummaryHistory
 	return p
 }
 
-func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (string, error) {
+func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name string, err error) {
 	f, name, err := GenerateExtractFile()
 	if err != nil {
 		return "", err
 	}
 	zw := zip.NewWriter(f)
 	defer func() {
+		if err != nil {
+			logutil.BgLogger().Error("dump extract plan task failed", zap.Error(err))
+		}
 		if err1 := zw.Close(); err1 != nil {
 			logutil.BgLogger().Warn("close zip file failed", zap.String("file", name), zap.Error(err))
 		}
@@ -243,14 +252,25 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (string, e
 	if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
 		return "", err
 	}
-	if err = dumpExtractPlanSQLs(p.sqls, zw); err != nil {
+	// Dump sqls
+	if err = dumpExtractPlanSQLs(p.sqls, p.skippedSQLs, zw); err != nil {
 		return "", err
 	}
 	return name, nil
 }
 
-func dumpExtractPlanSQLs(sqls []string, zw *zip.Writer) error {
-	zf, err := zw.Create("sql/sqls.sql")
+func dumpExtractPlanSQLs(sqls, skippedSQLs []string, zw *zip.Writer) error {
+	if err := dumpTargetSQLs(sqls, "sql/sqls.sql", zw); err != nil {
+		return err
+	}
+	if err := dumpTargetSQLs(skippedSQLs, "sql/skippedSQLs.sql", zw); err != nil {
+		return err
+	}
+	return nil
+}
+
+func dumpTargetSQLs(sqls []string, path string, zw *zip.Writer) error {
+	zf, err := zw.Create(path)
 	if err != nil {
 		return err
 	}
