@@ -395,6 +395,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
+					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", func(v failpoint.Value) {
+						time.Sleep(time.Duration(v.(int)))
+						panic("testIndexMergePartialIndexWorkerCoprLeak")
+					})
 					selectResults = append(selectResults, result)
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
@@ -510,6 +514,10 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", func(v failpoint.Value) {
+						time.Sleep(time.Duration(v.(int)))
+						panic("testIndexMergePartialTableWorkerCoprLeak")
+					})
 					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
