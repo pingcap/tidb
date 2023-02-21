@@ -569,7 +569,7 @@ const (
 
 var (
 	// CreateDefaultResourceGroup is the statement to create the default resource group
-	CreateDefaultResourceGroup = fmt.Sprintf("CREATE RESOURCE GROUP `default` RU_PER_SEC=%d BURSTABLE", resourcegroup.MaxRUFillRate)
+	CreateDefaultResourceGroup = fmt.Sprintf("CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=%d BURSTABLE", resourcegroup.MaxRUFillRate)
 )
 
 // bootstrap initiates system DB for a store.
