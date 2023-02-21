@@ -55,6 +55,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	mergeAddIndex(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo)
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
@@ -355,6 +356,45 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 		}
 	}
 	return nil
+}
+
+func mergeAddIndex(info *model.MultiSchemaInfo) {
+	var newSubJob *model.SubJob
+	var unique []bool
+	var indexNames []model.CIStr
+	var indexPartSpecifications [][]*ast.IndexPartSpecification
+	var indexOption []*ast.IndexOption
+	var hiddenCols [][]*model.ColumnInfo
+	var global []bool
+
+	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	for _, subJob := range info.SubJobs {
+		if subJob.Type == model.ActionAddIndex {
+			if newSubJob == nil {
+				newSubJob = new(model.SubJob)
+				newSubJob.Type = model.ActionAddIndex
+				newSubJob.Args = nil
+				newSubJob.RawArgs = nil
+				newSubJob.SchemaState = subJob.SchemaState
+				newSubJob.SnapshotVer = subJob.SnapshotVer
+				newSubJob.Revertible = true
+				newSubJob.CtxVars = subJob.CtxVars
+			}
+			unique = append(unique, subJob.Args[0].(bool))
+			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
+			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
+			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
+			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			global = append(global, subJob.Args[5].(bool))
+		} else {
+			newSubJobs = append(newSubJobs, subJob)
+		}
+	}
+	if newSubJob != nil {
+		newSubJob.Args = []interface{}{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+		newSubJobs = append(newSubJobs, newSubJob)
+		info.SubJobs = newSubJobs
+	}
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
