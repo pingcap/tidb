@@ -7,6 +7,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -331,6 +332,7 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
+	checksumBackoffer := utils.NewFixedBackoffer(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
@@ -343,11 +345,17 @@ func (exec *Executor) Execute(
 		)
 		err = utils.WithRetry(ctx, func() error {
 			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
+			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
+				// first time reach here. return error
+				if val.(bool) && checksumBackoffer.Attempt() == utils.ChecksumRetryTime {
+					err = errors.New("inject checksum error")
+				}
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}
 			return nil
-		}, utils.NewFixedBackoffer(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval))
+		}, checksumBackoffer)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
