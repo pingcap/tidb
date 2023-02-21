@@ -263,10 +263,7 @@ func dumpExtractPlanSQLs(sqls, skippedSQLs []string, zw *zip.Writer) error {
 	if err := dumpTargetSQLs(sqls, "sql/sqls.sql", zw); err != nil {
 		return err
 	}
-	if err := dumpTargetSQLs(skippedSQLs, "sql/skippedSQLs.sql", zw); err != nil {
-		return err
-	}
-	return nil
+	return dumpTargetSQLs(skippedSQLs, "sql/skippedSQLs.sql", zw)
 }
 
 func dumpTargetSQLs(sqls []string, path string, zw *zip.Writer) error {
