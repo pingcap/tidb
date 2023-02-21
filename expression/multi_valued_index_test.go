@@ -217,6 +217,16 @@ func TestMultiValuedIndexDML(t *testing.T) {
 		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02" as date)));`, errno.ErrInvalidJSONValueForFuncIndex)
 		tk.MustExec(`insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));`)
 		tk.MustGetErrCode(`insert into t values (json_array(cast('{"a":1}' as json)));`, errno.ErrInvalidJSONValueForFuncIndex)
+
+		tk.MustExec(`drop table if exists t;`)
+		tk.MustExec(`create table t(a json, index idx((cast(a as signed array))));`)
+		tk.MustExec(`insert into t values ('[1,2,3]');`)
+		tk.MustExec(`insert into t values ('[-1]');`)
+		tk.MustExec(`insert into t values ('[]');`)
+		tk.MustExec(`insert into t values (null);`)
+		tk.MustExec(`admin check table t`)
+		tk.MustExec(`update t set a = '[2,3,-1]'`)
+		tk.MustExec(`admin check table t`)
 	}
 }
 
