@@ -11287,7 +11287,7 @@ ShowLikeOrWhereOpt:
 		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
-			IsLike: true,
+			IsLike:  true,
 		}
 	}
 |	"WHERE" Expression
