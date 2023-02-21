@@ -35,20 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	stmtNodeCounterUse       = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow      = metrics.StmtNodeCounter.WithLabelValues("Show")
-	stmtNodeCounterBegin     = metrics.StmtNodeCounter.WithLabelValues("Begin")
-	stmtNodeCounterCommit    = metrics.StmtNodeCounter.WithLabelValues("Commit")
-	stmtNodeCounterRollback  = metrics.StmtNodeCounter.WithLabelValues("Rollback")
-	stmtNodeCounterInsert    = metrics.StmtNodeCounter.WithLabelValues("Insert")
-	stmtNodeCounterReplace   = metrics.StmtNodeCounter.WithLabelValues("Replace")
-	stmtNodeCounterDelete    = metrics.StmtNodeCounter.WithLabelValues("Delete")
-	stmtNodeCounterUpdate    = metrics.StmtNodeCounter.WithLabelValues("Update")
-	stmtNodeCounterSelect    = metrics.StmtNodeCounter.WithLabelValues("Select")
-	stmtNodeCounterSavepoint = metrics.StmtNodeCounter.WithLabelValues("Savepoint")
-)
-
 // Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 	Ctx sessionctx.Context
@@ -207,40 +193,21 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := ast.GetStmtLabel(stmtNode)
-	switch typeLabel {
-	case "Use":
-		stmtNodeCounterUse.Inc()
-	case "Show":
-		stmtNodeCounterShow.Inc()
-	case "Begin":
-		stmtNodeCounterBegin.Inc()
-	case "Commit":
-		stmtNodeCounterCommit.Inc()
-	case "Rollback":
-		stmtNodeCounterRollback.Inc()
-	case "Insert":
-		stmtNodeCounterInsert.Inc()
-	case "Replace":
-		stmtNodeCounterReplace.Inc()
-	case "Delete":
-		stmtNodeCounterDelete.Inc()
-	case "Update":
-		stmtNodeCounterUpdate.Inc()
-	case "Select":
-		stmtNodeCounterSelect.Inc()
-	case "Savepoint":
-		stmtNodeCounterSavepoint.Inc()
-	default:
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
-	}
 
-	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
-		return
-	}
-
-	dbLabels := getStmtDbLabel(stmtNode)
-	for dbLabel := range dbLabels {
-		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
+		dbLabels := getStmtDbLabel(stmtNode)
+		switch {
+		case config.GetGlobalConfig().Status.RecordQPSbyDB:
+			for dbLabel := range dbLabels {
+				metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+			}
+		case config.GetGlobalConfig().Status.RecordDBLabel:
+			for dbLabel := range dbLabels {
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+			}
+		}
+	} else {
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
 	}
 }
 

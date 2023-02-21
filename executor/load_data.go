@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -42,13 +41,20 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
+const (
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
+	// mydumper-format DML file
+	LoadDataFormatSQLDump = "sqldumpfile"
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is
+	// parquet
+	LoadDataFormatParquet = "parquet"
+)
+
 var (
-	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 	// InTest is a flag that bypass gcs authentication in unit tests.
 	InTest bool
@@ -66,15 +72,24 @@ type LoadDataExec struct {
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	// TODO: support lines terminated is "".
-	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return errors.New("Load Data: don't support load data terminated is nil")
-	}
+
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
 	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
 		return errors.New("can only load data into base tables")
+	}
+
+	// CSV-like
+	if e.loadDataInfo.Format == "" {
+		if e.loadDataInfo.NullInfo != nil && e.loadDataInfo.NullInfo.OptEnclosed &&
+			(e.loadDataInfo.FieldsInfo == nil || e.loadDataInfo.FieldsInfo.Enclosed == nil) {
+			return errors.New("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+		}
+		// TODO: support lines terminated is "".
+		if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+			return errors.New("Load Data: don't support load data terminated is nil")
+		}
 	}
 
 	switch e.FileLocRef {
@@ -125,6 +140,10 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	defer fileReader.Close()
 
+	e.loadDataInfo.loadRemoteInfo = loadRemoteInfo{
+		store: s,
+		path:  filename,
+	}
 	return e.loadDataInfo.Load(ctx, fileReader)
 }
 
@@ -152,6 +171,11 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
+type loadRemoteInfo struct {
+	store storage.ExternalStorage
+	path  string
+}
+
 // LoadDataInfo saves the information of loading data operation.
 // TODO: rename it and remove unnecessary public methods.
 type LoadDataInfo struct {
@@ -159,9 +183,11 @@ type LoadDataInfo struct {
 
 	row         []types.Datum
 	Path        string
+	Format      string
 	Table       table.Table
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
@@ -175,9 +201,11 @@ type LoadDataInfo struct {
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
 	OnDuplicate     ast.OnDuplicateKeyHandlingType
+
+	loadRemoteInfo loadRemoteInfo
 }
 
-// FieldMapping inticates the relationship between input field and table column or user variable
+// FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
@@ -206,8 +234,8 @@ func (e *LoadDataInfo) Load(ctx context.Context, reader io.ReadSeekCloser) error
 // processStream process input stream from network
 func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
 	var (
-		csvParser *mydump.CSVParser
-		err       error
+		parser mydump.Parser
+		err    error
 	)
 	defer func() {
 		r := recover()
@@ -215,6 +243,10 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 			logutil.Logger(ctx).Error("process routine panicked",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
+		}
+		if err != nil {
+			logutil.Logger(ctx).Error("process routine meet error",
+				zap.Error(err))
 		}
 		if err != nil || r != nil {
 			loadDataInfo.forceQuit()
@@ -224,21 +256,49 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		wg.Done()
 	}()
 
-	// TODO: use parser interface
-	csvParser, err = mydump.NewCSVParser(
-		ctx,
-		loadDataInfo.GenerateCSVConfig(),
-		reader,
-		int64(config.ReadBlockSize),
-		nil,
-		false,
-		// TODO: support charset conversion
-		nil)
-	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+	switch strings.ToLower(loadDataInfo.Format) {
+	case "":
+		// CSV-like
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			loadDataInfo.GenerateCSVConfig(),
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+			false,
+			// TODO: support charset conversion
+			nil)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			loadDataInfo.Ctx.GetSessionVars().SQLMode,
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+		)
+	case LoadDataFormatParquet:
+		if loadDataInfo.loadRemoteInfo.store == nil {
+			err = errors.New("parquet format requires remote storage")
+			return
+		}
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			loadDataInfo.loadRemoteInfo.store,
+			reader,
+			loadDataInfo.loadRemoteInfo.path,
+		)
+	default:
+		err = errors.Errorf("unsupported format: %s", loadDataInfo.Format)
+	}
+	if err != nil {
+		return
+	}
+
+	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
 	for {
 		// prepare batch and enqueue task
-		err = loadDataInfo.ReadRows(ctx, csvParser)
+		err = loadDataInfo.ReadRows(ctx, parser)
 		if err != nil {
 			logutil.Logger(ctx).Error("load data process stream error in ReadRows", zap.Error(err))
 			return
@@ -516,109 +576,22 @@ func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.curBatchCnt = 0
 }
 
-// getValidData returns curData that starts from starting symbol.
-// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
-func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
-	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
-	if idx == -1 {
-		return curData[len(curData)-len(e.LinesInfo.Starting)+1:], false
-	}
-
-	return curData[idx:], true
-}
-
-// indexOfTerminator return index of terminator, if not, return -1.
-// normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
-	fieldTerm := []byte(e.FieldsInfo.Terminated)
-	fieldTermLen := len(fieldTerm)
-	lineTerm := []byte(e.LinesInfo.Terminated)
-	lineTermLen := len(lineTerm)
-	type termType int
-	const (
-		notTerm termType = iota
-		fieldTermType
-		lineTermType
-	)
-	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
-	cmpTerm := func(restLen int, bs []byte) (typ termType) {
-		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-			typ = fieldTermType
-			return
-		}
-		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-			typ = lineTermType
-			return
-		}
-		return
-	}
-	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
-		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
-		cmpTerm = func(restLen int, bs []byte) (typ termType) {
-			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-				typ = lineTermType
-				return
-			}
-			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-				typ = fieldTermType
-				return
-			}
-			return
-		}
-	}
-	atFieldStart := true
-	inQuoter := false
-loop:
-	for i := 0; i < len(bs); i++ {
-		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			inQuoter = !inQuoter
-			atFieldStart = false
-			continue
-		}
-		restLen := len(bs) - i - 1
-		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen, bs[i+1:]) {
-			case lineTermType:
-				return i + 1
-			case fieldTermType:
-				i += fieldTermLen
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		if !inQuoter {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen+1, bs[i:]) {
-			case lineTermType:
-				return i
-			case fieldTermType:
-				i += fieldTermLen - 1
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		// if it is escaped char, skip next char.
-		if bs[i] == e.FieldsInfo.Escaped {
-			i++
-		}
-		atFieldStart = false
-	}
-	return -1
-}
-
 // ReadRows reads rows from parser. When parser's reader meet EOF, it will return
 // nil. For other errors it will return directly. When the rows batch is full it
 // will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) error {
+func (e *LoadDataInfo) ReadRows(ctx context.Context, parser mydump.Parser) error {
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
 	for e.IgnoreLines > 0 {
-		_, _, err := parser.ReadUntilTerminator()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				return nil
@@ -693,6 +666,9 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []type
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
+		// User variable names are not case-sensitive
+		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
+		name = strings.ToLower(name)
 		if col == nil || col.IsNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
@@ -763,27 +739,44 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataInfo.
 func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
-	var nullDef []string
-	if e.FieldsInfo.Enclosed != 0 {
+	var (
+		nullDef          []string
+		quotedNullIsText = true
+	)
+
+	if e.NullInfo != nil {
+		nullDef = append(nullDef, e.NullInfo.NullDef)
+		quotedNullIsText = !e.NullInfo.OptEnclosed
+	} else if e.FieldsInfo.Enclosed != nil {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.FieldsInfo.Escaped != 0 {
-		nullDef = append(nullDef, string([]byte{e.FieldsInfo.Escaped, 'N'}))
+	if e.FieldsInfo.Escaped != nil {
+		nullDef = append(nullDef, string([]byte{*e.FieldsInfo.Escaped, 'N'}))
 	}
+
+	enclosed := ""
+	if e.FieldsInfo.Enclosed != nil {
+		enclosed = string([]byte{*e.FieldsInfo.Enclosed})
+	}
+	escaped := ""
+	if e.FieldsInfo.Escaped != nil {
+		escaped = string([]byte{*e.FieldsInfo.Escaped})
+	}
+
 	return &config.CSVConfig{
 		Separator: e.FieldsInfo.Terminated,
 		// ignore optionally enclosed
-		Delimiter:      string([]byte{e.FieldsInfo.Enclosed}),
-		Terminator:     e.LinesInfo.Terminated,
-		NotNull:        false,
-		Null:           nullDef,
-		Header:         false,
-		TrimLastSep:    false,
-		EscapedBy:      string([]byte{e.FieldsInfo.Escaped}),
-		StartingBy:     e.LinesInfo.Starting,
-		AllowEmptyLine: true,
-		// TODO: set it through NULL DEFINED BY OPTIONALLY ENCLOSED
-		QuotedNullIsText: true,
+		Delimiter:        enclosed,
+		Terminator:       e.LinesInfo.Terminated,
+		NotNull:          false,
+		Null:             nullDef,
+		Header:           false,
+		TrimLastSep:      false,
+		EscapedBy:        escaped,
+		StartingBy:       e.LinesInfo.Starting,
+		AllowEmptyLine:   true,
+		QuotedNullIsText: quotedNullIsText,
+		UnescapedQuote:   true,
 	}
 }
 

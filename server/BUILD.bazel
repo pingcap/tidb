@@ -66,6 +66,7 @@ go_library(
         "//table",
         "//table/tables",
         "//tablecodec",
+        "//ttl/client",
         "//types",
         "//util",
         "//util/arena",
@@ -149,7 +150,6 @@ go_test(
     ],
     embed = [":server"],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//config",

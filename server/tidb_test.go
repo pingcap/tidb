@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package server
 
@@ -83,6 +82,16 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = false
+	cfg.Performance.TCPKeepAlive = true
+	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
@@ -93,11 +102,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := newTestConfig()
-	cfg.Port = ts.port
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = ts.statusPort
-	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -125,7 +129,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		}
 		view.Stop()
 	})
-
 	return ts
 }
 
@@ -1623,7 +1626,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'topsql.t_not_exist' doesn't exist", err.Error())
 	}
 	check = func() {
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
@@ -1674,7 +1677,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt.MustExec("alter table t drop index if exists idx_b")
 		_, err := db.Exec(addIndexStr)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1062: Duplicate entry '1' for key 't.idx_b'", err.Error())
+		require.Equal(t, "Error 1062 (23000): Duplicate entry '1' for key 't.idx_b'", err.Error())
 	}
 	check = func() {
 		checkFn(addIndexStr, "")
@@ -1688,7 +1691,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	execFn = func(db *sql.DB) {
 		_, err = db.Query(execFailedQuery)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1105: mock handleTaskOnce error", err.Error())
+		require.Equal(t, "Error 1105 (HY000): mock handleTaskOnce error", err.Error())
 	}
 	check = func() {
 		checkFn(execFailedQuery, "")
@@ -2182,11 +2185,11 @@ func TestTopSQLStatementStats2(t *testing.T) {
 
 		_, err := db.Exec(multiStatement6)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t6_not_exist' doesn't exist", err.Error())
 
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
-		require.Equal(t, "Error 1146: Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
+		require.Equal(t, "Error 1146 (42S02): Table 'stmtstats.t7_not_exist' doesn't exist", err.Error())
 
 		for _, ca := range cases8 {
 			dbt.MustExec(ca)
@@ -2973,12 +2976,14 @@ func TestChunkReuseCorruptSysVarString(t *testing.T) {
 
 	rs, err := conn.QueryContext(context.Background(), "show tables in test")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
 	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
 	ts.Rows(t, rs)
+	require.NoError(t, err)
 
 	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
 	require.NoError(t, err)

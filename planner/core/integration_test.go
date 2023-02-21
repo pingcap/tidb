@@ -459,6 +459,24 @@ func TestIssue40910(t *testing.T) {
 		"Warning 1105 The system ignores the hints in the current query and uses the hints specified in the bindSQL: SELECT /*+ use_index(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 1 AND `a` < 10 ORDER BY `b`"))
 }
 
+func TestSplitJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(a int, b int, index idx_a(a), index idx_b(b));`)
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
+	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints are conflict, you can only specify one type of join"))
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=1`)
+	tk.MustExec("select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Join hints conflict after join reorder phase, you can only specify one type of join"))
+
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
+}
+
 func TestKeepOrderHintWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3189,14 +3207,18 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
@@ -3207,8 +3229,10 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
 		"IndexMerge 19.99 root  type: union",
@@ -3218,8 +3242,10 @@ func TestIssue29221(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
 		"Limit 3.00 root  offset:0, count:3",
 		"└─IndexMerge 3.00 root  type: union",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Limit(Build) 1.50 cop[tikv]  offset:0, count:3",
+		"  │ └─IndexRangeScan 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
