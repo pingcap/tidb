@@ -827,6 +827,18 @@ func TestIndexMergeProcessWorkerHang(t *testing.T) {
 	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang"))
+
+	sql = "select /*+ use_index_merge(t1, c2, c3) */ c1 from t1 where c2 < 900 and c3 < 1000;"
+	res = tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+	require.Contains(t, res[1][4], "intersection")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return(20)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang", "return(true)"))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang"))
 }
 
 func TestIndexMergePanic(t *testing.T) {

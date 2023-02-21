@@ -883,7 +883,10 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 		}
 		failpoint.Inject("testIndexMergeProcessWorkerUnionHang", func(_ failpoint.Value) {
 			for i := 0; i < cap(resultCh); i++ {
-				resultCh <- &indexMergeTableTask{}
+				select {
+				case resultCh <- &indexMergeTableTask{}:
+				default:
+				}
 			}
 		})
 		select {
@@ -999,7 +1002,10 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	}
 	failpoint.Inject("testIndexMergeProcessWorkerIntersectionHang", func(_ failpoint.Value) {
 		for i := 0; i < cap(resultCh); i++ {
-			resultCh <- &indexMergeTableTask{}
+			select {
+			case resultCh <- &indexMergeTableTask{}:
+			default:
+			}
 		}
 	})
 	for _, task := range tasks {
