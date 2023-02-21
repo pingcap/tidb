@@ -6,6 +6,8 @@ go_test(
     srcs = [
         "main_test.go",
         "one_csv_test.go",
+        "one_parquet_test.go",
+        "one_sqldump_test.go",
         "util_test.go",
     ],
     flaky = True,
