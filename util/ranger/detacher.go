@@ -204,7 +204,14 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		if colSets.Len() == 0 {
 			continue
 		}
-		res, err := DetachCondAndBuildRangeForIndex(sctx, tmpConds, cols, lengths, rangeMaxSize)
+		// When we build ranges for the CNF item, we choose not to merge consecutive ranges because we hope to get point
+		// ranges here. See https://github.com/pingcap/tidb/issues/41572 for more details.
+		//
+		// Here is an example. Assume that the index is `idx(a,b,c)` and the condition is `((a,b) in ((1,1),(1,2)) and c = 1`.
+		// We build ranges for `(a,b) in ((1,1),(1,2))` and get `[1 1, 1 1] [1 2, 1 2]`, which are point ranges and we can
+		// append `c = 1` to the point ranges. However, if we choose to merge consecutive ranges here, we get `[1 1, 1 2]`,
+		// which are not point ranges, and we cannot append `c = 1` anymore.
+		res, err := detachCondAndBuildRangeWithoutMerging(sctx, tmpConds, cols, lengths, rangeMaxSize)
 		if err != nil {
 			return nil, -1, nil, err
 		}
@@ -821,11 +828,9 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 	return d.detachCondAndBuildRangeForCols()
 }
 
-// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
-// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
-func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+// detachCondAndBuildRangeWithoutMerging detaches the index filters from table filters and uses them to build ranges.
+// When building ranges, it doesn't merge consecutive ranges.
+func detachCondAndBuildRangeWithoutMerging(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
@@ -836,6 +841,15 @@ func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []e
 		rangeMaxSize:     rangeMaxSize,
 	}
 	return d.detachCondAndBuildRangeForCols()
+}
+
+// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
+// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
+func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
+	return detachCondAndBuildRangeWithoutMerging(sctx, conditions, cols, lengths, rangeMaxSize)
 }
 
 type rangeDetacher struct {
