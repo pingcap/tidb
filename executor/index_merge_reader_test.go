@@ -903,12 +903,12 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// If got goroutines leak in coprocessor, ci will fail.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak", "return(3)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialTableWorkerCoprLeak")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak", "return(3)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))

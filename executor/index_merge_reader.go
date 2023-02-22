@@ -363,6 +363,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 				var notClosedSelectResult distsql.SelectResult
 				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
 					if notClosedSelectResult != nil {
 						terror.Call(notClosedSelectResult.Close)
 					}
@@ -391,10 +392,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						return
 					}
 					notClosedSelectResult = result
-					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", func(v failpoint.Value) {
-						time.Sleep(time.Second * time.Duration(v.(int)))
-						panic("testIndexMergePartialIndexWorkerCoprLeak")
-					})
+					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -509,10 +507,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
-					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", func(v failpoint.Value) {
-						time.Sleep(time.Second * time.Duration(v.(int)))
-						panic("testIndexMergePartialTableWorkerCoprLeak")
-					})
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", nil)
 					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
