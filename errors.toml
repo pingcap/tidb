@@ -1648,7 +1648,7 @@ transaction aborted because lazy uniqueness check is enabled and an error occurr
 
 ["executor:8154"]
 error = '''
-Load data raise error(s): %s
+LOAD DATA raises error(s): %s
 '''
 
 ["executor:8212"]

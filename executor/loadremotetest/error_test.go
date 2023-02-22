@@ -41,7 +41,7 @@ func (s *mockGCSSuite) TestErrorMessage() {
 
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
-	s.tk.MustExec("CREATE TABLE t (i INT, s varchar(32));")
+	s.tk.MustExec("CREATE TABLE t (i INT PRIMARY KEY, s varchar(32));")
 
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'gs://1' INTO TABLE t (wrong)")
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
@@ -51,12 +51,35 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'gs://1' INTO TABLE t (@v) SET wrong=@v")
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): storage abc not support yet")
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): storage abc not support yet")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): failed to get region of bucket no-network")
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): failed to get region of bucket no-network")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
 
-	// TODO: test error during execution, like insert NULL to NOT NULL column, duplicate key, etc.
+	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
+	//s.server.CreateObject(fakestorage.Object{
+	//	ObjectAttrs: fakestorage.ObjectAttrs{
+	//		BucketName: "test-tsv",
+	//		Name:       "t.tsv",
+	//	},
+	//	Content: []byte("1\t2\n" +
+	//		"1\t4\n"),
+	//})
+	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+	//	INTO TABLE t;`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'")
+
+	//s.server.CreateObject(fakestorage.Object{
+	//	ObjectAttrs: fakestorage.ObjectAttrs{
+	//		BucketName: "test-tsv",
+	//		Name:       "t2.tsv",
+	//	},
+	//	Content: []byte("null\t2\n" +
+	//		"3\t4\n"),
+	//})
+	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+	//	INTO TABLE t NULL DEFINED BY 'null';`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): xxx")
 }
