@@ -991,25 +991,6 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
-	e := &PlanChangeCaptureExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-	}
-	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	end, err := time.Parse("2006-01-02 15:04:05", v.End)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	e.Begin = begin
-	e.End = end
-	return e
-}
-
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{
@@ -3436,6 +3417,29 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
 		memTracker:   memory.NewTracker(v.ID(), -1),
+
+		columns:                    []*model.ColumnInfo{},
+		virtualColumnIndex:         []int{},
+		virtualColumnRetFieldTypes: []*types.FieldType{},
+	}
+
+	var hasVirtualCol bool
+	for _, col := range v.Schema().Columns {
+		if col.VirtualExpr != nil {
+			hasVirtualCol = true
+			break
+		}
+	}
+	if hasVirtualCol {
+		// If hasVirtualCol, Join should not pushdown to tiflash,
+		// so there is only one TableScan.
+		ts, err := v.GetTableScan()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		gather.columns = ts.Columns
+		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
 	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return gather
