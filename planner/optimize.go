@@ -95,8 +95,9 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, err
 	}
 	defer func() {
-		if err != nil {
-			// keep the stmt unchanged if err so that it can fallback to the normal optimization path.
+		// If some error occurs, just return the error directly.
+		// If no error but this stmt is not supported, restore the AST node so that it can fallback to the normal optimization path
+		if err == nil && !ok {
 			// TODO: add metrics
 			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
 		}
