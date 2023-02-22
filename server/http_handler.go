@@ -88,6 +88,10 @@ const (
 	pSnapshot           = "snapshot"
 	pFileName           = "filename"
 	pDumpPartitionStats = "dumpPartitionStats"
+	pBegin              = "begin"
+	pEnd                = "end"
+	pIsBackground       = "isBackground"
+	pType               = "pType"
 )
 
 // For query string
