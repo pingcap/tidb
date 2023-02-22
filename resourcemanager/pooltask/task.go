@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/channel"
 )
 
@@ -151,6 +152,7 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U
 
 // Wait is to wait the pool task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
+	log.Info("yyy---------TaskController exit")
 	t.wg.Wait()
 	close(t.resultCh)
 	t.pool.DeleteTask(t.taskID)

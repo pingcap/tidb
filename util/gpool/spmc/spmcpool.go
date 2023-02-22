@@ -287,6 +287,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			}
 			close(inputCh)
 			wg.Done()
+			log.Info("yyy---------producer exit")
 		}()
 		for {
 			if isClose(productExitCh) {
@@ -341,6 +342,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			}
 			close(inputCh)
 			wg.Done()
+			log.Info("yyy---------producer exit")
 		}()
 		for {
 			if isClose(productExitCh) {

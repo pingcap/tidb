@@ -182,6 +182,7 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 			select {
 			case result, ok := <-resultCh:
 				if !ok {
+					logutil.BgLogger().Warn("yyy--------- wait final exit")
 					return
 				}
 				if result.err != nil {
@@ -194,6 +195,7 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 				if ingestBackendCtx != nil && i%workerCnt == 0 {
 					err := ingestBackendCtx.Flush(eleID)
 					if err != nil {
+						logutil.BgLogger().Warn("handle backfill task, flush failed", zap.Error(err))
 						bwm.unsyncErr = err
 						return
 					}

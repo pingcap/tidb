@@ -487,6 +487,8 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 	} else {
 		task.bfJob.State = model.JobStateDone
 		result.err = w.finishJob(task.bfJob)
+		logutil.BgLogger().Info("[ddl] backfill worker runTask, finishJob",
+			zap.Stringer("worker", w), zap.String("backfillJob", task.bfJob.AbbrStr()))
 	}
 	return result
 }
