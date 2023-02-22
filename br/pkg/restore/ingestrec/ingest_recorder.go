@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
+// IngestIndexInfo records the information used to generate index drop/re-add SQL.
 type IngestIndexInfo struct {
 	SchemaName string
 	TableName  string
@@ -29,11 +30,14 @@ type IngestIndexInfo struct {
 	IsPrimary  bool
 }
 
+// IngestRecorder records the indices information that use ingest mode to construct kvs.
+// Currently log backup cannot backed up these ingest kvs. So need to re-construct them.
 type IngestRecorder struct {
 	// Table ID -> Index ID -> Index info
 	items map[int64]map[int64]IngestIndexInfo
 }
 
+// Return an empty IngestRecorder
 func New() *IngestRecorder {
 	return &IngestRecorder{
 		items: make(map[int64]map[int64]IngestIndexInfo),
@@ -55,7 +59,7 @@ func notDropIndexJob(job *model.Job) bool {
 		job.Type != model.ActionDropIndexes
 }
 
-func notDone(job *model.Job) bool {
+func notSynced(job *model.Job) bool {
 	return job.State != model.JobStateSynced
 }
 
@@ -72,11 +76,13 @@ func parseIndexID(job *model.Job) (int64, error) {
 	return 0, nil
 }
 
+// AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
 func (i *IngestRecorder) AddJob(job *model.Job) error {
-	if notIngestJob(job) && notAddIndexJob(job) && notDone(job) {
+	if notIngestJob(job) && notAddIndexJob(job) && notSynced(job) {
 		return nil
 	}
 
+	// If the add-index operation affects no row, the index doesn't need to be repair.
 	if job.RowCount == 0 {
 		return nil
 	}
@@ -123,8 +129,9 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	return nil
 }
 
+// DelJob firstly filters the ingest index add operation job, and removes it from IngestRecorder.
 func (i *IngestRecorder) DelJob(job *model.Job) error {
-	if notIngestJob(job) && notDropIndexJob(job) && notDone(job) {
+	if notIngestJob(job) && notDropIndexJob(job) && notSynced(job) {
 		return nil
 	}
 
@@ -142,18 +149,14 @@ func (i *IngestRecorder) DelJob(job *model.Job) error {
 	return nil
 }
 
-func (i *IngestRecorder) Iterate(f func(tableID int64, info IngestIndexInfo) error) error {
-	for k, is := range i.items {
-		for _, info := range is {
-			if err := f(k, info); err != nil {
+// Iterate iterates all the ingest index.
+func (i *IngestRecorder) Iterate(f func(tableID int64, indexID int64, info IngestIndexInfo) error) error {
+	for tableID, is := range i.items {
+		for indexID, info := range is {
+			if err := f(tableID, indexID, info); err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	return nil
-}
-
-func (i *IngestRecorder) GenerateResetAlterTableDDLs() []string {
-
 	return nil
 }

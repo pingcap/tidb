@@ -2542,19 +2542,22 @@ const (
 	alterTableAddPrimaryFormat = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s)"
 )
 
+// RepairIngestIndex drops the indices from IngestRecorder and re-add them.
 func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder) error {
-	err := ingestRecorder.Iterate(func(tableID int64, info ingestrec.IngestIndexInfo) error {
+	err := ingestRecorder.Iterate(func(_ int64, _ int64, info ingestrec.IngestIndexInfo) error {
 		var dropSQL string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexName)
 		var addSQL string
 		if info.IsPrimary {
-			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
-		} else {
 			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.SchemaName, info.TableName, info.ColumnList)
+		} else {
+			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, dropSQL); err != nil {
+		log.Debug("repair ingest sql", zap.String("drop", dropSQL))
+		if err := rc.db.se.Execute(ctx, dropSQL); err != nil {
 			return errors.Trace(err)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL); err != nil {
+		log.Debug("repair ingest sql", zap.String("drop", addSQL))
+		if err := rc.db.se.Execute(ctx, addSQL); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
@@ -2777,6 +2780,22 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 				)
 			}
 		}
+		return nil
+	})
+}
+
+// TODO: currently this function does nothing, need to implement the range filter out feature
+func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
+	filter := rtree.NewRangeTree()
+	return recorder.Iterate(func(tableID int64, indexID int64, info ingestrec.IngestIndexInfo) error {
+		// range before table ID rewritten
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		rg := rtree.Range{
+			StartKey: codec.EncodeBytes([]byte{}, startKey),
+			EndKey:   codec.EncodeBytes([]byte{}, endKey),
+		}
+		filter.InsertRange(rg)
 		return nil
 	})
 }
