@@ -621,14 +621,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	g.Record("RestoreTS", restoreTS)
 
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
-	// restore checksum will check safe point with its start ts, see details at
-	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
-	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
-	if err != nil {
-		gcSafePointKeeperCancel()
-		return errors.Trace(err)
-	}
 	defer func() {
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
@@ -642,6 +634,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
+	// restore checksum will check safe point with its start ts, see details at
+	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
+	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	var newTS uint64
 	if client.IsIncremental() {
