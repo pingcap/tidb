@@ -2620,3 +2620,114 @@ func TestStatsLockForDelta(t *testing.T) {
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(30), stats1.Count)
 }
+<<<<<<< HEAD:statistics/handle/update_test.go
+=======
+
+func TestFillMissingStatsMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+
+	tk.MustQuery("select * from mysql.stats_meta").Check(testkit.Rows())
+
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1ID := tbl1.Meta().ID
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2Info := tbl2.Meta()
+	tbl2ID := tbl2Info.ID
+	require.Len(t, tbl2Info.Partition.Definitions, 2)
+	p0ID := tbl2Info.Partition.Definitions[0].ID
+	p1ID := tbl2Info.Partition.Definitions[1].ID
+	h := dom.StatsHandle()
+
+	checkStatsMeta := func(id int64, expectedModifyCount, expectedCount string) int64 {
+		rows := tk.MustQuery(fmt.Sprintf("select version, modify_count, count from mysql.stats_meta where table_id = %v", id)).Rows()
+		require.Len(t, rows, 1)
+		ver, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, expectedModifyCount, rows[0][1])
+		require.Equal(t, expectedCount, rows[0][2])
+		return ver
+	}
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
+	ver1 := checkStatsMeta(tbl1ID, "2", "2")
+	tk.MustExec("delete from t1 where a = 1")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
+	ver2 := checkStatsMeta(tbl1ID, "3", "1")
+	require.Greater(t, ver2, ver1)
+
+	tk.MustExec("insert into t2 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
+	checkStatsMeta(p0ID, "2", "2")
+	globalVer1 := checkStatsMeta(tbl2ID, "2", "2")
+	tk.MustExec("insert into t2 values (11, 12)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
+	checkStatsMeta(p1ID, "1", "1")
+	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
+	require.Greater(t, globalVer2, globalVer1)
+}
+
+func TestNotDumpSysTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustQuery("select count(1) from mysql.stats_meta").Check(testkit.Rows("1"))
+	// After executing `delete from mysql.stats_meta`, a delta for mysql.stats_meta is created but it would not be dumped.
+	tk.MustExec("delete from mysql.stats_meta")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("stats_meta"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+	tk.MustQuery(fmt.Sprintf("select * from mysql.stats_meta where table_id = %v", tblID)).Check(testkit.Rows())
+}
+
+func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	oriMinCnt := handle.AutoAnalyzeMinCnt
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		handle.AutoAnalyzeMinCnt = oriMinCnt
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	tk.MustExec("set global tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int) partition by range (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2), (3,4), (11,12),(13,14)")
+	tk.MustExec("set session tidb_analyze_version = 2")
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t")
+	require.False(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	tk.MustExec("alter table t add index idx(a)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+}
+>>>>>>> bf9f6c6096 (statistics/handle: fix trigger auto analyze for partition table after adding index (#41639)):statistics/handle/updatetest/update_test.go

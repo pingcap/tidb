@@ -1210,14 +1210,11 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 		sqlBuilder.WriteString(suffix)
 		return sqlBuilder.String()
 	}
-	if len(partitionNames) < 1 {
-		return false
-	}
-	logutil.BgLogger().Info("[stats] start to auto analyze",
-		zap.String("table", tblInfo.Name.String()),
-		zap.Any("partitions", partitionNames),
-		zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 	if len(partitionNames) > 0 {
+		logutil.BgLogger().Info("[stats] start to auto analyze",
+			zap.String("table", tblInfo.Name.String()),
+			zap.Any("partitions", partitionNames),
+			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
 		statsTbl := h.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
