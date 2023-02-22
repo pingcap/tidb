@@ -32,19 +32,46 @@ type joinMethodHint struct {
 	joinMethodHintInfo  *tableHintInfo
 }
 
+type joinGroupResult struct {
+	group              []LogicalPlan
+	eqEdges            []*expression.ScalarFunction
+	otherConds         []expression.Expression
+	joinTypes          []*joinTypeWithExtMsg
+	hasOuterJoin       *bool
+	joinOrderHintInfo  []*tableHintInfo
+	joinMethodHintInfo map[int]*joinMethodHint
+}
+
 // extractJoinGroup extracts all the join nodes connected with continuous
 // Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
-	otherConds []expression.Expression, joinTypes []*joinTypeWithExtMsg, joinOrderHintInfo []*tableHintInfo, joinMethodHintInfo map[int]*joinMethodHint, hasOuterJoin bool) {
-	join, isJoin := p.(*LogicalJoin)
+func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
 	// The sub-plan will join the join reorder process to build the new plan. So after we have finished the join reorder process,
 	// we can reset the join method hint based on the sub-plan's ID.
-	joinMethodHintInfo = make(map[int]*joinMethodHint)
+	joinMethodHintInfo := make(map[int]*joinMethodHint)
+	group := []LogicalPlan{p}
+	hasOuterJoin := false
+	var (
+		joinOrderHintInfo []*tableHintInfo
+		eqEdges           []*expression.ScalarFunction
+		otherConds        []expression.Expression
+		joinTypes         []*joinTypeWithExtMsg
+	)
+	result := &joinGroupResult{
+		group:              group,
+		eqEdges:            eqEdges,
+		otherConds:         otherConds,
+		joinTypes:          joinTypes,
+		hasOuterJoin:       &hasOuterJoin,
+		joinOrderHintInfo:  joinOrderHintInfo,
+		joinMethodHintInfo: joinMethodHintInfo,
+	}
+
+	join, isJoin := p.(*LogicalJoin)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
@@ -52,8 +79,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		joinOrderHintInfo = append(joinOrderHintInfo, join.hintInfo)
 	}
 	// `leftHasHint` and `rightHasHint` are used to record whether the left child and right child are set by the join method hint.
-	leftHasHint := false
-	rightHasHint := false
+	leftHasHint, rightHasHint := false, false
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.preferJoinType > uint(0) {
 		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
 		if join.leftPreferJoinType > uint(0) {
@@ -73,17 +99,18 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.hintInfo = nil
 		}
-		return []LogicalPlan{p}, nil, nil, nil, joinOrderHintInfo, joinMethodHintInfo, false
+		return result
 	}
 	// If the session var is set to off, we will still reject the outer joins.
 	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) {
-		return []LogicalPlan{p}, nil, nil, nil, joinOrderHintInfo, joinMethodHintInfo, false
+		return result
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
 	// So we don't need to split the left child part. The right child part is the same, so omit the comments for the right child part.
 	if join.JoinType != RightOuterJoin && !leftHasHint {
-		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
+		lhsJoinGroupResult := extractJoinGroup(join.children[0])
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
@@ -106,7 +133,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, nil, false
+			joinOrderHintInfo, joinMethodHintInfo = nil, nil
+			return result
 		}
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
@@ -116,13 +144,14 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		for ID, joinMethodHint := range lhsJoinMethodHintInfo {
 			joinMethodHintInfo[ID] = joinMethodHint
 		}
-		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
+		hasOuterJoin = hasOuterJoin || *lhsHasOuterJoin
 	} else {
 		group = append(group, join.children[0])
 	}
 
 	if join.JoinType != LeftOuterJoin && !rightHasHint {
-		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
+		rhsJoinGroupResult := extractJoinGroup(join.children[1])
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
@@ -145,7 +174,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, nil, false
+			joinOrderHintInfo, joinMethodHintInfo = nil, nil
+			return result
 		}
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
@@ -155,7 +185,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		for ID, joinMethodHint := range rhsJoinMethodHintInfo {
 			joinMethodHintInfo[ID] = joinMethodHint
 		}
-		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
+		hasOuterJoin = hasOuterJoin || *rhsHasOuterJoin
 	} else {
 		group = append(group, join.children[1])
 	}
@@ -180,7 +210,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 		otherConds = append(otherConds, tmpOtherConds...)
 	}
-	return group, eqEdges, otherConds, joinTypes, joinOrderHintInfo, joinMethodHintInfo, hasOuterJoin
+	return result
 }
 
 type joinReOrderSolver struct {
@@ -209,7 +239,8 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 
-	curJoinGroup, eqEdges, otherConds, joinTypes, joinOrderHintInfo, joinMethodHintInfo, hasOuterJoin := extractJoinGroup(p)
+	result := extractJoinGroup(p)
+	curJoinGroup, eqEdges, otherConds, joinTypes, joinOrderHintInfo, joinMethodHintInfo, hasOuterJoin := result.group, result.eqEdges, result.otherConds, result.joinTypes, result.joinOrderHintInfo, result.joinMethodHintInfo, result.hasOuterJoin
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -246,7 +277,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 		if leadingHintInfo != nil && leadingHintInfo.leadingJoinOrder != nil {
 			if useGreedy {
-				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, *hasOuterJoin)
 				if !ok {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table is valid"))
 				} else {
@@ -337,12 +368,17 @@ func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, boo
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx                sessionctx.Context
-	curJoinGroup       []*jrNode
-	otherConds         []expression.Expression
-	eqEdges            []*expression.ScalarFunction
-	joinTypes          []*joinTypeWithExtMsg
-	leadingJoinGroup   LogicalPlan
+	ctx              sessionctx.Context
+	curJoinGroup     []*jrNode
+	otherConds       []expression.Expression
+	eqEdges          []*expression.ScalarFunction
+	joinTypes        []*joinTypeWithExtMsg
+	leadingJoinGroup LogicalPlan
+	// joinMethodHintInfo is used to record the join method hint information involved in the join reorder process.
+	// The keys in the map structure correspond to the plan ID involved in the sub-plan of the join reorder section,
+	// and the values correspond to the join method hint information attached to that sub-plan.
+	// Before the join reorder, we will collect the corresponding join method hint information.
+	// After the join reorder is completed, we will generate the join method hint information on the new join node based on the join method hint information contained in the sub-plan.
 	joinMethodHintInfo map[int]*joinMethodHint
 }
 
