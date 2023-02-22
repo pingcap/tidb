@@ -455,7 +455,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, checker.hasSubQuery
+					return in, true
 				}
 			}
 		}
@@ -466,7 +466,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, checker.hasSubQuery
+					return in, true
 				}
 			}
 		}
