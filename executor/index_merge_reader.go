@@ -1086,18 +1086,23 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		}, handleWorkerPanic(ctx, finished, resultCh, errCh, partTblIntersectionWorkerType))
 		workers = append(workers, worker)
 	}
-loop:
+	defer func() {
+		for _, processWorker := range workers {
+			close(processWorker.workerCh)
+		}
+		wg.Wait()
+	}()
 	for {
 		var ok bool
 		var task *indexMergeTableTask
 		select {
 		case <-ctx.Done():
-			break loop
+			return
 		case <-finished:
-			break loop
+			return
 		case task, ok = <-fetchCh:
 			if !ok {
-				break loop
+				return
 			}
 		}
 
@@ -1106,26 +1111,22 @@ loop:
 			// If got error from partialIndexWorker/partialTableWorker, stop processing.
 			if err != nil {
 				syncErr(ctx, finished, resultCh, err)
-				break loop
+				return
 			}
 		default:
 		}
 
 		select {
 		case <-ctx.Done():
-			break loop
+			return
 		case <-finished:
-			break loop
+			return
 		case workers[task.parTblIdx%workerCnt].workerCh <- task:
 		case <-errCh:
 			// If got error from intersectionProcessWorker, stop processing.
-			break loop
+			return
 		}
 	}
-	for _, processWorker := range workers {
-		close(processWorker.workerCh)
-	}
-	wg.Wait()
 }
 
 type partialIndexWorker struct {
