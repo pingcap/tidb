@@ -482,9 +482,9 @@ func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) ([]uint64, bool, error) {
+func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.PlanCacheMatchOpts, error) {
 	if node == nil {
-		return nil, false, nil
+		return nil, errors.New("AST node is nil")
 	}
 	checker := matchOptsExtractor{
 		cacheable:      true,
@@ -493,27 +493,27 @@ func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) ([]uint64, 
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
-		return nil, false, checker.paramTypeErr
+		return nil, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
 	}
-	return checker.offsetAndCount, checker.hasSubQuery, nil
+
+	return &utilpc.PlanCacheMatchOpts{
+		LimitOffsetAndCount: checker.offsetAndCount,
+		HasSubQuery:         checker.hasSubQuery,
+	}, nil
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	limitParams, hasSubQuery, err := extractMatchOptsFromAST(node, sctx)
+	matchOpts, err := extractMatchOptsFromAST(node, sctx)
 	if err != nil {
 		return nil, err
 	}
-	paramTypes := parseParamTypes(sctx, params)
-	return &utilpc.PlanCacheMatchOpts{
-		ParamTypes:          paramTypes,
-		LimitOffsetAndCount: limitParams,
-		HasSubQuery:         hasSubQuery,
-	}, nil
+	matchOpts.ParamTypes = parseParamTypes(sctx, params)
+	return matchOpts, nil
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
