@@ -365,11 +365,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
 
-				selectResults := make([]distsql.SelectResult, 0, len(keyRanges))
+				var notClosedSelectResult distsql.SelectResult
 				defer func() {
-					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
-					for _, s := range selectResults {
-						terror.Call(s.Close)
+					if notClosedSelectResult != nil {
+						terror.Call(notClosedSelectResult.Close)
 					}
 				}()
 				for parTblIdx, keyRange := range keyRanges {
@@ -395,7 +394,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-					selectResults = append(selectResults, result)
+					notClosedSelectResult = result
 					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", func(v failpoint.Value) {
 						time.Sleep(time.Second * time.Duration(v.(int)))
 						panic("testIndexMergePartialIndexWorkerCoprLeak")
@@ -417,7 +416,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					if err := result.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
-					selectResults = selectResults[:len(selectResults)-1]
+					notClosedSelectResult = nil
 					cancel()
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 					if fetchErr != nil {
