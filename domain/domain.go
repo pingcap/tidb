@@ -132,6 +132,7 @@ type Domain struct {
 	indexUsageSyncLease   time.Duration
 	dumpFileGcChecker     *dumpFileGcChecker
 	planReplayerHandle    *planReplayerHandle
+	extractTaskHandle     *extractHandle
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
@@ -1750,6 +1751,11 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
+// SetupExtractHandle setups extract handler
+func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
+	do.extractTaskHandle = NewExtractHandler(sctxs)
+}
+
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
@@ -1811,6 +1817,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 // GetPlanReplayerHandle returns plan replayer handle
 func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 	return do.planReplayerHandle
+}
+
+// GetExtractHandle returns extract handle
+func (do *Domain) GetExtractHandle() *extractHandle {
+	return do.extractTaskHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
