@@ -508,10 +508,12 @@ func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) (*utilpc.Pl
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+	// get limit params and has sub query indicator
 	matchOpts, err := extractMatchOptsFromAST(node, sctx)
 	if err != nil {
 		return nil, err
 	}
+	// get param types
 	matchOpts.ParamTypes = parseParamTypes(sctx, params)
 	return matchOpts, nil
 }
