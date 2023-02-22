@@ -393,7 +393,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 					selectResults = append(selectResults, result)
 					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", func(v failpoint.Value) {
-						time.Sleep(time.Duration(v.(int)))
+						time.Sleep(time.Second * time.Duration(v.(int)))
 						panic("testIndexMergePartialIndexWorkerCoprLeak")
 					})
 					worker.batchSize = e.maxChunkSize
@@ -511,7 +511,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						break
 					}
 					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", func(v failpoint.Value) {
-						time.Sleep(time.Duration(v.(int)))
+						time.Sleep(time.Second * time.Duration(v.(int)))
 						panic("testIndexMergePartialTableWorkerCoprLeak")
 					})
 					tableReaderClosed = false
