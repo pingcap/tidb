@@ -291,6 +291,11 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from t where a in (1, 2, 3)",
 		"select * from t where a<13 or b<15",
 		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
 	}
 
 	unsupported := []string{
@@ -306,6 +311,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"insert into t1(a, b) select a, b from t1",                                         // insert into select
 		"update t1 set a = 1 where b = 2",                                                  // update
 		"delete from t1 where b = 1",                                                       // delete
+		"select * from t1 for update",                                                      // lock
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
 
 		"select * from t where a+b=13",      // '+'
 		"select * from t where mod(a, 3)=1", // mod
