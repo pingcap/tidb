@@ -215,10 +215,11 @@ func TestEncodingGB18030(t *testing.T) {
 	}{
 		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
 		{"🀁", "\x948\xe11", true},
-		{"€", "?", false},
-		{"€a", "?a", false},
-		{"a€aa", "a?aa", false},
-		{"aaa€", "aaa?", false},
+		{"€", "\xa2\xe3", true},
+		{"€a", "\xa2\xe3a", true},
+		{"a€aa", "a\xa2\xe3aa", true},
+		{"aaa€", "aaa\xa2\xe3", true},
+		{"ḿ", "\x815\xf47", true},
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)

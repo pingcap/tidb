@@ -129,10 +129,10 @@ type customGB18030Encoder struct {
 }
 
 // Transform special treatment for `€`,
-// see https://github.com/pingcap/tidb/issues/30581 get details.
 func (c customGB18030Encoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
-	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' */) {
-		return 0, 0, ErrInvalidCharacterString
+	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' in UTF8 */) {
+		dst[0], dst[1], dst[2], dst[3] = 0xa2, 0xe3, 0, 0
+		return 2, 3, nil
 	}
 	return c.gb18030Encoder.Transform(dst, src, atEOF)
 }
