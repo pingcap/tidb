@@ -856,6 +856,63 @@
     ]
   },
   {
+    "Name": "TestIssue37520",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t2.b, test.t1.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t1) in optimizer hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+        "Plan": [
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t2.b, inner key:test.t1.a, equal cond:eq(test.t2.b, test.t1.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 10000.00 cop[tikv] table:t1 range: decided by [test.t2.b], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
+        "Plan": [
+          "MergeJoin 9990.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─IndexReader 7992.00 root  index:StreamAgg",
+          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
+        "Plan": [
+          "IndexJoin 9990.00 root  inner join, inner:TableReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "│ └─IndexReader 7992.00 root  index:StreamAgg",
+          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t2.a, ",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 7992.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 7992.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestHintScope",
     "Cases": [
       {

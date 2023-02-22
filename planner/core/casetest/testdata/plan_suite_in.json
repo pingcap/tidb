@@ -69,6 +69,15 @@
     ]
   },
   {
+    "name": "TestIssue37520",
+    "cases": [
+      "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+      "select /*+ inl_join(t1) */ a, (select b from t1 where t1.a = t2.b) from t2;", // the query block for the right child is wrong, need further investgation
+      "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
+      "select /*+ inl_join(t1) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);"
+    ]
+  },
+  {
     "name": "TestHintScope",
     "cases": [
       // join hints
