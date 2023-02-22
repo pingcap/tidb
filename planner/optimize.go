@@ -764,7 +764,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasResourceGroup = true
-		// TODO: check the existence of the resource group
 		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
 	}
 	// Handle NTH_PLAN

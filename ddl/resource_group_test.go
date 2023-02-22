@@ -189,7 +189,8 @@ func TestResourceGroupHint(t *testing.T) {
 	tk.MustExec("create resource group rg1 ru_per_sec=1000")
 	tk.MustQuery("select /*+ resource_group(default) */ * from t1")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t1")
-	tk.MustQuery("select /*+ resource_group(rg2) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg1) resource_group(default) */ * from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(default)"))
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from information_schema.processlist").Check(testkit.Rows("1   test Sleep 0 autocommit select /*+ resource_group(rg1) */ * from information_schema.processlist 4b5e7cdd5d3ed84d6c1a6d56403a3d512554b534313caf296268abdec1c9ea99 0 0  rg1"))
 	tk.MustQuery("select * from information_schema.processlist").Check(testkit.Rows("1   test Sleep 0 autocommit select * from information_schema.processlist 4b5e7cdd5d3ed84d6c1a6d56403a3d512554b534313caf296268abdec1c9ea99 0 0  "))
 
