@@ -54,8 +54,8 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int

@@ -17,6 +17,7 @@ go_library(
     deps = [
         "//config",
         "//ddl/placement",
+        "//ddl/resourcegroup",
         "//domain/infosync",
         "//errno",
         "//kv",
@@ -56,6 +57,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],

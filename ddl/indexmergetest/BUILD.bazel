@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "indexmergetest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "merge_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 18,
+    deps = [
+        "//config",
+        "//ddl",
+        "//ddl/ingest",
+        "//ddl/internal/callback",
+        "//ddl/testutil",
+        "//domain",
+        "//errno",
+        "//kv",
+        "//meta/autoid",
+        "//parser/model",
+        "//tablecodec",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -186,7 +187,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	return s.rows, s.execErr
 }
 
-func (s *mockSession) RunInTxn(_ context.Context, fn func() error) error {
+func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.TxnMode) error {
 	require.False(s.t, s.closed)
 	if err := fn(); err != nil {
 		return err

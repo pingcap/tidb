@@ -31,6 +31,9 @@ func (r *ResourceManager) schedule() {
 }
 
 func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Command {
+	if pool.Pool.Running() == 0 {
+		return scheduler.Hold
+	}
 	for _, sch := range r.scheduler {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
@@ -52,14 +55,14 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 		switch cmd {
 		case scheduler.Downclock:
 			concurrency := con - 1
-			log.Info("downclock goroutine pool",
+			log.Debug("[resource manager] downclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		case scheduler.Overclock:
 			concurrency := con + 1
-			log.Info("overclock goroutine pool",
+			log.Debug("[resource manager] overclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))

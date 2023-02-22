@@ -158,6 +158,9 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // New creates an ExternalStorage with options.
 func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if opts == nil {
+		opts = &ExternalStorageOptions{}
+	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {

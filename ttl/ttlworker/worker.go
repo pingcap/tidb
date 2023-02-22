@@ -125,7 +125,7 @@ func (w *baseWorker) loop() {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r))
+			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r), zap.Stack("stack"))
 		}
 		w.Lock()
 		w.toStopped(err)

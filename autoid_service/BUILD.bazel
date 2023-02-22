@@ -27,8 +27,10 @@ go_library(
 
 go_test(
     name = "autoid_service_test",
+    timeout = "short",
     srcs = ["autoid_test.go"],
     embed = [":autoid_service"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//testkit",

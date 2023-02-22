@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "loadremotetest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "one_csv_test.go",
+        "one_parquet_test.go",
+        "one_sqldump_test.go",
+        "util_test.go",
+    ],
+    embedsrcs = ["test.parquet"],
+    flaky = True,
+    deps = [
+        "//executor",
+        "//kv",
+        "//testkit",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_stretchr_testify//suite",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

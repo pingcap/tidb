@@ -526,6 +526,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDuplicateKey"]
+error = '''
+found duplicate key '%s', value '%s'
+'''
+
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'
@@ -663,7 +668,7 @@ Too many keys specified; max %d keys allowed
 
 ["ddl:1071"]
 error = '''
-Specified key was too long; max key length is %d bytes
+Specified key was too long (%d bytes); max key length is %d bytes
 '''
 
 ["ddl:1072"]
@@ -1383,7 +1388,7 @@ column %s id %d does not exist, this column may have been updated by other DDL r
 
 ["ddl:8246"]
 error = '''
-Error happened when enable/disable DDL: %s
+Error happened when %s DDL: %s
 '''
 
 ["ddl:8247"]
@@ -2533,7 +2538,7 @@ Unknown resource group '%-.192s'
 
 ["schema:8250"]
 error = '''
-Resource group feature is disabled
+Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
 ["session:8002"]

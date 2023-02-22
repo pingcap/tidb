@@ -79,7 +79,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
-	logBackupEnabled bool
+	logBackupEnabled bool // check log-backup task existed.
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -301,6 +301,85 @@ func (w *GCWorker) tick(ctx context.Context) {
 	}
 }
 
+// getGCSafePoint returns the current gc safe point.
+func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	// If there is try to set gc safepoint is 0, the interface will not set gc safepoint to 0,
+	// it will return current gc safepoint.
+	safePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return safePoint, nil
+}
+
+func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint64) error {
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checkTs := oracle.GoTimeToTS(now.Add(-gcDefaultLifeTime * 2))
+	if checkTs > safePoint {
+		logutil.Logger(ctx).Info("[gc worker] gc safepoint is too early. " +
+			"Maybe there is a bit BR/Lightning/CDC task, " +
+			"or a long transaction is running" +
+			"or need a tidb without setting keyspace-name to calculate and update gc safe point.")
+	}
+	return nil
+}
+
+func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
+	// Get safe point from PD.
+	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
+	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
+	// so its safe to delete the ranges.
+	safePoint, err := getGCSafePoint(ctx, w.pdClient)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] get gc safe point error", zap.Error(errors.Trace(err)))
+		return nil
+	}
+
+	if safePoint == 0 {
+		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safe point is 0")
+		return nil
+	}
+
+	err = w.logIsGCSafePointTooEarly(ctx, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] log is gc safe point is too early error", zap.Error(errors.Trace(err)))
+		return nil
+	}
+
+	keyspaceID := w.store.GetCodec().GetKeyspaceID()
+	logutil.Logger(ctx).Info("[gc worker] start keyspace delete range",
+		zap.String("uuid", w.uuid),
+		zap.Int("concurrency", concurrency),
+		zap.Uint32("keyspaceID", uint32(keyspaceID)),
+		zap.Uint64("GCSafepoint", safePoint))
+
+	// Do deleteRanges.
+	err = w.deleteRanges(ctx, safePoint, concurrency)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] delete range returns an error",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("delete_range").Inc()
+		return errors.Trace(err)
+	}
+
+	// Do redoDeleteRanges.
+	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] redo-delete range returns an error",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -315,6 +394,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
+	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
+	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
+	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
+	// Therefore only one TiDB node in each key space will be responsible to do delete range.
+	if w.store.GetCodec().GetKeyspace() != nil {
+		err = w.runKeyspaceGCJob(ctx, concurrency)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
 	}
 
 	ok, safePoint, err := w.prepare(ctx)
@@ -351,6 +443,36 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	go func() {
 		w.done <- w.runGCJob(ctx, safePoint, concurrency)
 	}()
+	return nil
+}
+
+func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		logutil.Logger(ctx).Info("[gc worker] another keyspace gc job has just finished, skipped.",
+			zap.String("leaderTick on ", w.uuid))
+		return nil
+	}
+
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ok, err := w.checkGCInterval(now)
+	if err != nil || !ok {
+		return errors.Trace(err)
+	}
+
+	go func() {
+		w.done <- w.runKeyspaceDeleteRange(ctx, concurrency)
+	}()
+
+	err = w.saveTime(gcLastRunTimeKey, now)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -1198,6 +1320,7 @@ func (w *GCWorker) resolveLocksForRange(
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
+		//nolint: SA1029
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
@@ -1794,7 +1917,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
-	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
+	w.logBackupEnabled = utils.IsLogBackupInUse(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1973,6 +2096,11 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+	if w.store.GetCodec().GetKeyspace() != nil {
+		logutil.BgLogger().Info("[gc worker] skip doGCPlacementRules when keyspace_name is set.", zap.String("uuid", w.uuid))
+		return nil
+	}
+
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -2007,6 +2135,10 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
+			return
+		}
+	case model.ActionReorganizePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}

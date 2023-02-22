@@ -1251,9 +1251,9 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=5, @b=4, @c=2, @d=1;")
 	tk.MustQuery("execute stmt using @d, @a").Check(testkit.Rows("1", "2", "3", "4", "5"))
 	tk.MustQuery("execute stmt using @d, @b").Check(testkit.Rows("1", "2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @c, @b").Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	// Two seed parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1266,7 +1266,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=10, @b=2;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1", "2", "2"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	// Two recursive parts.
 	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
@@ -1281,7 +1281,7 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5;")
 	tk.MustQuery("execute stmt using @c, @b, @e;").Check(testkit.Rows("1", "2", "2", "3", "3", "3", "4", "4", "5", "5", "5", "6", "6"))
 	tk.MustQuery("execute stmt using @b, @a, @d;").Check(testkit.Rows("1", "2", "2", "2", "3", "3", "3", "4", "4", "4"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int);")
@@ -1293,11 +1293,13 @@ func TestCTE4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
 	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 	tk.MustQuery("execute stmt using @b, @b, @c;").Check(testkit.Rows("1 1", "3 1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestValidity4PlanCache(t *testing.T) {

@@ -25,6 +25,8 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//keepalive",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

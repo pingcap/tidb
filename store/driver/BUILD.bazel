@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//sessionctx/variable",
         "//store/copr",
         "//store/driver/error",
         "//store/driver/txn",
@@ -20,6 +21,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//resource_manager/client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",
