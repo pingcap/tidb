@@ -821,7 +821,7 @@ func TestIndexMergeProcessWorkerHang(t *testing.T) {
 	res := tk.MustQuery("explain " + sql).Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return(20)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang", "return(true)"))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
@@ -833,7 +833,7 @@ func TestIndexMergeProcessWorkerHang(t *testing.T) {
 	require.Contains(t, res[1][0], "IndexMerge")
 	require.Contains(t, res[1][4], "intersection")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return(20)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang", "return(true)"))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
