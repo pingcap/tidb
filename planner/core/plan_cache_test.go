@@ -154,6 +154,36 @@ func TestNonPreparedPlanCacheSwitch(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestNonPreparedPlanCacheReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`explain select * from t where a=1`)
+	tk.MustExec(`explain select * from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`explain select * from t where a+1=1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: query has some unsupported binary operation`))
+
+	tk.MustExec(`explain select * from t t1, t t2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that access multiple tables are not supported`))
+
+	tk.MustExec(`explain select * from (select * from t) tx`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that have sub-queries are not supported`))
+
+	// no warning if disable this feature
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tk.MustExec(`explain select * from t where a+1=1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`explain select * from t t1, t t2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`explain select * from t where a in (select a from t)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -455,7 +485,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), key(c, d))`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
 	}
@@ -468,6 +498,14 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		"select * from t where d>8",
 		"select * from t where c=8 and d>10",
 		"select * from t where a<12 and b<13 and c<12 and d>2",
+		"select * from t where a in (1, 2, 3)",
+		"select * from t where a<13 or b<15",
+		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
 	}
 
 	for _, query := range queries {
