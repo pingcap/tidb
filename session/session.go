@@ -3428,6 +3428,20 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	for i := 0; i < cnt; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
+
+	// setup extract Handle
+	extractWorkers := 1
+	sctxs, err := createSessions(store, extractWorkers)
+	if err != nil {
+		return nil, err
+	}
+	extractWorkerSctxs := make([]sessionctx.Context, 0)
+	for _, sctx := range sctxs {
+		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
+	}
+	dom.SetupExtractHandle(extractWorkerSctxs)
+
+	// setup init stats loader
 	initStatsCtx, err := createSession(store)
 	if err != nil {
 		return nil, err

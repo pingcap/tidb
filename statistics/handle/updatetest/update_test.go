@@ -2707,3 +2707,38 @@ func TestNotDumpSysTable(t *testing.T) {
 	tblID := tbl.Meta().ID
 	tk.MustQuery(fmt.Sprintf("select * from mysql.stats_meta where table_id = %v", tblID)).Check(testkit.Rows())
 }
+
+func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	oriMinCnt := handle.AutoAnalyzeMinCnt
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		handle.AutoAnalyzeMinCnt = oriMinCnt
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	tk.MustExec("set global tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int) partition by range (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2), (3,4), (11,12),(13,14)")
+	tk.MustExec("set session tidb_analyze_version = 2")
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t")
+	require.False(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	tk.MustExec("alter table t add index idx(a)")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+}
