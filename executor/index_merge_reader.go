@@ -290,7 +290,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
 		// Wait for processWorker to close resultCh.
-		time.Sleep(2)
+		time.Sleep(time.Second * 2)
 		// Should use fetchCh instead of resultCh to send error.
 		syncErr(ctx, e.finished, fetchCh, errors.New("testIndexMergeResultChCloseEarly"))
 	})
@@ -734,7 +734,7 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*indexMergeTableTask, error)
 	failpoint.Inject("testIndexMergeMainReturnEarly", func(v failpoint.Value) {
 		// To make sure processWorker make resultCh to be full.
 		// When main goroutine close finished, processWorker may be stuck when writing resultCh.
-		time.Sleep(time.Duration(v.(int)))
+		time.Sleep(time.Second * time.Duration(v.(int)))
 		failpoint.Return(nil, errors.New("failpoint testIndexMergeMainReturnEarly"))
 	})
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
