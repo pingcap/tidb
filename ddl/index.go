@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/infoschema"
@@ -750,8 +749,8 @@ func canUseIngest(w *worker) bool {
 		logutil.BgLogger().Info("lightning: mock enable PiTR")
 		failpoint.Return(true)
 	})
-	// Ingest way is not compatible with PiTR.
-	return !utils.IsLogBackupInUse(ctx)
+
+	return true
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.

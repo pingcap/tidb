@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -2533,6 +2534,32 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+const (
+	alterTableDropIndexFormat  = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`;"
+	alterTableAddIndexFormat   = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s);"
+	alterTableAddPrimaryFormat = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s)"
+)
+
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder) error {
+	err := ingestRecorder.Iterate(func(tableID int64, info ingestrec.IngestIndexInfo) error {
+		var dropSQL string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexName)
+		var addSQL string
+		if info.IsPrimary {
+			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
+		} else {
+			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.SchemaName, info.TableName, info.ColumnList)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, dropSQL); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	})
+	return err
 }
 
 const (

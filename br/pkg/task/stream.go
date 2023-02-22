@@ -1296,6 +1296,10 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
+	if err = client.RepairIngestIndex(ctx, schemasReplace.GetIngestRecorder()); err != nil {
+		return errors.Annotate(err, "failed to repair ingest index")
+	}
+
 	if cfg.tiflashRecorder != nil {
 		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
 		log.Info("Generating SQLs for restoring TiFlash Replica",
