@@ -752,6 +752,9 @@ func (p *LogicalJoin) setPreferredJoinType() {
 		}
 		p.preferJoinType = preferJoinType
 	}
+	//// Clear information from left and right child nodes to prevent multiple calls to this function.
+	//p.leftPreferJoinType = 0
+	//p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
