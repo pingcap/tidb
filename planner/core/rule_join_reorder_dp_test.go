@@ -186,9 +186,12 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		require.True(t, isSF)
 		eqEdges = append(eqEdges, sf)
 	}
-	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-		ctx:     ctx,
+	basicJoinInfo := &basicJoinInfo{
 		eqEdges: eqEdges,
+	}
+	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+		ctx:           ctx,
+		basicJoinInfo: basicJoinInfo,
 	}
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,

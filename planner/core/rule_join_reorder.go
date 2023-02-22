@@ -27,21 +27,6 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-type joinMethodHint struct {
-	preferredJoinMethod uint
-	joinMethodHintInfo  *tableHintInfo
-}
-
-type joinGroupResult struct {
-	group              []LogicalPlan
-	eqEdges            []*expression.ScalarFunction
-	otherConds         []expression.Expression
-	joinTypes          []*joinTypeWithExtMsg
-	hasOuterJoin       *bool
-	joinOrderHintInfo  []*tableHintInfo
-	joinMethodHintInfo map[int]*joinMethodHint
-}
-
 // extractJoinGroup extracts all the join nodes connected with continuous
 // Joins to construct a join group. This join group is further used to
 // construct a new join order based on a reorder algorithm.
@@ -49,9 +34,6 @@ type joinGroupResult struct {
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p LogicalPlan) *joinGroupResult {
-	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
-	// The sub-plan will join the join reorder process to build the new plan. So after we have finished the join reorder process,
-	// we can reset the join method hint based on the sub-plan's ID.
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	group := []LogicalPlan{p}
 	hasOuterJoin := false
@@ -61,14 +43,17 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 		otherConds        []expression.Expression
 		joinTypes         []*joinTypeWithExtMsg
 	)
-	result := &joinGroupResult{
-		group:              group,
+	joinInfo := &basicJoinInfo{
 		eqEdges:            eqEdges,
 		otherConds:         otherConds,
 		joinTypes:          joinTypes,
-		hasOuterJoin:       &hasOuterJoin,
-		joinOrderHintInfo:  joinOrderHintInfo,
 		joinMethodHintInfo: joinMethodHintInfo,
+	}
+	result := &joinGroupResult{
+		group:             group,
+		hasOuterJoin:      &hasOuterJoin,
+		joinOrderHintInfo: joinOrderHintInfo,
+		basicJoinInfo:     joinInfo,
 	}
 
 	join, isJoin := p.(*LogicalJoin)
@@ -240,7 +225,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	var err error
 
 	result := extractJoinGroup(p)
-	curJoinGroup, eqEdges, otherConds, joinTypes, joinOrderHintInfo, joinMethodHintInfo, hasOuterJoin := result.group, result.eqEdges, result.otherConds, result.joinTypes, result.joinOrderHintInfo, result.joinMethodHintInfo, result.hasOuterJoin
+	curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -260,11 +245,8 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:                ctx,
-			otherConds:         otherConds,
-			eqEdges:            eqEdges,
-			joinTypes:          joinTypes,
-			joinMethodHintInfo: joinMethodHintInfo,
+			ctx:           ctx,
+			basicJoinInfo: result.basicJoinInfo,
 		}
 
 		joinGroupNum := len(curJoinGroup)
@@ -366,20 +348,35 @@ func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, boo
 	return leadingHintInfo, hasDiffLeadingHint
 }
 
+type joinMethodHint struct {
+	preferredJoinMethod uint
+	joinMethodHintInfo  *tableHintInfo
+}
+
+// basicJoinInfo represents basic information for a join operation.
+type basicJoinInfo struct {
+	eqEdges    []*expression.ScalarFunction
+	otherConds []expression.Expression
+	joinTypes  []*joinTypeWithExtMsg
+	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
+	// The sub-plan will join the join reorder process to build the new plan.
+	// So after we have finished the join reorder process, we can reset the join method hint based on the sub-plan's ID.
+	joinMethodHintInfo map[int]*joinMethodHint
+}
+
+type joinGroupResult struct {
+	group             []LogicalPlan
+	hasOuterJoin      *bool
+	joinOrderHintInfo []*tableHintInfo
+	*basicJoinInfo
+}
+
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
 	ctx              sessionctx.Context
 	curJoinGroup     []*jrNode
-	otherConds       []expression.Expression
-	eqEdges          []*expression.ScalarFunction
-	joinTypes        []*joinTypeWithExtMsg
 	leadingJoinGroup LogicalPlan
-	// joinMethodHintInfo is used to record the join method hint information involved in the join reorder process.
-	// The keys in the map structure correspond to the plan ID involved in the sub-plan of the join reorder section,
-	// and the values correspond to the join method hint information attached to that sub-plan.
-	// Before the join reorder, we will collect the corresponding join method hint information.
-	// After the join reorder is completed, we will generate the join method hint information on the new join node based on the join method hint information contained in the sub-plan.
-	joinMethodHintInfo map[int]*joinMethodHint
+	*basicJoinInfo
 }
 
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *tableHintInfo, hasOuterJoin bool) (bool, []LogicalPlan) {
