@@ -76,21 +76,21 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 
 	if e.loadDataWorker.Path == "" {
-		return errors.New("Load Data: infile path is empty")
+		return ErrLoadDataGeneral.GenWithStackByArgs("INFILE path is empty")
 	}
 	if !e.loadDataWorker.table.Meta().IsBaseTable() {
-		return errors.New("can only load data into base tables")
+		return ErrLoadDataGeneral.GenWithStackByArgs("can only load data into base tables")
 	}
 
 	// CSV-like
 	if e.loadDataWorker.format == "" {
 		if e.loadDataWorker.NullInfo != nil && e.loadDataWorker.NullInfo.OptEnclosed &&
 			(e.loadDataWorker.FieldsInfo == nil || e.loadDataWorker.FieldsInfo.Enclosed == nil) {
-			return errors.New("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+			return ErrLoadDataGeneral.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 		}
 		// TODO: support lines terminated is "".
 		if len(e.loadDataWorker.LinesInfo.Terminated) == 0 {
-			return errors.New("Load Data: don't support load data terminated is nil")
+			return ErrLoadDataGeneral.GenWithStackByArgs("don't support load data terminated is nil")
 		}
 	}
 
@@ -98,16 +98,16 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.FileLocServerOrRemote:
 		u, err := storage.ParseRawURL(e.loadDataWorker.Path)
 		if err != nil {
-			return err
+			return ErrLoadDataGeneral.GenWithStackByArgs(err.Error())
 		}
 		var filename string
 		u.Path, filename = filepath.Split(u.Path)
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
-			return err
+			return ErrLoadDataGeneral.GenWithStackByArgs(getMsgFromBRError(err))
 		}
 		if b.GetLocal() != nil {
-			return errors.Errorf("Load Data: don't support load data from tidb-server's disk")
+			return ErrLoadDataGeneral.GenWithStackByArgs("don't support load data from tidb-server's disk")
 		}
 		return e.loadFromRemote(ctx, b, filename)
 	case ast.FileLocClient:
@@ -116,11 +116,27 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		val := sctx.Value(LoadDataVarKey)
 		if val != nil {
 			sctx.SetValue(LoadDataVarKey, nil)
-			return errors.New("Load Data: previous load data option wasn't closed normally")
+			return ErrLoadDataGeneral.GenWithStackByArgs("previous load data option wasn't closed normally")
 		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
 	}
 	return nil
+}
+
+// TODO: add GetMsg() to errors package to replace this function.
+func getMsgFromBRError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if berr, ok := err.(*errors.Error); ok {
+		return berr.GetMsg()
+	}
+	raw := err.Error()
+	berrMsg := errors.Cause(err).Error()
+	if len(raw) <= len(berrMsg)+len(": ") {
+		return raw
+	}
+	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
 func (e *LoadDataExec) loadFromRemote(
@@ -134,11 +150,11 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return err
+		return ErrLoadDataGeneral.GenWithStackByArgs(getMsgFromBRError(err))
 	}
 	fileReader, err := s.Open(ctx, filename)
 	if err != nil {
-		return err
+		return ErrLoadDataGeneral.GenWithStackByArgs(getMsgFromBRError(err))
 	}
 	defer fileReader.Close()
 
@@ -406,7 +422,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		err = errors.Errorf("unsupported format: %s", e.format)
 	}
 	if err != nil {
-		return err
+		return ErrLoadDataGeneral.GenWithStackByArgs(err.Error())
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
@@ -426,7 +442,10 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 
 	err = group.Wait()
 	e.SetMessage()
-	return err
+	if err != nil {
+		return ErrLoadDataGeneral.GenWithStackByArgs(err.Error())
+	}
+	return nil
 }
 
 // processStream process input stream from network

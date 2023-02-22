@@ -1040,6 +1040,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTempTableNotAllowedWithTTL:       mysql.Message("Set TTL for temporary table is not allowed", nil),
 	ErrUnsupportedTTLReferencedByFK:     mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 	ErrUnsupportedPrimaryKeyTypeWithTTL: mysql.Message("Unsupported clustered primary key type FLOAT/DOUBLE for TTL", nil),
+	ErrLoadDataGeneral:                  mysql.Message("Load data raise error(s): %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

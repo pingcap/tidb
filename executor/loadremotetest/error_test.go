@@ -15,6 +15,7 @@
 package loadremotetest
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -49,5 +50,11 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1110 (42000): Column 'i' specified twice")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'gs://1' INTO TABLE t (@v) SET wrong=@v")
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
-
+	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): storage abc not support yet")
+	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): failed to get region of bucket no-network")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
+		INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
 }

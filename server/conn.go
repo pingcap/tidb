@@ -1671,7 +1671,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 
 	err = loadDataWorker.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
 	_ = r.Close()
-	wg.Done()
+	wg.Wait()
 
 	if err != nil {
 		if !drained {

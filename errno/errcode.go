@@ -1045,6 +1045,7 @@ const (
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
 	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
+	ErrLoadDataGeneral                     = 8154
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
