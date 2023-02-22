@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"runtime/pprof"
-	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -314,14 +314,10 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
 	}
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	if trace.IsEnabled() {
-		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
-	}
+
+	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	defer r.End()
+
 	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
@@ -1523,15 +1519,13 @@ func init() {
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := sctx.GetSessionVars()
+			s.StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
 
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
+		defer r.End()
 
 		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)
@@ -1616,7 +1610,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())

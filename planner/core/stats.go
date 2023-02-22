@@ -567,6 +567,16 @@ func getColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Sche
 	return NDV, 1
 }
 
+func getColsDNVWithMatchedLenFromUniqueIDs(ids []int64, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
+	cols := make([]*expression.Column, 0, len(ids))
+	for _, id := range ids {
+		cols = append(cols, &expression.Column{
+			UniqueID: id,
+		})
+	}
+	return getColsNDVWithMatchedLen(cols, schema, profile)
+}
+
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
 	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
 		return nil

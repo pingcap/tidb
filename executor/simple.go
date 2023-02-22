@@ -66,8 +66,10 @@ import (
 const notSpecified = -1
 
 var (
-	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
-	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
+	transactionDurationPessimisticRollbackInternal = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback, metrics.LblInternal)
+	transactionDurationPessimisticRollbackGeneral  = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback, metrics.LblGeneral)
+	transactionDurationOptimisticRollbackInternal  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblInternal)
+	transactionDurationOptimisticRollbackGeneral   = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblGeneral)
 )
 
 // SimpleExec represents simple statement executor.
@@ -814,10 +816,18 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.TxnCtx.IsPessimistic {
-			transactionDurationPessimisticRollback.Observe(duration)
-		} else {
-			transactionDurationOptimisticRollback.Observe(duration)
+		isInternal := false
+		if internal := txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
+			isInternal = true
+		}
+		if isInternal && sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollbackInternal.Observe(duration)
+		} else if isInternal && !sessVars.TxnCtx.IsPessimistic {
+			transactionDurationOptimisticRollbackInternal.Observe(duration)
+		} else if !isInternal && sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollbackGeneral.Observe(duration)
+		} else if !isInternal && !sessVars.TxnCtx.IsPessimistic {
+			transactionDurationOptimisticRollbackGeneral.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()

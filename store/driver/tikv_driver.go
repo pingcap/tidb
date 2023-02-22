@@ -39,7 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	rmclient "github.com/tikv/pd/pkg/mcs/resource_manager/client"
+	rmclient "github.com/tikv/pd/client/resource_manager/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"

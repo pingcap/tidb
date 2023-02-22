@@ -191,7 +191,7 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
-	CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
 	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
 	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
@@ -526,6 +526,13 @@ func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 }
 
 func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+	dc.reorgCtx.Lock()
+	defer dc.reorgCtx.Unlock()
+	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		existedRC.references.Add(1)
+		return existedRC
+	}
 	rc := &reorgCtx{}
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
@@ -534,24 +541,21 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
-	dc.reorgCtx.Lock()
-	defer dc.reorgCtx.Unlock()
+	rc.references.Add(1)
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
 }
 
-func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
-	rc := dc.getReorgCtx(bfJob.JobID)
-	if rc == nil {
-		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
-		dc.newReorgCtx(bfJob.JobID, bfJob.StartKey, ele, bfJob.RowCount)
-	}
-}
-
-func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
+func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	delete(dc.reorgCtx.reorgCtxMap, job.ID)
+	ctx, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		ctx.references.Sub(1)
+		if ctx.references.Load() == 0 {
+			delete(dc.reorgCtx.reorgCtxMap, jobID)
+		}
+	}
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
@@ -821,7 +825,7 @@ func (d *ddl) DisableDDL() error {
 			return err
 		}
 		if len(serverInfo) <= 1 {
-			return dbterror.ErrDDLSetting.GenWithStackByArgs("can not disable ddl when there is only one instance")
+			return dbterror.ErrDDLSetting.GenWithStackByArgs("disabling", "can not disable ddl owner when it is the only one tidb instance")
 		}
 		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
 	}
@@ -972,7 +976,8 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
+		model.ActionReorganizePartition:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)

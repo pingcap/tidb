@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -190,6 +191,9 @@ type RecoverIndexExec struct {
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
 	handleCols    plannercore.HandleCols
+
+	containsGenedCol bool
+	cols             []*expression.Column
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
@@ -379,10 +383,13 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if err != nil {
 				return nil, err
 			}
-			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
+			idxVals, err := e.buildIndexedValues(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
+			if err != nil {
+				return nil, err
+			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
-			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle
 		}
@@ -391,22 +398,71 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	return e.recoverRows, nil
 }
 
+func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Datum, fieldTypes []*types.FieldType, idxValLen int) ([]types.Datum, error) {
+	if !e.containsGenedCol {
+		return extractIdxVals(row, idxVals, fieldTypes, idxValLen), nil
+	}
+
+	if e.cols == nil {
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.ctx, model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		if err != nil {
+			return nil, err
+		}
+		e.cols = columns
+	}
+
+	if cap(idxVals) < idxValLen {
+		idxVals = make([]types.Datum, idxValLen)
+	} else {
+		idxVals = idxVals[:idxValLen]
+	}
+
+	for i, col := range e.index.Meta().Columns {
+		if e.table.Meta().Columns[col.Offset].IsGenerated() {
+			val, err := e.cols[col.Offset].EvalVirtualColumn(row)
+			if err != nil {
+				return nil, err
+			}
+			val.Copy(&idxVals[i])
+		} else {
+			val := row.GetDatum(col.Offset, &(e.table.Meta().Columns[col.Offset].FieldType))
+			val.Copy(&idxVals[i])
+		}
+	}
+	return idxVals, nil
+}
+
 func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	e.batchKeys = e.batchKeys[:0]
 	sc := e.ctx.GetSessionVars().StmtCtx
-	distinctFlags := make([]bool, len(rows))
+	distinctFlags := make([]bool, 0, len(rows))
+	rowIdx := make([]int, 0, len(rows))
+	cnt := 0
 	for i, row := range rows {
-		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
-		if err != nil {
-			return err
-		}
-		e.idxKeyBufs[i] = idxKey
+		iter := e.index.GenIndexKVIter(sc, row.idxVals, row.handle, nil)
+		for iter.Valid() {
+			var buf []byte
+			if cnt < len(e.idxKeyBufs) {
+				buf = e.idxKeyBufs[cnt]
+			}
+			key, _, distinct, err := iter.Next(buf)
+			if err != nil {
+				return err
+			}
+			if cnt < len(e.idxKeyBufs) {
+				e.idxKeyBufs[cnt] = key
+			} else {
+				e.idxKeyBufs = append(e.idxKeyBufs, key)
+			}
 
-		e.batchKeys = append(e.batchKeys, idxKey)
-		distinctFlags[i] = distinct
+			cnt++
+			e.batchKeys = append(e.batchKeys, key)
+			distinctFlags = append(distinctFlags, distinct)
+			rowIdx = append(rowIdx, i)
+		}
 	}
 
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -419,21 +475,22 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 3. non-unique-key is duplicate, skip it.
 	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
-		if val, found := values[string(key)]; found {
+		val, found := values[string(key)]
+		if found {
 			if distinctFlags[i] {
 				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
 				if err1 != nil {
 					return err1
 				}
 
-				if handle.Compare(rows[i].handle) != 0 {
+				if handle.Compare(rows[rowIdx[i]].handle) != 0 {
 					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
 						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
-						zap.Stringer("handleInTable", rows[i].handle), zap.Stringer("handleInIndex", handle))
+						zap.Stringer("handleInTable", rows[rowIdx[i]].handle), zap.Stringer("handleInIndex", handle))
 				}
 			}
-			rows[i].skip = true
 		}
+		rows[rowIdx[i]].skip = found && rows[rowIdx[i]].skip
 	}
 	return nil
 }

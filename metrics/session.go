@@ -59,14 +59,14 @@ var (
 			Name:      "schema_lease_error_total",
 			Help:      "Counter of schema lease error",
 		}, []string{LblType})
-	SessionRetry = prometheus.NewHistogram(
+	SessionRetry = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "retry_num",
 			Help:      "Bucketed histogram of session retry count.",
 			Buckets:   prometheus.LinearBuckets(0, 1, 21), // 0 ~ 20
-		})
+		}, []string{LblScope})
 	SessionRetryErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -90,7 +90,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Bucketed histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
-		}, []string{LblTxnMode, LblType})
+		}, []string{LblTxnMode, LblType, LblScope})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -99,7 +99,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		}, []string{LblTxnMode, LblType})
+		}, []string{LblTxnMode, LblType, LblScope})
 
 	StatementDeadlockDetectDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -186,6 +186,14 @@ var (
 			Name:      "resource_group_query_total",
 			Help:      "Counter of the total number of queries for the resource group",
 		}, []string{LblName})
+
+	AggressiveLockingUsageCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "transaction_aggressive_locking_usage",
+			Help:      "The counter of statements and transactions in which aggressive locking is used or takes effect",
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -227,5 +235,12 @@ const (
 	LblModule         = "module"
 	LblRCReadCheckTS  = "read_check"
 	LblRCWriteCheckTS = "write_check"
-	LblName           = "name"
+
+	LblName = "name"
+
+	LblAggressiveLockingTxnUsed       = "txn-used"
+	LblAggressiveLockingTxnEffective  = "txn-effective"
+	LblAggressiveLockingStmtUsed      = "stmt-used"
+	LblAggressiveLockingStmtEffective = "stmt-effective"
+	LblScope                          = "scope"
 )

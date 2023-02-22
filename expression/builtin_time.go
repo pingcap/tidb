@@ -2774,7 +2774,7 @@ func (du *baseDateArithmetical) getDateFromString(ctx sessionctx.Context, args [
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
+	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp, nil)
 	if err != nil {
 		err = handleInvalidTimeError(ctx, err)
 		if err != nil {
@@ -3184,7 +3184,7 @@ func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, input *
 			dateTp = mysql.TypeDatetime
 		}
 
-		date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
+		date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp, nil)
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -3581,6 +3581,9 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	argTps := []types.EvalType{dateEvalTp, intervalEvalTp, types.ETString}
 	var bf baseBuiltinFunc
 	bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resultEvalTp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.SetType(resultTp)
 
 	var resultFsp int
@@ -4348,7 +4351,7 @@ func (b *builtinTimestamp1ArgSig) evalTime(row chunk.Row) (types.Time, bool, err
 	if b.isFloat {
 		tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 	} else {
-		tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s))
+		tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s), nil)
 	}
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
@@ -4380,7 +4383,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if b.isFloat {
 		tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	} else {
-		tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
+		tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
 	}
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
@@ -4431,7 +4434,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.GetFsp(str), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4539,7 +4542,7 @@ func isDuration(str string) bool {
 
 // strDatetimeAddDuration adds duration to datetime string, returns a string value.
 func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
+	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp, nil)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		sc.AppendWarning(err)
@@ -4576,7 +4579,7 @@ func strDurationAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a string value.
 func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
+	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp, nil)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		sc.AppendWarning(err)

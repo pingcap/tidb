@@ -41,8 +41,8 @@ const (
 
 var (
 	DefaultGrpcKeepaliveParams = grpc.WithKeepaliveParams(keepalive.ClientParameters{
-		Time:                10 * time.Second,
-		Timeout:             20 * time.Second,
+		Time:                1 * time.Minute,
+		Timeout:             2 * time.Minute,
 		PermitWithoutStream: false,
 	})
 )

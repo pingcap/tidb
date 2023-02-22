@@ -598,6 +598,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		// don't exit too quickly to expose panic
+		defer time.Sleep(time.Second * 10)
+	})
 	defer procedure.Close()
 
 	err = procedure.Run(ctx)

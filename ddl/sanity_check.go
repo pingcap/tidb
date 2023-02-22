@@ -97,8 +97,9 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(physicalTableIDs), 1), nil
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		return len(physicalTableIDs) + 1, nil
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+		model.ActionReorganizePartition:
 		var physicalTableIDs []int64
 		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return 0, errors.Trace(err)

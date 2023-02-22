@@ -2025,6 +2025,7 @@ const (
 	PlacementOptionLearnerConstraints
 	PlacementOptionFollowerConstraints
 	PlacementOptionVoterConstraints
+	PlacementOptionSurvivalPreferences
 	PlacementOptionPolicy
 )
 
@@ -2089,6 +2090,10 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT POLICY ")
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.StrValue)
+		case PlacementOptionSurvivalPreferences:
+			ctx.WriteKeyWord("SURVIVAL_PREFERENCES ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}

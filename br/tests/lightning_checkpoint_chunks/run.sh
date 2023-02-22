@@ -48,6 +48,11 @@ for i in $(seq "$CHUNK_COUNT"); do
     done
 done
 
+PKG="github.com/pingcap/tidb/br/pkg/lightning"
+export GO_FAILPOINTS="$PKG/backend/local/orphanWriterGoRoutine=return();$PKG/restore/orphanWriterGoRoutine=return();$PKG/orphanWriterGoRoutine=return()"
+# test won't panic
+do_run_lightning config
+
 # Set the failpoint to kill the lightning instance as soon as
 # one file (after writing totally $ROW_COUNT rows) is imported.
 # If checkpoint does work, this should kill exactly $CHUNK_COUNT instances of lightnings.
