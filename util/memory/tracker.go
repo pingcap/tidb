@@ -739,8 +739,14 @@ func (t *Tracker) DetachFromGlobalTracker() {
 
 // ReplaceBytesUsed replace bytesConsume for the tracker
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
-	t.Consume(-t.BytesConsumed())
-	t.Consume(bytes)
+	t.Consume(bytes - t.BytesConsumed())
+}
+
+// Reset detach the tracker from the old parent and clear the old children. The label and byteLimit would not be reset.
+func (t *Tracker) Reset() {
+	t.Detach()
+	t.ReplaceBytesUsed(0)
+	t.mu.children = nil
 }
 
 func (t *Tracker) getParent() *Tracker {

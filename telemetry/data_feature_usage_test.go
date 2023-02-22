@@ -17,6 +17,7 @@ package telemetry_test
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -733,6 +734,10 @@ func TestTTLTelemetry(t *testing.T) {
 			createTime.Format(timeFormat), finishTime.Format(timeFormat), ttlExpire.Format(timeFormat), summaryText,
 			totalRows, totalRows-errorRows, errorRows, status,
 		)
+
+		if status == "running" {
+			tk.MustExec("update mysql.tidb_ttl_job_history set finish_time=FROM_UNIXTIME(1), summary_text=NULL, expired_rows=NULL, deleted_rows=NULL, error_delete_rows=NULL where job_id=?", strconv.Itoa(jobIDIdx))
+		}
 	}
 
 	oneDayAgoDate := curDate.Add(-24 * time.Hour)
@@ -755,6 +760,7 @@ func TestTTLTelemetry(t *testing.T) {
 	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 112600, 110000, "finished")
 	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 2600, 0, "timeout")
 	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "", 100000000, 0, "running")
 	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 2600, 0, "finished")
 	insertTTLHistory("t1", "", times51[0], times51[1], times51[2], "", 100000000, 1, "finished")
 

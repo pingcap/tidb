@@ -138,7 +138,26 @@ func TestTraceAndLocation(t *testing.T) {
 	goroot := strings.ReplaceAll(runtime.GOROOT(), string(os.PathSeparator), "/")
 	var sysStack = 0
 	for _, line := range lines {
-		if strings.Contains(line, goroot) {
+		// When you run test case in the bazel. you will find the difference stack. It looks like this:
+		//
+		// ```go
+		// testing.tRunner
+		//   GOROOT/src/testing/testing.go:1576
+		// runtime.goexit
+		//   src/runtime/asm_arm64.s:1172
+		// ```
+		//
+		// but run with ```go test```. It looks like this:
+		//
+		// ```go
+		// testing.tRunner
+		//   /Users/pingcap/.gvm/gos/go1.20.1/src/testing/testing.go:1576
+		// runtime.goexit
+		//	 /Users/pingcap/.gvm/gos/go1.20.1/src/runtime/asm_arm64.s:1172
+		// ```
+		//
+		// So we have to deal with these boundary conditions.
+		if strings.Contains(line, goroot) || strings.Contains(line, "GOROOT") || strings.Contains(line, "runtime.goexit") {
 			sysStack++
 		}
 	}

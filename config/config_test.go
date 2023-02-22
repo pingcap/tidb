@@ -414,6 +414,9 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# Record database name label if it is enabled.
+record-db-label = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -732,10 +735,12 @@ enable-forwarding = true
 enable-global-kill = true
 tidb-max-reuse-chunk = 10
 tidb-max-reuse-column = 20
+tidb-enable-exit-check = false
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
+plan-replayer-dump-worker-concurrency = 1
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
