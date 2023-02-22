@@ -290,11 +290,172 @@ func TestNonPreparedPlanCacheFallback(t *testing.T) {
 	require.NotNil(t, err)
 }
 
+func TestNonPreparedPlanCacheFastPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int primary key, b int, unique key(b))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// fast plans have a higher priority than non-prep cache plan
+	tk.MustQuery(`explain format='brief' select a from t where a in (1, 2)`).Check(testkit.Rows(
+		`Batch_Point_Get 2.00 root table:t handle:[1 2], keep order:false, desc:false`))
+	tk.MustQuery(`select a from t where a in (1, 2)`).Check(testkit.Rows())
+	tk.MustQuery(`select a from t where a in (1, 2)`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustQuery(`explain format='brief' select b from t where b = 1`).Check(testkit.Rows(
+		`Point_Get 1.00 root table:t, index:b(b) `))
+	tk.MustQuery(`select b from t where b = 1`).Check(testkit.Rows())
+	tk.MustQuery(`select b from t where b = 1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheSetOperations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// queries with set operations cannot hit the cache
+	for _, q := range []string{
+		`select * from t union select * from t`,
+		`select * from t union distinct select * from t`,
+		`select * from t union all select * from t`,
+		`select * from t except select * from t`,
+		`select * from t intersect select * from t`,
+	} {
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanCacheSpecialTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create definer='root'@'localhost' view t_v as select * from t`)
+	tk.MustExec(`create table t_p (a int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create temporary table t_t (a int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	// queries that access partitioning tables, view, temporary tables or contain CTE cannot hit the cache.
+	for _, q := range []string{
+		`select * from t_v`,
+		`select * from t_p`,
+		`select * from t_t`,
+		`with t_cte as (select * from t) select * from t_cte`,
+	} {
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(q).Check(testkit.Rows())
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanParameterType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustQuery(`select * from t where a=1`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a=1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1.1' may be converted to INT`))
+
+	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1' may be converted to INT`))
+}
+
+func TestNonPreparedPlanTypeRandomly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, key(a))`)
+	tk.MustExec(`create table t2 (a varchar(8), b varchar(8), key(a))`)
+	tk.MustExec(`create table t3 (a double, b double, key(a))`)
+	tk.MustExec(`create table t4 (a decimal(4, 2), b decimal(4, 2), key(a))`)
+	tk.MustExec(`create table t5 (a year, b year, key(a))`)
+	tk.MustExec(`create table t6 (a date, b date, key(a))`)
+	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
+
+	n := 30
+	for i := 0; i < n; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (%v, %v)`, randNonPrepTypeVal(t, n, "int"), randNonPrepTypeVal(t, n, "int")))
+		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
+		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
+		tk.MustExec(fmt.Sprintf(`insert into t4 values (%v, %v)`, randNonPrepTypeVal(t, n, "decimal"), randNonPrepTypeVal(t, n, "decimal")))
+		// TODO: fix it later
+		//tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
+		tk.MustExec(fmt.Sprintf(`insert into t6 values (%v, %v)`, randNonPrepTypeVal(t, n, "date"), randNonPrepTypeVal(t, n, "date")))
+		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
+	}
+
+	for i := 0; i < 200; i++ {
+		q := fmt.Sprintf(`select * from t%v where %v`, rand.Intn(7)+1, randNonPrepFilter(t, n))
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+		r0 := tk.MustQuery(q).Sort()            // the first execution
+		tk.MustQuery(q).Sort().Check(r0.Rows()) // may hit the cache
+		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+		tk.MustQuery(q).Sort().Check(r0.Rows()) // disable the non-prep cache
+	}
+}
+
+func randNonPrepFilter(t *testing.T, scale int) string {
+	switch rand.Intn(4) {
+	case 0: // >=
+		return fmt.Sprintf(`a >= %v`, randNonPrepVal(t, scale))
+	case 1: // <
+		return fmt.Sprintf(`a < %v`, randNonPrepVal(t, scale))
+	case 2: // =
+		return fmt.Sprintf(`a = %v`, randNonPrepVal(t, scale))
+	case 3: // in
+		return fmt.Sprintf(`a in (%v, %v)`, randNonPrepVal(t, scale), randNonPrepVal(t, scale))
+	}
+	require.Error(t, errors.New(""))
+	return ""
+}
+
+func randNonPrepVal(t *testing.T, scale int) string {
+	return randNonPrepTypeVal(t, scale, [7]string{"int", "varchar", "double",
+		"decimal", "year", "datetime", "date"}[rand.Intn(7)])
+}
+
+func randNonPrepTypeVal(t *testing.T, scale int, typ string) string {
+	switch typ {
+	case "int":
+		return fmt.Sprintf("%v", rand.Intn(scale)-(scale/2))
+	case "varchar":
+		return fmt.Sprintf("'%v'", rand.Intn(scale)-(scale/2))
+	case "double", "decimal":
+		return fmt.Sprintf("%v", float64(rand.Intn(scale)-(scale/2))/float64(10))
+	case "year":
+		return fmt.Sprintf("%v", 2000+rand.Intn(scale))
+	case "date":
+		return fmt.Sprintf("'2023-01-%02d'", rand.Intn(scale)+1)
+	case "timestamp", "datetime":
+		return fmt.Sprintf("'2023-01-01 00:00:%02d'", rand.Intn(scale))
+	default:
+		require.Error(t, errors.New(typ))
+		return ""
+	}
+}
+
 func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), key(c, d))`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
 	}
@@ -307,6 +468,14 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		"select * from t where d>8",
 		"select * from t where c=8 and d>10",
 		"select * from t where a<12 and b<13 and c<12 and d>2",
+		"select * from t where a in (1, 2, 3)",
+		"select * from t where a<13 or b<15",
+		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
 	}
 
 	for _, query := range queries {
@@ -356,6 +525,18 @@ func TestNonPreparedPlanCacheSelectLimit(t *testing.T) {
 	tk.MustExec("set @@session.sql_select_limit=1")
 	tk.MustExec("select * from t where a=1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue41626(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a year)`)
+	tk.MustExec(`insert into t values (2000)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=12`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
 }
 
 func TestIssue38269(t *testing.T) {
@@ -533,9 +714,6 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, key(a), key(b))")
-
-	tk.MustExec("prepare stmt from 'select * from t where a in (select a from t)'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
@@ -724,4 +902,62 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+}
+
+func TestPlanCacheWithSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	testCases := []struct {
+		sql            string
+		params         []int
+		cacheAble      string
+		isDecorrelated bool
+	}{
+		{"select * from t t1 where exists (select 1 from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}, "1", false},      // exist
+		{"select * from t t1 where t1.a in (select a from t t2 where t2.b < ?)", []int{1}, "1", false},                     // in
+		{"select * from t t1 where t1.a > (select max(a) from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}, "0", false}, // scala
+		{"select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)", []int{1}, "0", true},                         // uncorrelated
+	}
+
+	// switch on
+	for _, testCase := range testCases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(testCase.cacheAble))
+		if testCase.cacheAble == "0" {
+			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+			if testCase.isDecorrelated {
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
+			} else {
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+			}
+		}
+	}
+	// switch off
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 0")
+	for _, testCase := range testCases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
 }

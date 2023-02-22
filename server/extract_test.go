@@ -12,4 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+<<<<<<<< HEAD:server/extract_test.go
 package server
+========
+package util
+
+import (
+	"github.com/pingcap/tidb/types"
+)
+
+// PlanCacheMatchOpts store some property used to fetch plan from plan cache
+// The structure set here is to avoid import cycle
+type PlanCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	ParamTypes []*types.FieldType
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	LimitOffsetAndCount []uint64
+}
+>>>>>>>> upstream/master:util/plancache/util.go

@@ -13875,16 +13875,18 @@ LocalOpt:
 
 Fields:
 	{
+		defaultEscaped := byte('\\')
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
+		defaultEscaped := byte('\\')
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
@@ -13892,18 +13894,20 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = item.Value
 			case ast.Enclosed:
-				var enclosed byte
+				var enclosed *byte = nil
 				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
+					b := item.Value[0]
+					enclosed = &b
 				}
 				fieldsClause.Enclosed = enclosed
 				if item.OptEnclosed {
 					fieldsClause.OptEnclosed = true
 				}
 			case ast.Escaped:
-				var escaped byte
+				var escaped *byte = nil
 				if len(item.Value) > 0 {
-					escaped = item.Value[0]
+					b := item.Value[0]
+					escaped = &b
 				}
 				fieldsClause.Escaped = escaped
 			}
