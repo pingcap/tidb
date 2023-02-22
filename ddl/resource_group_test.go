@@ -176,3 +176,21 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 	g, _ := dom.InfoSchema().ResourceGroupByName(model.NewCIStr(name))
 	return g
 }
+
+func TestResourceGroupHint(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t1 values(1)")
+
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("create resource group rg1 ru_per_sec=1000")
+	tk.MustQuery("select /*+ resource_group(default) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg2) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from information_schema.processlist").Check(testkit.Rows("1   test Sleep 0 autocommit select /*+ resource_group(rg1) */ * from information_schema.processlist 4b5e7cdd5d3ed84d6c1a6d56403a3d512554b534313caf296268abdec1c9ea99 0 0  rg1"))
+	tk.MustQuery("select * from information_schema.processlist").Check(testkit.Rows("1   test Sleep 0 autocommit select * from information_schema.processlist 4b5e7cdd5d3ed84d6c1a6d56403a3d512554b534313caf296268abdec1c9ea99 0 0  "))
+
+}

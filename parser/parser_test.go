@@ -3874,12 +3874,12 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
 	// Test FORCE_INDEX
-	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) RESOURCE_GROUP(rg1)*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
+	require.Len(t, hints, 3)
 	require.Equal(t, "force_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
@@ -3891,6 +3891,9 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	require.Equal(t, "resource_group", hints[2].HintName.L)
+	require.Equal(t, hints[2].HintData, "rg1")
 
 	// Test IGNORE_INDEX
 	stmt, _, err = p.Parse("select /*+ IGNORE_INDEX(T1,T2), ignore_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

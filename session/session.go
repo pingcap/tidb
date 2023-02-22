@@ -2186,6 +2186,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
+	// Backup the original resource group name since sql hint might change it during optimization
+	originalResourceGroup := s.GetSessionVars().ResourceGroupName
+
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
@@ -2235,6 +2238,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
+
+	// Restore the resource group for the session
+	s.GetSessionVars().ResourceGroupName = originalResourceGroup
 
 	if err != nil {
 		if !errIsNoisy(err) {
