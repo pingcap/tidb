@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
@@ -89,7 +89,7 @@ func strHashKey(key kvcache.Key, deepCopy bool) string {
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key kvcache.Key, opts *util.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
+func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -104,7 +104,7 @@ func (l *LRUPlanCache) Get(key kvcache.Key, opts *util.PlanCacheMatchOpts) (valu
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *util.PlanCacheMatchOpts) {
+func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -247,11 +247,11 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *util.PlanCacheMatchOpts) (*list.Element, bool) {
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *utilpc.PlanCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
 		// check param types' compatibility
-		ok1 := plan.matchOpts.ParamTypes.CheckTypesCompatibility4PC(matchOpts.ParamTypes)
+		ok1 := checkTypesCompatibility4PC(plan.matchOpts.ParamTypes, matchOpts.ParamTypes)
 		if !ok1 {
 			continue
 		}
@@ -263,10 +263,6 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 		}
 		if len(plan.matchOpts.LimitOffsetAndCount) > 0 && !l.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
-			continue
-		}
-		// check subquery switch
-		if matchOpts.HasSubQuery && !l.sctx.GetSessionVars().EnablePlanCacheForSubquery {
 			continue
 		}
 		return k, true

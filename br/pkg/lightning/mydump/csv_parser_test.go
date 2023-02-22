@@ -384,11 +384,12 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 
 func TestMySQL(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: `"`,
-		EscapedBy: `\`,
-		NotNull:   false,
-		Null:      []string{`\N`},
+		Separator:  ",",
+		Delimiter:  `"`,
+		Terminator: "\n",
+		EscapedBy:  `\`,
+		NotNull:    false,
+		Null:       []string{`\N`},
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"\"","\\","\?"
@@ -396,7 +397,7 @@ func TestMySQL(t *testing.T) {
 ",\N,\\N`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
-	require.Nil(t, parser.ReadRow())
+	require.NoError(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
@@ -408,7 +409,7 @@ func TestMySQL(t *testing.T) {
 	}, parser.LastRow())
 	assertPosEqual(t, parser, 15, 1)
 
-	require.Nil(t, parser.ReadRow())
+	require.NoError(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
 		RowID: 2,
 		Row: []types.Datum{
@@ -428,13 +429,65 @@ func TestMySQL(t *testing.T) {
 		int64(config.ReadBlockSize), ioWorkers, false, nil)
 	require.NoError(t, err)
 
-	require.Nil(t, parser.ReadRow())
+	require.NoError(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})),
 		},
 		Length: 23,
+	}, parser.LastRow())
+
+	cfg.UnescapedQuote = true
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`3,"a string containing a " quote",102.20
+`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum("3"),
+			types.NewStringDatum(`a string containing a " quote`),
+			types.NewStringDatum("102.20"),
+		},
+		Length: 36,
+	}, parser.LastRow())
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`3,"a string containing a " quote","102.20"`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum("3"),
+			types.NewStringDatum(`a string containing a " quote`),
+			types.NewStringDatum("102.20"),
+		},
+		Length: 36,
+	}, parser.LastRow())
+
+	parser, err = mydump.NewCSVParser(
+		context.Background(), &cfg,
+		mydump.NewStringReader(`"a"b",c"d"e`),
+		int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(`a"b`),
+			types.NewStringDatum(`c"d"e`),
+		},
+		Length: 8,
 	}, parser.LastRow())
 }
 

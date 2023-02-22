@@ -554,6 +554,7 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
+	Format      string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
@@ -586,13 +587,6 @@ type UnlockStats struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
-}
-
-// PlanChangeCapture represents a plan change capture stmt
-type PlanChangeCapture struct {
-	baseSchemaProducer
-	Begin string
-	End   string
 }
 
 // PlanReplayer represents a plan replayer plan.

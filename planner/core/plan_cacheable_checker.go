@@ -256,7 +256,7 @@ type nonPreparedPlanCacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join,
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
@@ -273,6 +273,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				checker.cacheable = false
 			}
 			if isTempTable(checker.schema, node) {
+				checker.cacheable = false
+			}
+			if isView(checker.schema, node) {
 				checker.cacheable = false
 			}
 		}
@@ -299,6 +302,10 @@ func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 		}
 	}
 	return false
+}
+
+func isView(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	return schema.TableIsView(tn.Schema, tn.Name)
 }
 
 func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
