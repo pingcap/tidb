@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	"hash/crc32"
 	"sort"
 	"strconv"
 	"strings"
@@ -293,21 +294,20 @@ func (pe *PartitionExpr) LocateKeyPartitionWithSPC(pi *model.PartitionInfo,
 // LocateKeyPartition is the common interface used to locate the destination partition
 func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
 	cols []*expression.Column, r []types.Datum) (int, error) {
-	nr1 := uint64(1)
-	nr2 := uint64(4)
+	h := crc32.NewIEEE()
 	for _, col := range cols {
-		if r[col.Index].Kind() == types.KindNull {
-			nr1 ^= (nr1 << 1) | 1
-			continue
+		val := r[col.Index]
+		if val.Kind() == types.KindNull {
+			h.Write([]byte{0})
+		} else {
+			data, err := val.ToHashKey()
+			if err != nil {
+				return 0, err
+			}
+			h.Write(data)
 		}
-		data, err := r[col.Index].ToBytes()
-		if err != nil {
-			return 0, err
-		}
-		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
-	partID := nr1 % pi.Num
-	return int(partID), nil
+	return int(h.Sum32() % uint32(pi.Num)), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {
