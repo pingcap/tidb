@@ -1494,7 +1494,6 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 
 			for i := 0; i < nthPlan; i++ {
 				s := fmt.Sprintf(sql, i)
-				fmt.Printf("handling sql: %s, forceTiFlash: %v\n", s, forceTiFlash)
 				rows := tk.MustQuery(s).Rows()
 				for _, row := range rows {
 					line := fmt.Sprintf("%v", row)
@@ -1540,7 +1539,6 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 			var aggPushdownTiFlash bool
 			for i := 0; i < nthPlan; i++ {
 				s := fmt.Sprintf(sql, i)
-				fmt.Println("handling ", s)
 				rows := tk.MustQuery(s).Rows()
 				for _, row := range rows {
 					line := fmt.Sprintf("%v", row)
@@ -1570,7 +1568,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 		conf.DisaggregatedTiFlash = true
 	})
 	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = true
+		conf.DisaggregatedTiFlash = false
 	})
 	test1(true)
 	test1(false)
