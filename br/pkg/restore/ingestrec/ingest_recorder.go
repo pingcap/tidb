@@ -30,7 +30,7 @@ type IngestIndexInfo struct {
 	IsPrimary  bool
 }
 
-// IngestRecorder records the indices information that use ingest mode to construct kvs.
+// IngestRecorder records the indexes information that use ingest mode to construct kvs.
 // Currently log backup cannot backed up these ingest kvs. So need to re-construct them.
 type IngestRecorder struct {
 	// Table ID -> Index ID -> Index info
@@ -101,10 +101,10 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	}
 
 	if indexInfo != nil && len(indexInfo.Columns) > 0 {
-		tableIndices, exists := i.items[job.TableID]
+		tableindexes, exists := i.items[job.TableID]
 		if !exists {
-			tableIndices = make(map[int64]IngestIndexInfo)
-			i.items[job.TableID] = tableIndices
+			tableindexes = make(map[int64]IngestIndexInfo)
+			i.items[job.TableID] = tableindexes
 		}
 
 		var columnListBuilder strings.Builder
@@ -118,7 +118,7 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 			columnListBuilder.WriteString(column.Name.O)
 			columnListBuilder.WriteByte('`')
 		}
-		tableIndices[indexID] = IngestIndexInfo{
+		tableindexes[indexID] = IngestIndexInfo{
 			SchemaName: job.SchemaName,
 			TableName:  job.TableName,
 			IndexName:  indexInfo.Name.O,
@@ -135,7 +135,7 @@ func (i *IngestRecorder) DelJob(job *model.Job) error {
 		return nil
 	}
 
-	tableIndices, exists := i.items[job.TableID]
+	tableindexes, exists := i.items[job.TableID]
 	if !exists {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (i *IngestRecorder) DelJob(job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	delete(tableIndices, indexID)
+	delete(tableindexes, indexID)
 	return nil
 }
 

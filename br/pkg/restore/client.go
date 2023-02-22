@@ -2542,7 +2542,7 @@ const (
 	alterTableAddPrimaryFormat = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s)"
 )
 
-// RepairIngestIndex drops the indices from IngestRecorder and re-add them.
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
 func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder) error {
 	err := ingestRecorder.Iterate(func(_ int64, _ int64, info ingestrec.IngestIndexInfo) error {
 		var dropSQL string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexName)
