@@ -2643,6 +2643,9 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
 	if prop.IsFlashProp() && prop.CTECanMPP {
+		if prop.MPPPartitionTp != property.AnyType {
+			return invalidTask, 1, nil
+		}
 		t = &mppTask{
 			p:           pcte,
 			partTp:      prop.MPPPartitionTp,
