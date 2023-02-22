@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -366,10 +367,13 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	var indexOption []*ast.IndexOption
 	var hiddenCols [][]*model.ColumnInfo
 	var global []bool
+	var isPK []bool
+	var sqlMode mysql.SQLMode
+	var warnings []string
 
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
 	for _, subJob := range info.SubJobs {
-		if subJob.Type == model.ActionAddIndex {
+		if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
 			if newSubJob == nil {
 				newSubJob = new(model.SubJob)
 				newSubJob.Type = model.ActionAddIndex
@@ -384,14 +388,23 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
 			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
 			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
-			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
-			global = append(global, subJob.Args[5].(bool))
+			if subJob.Type == model.ActionAddIndex {
+				hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+				global = append(global, subJob.Args[5].(bool))
+				isPK = append(isPK, false)
+			} else if subJob.Type == model.ActionAddPrimaryKey {
+				hiddenCols = append(hiddenCols, nil)
+				sqlMode = subJob.Args[4].(mysql.SQLMode)
+				warnings = subJob.Args[5].([]string)
+				global = append(global, subJob.Args[6].(bool))
+				isPK = append(isPK, true)
+			}
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 	if newSubJob != nil {
-		newSubJob.Args = []interface{}{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+		newSubJob.Args = []interface{}{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, isPK, sqlMode, warnings}
 		newSubJobs = append(newSubJobs, newSubJob)
 		info.SubJobs = newSubJobs
 	}

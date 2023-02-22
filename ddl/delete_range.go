@@ -326,7 +326,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		tableID := job.TableID
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
 		var partitionIDs []int64
