@@ -409,10 +409,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 						e.feedbacks[workID].Invalidate()
 					}
+					notClosedSelectResult = nil
 					if err := result.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
-					notClosedSelectResult = nil
 					cancel()
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 					if fetchErr != nil {
@@ -531,10 +531,10 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// release related resources
 					cancel()
+					tableReaderClosed = true
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
-					tableReaderClosed = true
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 					if fetchErr != nil {
 						break
