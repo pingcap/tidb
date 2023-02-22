@@ -548,7 +548,7 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%?", user.User.Username, user.User.Hostname, dbName, strings.ToLower(tblName))
+	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%?", user.User.Username, user.User.Hostname, strings.ToLower(dbName), strings.ToLower(tblName))
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
@@ -574,7 +574,7 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		if err != nil {
 			return err
 		}
-		sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%? AND Column_name=%?", user.User.Username, user.User.Hostname, dbName, strings.ToLower(tbl.Meta().Name.O), col.Name.O)
+		sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%? AND lower(Column_name)=%?", user.User.Username, user.User.Hostname, strings.ToLower(dbName), tbl.Meta().Name.L, col.Name.L)
 
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
@@ -698,19 +698,19 @@ func dbUserExists(ctx sessionctx.Context, name string, host string, db string) (
 
 // tableUserExists checks if there is an entry with key user-host-db-tbl in mysql.Tables_priv.
 func tableUserExists(ctx sessionctx.Context, name string, host string, db string, tbl string) (bool, error) {
-	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%?;`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, strings.ToLower(tbl))
+	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%?;`, mysql.SystemDB, mysql.TablePrivTable, name, host, strings.ToLower(db), strings.ToLower(tbl))
 }
 
 // columnPrivEntryExists checks if there is an entry with key user-host-db-tbl-col in mysql.Columns_priv.
 func columnPrivEntryExists(ctx sessionctx.Context, name string, host string, db string, tbl string, col string) (bool, error) {
-	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%? AND Column_name=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, strings.ToLower(tbl), col)
+	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%? AND lower(Column_name)=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, strings.ToLower(db), strings.ToLower(tbl), strings.ToLower(col))
 }
 
 // getTablePriv gets current table scope privilege set from mysql.Tables_priv.
 // Return Table_priv and Column_priv.
 func getTablePriv(sctx sessionctx.Context, name string, host string, db string, tbl string) (string, string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `SELECT Table_priv, Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%?`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, strings.ToLower(tbl))
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `SELECT Table_priv, Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%?`, mysql.SystemDB, mysql.TablePrivTable, name, host, strings.ToLower(db), strings.ToLower(tbl))
 	if err != nil {
 		return "", "", err
 	}
@@ -738,7 +738,7 @@ func getTablePriv(sctx sessionctx.Context, name string, host string, db string, 
 // Return Column_priv.
 func getColumnPriv(sctx sessionctx.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `SELECT Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%? AND Column_name=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, strings.ToLower(tbl), col)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `SELECT Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%? AND lower(Column_name)=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, strings.ToLower(db), strings.ToLower(tbl), strings.ToLower(col))
 	if err != nil {
 		return "", err
 	}
