@@ -281,7 +281,7 @@ func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessio
 		return err
 	}
 
-	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%?", user, host, dbName, strings.ToLower(tblName))
+	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%?", user, host, strings.ToLower(dbName), strings.ToLower(tblName))
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -289,7 +289,7 @@ func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessio
 
 	if isDelRow {
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, dbName, strings.ToLower(tblName))
+		sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, strings.ToLower(dbName), strings.ToLower(tblName))
 		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 	}
 	return err
@@ -314,7 +314,7 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 		if err != nil {
 			return err
 		}
-		sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%? AND Column_name=%?", user, host, dbName, strings.ToLower(tbl.Meta().Name.O), col.Name.O)
+		sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%? AND lower(Column_name)=%?", user, host, strings.ToLower(dbName), tbl.Meta().Name.L, col.Name.L)
 
 		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 		if err != nil {
@@ -323,7 +323,7 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 
 		if isDelRow {
 			sql.Reset()
-			sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND lower(Table_name)=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, strings.ToLower(tbl.Meta().Name.O), col.Name.O)
+			sqlexec.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND lower(DB)=%? AND lower(Table_name)=%? AND lower(Column_name)=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, strings.ToLower(dbName), tbl.Meta().Name.L, col.Name.L)
 			_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return err
