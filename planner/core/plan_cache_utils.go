@@ -431,7 +431,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-type limitExtractor struct {
+type matchOptsExtractor struct {
 	cacheable         bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount    []uint64
 	unCacheableReason string
@@ -440,7 +440,7 @@ type limitExtractor struct {
 }
 
 // Enter implements Visitor interface.
-func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		if node.Count != nil {
@@ -450,12 +450,12 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					if val > 10000 {
 						checker.cacheable = false
 						checker.unCacheableReason = "limit count more than 10000"
-						return in, checker.hasSubQuery
+						return in, !checker.cacheable
 					}
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, true
+					return in, !checker.cacheable
 				}
 			}
 		}
@@ -466,7 +466,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
-					return in, true
+					return in, !checker.cacheable
 				}
 			}
 		}
@@ -477,23 +477,23 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 }
 
 // Leave implements Visitor interface.
-func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.cacheable || !checker.hasSubQuery
+func (checker *matchOptsExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func extractLimitAndEstimateSubQueryFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, bool, error) {
+func extractMatchOptsFromAST(node ast.Node, sctx sessionctx.Context) ([]uint64, bool, error) {
 	if node == nil {
 		return nil, false, nil
 	}
-	checker := limitExtractor{
+	checker := matchOptsExtractor{
 		cacheable:      true,
 		offsetAndCount: []uint64{},
 		hasSubQuery:    false,
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
-		return nil, checker.hasSubQuery, checker.paramTypeErr
+		return nil, false, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
@@ -502,8 +502,9 @@ func extractLimitAndEstimateSubQueryFromAst(node ast.Node, sctx sessionctx.Conte
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
+// we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	limitParams, hasSubQuery, err := extractLimitAndEstimateSubQueryFromAst(node, sctx)
+	limitParams, hasSubQuery, err := extractMatchOptsFromAST(node, sctx)
 	if err != nil {
 		return nil, err
 	}
