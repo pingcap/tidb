@@ -217,7 +217,8 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	joinGroup = append(joinGroup, newDataSource(ctx, "d", 100))
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: ctx,
+			ctx:           ctx,
+			basicJoinInfo: &basicJoinInfo{},
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
