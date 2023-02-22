@@ -377,19 +377,8 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 // For snapshot restore, it checks gc-safepoint;
 // For lightning/stream restore, it checks import mode.
 func (s *streamMgr) checkRestoreRunning(ctx context.Context) error {
-	// check gc-safepoint for snapshot restore
-	ids, err := s.mgr.GetServiceGcSafePointID(ctx)
-	if err != nil {
-		return errors.Annotate(err, "failed to get service-gc-safepoint")
-	}
-	for _, id := range ids {
-		if strings.Contains(id, utils.GetRestoreSafePointPrefix()) {
-			return errors.Errorf("there may a snapshot restore task running, please check the task which has set gc-safepoint `%s`", id)
-		}
-	}
-
 	// check import mode
-	if err = version.CheckClusterVersion(ctx, s.mgr.GetPDClient(), version.CheckVersionForGetModeRPC()); err != nil {
+	if err := version.CheckClusterVersion(ctx, s.mgr.GetPDClient(), version.CheckVersionForGetModeRPC()); err != nil {
 		log.Warn("failed to check whether stream restore or lightning is running", zap.Error(err))
 		return nil
 	}
