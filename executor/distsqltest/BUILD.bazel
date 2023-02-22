@@ -2,10 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "distsqltest_test",
+    timeout = "short",
     srcs = [
         "distsql_test.go",
         "main_test.go",
     ],
+    flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//kv",
