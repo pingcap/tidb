@@ -1697,7 +1697,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 			}
 		}
 	}
-	loadDataWorker.SetMessage()
 	return err
 }
 

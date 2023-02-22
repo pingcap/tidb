@@ -938,8 +938,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
-	worker, err := NewLoadDataWorker(b.ctx, v, tbl, defaultLoadDataBatchCnt)
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
