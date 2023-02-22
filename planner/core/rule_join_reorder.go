@@ -113,7 +113,6 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 			}
 		}
 		if noExpand {
-			hasOuterJoin = false
 			return &joinGroupResult{
 				group:         []LogicalPlan{p},
 				basicJoinInfo: &basicJoinInfo{},
@@ -157,7 +156,6 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 			}
 		}
 		if noExpand {
-			hasOuterJoin = false
 			return &joinGroupResult{
 				group:         []LogicalPlan{p},
 				basicJoinInfo: &basicJoinInfo{},
