@@ -154,6 +154,33 @@ func TestNonPreparedPlanCacheSwitch(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestNonPreparedPlanCacheSwitch2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for nonPrep := 0; nonPrep <= 1; nonPrep++ {
+		for prep := 0; prep <= 1; prep++ {
+			tk.MustExec("create table t(a int)")
+			tk.MustExec(fmt.Sprintf(`set tidb_enable_non_prepared_plan_cache=%v`, nonPrep))
+			tk.MustExec(fmt.Sprintf(`set tidb_enable_prepared_plan_cache=%v`, prep))
+
+			tk.MustExec(`select * from t where a<1`)
+			tk.MustExec(`select * from t where a<2`)
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(fmt.Sprintf("%v", nonPrep)))
+
+			tk.MustExec(`prepare st from 'select * from t where a<?'`)
+			tk.MustExec(`set @a=1`)
+			tk.MustExec(`execute st using @a`)
+			tk.MustExec(`set @a=2`)
+			tk.MustExec(`execute st using @a`)
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(fmt.Sprintf("%v", prep)))
+
+			tk.MustExec("drop table t")
+		}
+	}
+}
+
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
