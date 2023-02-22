@@ -226,9 +226,12 @@ func TestSelectClusterTable(t *testing.T) {
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-slow0.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
@@ -1019,15 +1022,14 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 
 func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.store = testkit.CreateMockStore(t, withMockTiFlash(2))
+	_, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.store = testkit.CreateMockStore(t, withMockTiFlash(1))
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
 	defer s.rpcserver.Stop()
 	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -1040,7 +1042,7 @@ func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
 
 	sql := "select * from t"
 	tk.MustExec(sql)
-	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
 }
 
@@ -1148,6 +1150,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	tk.MustExec(sql)
 	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding := tk.MustQuery("show bindings").Rows()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
@@ -1155,8 +1158,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 
 	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding1 := tk.MustQuery("show bindings").Rows()
 	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
 	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
@@ -1169,6 +1171,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from sql cover binding from history
 	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
+	time.Sleep(time.Millisecond * 10)
 	binding2 := tk.MustQuery("show bindings").Rows()
 	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
 	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
@@ -1184,6 +1187,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	}
 	// binding from history cover binding from sql
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	time.Sleep(time.Millisecond * 10)
 	binding3 := tk.MustQuery("show bindings").Rows()
 	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
 	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
@@ -1263,4 +1267,38 @@ func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestCreateBindingForPrepareToken(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b time, c varchar(5))")
+
+	//some builtin functions listed in https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html
+	cases := []string{
+		"select std(a) from t",
+		"select cast(a as decimal(10, 2)) from t",
+		"select bit_or(a) from t",
+		"select min(a) from t",
+		"select max(a) from t",
+		"select substr(c, 1, 2) from t",
+	}
+
+	for _, sql := range cases {
+		prep := fmt.Sprintf("prepare stmt from '%s'", sql)
+		tk.MustExec(prep)
+		tk.MustExec("execute stmt")
+		planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+		tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	}
 }

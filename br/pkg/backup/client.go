@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -528,7 +529,7 @@ func BuildBackupRangeAndSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
@@ -565,7 +566,7 @@ func BuildBackupRangeAndSchema(
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = autoIDAccess.SequenceCycle().Get()
+				globalAutoID, err = autoIDAccess.SequenceValue().Get()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
@@ -758,6 +759,7 @@ func (bc *Client) BackupRanges(
 	ranges []rtree.Range,
 	request backuppb.BackupRequest,
 	concurrency uint,
+	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -787,7 +789,7 @@ func (bc *Client) BackupRanges(
 		}
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err := bc.BackupRange(elctx, req, pr, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, replicaReadLabel, pr, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
@@ -807,6 +809,7 @@ func (bc *Client) BackupRanges(
 func (bc *Client) BackupRange(
 	ctx context.Context,
 	request backuppb.BackupRequest,
+	replicaReadLabel map[string]string,
 	progressRange *rtree.ProgressRange,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -827,10 +830,26 @@ func (bc *Client) BackupRange(
 		zap.Uint64("rateLimit", request.RateLimit),
 		zap.Uint32("concurrency", request.Concurrency))
 
-	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
+	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	var targetStores []*metapb.Store
+	targetStoreIds := make(map[uint64]struct{})
+	if len(replicaReadLabel) == 0 {
+		targetStores = allStores // send backup push down request to all stores
+	} else {
+		for _, store := range allStores {
+			for _, label := range store.Labels {
+				if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {
+					targetStores = append(targetStores, store) // send backup push down request to stores that match replica read label
+					targetStoreIds[store.GetId()] = struct{}{} // record store id for fine grained backup
+				}
+			}
+		}
+	}
+	if len(replicaReadLabel) > 0 && len(targetStores) == 0 {
+		return errors.Errorf("no store matches replica read label: %v", replicaReadLabel)
 	}
 
 	logutil.CL(ctx).Info("backup push down started")
@@ -855,8 +874,8 @@ func (bc *Client) BackupRange(
 			req.EndKey = progressRange.Incomplete[0].EndKey
 		}
 
-		push := newPushDown(bc.mgr, len(allStores))
-		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)
+		push := newPushDown(bc.mgr, len(targetStores))
+		err = push.pushBackup(ctx, req, progressRange, targetStores, bc.checkpointRunner, progressCallBack)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -865,7 +884,7 @@ func (bc *Client) BackupRange(
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	if err := bc.fineGrainedBackup(ctx, request, progressRange, progressCallBack); err != nil {
+	if err := bc.fineGrainedBackup(ctx, request, targetStoreIds, progressRange, progressCallBack); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -908,7 +927,7 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
+func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, targetStoreIds map[uint64]struct{}) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
@@ -916,26 +935,46 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
-			log.Error("find leader failed", zap.Error(err), zap.Reflect("region", region))
+			log.Error("find region failed", zap.Error(err), zap.Reflect("region", region))
 			time.Sleep(time.Millisecond * time.Duration(100*i))
 			continue
 		}
-		if region.Leader != nil {
-			log.Info("find leader",
-				zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
-			return region.Leader, nil
+		if len(targetStoreIds) == 0 {
+			if region.Leader != nil {
+				log.Info("find leader",
+					zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
+				return region.Leader, nil
+			}
+		} else {
+			candidates := make([]*metapb.Peer, 0, len(region.Meta.Peers))
+			for _, peer := range region.Meta.Peers {
+				if _, ok := targetStoreIds[peer.StoreId]; ok {
+					candidates = append(candidates, peer)
+				}
+			}
+			if len(candidates) > 0 {
+				peer := candidates[rand.Intn(len(candidates))]
+				log.Info("find target peer for backup",
+					zap.Reflect("Peer", peer), logutil.Key("key", key))
+				return peer, nil
+			}
 		}
-		log.Warn("no region found", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(100*i))
+
+		log.Warn("fail to find a target peer", logutil.Key("key", key))
+		time.Sleep(time.Millisecond * time.Duration(1000*i))
 		continue
 	}
-	log.Error("can not find leader", logutil.Key("key", key))
-	return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find leader")
+	log.Error("can not find a valid target peer", logutil.Key("key", key))
+	if len(targetStoreIds) == 0 {
+		return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid leader for key %s", key)
+	}
+	return nil, errors.Errorf("can not find a valid target peer for key %s", key)
 }
 
 func (bc *Client) fineGrainedBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
+	targetStoreIds map[uint64]struct{},
 	pr *rtree.ProgressRange,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -986,7 +1025,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					subReq := req
 					subReq.StartKey, subReq.EndKey = rg.StartKey, rg.EndKey
-					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, respCh)
+					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, targetStoreIds, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -1138,13 +1177,14 @@ func (bc *Client) handleFineGrained(
 	ctx context.Context,
 	bo *tikv.Backoffer,
 	req backuppb.BackupRequest,
+	targetStoreIds map[uint64]struct{},
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	leader, pderr := bc.findRegionLeader(ctx, req.StartKey, req.IsRawKv)
+	targetPeer, pderr := bc.findTargetPeer(ctx, req.StartKey, req.IsRawKv, targetStoreIds)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
-	storeID := leader.GetStoreId()
+	storeID := targetPeer.GetStoreId()
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
 	if err != nil {

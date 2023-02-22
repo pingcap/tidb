@@ -554,10 +554,12 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
+	Format      string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
 	IgnoreLines uint64
 
 	ColumnAssignments  []*ast.Assignment
@@ -596,6 +598,7 @@ type PlanReplayer struct {
 	File     string
 
 	Capture    bool
+	Remove     bool
 	SQLDigest  string
 	PlanDigest string
 }

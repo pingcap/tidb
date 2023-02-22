@@ -69,6 +69,8 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
+	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
@@ -130,6 +132,7 @@ type Domain struct {
 	indexUsageSyncLease   time.Duration
 	dumpFileGcChecker     *dumpFileGcChecker
 	planReplayerHandle    *planReplayerHandle
+	extractTaskHandle     *extractHandle
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
@@ -149,6 +152,8 @@ type Domain struct {
 		sync.Mutex
 		sctxs map[sessionctx.Context]bool
 	}
+
+	stopAutoAnalyze atomicutil.Bool
 }
 
 type mdlCheckTableInfo struct {
@@ -208,6 +213,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
+				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
 			return is, false, currentSchemaVersion, relatedChanges, nil
@@ -902,6 +908,19 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
+	ttlJobManager := do.ttlJobManager.Load()
+	if ttlJobManager != nil {
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
+			if intest.InTest {
+				return 10 * time.Second
+			}
+			return 30 * time.Second
+		}())
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
+	}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -921,6 +940,7 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
+	gctuner.WaitMemoryLimitTunerExitInTest()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -945,6 +965,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
+	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
@@ -1069,7 +1090,9 @@ func (do *Domain) Init(
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, do.unprefixedEtcdCli, pdCli, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
+		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
+		skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -1728,6 +1751,11 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
+// SetupExtractHandle setups extract handler
+func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
+	do.extractTaskHandle = NewExtractHandler(sctxs)
+}
+
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
@@ -1789,6 +1817,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 // GetPlanReplayerHandle returns plan replayer handle
 func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 	return do.planReplayerHandle
+}
+
+// GetExtractHandle returns extract handle
+func (do *Domain) GetExtractHandle() *extractHandle {
+	return do.extractTaskHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
@@ -2168,7 +2201,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -2540,18 +2573,17 @@ func (do *Domain) StartTTLJobManager() {
 		ttlJobManager.Start()
 
 		<-do.exit
-
-		ttlJobManager.Stop()
-		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
-		if err != nil {
-			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
-		}
 	}, "ttlJobManager")
 }
 
 // TTLJobManager returns the ttl job manager on this domain
 func (do *Domain) TTLJobManager() *ttlworker.JobManager {
 	return do.ttlJobManager.Load()
+}
+
+// StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
+func (do *Domain) StopAutoAnalyze() {
+	do.stopAutoAnalyze.Store(true)
 }
 
 func init() {

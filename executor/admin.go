@@ -389,7 +389,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
-			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle
 		}
@@ -438,16 +438,31 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	}
 	e.batchKeys = e.batchKeys[:0]
 	sc := e.ctx.GetSessionVars().StmtCtx
-	distinctFlags := make([]bool, len(rows))
+	distinctFlags := make([]bool, 0, len(rows))
+	rowIdx := make([]int, 0, len(rows))
+	cnt := 0
 	for i, row := range rows {
-		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
-		if err != nil {
-			return err
-		}
-		e.idxKeyBufs[i] = idxKey
+		iter := e.index.GenIndexKVIter(sc, row.idxVals, row.handle, nil)
+		for iter.Valid() {
+			var buf []byte
+			if cnt < len(e.idxKeyBufs) {
+				buf = e.idxKeyBufs[cnt]
+			}
+			key, _, distinct, err := iter.Next(buf)
+			if err != nil {
+				return err
+			}
+			if cnt < len(e.idxKeyBufs) {
+				e.idxKeyBufs[cnt] = key
+			} else {
+				e.idxKeyBufs = append(e.idxKeyBufs, key)
+			}
 
-		e.batchKeys = append(e.batchKeys, idxKey)
-		distinctFlags[i] = distinct
+			cnt++
+			e.batchKeys = append(e.batchKeys, key)
+			distinctFlags = append(distinctFlags, distinct)
+			rowIdx = append(rowIdx, i)
+		}
 	}
 
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -460,21 +475,22 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 3. non-unique-key is duplicate, skip it.
 	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
-		if val, found := values[string(key)]; found {
+		val, found := values[string(key)]
+		if found {
 			if distinctFlags[i] {
 				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
 				if err1 != nil {
 					return err1
 				}
 
-				if handle.Compare(rows[i].handle) != 0 {
+				if handle.Compare(rows[rowIdx[i]].handle) != 0 {
 					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
 						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
-						zap.Stringer("handleInTable", rows[i].handle), zap.Stringer("handleInIndex", handle))
+						zap.Stringer("handleInTable", rows[rowIdx[i]].handle), zap.Stringer("handleInIndex", handle))
 				}
 			}
-			rows[i].skip = true
 		}
+		rows[rowIdx[i]].skip = found && rows[rowIdx[i]].skip
 	}
 	return nil
 }

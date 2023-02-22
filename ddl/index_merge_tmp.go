@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -198,6 +199,12 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 		return nil
 	})
 
+	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionMerging != nil {
+			MockDMLExecutionMerging()
+		}
+	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 	return
 }
@@ -235,7 +242,6 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	isCommonHandle := w.table.Meta().IsCommonHandle
 	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
@@ -252,40 +258,44 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				return false, nil
 			}
 
-			originVal, handle, isDelete, unique, keyVer := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
-			if keyVer == tables.TempIndexKeyTypeMerge || keyVer == tables.TempIndexKeyTypeDelete {
-				// For 'm' version kvs, they are double-written.
-				// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
-				return true, nil
+			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)
+			if err != nil {
+				return false, err
+			}
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.index.Meta().Columns))
+			if err != nil {
+				return false, err
 			}
 
-			if handle == nil {
-				// If the handle is not found in the value of the temp index, it means
-				// 1) This is not a deletion marker, the handle is in the key or the origin value.
-				// 2) This is a deletion marker, but the handle is in the key of temp index.
-				handle, err = tablecodec.DecodeIndexHandle(indexKey, originVal, len(w.index.Meta().Columns))
-				if err != nil {
-					return false, err
+			tempIdxVal = tempIdxVal.FilterOverwritten()
+
+			// Extract the operations on the original index and replay them later.
+			for _, elem := range tempIdxVal {
+				if elem.KeyVer == tables.TempIndexKeyTypeMerge || elem.KeyVer == tables.TempIndexKeyTypeDelete {
+					// For 'm' version kvs, they are double-written.
+					// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
+					continue
 				}
+
+				originIdxKey := make([]byte, len(indexKey))
+				copy(originIdxKey, indexKey)
+				tablecodec.TempIndexKey2IndexKey(originIdxKey)
+
+				idxRecord := &temporaryIndexRecord{
+					handle: elem.Handle,
+					delete: elem.Delete,
+					unique: elem.Distinct,
+					skip:   false,
+				}
+				if !elem.Delete {
+					idxRecord.vals = elem.Value
+					idxRecord.distinct = tablecodec.IndexKVIsUnique(elem.Value)
+				}
+				w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
+				w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
+				w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
 			}
 
-			originIdxKey := make([]byte, len(indexKey))
-			copy(originIdxKey, indexKey)
-			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
-
-			idxRecord := &temporaryIndexRecord{
-				handle: handle,
-				delete: isDelete,
-				unique: unique,
-				skip:   false,
-			}
-			if !isDelete {
-				idxRecord.vals = originVal
-				idxRecord.distinct = tablecodec.IndexKVIsUnique(originVal)
-			}
-			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-			w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
-			w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
 			lastKey = indexKey
 			return true, nil
 		})
@@ -303,4 +313,19 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	logutil.BgLogger().Debug("[ddl] merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
+}
+
+func decodeTempIndexHandleFromIndexKV(indexKey kv.Key, tmpVal tablecodec.TempIndexValue, idxColLen int) (ret tablecodec.TempIndexValue, err error) {
+	for _, elem := range tmpVal {
+		if elem.Handle == nil {
+			// If the handle is not found in the value of the temp index, it means
+			// 1) This is not a deletion marker, the handle is in the key or the origin value.
+			// 2) This is a deletion marker, but the handle is in the key of temp index.
+			elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, idxColLen)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return tmpVal, nil
 }

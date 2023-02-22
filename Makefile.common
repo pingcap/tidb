@@ -115,6 +115,6 @@ DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LD
 TEST_COVERAGE_DIR := "test_coverage"
 
 ifneq ("$(CI)", "0")
-	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp --host_jvm_args=-XX:+UnlockExperimentalVMOptions --host_jvm_args=-XX:+UseZGC
+	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
 endif

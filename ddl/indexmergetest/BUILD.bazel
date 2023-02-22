@@ -2,14 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "indexmergetest_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "merge_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 18,
     deps = [
         "//config",
         "//ddl",
@@ -17,6 +17,7 @@ go_test(
         "//ddl/internal/callback",
         "//ddl/testutil",
         "//domain",
+        "//errno",
         "//kv",
         "//meta/autoid",
         "//parser/model",

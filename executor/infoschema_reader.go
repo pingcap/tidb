@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
@@ -158,9 +157,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(sctx)
-		case infoschema.TableStatementsSummaryEvicted,
-			infoschema.ClusterTableStatementsSummaryEvicted:
-			err = e.setDataForStatementsSummaryEvicted(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
@@ -1124,17 +1120,23 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 					partitionMethod := table.Partition.Type.String()
 					partitionExpr := table.Partition.Expr
-					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
-						partitionMethod = "RANGE COLUMNS"
-						partitionExpr = table.Partition.Columns[0].String()
-					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
-						partitionMethod = "LIST COLUMNS"
+					if len(table.Partition.Columns) > 0 {
+						switch table.Partition.Type {
+						case model.PartitionTypeRange:
+							partitionMethod = "RANGE COLUMNS"
+						case model.PartitionTypeList:
+							partitionMethod = "LIST COLUMNS"
+						default:
+							return fmt.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
+						}
 						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
 							if i > 0 {
 								buf.WriteString(",")
 							}
+							buf.WriteString("`")
 							buf.WriteString(col.String())
+							buf.WriteString("`")
 						}
 						partitionExpr = buf.String()
 					}
@@ -2306,22 +2308,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	e.rows = rows
 }
 
-func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-	switch e.table.Name.O {
-	case infoschema.ClusterTableStatementsSummaryEvicted:
-		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-		if err != nil {
-			return err
-		}
-		e.rows = rows
-	}
-	return nil
-}
-
 func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
 	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
 	// This is similar to information_schema.processlist, which is the closest comparison.
@@ -2474,50 +2460,6 @@ func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionct
 	}
 	e.rows = rows
 	return nil
-}
-
-type stmtSummaryTableRetriever struct {
-	dummyCloser
-	table     *model.TableInfo
-	columns   []*model.ColumnInfo
-	retrieved bool
-	extractor *plannercore.StatementsSummaryExtractor
-}
-
-// retrieve implements the infoschemaRetriever interface
-func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor.SkipRequest || e.retrieved {
-		return nil, nil
-	}
-	e.retrieved = true
-
-	var err error
-	var instanceAddr string
-	switch e.table.Name.O {
-	case infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	user := sctx.GetSessionVars().User
-	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr, sctx.GetSessionVars().StmtCtx.TimeZone)
-	if e.extractor.Enable {
-		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
-		reader.SetChecker(checker)
-	}
-	var rows [][]types.Datum
-	switch e.table.Name.O {
-	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
-		rows = reader.GetStmtSummaryCurrentRows()
-	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		rows = reader.GetStmtSummaryHistoryRows()
-	}
-
-	return rows, nil
 }
 
 // tidbTrxTableRetriever is the memtable retriever for the TIDB_TRX and CLUSTER_TIDB_TRX table.
@@ -3018,9 +2960,6 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
-	if table.Name.O == infoschema.TableStatementsSummary {
-		return input
-	}
 	if len(outColumns) == len(table.Columns) {
 		return input
 	}
@@ -3406,7 +3345,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
-				uint64(group.RUSettings.RU.Tokens),
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3414,7 +3352,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
-				nil,
 				nil,
 				nil,
 			)

@@ -32,6 +32,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -1224,6 +1225,15 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		_ = common.KillMySelf()
+		// mimic we meet context cancel error when `addSST`
+		<-ctx.Done()
+		time.Sleep(5 * time.Second)
+		failpoint.Return(errors.Trace(ctx.Err()))
+	})
+
 	err = w.addSST(ctx, meta)
 	if err != nil {
 		return errors.Trace(err)

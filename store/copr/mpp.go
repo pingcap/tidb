@@ -350,7 +350,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	if !req.IsRoot {
 		return
 	}
-
+	// only root task should establish a stream conn with tiFlash to receive result.
 	m.establishMPPConns(bo, req, taskMeta)
 }
 
