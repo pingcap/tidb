@@ -291,6 +291,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from t where a in (1, 2, 3)",
 		"select * from t where a<13 or b<15",
 		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
 	}
 
 	unsupported := []string{
