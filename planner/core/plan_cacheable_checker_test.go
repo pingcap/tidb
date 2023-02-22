@@ -309,6 +309,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"insert into t1(a, b) select a, b from t1",                                         // insert into select
 		"update t1 set a = 1 where b = 2",                                                  // update
 		"delete from t1 where b = 1",                                                       // delete
+		"select * from t1 for update",                                                      // lock
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
 
 		"select * from t where a+b=13",      // '+'
 		"select * from t where mod(a, 3)=1", // mod
