@@ -325,6 +325,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.RequestSourceType, tp)
 	}
 
+	if sessVars.LoadBasedReplicaReadThreshold > 0 {
+		txn.SetOption(kv.LoadBasedReplicaReadThreshold, sessVars.LoadBasedReplicaReadThreshold)
+	}
+
 	p.txn = txn
 	return txn, nil
 }

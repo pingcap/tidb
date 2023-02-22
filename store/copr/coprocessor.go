@@ -1144,6 +1144,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		TaskId:            worker.req.TaskID,
 		RequestSource:     task.requestSource.GetRequestSource(),
 		ResourceGroupName: worker.req.ResourceGroupName,
+		BusyThresholdMs:   uint32(worker.req.StoreBusyThreshold.Milliseconds()),
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
