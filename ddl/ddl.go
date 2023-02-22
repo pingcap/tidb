@@ -755,6 +755,9 @@ func (d *ddl) prepareBackfillWorkers() error {
 	var err error
 	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
 		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
+	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
+		return bfWorker.runTask(task)
+	})
 	if err != nil {
 		return err
 	}

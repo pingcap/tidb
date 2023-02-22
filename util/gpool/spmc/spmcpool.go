@@ -286,6 +286,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(inputCh)
+			log.Info("producer exit")
 			wg.Done()
 		}()
 		for {
@@ -340,6 +341,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(inputCh)
+			log.Info("producer exit")
 			wg.Done()
 		}()
 		for {

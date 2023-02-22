@@ -66,14 +66,17 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			if f.GetResultCh() != nil {
 				for t := range f.GetTaskCh() {
 					if f.GetStatus() == pooltask.StopTask {
+						log.Info("worker Done a task because of stop", zap.Uint64("taskID", f.TaskID()))
 						f.Done()
 						break
 					}
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
+					log.Info("worker Done a task", zap.Uint64("taskID", f.TaskID()))
 					f.Done()
 				}
 			}
 			w.pool.ExitSubTask(f.TaskID())
+			log.Info("worker exits from a task", zap.Uint64("taskID", f.TaskID()))
 			f.Finish()
 			if ok := w.pool.revertWorker(w); !ok {
 				return

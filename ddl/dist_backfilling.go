@@ -125,9 +125,6 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	}
 	workerCnt = len(workerCtx.backfillWorkers)
 	bwMgr := newBackfilWorkerManager(workerCtx)
-	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
-		return bfWorker.runTask(task)
-	})
 
 	runningPID := int64(0)
 	// If txn-merge we needn't to claim the backfill job through the partition table
