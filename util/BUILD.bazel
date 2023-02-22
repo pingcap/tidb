@@ -32,7 +32,6 @@ go_library(
         "//parser/terror",
         "//session/txninfo",
         "//sessionctx/stmtctx",
-        "//types",
         "//util/collate",
         "//util/disk",
         "//util/execdetails",
