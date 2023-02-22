@@ -181,6 +181,16 @@ func TestNonPreparedPlanCacheSwitch2(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheUnknownSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt(a char(2) primary key, b char(2))`)
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	err := tk.ExecToErr(`select tt.* from tt tmp where a='aa'`)
+	require.Equal(t, err.Error(), "[planner:1051]Unknown table 'tt'")
+}
+
 func TestNonPreparedPlanCacheReason(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
