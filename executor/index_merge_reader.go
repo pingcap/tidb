@@ -258,6 +258,39 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					maxChunkSize: e.maxChunkSize,
 				}
 
+<<<<<<< HEAD
+=======
+				if e.isCorColInPartialFilters[workID] {
+					// We got correlated column, so need to refresh Selection operator.
+					var err error
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						syncErr(ctx, e.finished, fetchCh, err)
+						return
+					}
+				}
+
+				var builder distsql.RequestBuilder
+				builder.SetDAGRequest(e.dagPBs[workID]).
+					SetStartTS(e.startTS).
+					SetDesc(e.descs[workID]).
+					SetKeepOrder(false).
+					SetTxnScope(e.txnScope).
+					SetReadReplicaScope(e.readReplicaScope).
+					SetIsStaleness(e.isStaleness).
+					SetFromSessionVars(e.ctx.GetSessionVars()).
+					SetMemTracker(e.memTracker).
+					SetPaging(e.paging).
+					SetFromInfoSchema(e.ctx.GetInfoSchema()).
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
+
+				var notClosedSelectResult distsql.SelectResult
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					if notClosedSelectResult != nil {
+						terror.Call(notClosedSelectResult.Close)
+					}
+				}()
+>>>>>>> 4aa3a95f9f (exeuctor: fix coprocessor goroutine leak for IndexMerge (#41610))
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
@@ -277,6 +310,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						worker.syncErr(e.resultCh, err)
 						return
 					}
+					notClosedSelectResult = result
+					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -291,6 +326,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 						e.feedbacks[workID].Invalidate()
 					}
+					notClosedSelectResult = nil
 					if err := result.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
@@ -345,7 +381,26 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					tableReader:  partialTableReader,
 				}
 
+<<<<<<< HEAD
 				for _, tbl := range tbls {
+=======
+				if e.isCorColInPartialFilters[workID] {
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						syncErr(ctx, e.finished, fetchCh, err)
+						return
+					}
+					partialTableReader.dagPB = e.dagPBs[workID]
+				}
+
+				var tableReaderClosed bool
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					if !tableReaderClosed {
+						terror.Call(worker.tableReader.Close)
+					}
+				}()
+				for parTblIdx, tbl := range tbls {
+>>>>>>> 4aa3a95f9f (exeuctor: fix coprocessor goroutine leak for IndexMerge (#41610))
 					// check if this executor is closed
 					select {
 					case <-e.finished:
@@ -361,6 +416,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						worker.syncErr(e.resultCh, err)
 						break
 					}
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", nil)
+					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -378,7 +435,12 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// release related resources
 					cancel()
+<<<<<<< HEAD
 					if err := worker.tableReader.Close(); err != nil {
+=======
+					tableReaderClosed = true
+					if err = worker.tableReader.Close(); err != nil {
+>>>>>>> 4aa3a95f9f (exeuctor: fix coprocessor goroutine leak for IndexMerge (#41610))
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
 					e.ctx.StoreQueryFeedback(e.feedbacks[workID])
