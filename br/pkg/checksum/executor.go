@@ -332,7 +332,7 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
-	checksumBackoffer := utils.NewFixedBackoffer(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
+	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime, utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
@@ -347,7 +347,7 @@ func (exec *Executor) Execute(
 			resp, err = sendChecksumRequest(ctx, client, req, kv.NewVariables(&killed))
 			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
 				// first time reach here. return error
-				if val.(bool) && checksumBackoffer.Attempt() == utils.ChecksumRetryTime {
+				if val.(bool) {
 					err = errors.New("inject checksum error")
 				}
 			})
@@ -355,7 +355,7 @@ func (exec *Executor) Execute(
 				return errors.Trace(err)
 			}
 			return nil
-		}, checksumBackoffer)
+		}, &checksumBackoffer)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

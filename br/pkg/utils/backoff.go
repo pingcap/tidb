@@ -213,33 +213,3 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 func (bo *pdReqBackoffer) Attempt() int {
 	return bo.attempt
 }
-
-type fixedBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
-}
-
-// NewFixedBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewFixedBackoffer(attempt int, delayTime time.Duration, maxDelayTime time.Duration) Backoffer {
-	return &fixedBackoffer{
-		attempt:      attempt,
-		delayTime:    delayTime,
-		maxDelayTime: maxDelayTime,
-	}
-}
-
-// retry 3 times when prepare flashback failure.
-func (bo *fixedBackoffer) NextBackoff(err error) time.Duration {
-	bo.delayTime = 2 * bo.delayTime
-	bo.attempt--
-
-	if bo.delayTime > bo.maxDelayTime {
-		return bo.maxDelayTime
-	}
-	return bo.delayTime
-}
-
-func (bo *fixedBackoffer) Attempt() int {
-	return bo.attempt
-}

@@ -112,7 +112,7 @@ func TestChecksum(t *testing.T) {
 
 	exe4, err := checksum.NewExecutorBuilder(tableInfo3, math.MaxUint64).Build()
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr", `1*return(true)`))
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr")
 	resp4, err := exe4.Execute(context.TODO(), mock.Storage.GetClient(), func() {})
 	require.NoError(t, err)

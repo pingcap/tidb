@@ -302,6 +302,7 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
+	retryState := utils.InitialRetryState(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval)
 	retryErr := utils.WithRetry(
 		ctx,
 		func() error {
@@ -322,9 +323,7 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 			}
 			log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
 			return nil
-		},
-		utils.NewFixedBackoffer(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval),
-	)
+		}, &retryState)
 
 	recovery.progress.Inc()
 	return retryErr
