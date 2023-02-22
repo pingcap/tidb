@@ -86,6 +86,15 @@ func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
 			return in, true
 		}
 	}
+	if node, ok := in.(*SelectStmt); ok {
+		if node.LockInfo != nil {
+			switch node.LockInfo.LockType {
+			case SelectLockForUpdate, SelectLockForUpdateNoWait, SelectLockForUpdateWaitN:
+				checker.readOnly = false
+				return in, true
+			}
+		}
+	}
 	return in, false
 }
 
