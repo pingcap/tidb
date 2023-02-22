@@ -1646,6 +1646,11 @@ error = '''
 transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
 '''
 
+["executor:8154"]
+error = '''
+Load data raise error(s): %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

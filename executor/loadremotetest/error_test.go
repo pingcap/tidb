@@ -57,4 +57,6 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): Load data raise error(s): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
+
+	// TODO: test error during execution, like insert NULL to NOT NULL column, duplicate key, etc.
 }
