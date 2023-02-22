@@ -181,6 +181,36 @@ func TestNonPreparedPlanCacheSwitch2(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`explain select * from t where a=1`)
+	tk.MustExec(`explain select * from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`explain select * from t where a+1=1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: query has some unsupported binary operation`))
+
+	tk.MustExec(`explain select * from t t1, t t2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that access multiple tables are not supported`))
+
+	tk.MustExec(`explain select * from (select * from t) tx`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that have sub-queries are not supported`))
+
+	// no warning if disable this feature
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tk.MustExec(`explain select * from t where a+1=1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`explain select * from t t1, t t2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`explain select * from t where a in (select a from t)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
+
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -77,10 +77,19 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
 		sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		sctx.GetSessionVars().StmtCtx.InRestrictedSQL || // is internal SQL
-		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) { // not support
+		sctx.GetSessionVars().StmtCtx.InRestrictedSQL { // is internal SQL
 		return nil, nil, false, nil
 	}
+	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	if !ok {
+		_, isExplain := stmt.(*ast.ExplainStmt)
+		if !isExplain && sctx.GetSessionVars().StmtCtx.InExplainStmt {
+			notice := errors.Errorf("skip non-prep plan cache: %v", reason)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(notice)
+		}
+		return nil, nil, false, nil
+	}
+
 	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
