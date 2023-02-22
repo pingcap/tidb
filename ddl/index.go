@@ -839,8 +839,16 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 			if err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					logutil.BgLogger().Warn("[ddl] partial import found duplicated index key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					if common.ErrFoundDuplicateKeys.Equal(err) {
+						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+					}
+					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+				} else {
+					err = tryFallbackToTxnMerge(job, err)
+				}
 				ingest.LitBackCtxMgr.Unregister(job.ID)
-				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
 			if !done {

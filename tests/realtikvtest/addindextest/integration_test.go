@@ -472,6 +472,22 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
 
+func TestAddIndexMockTxnRetryForUnique(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"))
+}
+
 type testCallback struct {
 	ddl.Callback
 	OnJobRunBeforeExported func(job *model.Job)

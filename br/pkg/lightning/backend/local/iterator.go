@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 
 	"github.com/cockroachdb/pebble"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 // Iter abstract iterator method for Ingester.
@@ -160,6 +162,9 @@ func (d *dupDetectIter) Next() bool {
 			dupVal := make([]byte, len(d.iter.Value()))
 			copy(dupKey, d.curKey)
 			copy(dupVal, d.curVal)
+			d.logger.Warn("[detect-dupe] local duplicate key detected",
+				zap.String("key", hex.EncodeToString(dupKey)),
+				zap.String("value", hex.EncodeToString(dupVal)))
 			d.err = common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
 			return false
 		}
