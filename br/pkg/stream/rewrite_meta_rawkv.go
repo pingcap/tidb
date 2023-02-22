@@ -119,22 +119,22 @@ func NewSchemasReplace(
 	}
 }
 
-func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, error) {
+func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error) {
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbID, err := meta.ParseDBKey(rawMetaKey.Field)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
 		newID, err := sr.genGenGlobalID(context.Background())
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		dbReplace = NewDBReplace(nil, newID)
 		sr.DbMap[dbID] = dbReplace
@@ -144,13 +144,13 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
-	return rawMetaKey.EncodeMetaKey(), true, nil
+	return rawMetaKey.EncodeMetaKey(), nil
 }
 
-func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, bool, error) {
+func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	oldDBInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, oldDBInfo); err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbReplace, exist := sr.DbMap[oldDBInfo.ID]
@@ -159,7 +159,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, bool, error) {
 		// Or we need a new ID to rewrite the dbID in kv entry.
 		newID, err := sr.genGenGlobalID(context.Background())
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		dbReplace = NewDBReplace(oldDBInfo, newID)
@@ -176,25 +176,26 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, bool, error) {
 	newDBInfo.ID = dbReplace.NewDBID
 	newValue, err := json.Marshal(newDBInfo)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return newValue, true, nil
+	return newValue, nil
 }
 
 func (sr *SchemasReplace) rewriteEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newValue, needWrite, err := sr.rewriteValue(
+	r, err := sr.rewriteValueV2(
 		e.Value,
 		cf,
-		func(value []byte) ([]byte, bool, error) {
+		func(value []byte) ([]byte, error) {
 			return sr.rewriteDBInfo(value)
 		},
 	)
-	if err != nil || !needWrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	newKey, needWrite, err := sr.rewriteKeyForDB(e.Key, cf)
-	if err != nil || !needWrite {
+	newValue := r.NewValue
+	newKey, err := sr.rewriteKeyForDB(e.Key, cf)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -214,7 +215,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	cf string,
 	parseField func([]byte) (tableID int64, err error),
 	encodeField func(tableID int64) []byte,
-) ([]byte, bool, error) {
+) ([]byte, error) {
 	var (
 		err   error
 		newID int64
@@ -222,24 +223,24 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	)
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbID, err := meta.ParseDBKey(rawMetaKey.Key)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	tableID, err := parseField(rawMetaKey.Field)
 	if err != nil {
 		log.Warn("parse table key failed", zap.ByteString("field", rawMetaKey.Field))
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
 		newID, err = sr.genGenGlobalID(context.Background())
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		dbReplace = NewDBReplace(nil, newID)
 		sr.DbMap[dbID] = dbReplace
@@ -251,7 +252,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		if !exist {
 			newID, err = sr.genGenGlobalID(context.Background())
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			sr.globalTableIdMap[tableID] = newID
 		}
@@ -264,10 +265,10 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
-	return rawMetaKey.EncodeMetaKey(), true, nil
+	return rawMetaKey.EncodeMetaKey(), nil
 }
 
-func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bool, error) {
+func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, error) {
 	var (
 		tableInfo model.TableInfo
 		err       error
@@ -275,7 +276,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		exist     bool
 	)
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// update table ID
@@ -283,7 +284,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	if !exist {
 		newID, err = sr.genGenGlobalID(context.Background())
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		dbReplace = NewDBReplace(nil, newID)
 		sr.DbMap[dbID] = dbReplace
@@ -295,7 +296,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		if !exist {
 			newID, err = sr.genGenGlobalID(context.TODO())
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			sr.globalTableIdMap[tableInfo.ID] = newID
 		}
@@ -325,7 +326,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 				if !exist {
 					newID, err = sr.genGenGlobalID(context.Background())
 					if err != nil {
-						return nil, false, errors.Trace(err)
+						return nil, errors.Trace(err)
 					}
 					sr.globalTableIdMap[tbl.ID] = newID
 				}
@@ -351,9 +352,9 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	// marshal to json
 	newValue, err := json.Marshal(&newTableInfo)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return newValue, true, nil
+	return newValue, nil
 }
 
 func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entry, error) {
@@ -365,20 +366,20 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	result, err := sr.rewriteValueV2(
 		e.Value,
 		cf,
-		func(value []byte) ([]byte, bool, error) {
+		func(value []byte) ([]byte, error) {
 			return sr.rewriteTableInfo(value, dbID)
 		},
 	)
-	if err != nil || !result.NeedRewrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	newTableID := 0
-	newKey, needWrite, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
+	newKey, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, func(tableID int64) []byte {
 		newTableID = int(tableID)
 		return meta.TableKey(tableID)
 	})
-	if err != nil || !needWrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// NOTE: the normal path is in the `SchemaReplace.rewriteTableInfo`
@@ -393,13 +394,13 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 }
 
 func (sr *SchemasReplace) rewriteEntryForAutoTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, err := sr.rewriteKeyForTable(
+	newKey, err := sr.rewriteKeyForTable(
 		e.Key,
 		cf,
 		meta.ParseAutoTableIDKey,
 		meta.AutoTableIDKey,
 	)
-	if err != nil || !needWrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -407,13 +408,13 @@ func (sr *SchemasReplace) rewriteEntryForAutoTableIDKey(e *kv.Entry, cf string) 
 }
 
 func (sr *SchemasReplace) rewriteEntryForSequenceKey(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, err := sr.rewriteKeyForTable(
+	newKey, err := sr.rewriteKeyForTable(
 		e.Key,
 		cf,
 		meta.ParseSequenceKey,
 		meta.SequenceKey,
 	)
-	if err != nil || !needWrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -421,13 +422,13 @@ func (sr *SchemasReplace) rewriteEntryForSequenceKey(e *kv.Entry, cf string) (*k
 }
 
 func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, err := sr.rewriteKeyForTable(
+	newKey, err := sr.rewriteKeyForTable(
 		e.Key,
 		cf,
 		meta.ParseAutoRandomTableIDKey,
 		meta.AutoRandomTableIDKey,
 	)
-	if err != nil || !needWrite {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -435,23 +436,21 @@ func (sr *SchemasReplace) rewriteEntryForAutoRandomTableIDKey(e *kv.Entry, cf st
 }
 
 type rewriteResult struct {
-	Deleted     bool
-	NeedRewrite bool
-	NewValue    []byte
+	Deleted  bool
+	NewValue []byte
 }
 
 // rewriteValueV2 likes rewriteValueV1, but provides a richer return value.
-func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([]byte) ([]byte, bool, error)) (rewriteResult, error) {
+func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([]byte) ([]byte, error)) (rewriteResult, error) {
 	switch cf {
 	case DefaultCF:
-		newValue, needRewrite, err := rewrite(value)
+		newValue, err := rewrite(value)
 		if err != nil {
 			return rewriteResult{}, errors.Trace(err)
 		}
 		return rewriteResult{
-			NeedRewrite: needRewrite,
-			NewValue:    newValue,
-			Deleted:     false,
+			NewValue: newValue,
+			Deleted:  false,
 		}, nil
 	case WriteCF:
 		rawWriteCFValue := new(RawWriteCFValue)
@@ -461,55 +460,35 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 
 		if rawWriteCFValue.IsDelete() {
 			return rewriteResult{
-				NewValue:    value,
-				NeedRewrite: true,
-				Deleted:     true,
+				NewValue: value,
+				Deleted:  true,
 			}, nil
 		}
 		if rawWriteCFValue.IsRollback() {
 			return rewriteResult{
-				NewValue:    value,
-				NeedRewrite: true,
-				Deleted:     false,
+				NewValue: value,
+				Deleted:  false,
 			}, nil
 		}
 		if !rawWriteCFValue.HasShortValue() {
 			return rewriteResult{
-				NewValue:    value,
-				NeedRewrite: true,
+				NewValue: value,
 			}, nil
 		}
 
-		shortValue, needWrite, err := rewrite(rawWriteCFValue.GetShortValue())
+		shortValue, err := rewrite(rawWriteCFValue.GetShortValue())
 		if err != nil {
 			log.Info("failed to rewrite short value",
 				zap.ByteString("write-type", []byte{rawWriteCFValue.GetWriteType()}),
 				zap.Int("short-value-len", len(rawWriteCFValue.GetShortValue())))
 			return rewriteResult{}, errors.Trace(err)
 		}
-		if !needWrite {
-			return rewriteResult{
-				NeedRewrite: false,
-			}, nil
-		}
 
 		rawWriteCFValue.UpdateShortValue(shortValue)
-		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo(), NeedRewrite: true}, nil
+		return rewriteResult{NewValue: rawWriteCFValue.EncodeTo()}, nil
 	default:
 		panic(fmt.Sprintf("not support cf:%s", cf))
 	}
-}
-
-func (sr *SchemasReplace) rewriteValue(
-	value []byte,
-	cf string,
-	cbRewrite func([]byte) ([]byte, bool, error),
-) ([]byte, bool, error) {
-	r, err := sr.rewriteValueV2(value, cf, cbRewrite)
-	if err != nil {
-		return nil, false, err
-	}
-	return r.NewValue, r.NeedRewrite, nil
 }
 
 func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
