@@ -60,6 +60,7 @@ go_library(
         "mem_reader.go",
         "memtable_reader.go",
         "merge_join.go",
+        "metrics.go",
         "metrics_reader.go",
         "mpp_gather.go",
         "opt_rule_blacklist.go",

@@ -112,62 +112,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	statementPerTransactionPessimisticOKInternal    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK, metrics.LblInternal)
-	statementPerTransactionPessimisticOKGeneral     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK, metrics.LblGeneral)
-	statementPerTransactionPessimisticErrorInternal = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError, metrics.LblInternal)
-	statementPerTransactionPessimisticErrorGeneral  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError, metrics.LblGeneral)
-	statementPerTransactionOptimisticOKInternal     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK, metrics.LblInternal)
-	statementPerTransactionOptimisticOKGeneral      = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK, metrics.LblGeneral)
-	statementPerTransactionOptimisticErrorInternal  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError, metrics.LblInternal)
-	statementPerTransactionOptimisticErrorGeneral   = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError, metrics.LblGeneral)
-	transactionDurationPessimisticCommitInternal    = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit, metrics.LblInternal)
-	transactionDurationPessimisticCommitGeneral     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit, metrics.LblGeneral)
-	transactionDurationPessimisticAbortInternal     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort, metrics.LblInternal)
-	transactionDurationPessimisticAbortGeneral      = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort, metrics.LblGeneral)
-	transactionDurationOptimisticCommitInternal     = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit, metrics.LblInternal)
-	transactionDurationOptimisticCommitGeneral      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit, metrics.LblGeneral)
-	transactionDurationOptimisticAbortInternal      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort, metrics.LblInternal)
-	transactionDurationOptimisticAbortGeneral       = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort, metrics.LblGeneral)
-	transactionRetryInternal                        = metrics.SessionRetry.WithLabelValues(metrics.LblInternal)
-	transactionRetryGeneral                         = metrics.SessionRetry.WithLabelValues(metrics.LblGeneral)
-
-	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
-	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
-
-	telemetryCTEUsageRecurCTE       = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
-	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
-	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
-	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryFlashbackClusterUsage  = metrics.TelemetryFlashbackClusterCnt
-
-	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage           = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage            = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage    = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
-	telemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
-	telemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
-	telemetryTablePartitionListColumnsUsage     = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage   = metrics.TelemetryTablePartitionMaxPartitionsCnt
-	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
-	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
-	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
-	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
-	telemetryTableCompactPartitionUsage         = metrics.TelemetryCompactPartitionCnt
-	telemetryReorganizePartitionUsage           = metrics.TelemetryReorganizePartitionCnt
-
-	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
-	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
-	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
-
-	telemetryIndexMerge        = metrics.TelemetryIndexMergeUsage
-	telemetryStoreBatchedUsage = metrics.TelemetryStoreBatchedQueryCnt
-)
-
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context

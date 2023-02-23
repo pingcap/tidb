@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -26,6 +27,8 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
+
+	metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName)
 
 	if task.IsStreamRestore(cmdName) {
 		if err := cfg.ParseStreamRestoreFlags(command.Flags()); err != nil {

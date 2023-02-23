@@ -41,18 +41,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const defaultWriterSize = 16 * 1024
-
-var (
-	readPacketBytes  = metrics.PacketIOCounter.WithLabelValues("read")
-	writePacketBytes = metrics.PacketIOCounter.WithLabelValues("write")
-)
 
 // packetIO is a helper to read and write data in packet format.
 // MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html

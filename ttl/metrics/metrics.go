@@ -37,21 +37,44 @@ var (
 
 // TTL metrics
 var (
+	SelectSuccessDuration prometheus.Observer
+	SelectErrorDuration   prometheus.Observer
+	DeleteSuccessDuration prometheus.Observer
+	DeleteErrorDuration   prometheus.Observer
+
+	ScannedExpiredRows       prometheus.Counter
+	DeleteSuccessExpiredRows prometheus.Counter
+	DeleteErrorExpiredRows   prometheus.Counter
+
+	RunningJobsCnt    prometheus.Gauge
+	CancellingJobsCnt prometheus.Gauge
+
+	ScanningTaskCnt prometheus.Gauge
+	DeletingTaskCnt prometheus.Gauge
+)
+
+func init() {
+	InitMetricsVars()
+}
+
+// InitMetricsVars init ttl metrics vars vars.
+func InitMetricsVars() {
 	SelectSuccessDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
-	SelectErrorDuration   = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblError})
+	SelectErrorDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblError})
 	DeleteSuccessDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorDuration   = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+	DeleteErrorDuration = metrics.TTLQueryDuration.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
 
-	ScannedExpiredRows       = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
+	ScannedExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
 	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorExpiredRows   = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
+	DeleteErrorExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
 
-	RunningJobsCnt    = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
+	RunningJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
 	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
 
 	ScanningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "scanning"})
 	DeletingTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "deleting"})
-)
+
+}
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
 	return map[string]prometheus.Counter{

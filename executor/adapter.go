@@ -74,32 +74,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// metrics option
-var (
-	totalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
-	totalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
-	totalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
-	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
-	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
-	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
-
-	selectForUpdateFirstAttemptDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "first-attempt")
-	selectForUpdateRetryDuration        = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "retry")
-	dmlFirstAttemptDuration             = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "first-attempt")
-	dmlRetryDuration                    = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "retry")
-
-	// aggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled.
-	aggressiveLockingTxnUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnUsed)
-	// aggressiveLockingStmtUsedCount counts statements that have aggressive locking enabled.
-	aggressiveLockingStmtUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtUsed)
-	// aggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled,
-	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
-	aggressiveLockingTxnEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnEffective)
-	// aggressiveLockingTxnUsedCount counts statements where at least one statement has aggressive locking enabled,
-	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
-	aggressiveLockingStmtEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtEffective)
-)
-
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -1269,106 +1243,6 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)
-	}
-}
-
-const (
-	phaseBuildLocking       = "build:locking"
-	phaseOpenLocking        = "open:locking"
-	phaseNextLocking        = "next:locking"
-	phaseLockLocking        = "lock:locking"
-	phaseBuildFinal         = "build:final"
-	phaseOpenFinal          = "open:final"
-	phaseNextFinal          = "next:final"
-	phaseLockFinal          = "lock:final"
-	phaseCommitPrewrite     = "commit:prewrite"
-	phaseCommitCommit       = "commit:commit"
-	phaseCommitWaitCommitTS = "commit:wait:commit-ts"
-	phaseCommitWaitLatestTS = "commit:wait:latest-ts"
-	phaseCommitWaitLatch    = "commit:wait:local-latch"
-	phaseCommitWaitBinlog   = "commit:wait:prewrite-binlog"
-	phaseWriteResponse      = "write-response"
-)
-
-var (
-	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
-
-	// pre-define observers for non-internal queries
-	execBuildLocking       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "0")
-	execOpenLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "0")
-	execNextLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "0")
-	execLockLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "0")
-	execBuildFinal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "0")
-	execOpenFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "0")
-	execNextFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "0")
-	execLockFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "0")
-	execCommitPrewrite     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "0")
-	execCommitCommit       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "0")
-	execCommitWaitCommitTS = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "0")
-	execCommitWaitLatestTS = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "0")
-	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
-	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
-	execWriteResponse      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "0")
-	execUnknown            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "0")
-
-	// pre-define observers for internal queries
-	execBuildLockingInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "1")
-	execOpenLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "1")
-	execNextLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "1")
-	execLockLockingInternal        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "1")
-	execBuildFinalInternal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "1")
-	execOpenFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "1")
-	execNextFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "1")
-	execLockFinalInternal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "1")
-	execCommitPrewriteInternal     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "1")
-	execCommitCommitInternal       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "1")
-	execCommitWaitCommitTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "1")
-	execCommitWaitLatestTSInternal = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "1")
-	execCommitWaitLatchInternal    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "1")
-	execCommitWaitBinlogInternal   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "1")
-	execWriteResponseInternal      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "1")
-	execUnknownInternal            = metrics.ExecPhaseDuration.WithLabelValues("unknown", "1")
-)
-
-var phaseDurationObserverMap map[string]prometheus.Observer
-var phaseDurationObserverMapInternal map[string]prometheus.Observer
-
-func init() {
-	phaseDurationObserverMap = map[string]prometheus.Observer{
-		phaseBuildLocking:       execBuildLocking,
-		phaseOpenLocking:        execOpenLocking,
-		phaseNextLocking:        execNextLocking,
-		phaseLockLocking:        execLockLocking,
-		phaseBuildFinal:         execBuildFinal,
-		phaseOpenFinal:          execOpenFinal,
-		phaseNextFinal:          execNextFinal,
-		phaseLockFinal:          execLockFinal,
-		phaseCommitPrewrite:     execCommitPrewrite,
-		phaseCommitCommit:       execCommitCommit,
-		phaseCommitWaitCommitTS: execCommitWaitCommitTS,
-		phaseCommitWaitLatestTS: execCommitWaitLatestTS,
-		phaseCommitWaitLatch:    execCommitWaitLatch,
-		phaseCommitWaitBinlog:   execCommitWaitBinlog,
-		phaseWriteResponse:      execWriteResponse,
-	}
-	phaseDurationObserverMapInternal = map[string]prometheus.Observer{
-		phaseBuildLocking:       execBuildLockingInternal,
-		phaseOpenLocking:        execOpenLockingInternal,
-		phaseNextLocking:        execNextLockingInternal,
-		phaseLockLocking:        execLockLockingInternal,
-		phaseBuildFinal:         execBuildFinalInternal,
-		phaseOpenFinal:          execOpenFinalInternal,
-		phaseNextFinal:          execNextFinalInternal,
-		phaseLockFinal:          execLockFinalInternal,
-		phaseCommitPrewrite:     execCommitPrewriteInternal,
-		phaseCommitCommit:       execCommitCommitInternal,
-		phaseCommitWaitCommitTS: execCommitWaitCommitTSInternal,
-		phaseCommitWaitLatestTS: execCommitWaitLatestTSInternal,
-		phaseCommitWaitLatch:    execCommitWaitLatchInternal,
-		phaseCommitWaitBinlog:   execCommitWaitBinlogInternal,
-		phaseWriteResponse:      execWriteResponseInternal,
 	}
 }
 

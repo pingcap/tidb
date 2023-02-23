@@ -17,17 +17,11 @@ package domain
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	generateHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("generate", "success")
-	generateHistoricalStatsFailedCounter  = metrics.HistoricalStatsCounter.WithLabelValues("generate", "fail")
 )
 
 // HistoricalStatsWorker indicates for dump historical stats

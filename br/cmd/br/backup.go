@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -24,6 +25,8 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
+
+	metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName)
 
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {

@@ -11,6 +11,7 @@ go_library(
         "handle_hist.go",
         "historical_stats_handler.go",
         "lru_cache.go",
+        "metrics.go",
         "statscache.go",
         "update.go",
     ],

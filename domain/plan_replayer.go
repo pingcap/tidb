@@ -179,13 +179,6 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 	}
 }
 
-var (
-	planReplayerCaptureTaskSendCounter    = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "send")
-	planReplayerCaptureTaskDiscardCounter = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "discard")
-
-	planReplayerRegisterTaskGauge = metrics.PlanReplayerRegisterTaskGauge
-)
-
 type planReplayerHandle struct {
 	*planReplayerTaskCollectorHandle
 	*planReplayerTaskDumpHandle

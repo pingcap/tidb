@@ -24,6 +24,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_wangjohn_quickselect//:quickselect",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",

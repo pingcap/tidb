@@ -12,6 +12,7 @@ go_library(
         "extension.go",
         "http_handler.go",
         "http_status.go",
+        "metrics.go",
         "mock_conn.go",
         "optimize_trace.go",
         "packetio.go",

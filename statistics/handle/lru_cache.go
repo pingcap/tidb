@@ -19,18 +19,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
-)
-
-var (
-	missCounter   = metrics.StatsCacheLRUCounter.WithLabelValues("miss")
-	hitCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("hit")
-	updateCounter = metrics.StatsCacheLRUCounter.WithLabelValues("update")
-	delCounter    = metrics.StatsCacheLRUCounter.WithLabelValues("del")
-	evictCounter  = metrics.StatsCacheLRUCounter.WithLabelValues("evict")
-	costGauge     = metrics.StatsCacheLRUGauge.WithLabelValues("track")
-	capacityGauge = metrics.StatsCacheLRUGauge.WithLabelValues("capacity")
 )
 
 type statsInnerCache struct {

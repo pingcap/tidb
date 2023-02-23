@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "advisory_locks.go",
         "bootstrap.go",
+        "metrics.go",
         "nontransactional.go",
         "session.go",
         "testutil.go",  #keep
