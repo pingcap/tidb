@@ -1169,7 +1169,7 @@ func TestCheckPeersBusy(t *testing.T) {
 				importCli.apiInvokeRecorder = apiInvokeRecorder
 				if store.Id == 12 {
 					createTimeStore12++
-					// the second time is shouldCheckWriteStall, we mock a busy response
+					// the second time is checkWriteStall, we mock a busy response
 					if createTimeStore12 == 2 {
 						importCli.retry = 1
 						importCli.resp = serverIsBusyResp

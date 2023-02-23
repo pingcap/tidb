@@ -389,7 +389,7 @@ func (j *regionJob) ingest(
 	return nil
 }
 
-func (j *regionJob) shouldCheckWriteStall(
+func (j *regionJob) checkWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 	clientFactory ImportClientFactory,
@@ -421,7 +421,7 @@ func (j *regionJob) doIngest(
 	shouldCheckWriteStall bool,
 ) (*sst.IngestResponse, error) {
 	if shouldCheckWriteStall {
-		writeStall, resp, err := j.shouldCheckWriteStall(ctx, j.region, clientFactory)
+		writeStall, resp, err := j.checkWriteStall(ctx, j.region, clientFactory)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
