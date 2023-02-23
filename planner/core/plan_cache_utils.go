@@ -132,7 +132,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		if isPrepStmt {
 			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
 		} else {
-			cacheable, reason = NonPreparedPlanCacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+			cacheable = true // it is already checked here
 		}
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
