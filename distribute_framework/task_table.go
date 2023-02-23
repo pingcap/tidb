@@ -116,3 +116,42 @@ type subTaskManager struct {
 	se  sessionctx.Context
 	mu  sync.Mutex
 }
+
+func (stm *subTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID string, meta []byte) error {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(global_task_id, designate_tidb_id, meta) values (?, ?, ?)", globalTaskID, designatedTiDBID, meta)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (stm *subTaskManager) GetTaskByTiDBID(TiDBID string) (subTaskID int64, meta []byte, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := execSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = ? limit 1", TiDBID)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	id := rs[0].GetInt64(0)
+	meta = rs[0].GetBytes(1)
+
+	return id, meta, nil
+}
+
+func (stm *subTaskManager) UpdateTask(subTaskID int64, meta []byte) error {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set meta = ? where id = ?", meta, subTaskID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
