@@ -123,6 +123,7 @@ func (j *regionJob) writeToTiKV(
 
 	begin := time.Now()
 	stats := rangeStats{}
+	region := j.region.Region
 
 	firstKey, lastKey, err := j.engine.getFirstAndLastKey(j.keyRange.start, j.keyRange.end)
 	if err != nil {
@@ -132,9 +133,9 @@ func (j *regionJob) writeToTiKV(
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Info("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.start),
-			logutil.Key("regionStart", j.region.Region.StartKey),
+			logutil.Key("regionStart", region.StartKey),
 			logutil.Key("end", j.keyRange.end),
-			logutil.Key("regionEnd", j.region.Region.EndKey))
+			logutil.Key("regionEnd", region.EndKey))
 		return nil
 	}
 
@@ -144,8 +145,8 @@ func (j *regionJob) writeToTiKV(
 	u := uuid.New()
 	meta := &sst.SSTMeta{
 		Uuid:        u[:],
-		RegionId:    j.region.Region.GetId(),
-		RegionEpoch: j.region.Region.GetRegionEpoch(),
+		RegionId:    region.GetId(),
+		RegionEpoch: region.GetRegionEpoch(),
 		Range: &sst.Range{
 			Start: firstKey,
 			End:   lastKey,
@@ -153,10 +154,10 @@ func (j *regionJob) writeToTiKV(
 	}
 
 	leaderID := j.region.Leader.GetId()
-	clients := make([]sst.ImportSST_WriteClient, 0, len(j.region.Region.GetPeers()))
-	storeIDs := make([]uint64, 0, len(j.region.Region.GetPeers()))
-	requests := make([]*sst.WriteRequest, 0, len(j.region.Region.GetPeers()))
-	for _, peer := range j.region.Region.GetPeers() {
+	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
+	storeIDs := make([]uint64, 0, len(region.GetPeers()))
+	requests := make([]*sst.WriteRequest, 0, len(region.GetPeers()))
+	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
 			return errors.Trace(err)
@@ -255,12 +256,12 @@ func (j *regionJob) writeToTiKV(
 				j.keyRange.end = firstKey
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
-					zap.Int64("size", size),
+					zap.Int64("size", totalSize),
 					logutil.Key("startKey", j.keyRange.start),
 					logutil.Key("endKey", oldEndKey),
 					logutil.Key("remainStart", firstKey),
 					logutil.Key("remainEnd", oldEndKey),
-					logutil.Region(j.region.Region),
+					logutil.Region(region),
 					logutil.Leader(j.region.Leader))
 			}
 			break
@@ -289,7 +290,7 @@ func (j *regionJob) writeToTiKV(
 		if resp.Error != nil {
 			return errors.New(resp.Error.Message)
 		}
-		if leaderID == j.region.Region.Peers[i].GetId() {
+		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
 			log.FromContext(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
 		}
@@ -299,11 +300,11 @@ func (j *regionJob) writeToTiKV(
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
 		log.FromContext(ctx).Warn("write to tikv no leader",
-			logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
+			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			j.region.Region.Id, leaderID)
+			region.Id, leaderID)
 	}
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
