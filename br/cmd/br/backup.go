@@ -26,7 +26,9 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
-	metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName)
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+		return errors.Trace(err)
+	}
 
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {

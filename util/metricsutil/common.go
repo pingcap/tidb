@@ -74,7 +74,7 @@ func RegisterMetrics() error {
 	return registerMetrics(keyspaceMeta)
 }
 
-// RegisterMetrics register metrics with const label keyspace_id for BR.
+// RegisterMetricsForBR register metrics with const label keyspace_id for BR.
 func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		return registerMetrics(nil) // register metrics without label 'keyspace_id'.

@@ -73,7 +73,6 @@ func InitMetricsVars() {
 
 	ScanningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "scanning"})
 	DeletingTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "deleting"})
-
 }
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {

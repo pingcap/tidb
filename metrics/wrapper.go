@@ -16,52 +16,52 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
-var KeyspaceLabels prometheus.Labels
+var keyspaceLabels prometheus.Labels
 
-// SetServerlessLabels sets keyspace_id label for metrics.
-func SetKeyspaceLabels(keyspaceId string) {
-	KeyspaceLabels = make(prometheus.Labels)
-	KeyspaceLabels["keyspace_id"] = keyspaceId
+// SetKeyspaceLabels sets keyspace_id label for metrics.
+func SetKeyspaceLabels(keyspaceID string) {
+	keyspaceLabels = make(prometheus.Labels)
+	keyspaceLabels["keyspace_id"] = keyspaceID
 }
 
 // NewCounter wraps a prometheus.NewCounter.
 func NewCounter(opts prometheus.CounterOpts) prometheus.Counter {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewCounter(opts)
 }
 
 // NewCounterVec wraps a prometheus.NewCounterVec.
 func NewCounterVec(opts prometheus.CounterOpts, labelNames []string) *prometheus.CounterVec {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewCounterVec(opts, labelNames)
 }
 
 // NewGauge wraps a prometheus.NewGauge.
 func NewGauge(opts prometheus.GaugeOpts) prometheus.Gauge {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewGauge(opts)
 }
 
 // NewGaugeVec wraps a prometheus.NewGaugeVec.
 func NewGaugeVec(opts prometheus.GaugeOpts, labelNames []string) *prometheus.GaugeVec {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewGaugeVec(opts, labelNames)
 }
 
 // NewHistogram wraps a prometheus.NewHistogram.
 func NewHistogram(opts prometheus.HistogramOpts) prometheus.Histogram {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewHistogram(opts)
 }
 
 // NewHistogramVec wraps a prometheus.NewHistogramVec.
 func NewHistogramVec(opts prometheus.HistogramOpts, labelNames []string) *prometheus.HistogramVec {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewHistogramVec(opts, labelNames)
 }
 
 // NewSummaryVec wraps a prometheus.NewSummaryVec.
 func NewSummaryVec(opts prometheus.SummaryOpts, labelNames []string) *prometheus.SummaryVec {
-	opts.ConstLabels = KeyspaceLabels
+	opts.ConstLabels = keyspaceLabels
 	return prometheus.NewSummaryVec(opts, labelNames)
 }
