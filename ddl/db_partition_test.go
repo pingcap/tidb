@@ -1461,6 +1461,53 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	}
 }
 
+func TestDefaultListPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database defaultPartition")
+	tk.MustExec("use defaultPartition")
+
+	tk.MustExec(`create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10))`)
+	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11")`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustQuery(`select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'defaultPartition'`).Sort().Check(testkit.Rows(""+
+		"p0 LIST `a` 0,4 1",
+		"p1 LIST `a` 1,NULL,DEFAULT 4",
+		"p2 LIST `a` 2,7,10 1"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `a` (`a`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p0` VALUES IN (0,4),\n" +
+		" PARTITION `p1` VALUES IN (1,NULL,DEFAULT),\n" +
+		" PARTITION `p2` VALUES IN (2,7,10))"))
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:p1 data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"  └─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select * from t where a = 4`).Check(testkit.Rows("4 4"))
+	tk.MustQuery(`select * from t where a is null`).Check(testkit.Rows("<nil> null"))
+	tk.MustQuery(`select * from t where a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 4`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0, index:a(a) "))
+	tk.MustQuery(`explain format = 'brief' select * from t where a is null`).Check(testkit.Rows(""+
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  isnull(defaultpartition.t.a)",
+		"  └─TableFullScan 4.00 cop[tikv] table:t, partition:p1 keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1, index:a(a) "))
+}
+
 func TestAlterTableDropPartitionByList(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
