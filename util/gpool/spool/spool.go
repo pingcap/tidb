@@ -59,7 +59,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	}
 	result := &Pool{
 		stopCh:             make(chan struct{}),
-		lock:               gpool.NewSpinLock(),
+		lock:               &sync.Mutex{},
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		options:            opts,
 	}
