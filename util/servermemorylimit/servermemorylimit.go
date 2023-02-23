@@ -95,7 +95,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				if time.Since(s.lastLogTime) > 5*time.Second {
 					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),
-						zap.Uint64("connID", info.ID),
+						zap.Uint64("conn", info.ID),
 						zap.String("sql digest", info.Digest),
 						zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
 						zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()))
@@ -124,7 +124,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		if t != nil {
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
 				logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer",
-					zap.Uint64("connID", info.ID),
+					zap.Uint64("conn", info.ID),
 					zap.String("sql digest", info.Digest),
 					zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
 					zap.Uint64("tidb_server_memory_limit", bt),

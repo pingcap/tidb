@@ -366,7 +366,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 	startTS := time.Now()
 	sql := fmt.Sprintf("SELECT SLEEP(%d);", sleepTime)
 	if connID > 0 {
-		log.Info("exec sql", zap.String("sql", sql), zap.String("connID", "0x"+strconv.FormatUint(connID, 16)))
+		log.Info("exec sql", zap.String("sql", sql), zap.String("conn", "0x"+strconv.FormatUint(connID, 16)))
 	} else {
 		log.Info("exec sql", zap.String("sql", sql))
 	}
