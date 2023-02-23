@@ -165,6 +165,10 @@ var defaultSysVars = []*SysVar{
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDeriveTopN, Value: BoolToOnOff(DefOptDeriveTopN), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AllowDeriveTopN = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil

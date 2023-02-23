@@ -54,6 +54,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDeriveTopN, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
