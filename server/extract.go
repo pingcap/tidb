@@ -62,7 +62,6 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	}
 	// TODO: support return zip file directly for non background job later
 	w.WriteHeader(http.StatusOK)
-	return
 }
 
 func buildExtractTask(req *http.Request) (*domain.ExtractTask, error) {
