@@ -47,18 +47,13 @@ func (s *CDCNameSet) Empty() bool {
 func (s *CDCNameSet) MessageToUser() string {
 	var changefeedMsgBuf strings.Builder
 	changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
-	isFirst := true
 	for clusterID, captureIDs := range s.nameSet {
-		if !isFirst {
-			changefeedMsgBuf.WriteString(", ")
-		}
-		isFirst = false
 		changefeedMsgBuf.WriteString("cluster/namespace: ")
 		changefeedMsgBuf.WriteString(clusterID)
 		changefeedMsgBuf.WriteString(" changefeed(s): ")
 		changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
+		changefeedMsgBuf.WriteString(", ")
 	}
-	changefeedMsgBuf.WriteString(",")
 	return changefeedMsgBuf.String()
 }
 
