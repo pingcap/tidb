@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1141,11 +1142,13 @@ func (local *local) writeAndIngestPairs(
 	})
 	if local.checkTiKVAvaliable {
 		for _, peer := range job.region.Region.GetPeers() {
-			var e error
+			var (
+				store *pdtypes.StoreInfo
+				err   error
+			)
 			for i := 0; i < maxRetryTimes; i++ {
-				store, err := local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
+				store, err = local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
 				if err != nil {
-					e = err
 					continue
 				}
 				if store.Status.Capacity > 0 {
@@ -1158,8 +1161,8 @@ func (local *local) writeAndIngestPairs(
 				}
 				break
 			}
-			if e != nil {
-				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(e))
+			if err != nil {
+				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
 			}
 		}
 	}
