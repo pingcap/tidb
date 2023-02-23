@@ -42,7 +42,7 @@ type Options struct {
 	// used for more than `ExpiryDuration`.
 	ExpiryDuration time.Duration
 
-	// Max number of goroutine blocking on pool.Submit.
+	// Max number of goroutine blocking on pool.Run.
 	// 0 (default value) means no such limit.
 	MaxBlockingTasks int
 

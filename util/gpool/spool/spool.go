@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/prometheus/client_golang/prometheus"
-	atomicutil "go.uber.org/atomic"
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
@@ -42,8 +41,8 @@ type Pool struct {
 
 	workers *loopQueue
 	options *Options
+	gpool.BasePool
 
-	waitingTask        atomicutil.Uint32
 	capacity           atomic.Int32
 	running            atomic.Int32
 	state              atomic.Int32
@@ -64,6 +63,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		options:            opts,
 	}
+	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))
 	result.workerCache.New = func() interface{} {
 		return &goWorker{
@@ -119,7 +119,7 @@ func (p *Pool) purgePeriodically() {
 		// or another case where the pool capacity has been Tuned up,
 		// while some invokers still get stuck in "p.cond.Wait()",
 		// then it ought to wake all those invokers.
-		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) || p.waitingTask.Load() > 0 {
+		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) {
 			p.cond.Broadcast()
 		}
 	}
@@ -212,7 +212,7 @@ func (p *Pool) ReleaseAndWait() {
 	defer resourcemanager.InstanceResourceManager.Unregister(p.Name())
 	for {
 		// Wait for all workers to exit and all task to be completed.
-		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {
+		if p.Running() == 0 && p.heartbeatDone.Load() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -302,7 +302,7 @@ func (p *Pool) revertWorker(worker *goWorker) bool {
 	err := p.workers.insert(worker)
 	if err != nil {
 		p.lock.Unlock()
-		if err == errQueueIsFull && p.waitingTask.Load() > 0 {
+		if err == errQueueIsFull {
 			return true
 		}
 		return false

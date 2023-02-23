@@ -29,7 +29,6 @@ go_test(
     srcs = ["worker_loop_queue_test.go"],
     embed = [":spool"],
     deps = [
-        "//resourcemanager/pooltask",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
     ],
