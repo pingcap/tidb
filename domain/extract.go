@@ -187,6 +187,8 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 			switch strings.ToLower(record.schemaName) {
 			case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
 				setRecord = false
+			}
+			if !setRecord {
 				break
 			}
 			record.tables = append(record.tables, tableNamePair{DBName: dbName, TableName: tblName, IsView: t.Meta().IsView()})
@@ -324,7 +326,7 @@ func dumpExtractPlans(plans []string, zw *zip.Writer) error {
 		return err
 	}
 	for i, plan := range plans {
-		_, err = zf.Write([]byte(fmt.Sprintf("%s", plan)))
+		_, err = zf.Write([]byte(plan))
 		if err != nil {
 			return err
 		}

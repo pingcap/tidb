@@ -21,10 +21,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -32,27 +33,30 @@ const (
 )
 
 // ExtractTaskServeHandler is the http serve handler for extract task handler
-type extractTaskServeHandler struct {
+type ExtractTaskServeHandler struct {
 	extractHandler *domain.ExtractHandle
 }
 
 // newExtractServeHandler returns extractTaskServeHandler
-func (s *Server) newExtractServeHandler() *extractTaskServeHandler {
-	return &extractTaskServeHandler{
-		extractHandler: s.dom.GetExtractHandle(),
+func (s *Server) newExtractServeHandler() *ExtractTaskServeHandler {
+	esh := &ExtractTaskServeHandler{}
+	if s.dom != nil {
+		esh.extractHandler = s.dom.GetExtractHandle()
 	}
+	return esh
 }
 
 // ServeHTTP serves http
-func (eh *extractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	params := mux.Vars(req)
-	task, err := buildExtractTask(params)
+func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	task, err := buildExtractTask(req)
 	if err != nil {
+		logutil.BgLogger().Error("build extract task failed", zap.Error(err))
 		writeError(w, err)
 		return
 	}
 	_, err = eh.extractHandler.ExtractTask(context.Background(), task)
 	if err != nil {
+		logutil.BgLogger().Error("extract task failed", zap.Error(err))
 		writeError(w, err)
 		return
 	}
@@ -61,27 +65,28 @@ func (eh *extractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 	return
 }
 
-func buildExtractTask(params map[string]string) (*domain.ExtractTask, error) {
-	extractTaskType := params[pType]
+func buildExtractTask(req *http.Request) (*domain.ExtractTask, error) {
+	extractTaskType := req.URL.Query().Get(pType)
 	switch strings.ToLower(extractTaskType) {
 	case extractPlanTaskType:
-		return buildExtractPlanTask(params)
+		return buildExtractPlanTask(req)
 	}
+	logutil.BgLogger().Error("unknown extract task type")
 	return nil, errors.New("unknown extract task type")
 }
 
-func buildExtractPlanTask(params map[string]string) (*domain.ExtractTask, error) {
-	beginStr := params[pBegin]
-	endStr := params[pEnd]
-	begin, err := time.Parse(types.DateFormat, beginStr)
+func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, error) {
+	beginStr := req.URL.Query().Get(pBegin)
+	endStr := req.URL.Query().Get(pEnd)
+	begin, err := time.Parse(types.TimeFormat, beginStr)
 	if err != nil {
 		return nil, err
 	}
-	end, err := time.Parse(types.DateFormat, endStr)
+	end, err := time.Parse(types.TimeFormat, endStr)
 	if err != nil {
 		return nil, err
 	}
-	isBackgroundJobStr := params[pIsBackground]
+	isBackgroundJobStr := req.URL.Query().Get(pIsBackground)
 	var isBackgroundJob bool
 	isBackgroundJob, err = strconv.ParseBool(isBackgroundJobStr)
 	if err != nil {
