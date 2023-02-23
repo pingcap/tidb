@@ -97,7 +97,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrMultiplePriKey:                           Message("Multiple primary key defined", nil),
 	ErrTooManyKeys:                              Message("Too many keys specified; max %d keys allowed", nil),
 	ErrTooManyKeyParts:                          Message("Too many key parts specified; max %d parts allowed", nil),
-	ErrTooLongKey:                               Message("Specified key was too long; max key length is %d bytes", nil),
+	ErrTooLongKey:                               Message("Specified key was too long (%d bytes); max key length is %d bytes", nil),
 	ErrKeyColumnDoesNotExits:                    Message("Key column '%-.192s' doesn't exist in table", nil),
 	ErrBlobUsedAsKey:                            Message("BLOB column '%-.192s' can't be used in key specification with the used table type", nil),
 	ErrTooBigFieldlength:                        Message("Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead", nil),

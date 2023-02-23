@@ -46,6 +46,7 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("CREATE TABLE t(x INT, KEY k ((1 AND CAST(JSON_ARRAY(x) AS UNSIGNED ARRAY))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(cast(f1 as unsigned array) as unsigned array))));", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->>'$[*]' as unsigned array))));", errno.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as year array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as json array))));", errno.ErrNotSupportedYet)
@@ -75,6 +76,9 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("set names gbk")
 	tk.MustExec("create table t(a json, b int, index idx3(b, (cast(a as char(10) array))));")
+
+	tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
+	tk.MustExecToErr("CREATE TABLE t (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON, FOREIGN KEY fk_user_id ((cast(doc->'$[*]' as signed array))) REFERENCES users(id));")
 }
 
 func TestMultiValuedIndexDML(t *testing.T) {

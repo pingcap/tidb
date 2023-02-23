@@ -41,6 +41,7 @@ go_test(
         "//domain",
         "//errno",
         "//parser/model",
+        "//sessionctx/variable",
         "//testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

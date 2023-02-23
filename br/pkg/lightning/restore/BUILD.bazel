@@ -45,6 +45,7 @@ go_library(
         "//br/pkg/version/build",
         "//ddl",
         "//errno",
+        "//keyspace",
         "//kv",
         "//meta/autoid",
         "//parser",

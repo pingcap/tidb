@@ -514,8 +514,6 @@ func TestBuildPagingTasks(t *testing.T) {
 	req := &kv.Request{}
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
-	flashReq := &kv.Request{}
-	flashReq.StoreType = kv.TiFlash
 	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -523,6 +521,37 @@ func TestBuildPagingTasks(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.True(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
+}
+
+func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.LimitSize = 1
+	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
+	require.False(t, tasks[0].paging)
+	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
@@ -667,7 +696,7 @@ func TestBasicSmallTaskConc(t *testing.T) {
 	require.True(t, isSmallTask(&copTask{RowCountHint: 6}))
 	require.True(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow}))
 	require.False(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow + 1}))
-	_, conc := smallTaskConcurrency([]*copTask{})
+	_, conc := smallTaskConcurrency([]*copTask{}, 16)
 	require.GreaterOrEqual(t, conc, 0)
 }
 
@@ -705,7 +734,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
-	_, conc := smallTaskConcurrency(tasks)
+	_, conc := smallTaskConcurrency(tasks, 16)
 	require.Equal(t, conc, 1)
 
 	ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
@@ -724,7 +753,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 6)
-	_, conc = smallTaskConcurrency(tasks)
+	_, conc = smallTaskConcurrency(tasks, 16)
 	require.Equal(t, conc, 2)
 
 	// cross-region long range
@@ -744,4 +773,21 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 10)
 	// task[3] ["t"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 10)
+}
+
+func TestSmallTaskConcurrencyLimit(t *testing.T) {
+	smallTaskCount := 1000
+	tasks := make([]*copTask, 0, smallTaskCount)
+	for i := 0; i < smallTaskCount; i++ {
+		tasks = append(tasks, &copTask{
+			RowCountHint: 1,
+		})
+	}
+	count, conc := smallTaskConcurrency(tasks, 1)
+	require.Equal(t, smallConcPerCore, conc)
+	require.Equal(t, smallTaskCount, count)
+	// also handle 0 value.
+	count, conc = smallTaskConcurrency(tasks, 0)
+	require.Equal(t, smallConcPerCore, conc)
+	require.Equal(t, smallTaskCount, count)
 }

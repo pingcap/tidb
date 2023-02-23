@@ -65,7 +65,7 @@ type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
 	concurrency int32
 }
 
-// NewTaskManager create a new pooltask manager.
+// NewTaskManager create a new pool task manager.
 func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskManager[T, U, C, CT, TF] {
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
@@ -147,4 +147,9 @@ func (t *TaskManager[T, U, C, CT, TF]) StopTask(taskID uint64) {
 			e.Value.(tContainer[T, U, C, CT, TF]).task.SetStatus(StopTask)
 		}
 	}
+}
+
+// GetOriginConcurrency return the concurrency of the pool at the init.
+func (t *TaskManager[T, U, C, CT, TF]) GetOriginConcurrency() int32 {
+	return t.concurrency
 }

@@ -118,6 +118,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 // TODO: let client-go provide a high-level write interface.
 func (j *regionJob) writeToTiKV(
 	ctx context.Context,
+	apiVersion kvrpcpb.APIVersion,
 	clientFactory ImportClientFactory,
 	kvBatchSize int,
 	bufferPool *membuf.Pool,
@@ -157,6 +158,7 @@ func (j *regionJob) writeToTiKV(
 			Start: firstKey,
 			End:   lastKey,
 		},
+		ApiVersion: apiVersion,
 	}
 
 	leaderID := j.region.Leader.GetId()
@@ -308,7 +310,7 @@ func (j *regionJob) writeToTiKV(
 		log.FromContext(ctx).Warn("write to tikv no leader",
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
-			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
 		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Id, leaderID)
 	}

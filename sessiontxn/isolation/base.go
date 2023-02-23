@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -474,11 +474,8 @@ func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 
 // newOracleFuture creates new future according to the scope and the session context
 func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("isolation.newOracleFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "isolation.newOracleFuture")
+	defer r.End()
 
 	failpoint.Inject("requestTsoFromPD", func() {
 		sessiontxn.TsoRequestCountInc(sctx)
@@ -513,7 +510,10 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
 		return err
 	}
-	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking && p.txn != nil {
+	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking &&
+		p.txn != nil &&
+		p.sctx.GetSessionVars().ConnectionID != 0 &&
+		!p.sctx.GetSessionVars().InRestrictedSQL {
 		if err := p.txn.StartAggressiveLocking(); err != nil {
 			return err
 		}

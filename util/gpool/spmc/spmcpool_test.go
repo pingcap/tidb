@@ -53,7 +53,7 @@ func TestPool(t *testing.T) {
 		}
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(5))
 
 	var count atomic.Uint32
 	var wg sync.WaitGroup
@@ -112,12 +112,55 @@ func TestStopPool(t *testing.T) {
 			require.Greater(t, result, 10)
 		}
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		control.Stop()
+	}()
 	// Waiting task finishing
-	control.Stop()
-	close(exit)
 	control.Wait()
-	// it should pass. Stop can be used after the pool is closed. we should prevent it from panic.
-	control.Stop()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
+func TestStopPoolWithSlice(t *testing.T) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestStopPoolWithSlice", 3, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() ([]int, error) {
+		select {
+		case <-exit:
+			return nil, gpool.ErrProducerClosed
+		default:
+			return []int{1, 2, 3}, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProduceBySlice(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+			control.Stop()
+		}
+	}()
+	// Waiting task finishing
+	control.Wait()
 	wg.Wait()
 	// close pool
 	pool.ReleaseAndWait()
@@ -175,24 +218,48 @@ func testTunePool(t *testing.T, name string) {
 		}
 	}()
 	time.Sleep(1 * time.Second)
+	downclockPool(t, pool, tid)
+	overclockPool(t, pool, tid)
+
+	// at Overclock mode
+	overclockPool(t, pool, tid)
+
+	// Overclock mode, But it is invalid. It should keep the same size.
+	size := pool.Cap()
+	pool.Tune(pool.Cap() + 1)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, size, pool.Cap())
+	require.Equal(t, int32(size), pool.taskManager.Running(tid))
+
+	for n := pool.Cap(); n > 1; n-- {
+		downclockPool(t, pool, tid)
+	}
+	wg.Add(1)
+	go func() {
+		// exit test
+		control.Stop()
+		wg.Done()
+	}()
+	control.Wait()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
+func overclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *testing.T, pool *Pool[T, U, C, CT, TF], tid uint64) {
+	newSize := pool.Cap() + 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+}
+
+func downclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *testing.T, pool *Pool[T, U, C, CT, TF], tid uint64) {
 	newSize := pool.Cap() - 1
 	pool.Tune(newSize)
 	time.Sleep(1 * time.Second)
 	require.Equal(t, newSize, pool.Cap())
 	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
-
-	newSize = pool.Cap() + 1
-	pool.Tune(newSize)
-	time.Sleep(1 * time.Second)
-	require.Equal(t, newSize, pool.Cap())
-	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
-
-	// exit test
-	close(exit)
-	control.Wait()
-	wg.Wait()
-	// close pool
-	pool.ReleaseAndWait()
 }
 
 func TestPoolWithEnoughCapacity(t *testing.T) {

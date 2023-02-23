@@ -334,25 +334,25 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
-		hg, err = h.histogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		hg, err = h.histogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch
 	var topN *statistics.TopN
-	cms, topN, err = h.cmSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+	cms, topN, err = statistics.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = h.fmSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+		fms, err = statistics.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -1302,7 +1302,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, _ int64) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1407,10 +1407,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
-			if path.Index != nil && path.Index.Global {
-				ignored = append(ignored, path)
-				continue
-			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
@@ -1420,10 +1416,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
-			if hint.HintType == ast.HintKeepOrder {
+			if hint.HintType == ast.HintOrderIndex {
 				path.ForceKeepOrder = true
 			}
-			if hint.HintType == ast.HintNoKeepOrder {
+			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
 			}
 			available = append(available, path)
@@ -1435,6 +1431,12 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
+
+	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
+	// ignore global index if flagPartitionProcessor exists.
+	if hasFlagPartitionProcessor {
+		available = removeGlobalIndexPaths(available)
+	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1493,6 +1495,18 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 		}
 	}
 	return remainedPaths
+}
+
+func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
+	i := 0
+	for _, path := range paths {
+		if path.Index != nil && path.Index.Global {
+			continue
+		}
+		paths[i] = path
+		i++
+	}
+	return paths[:i]
 }
 
 func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
@@ -3260,6 +3274,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+		if show.Tp == ast.ShowStatsHealthy {
+			if extractor := newShowBaseExtractor(*show); extractor.Extract() {
+				p.Extractor = extractor
+				buildPattern = false
+			}
+		}
 	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsLocked:
 		var err error
 		if user := b.ctx.GetSessionVars().User; user != nil {
@@ -3934,7 +3954,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return err
 		}
 		if idx < 0 {
-			return errors.Errorf("Can't find column %s", assign.Column)
+			return dbterror.ErrBadField.GenWithStackByArgs(assign.Column, "field list")
 		}
 		colNames = append(colNames, assign.Column.Name.L)
 		exprCols = append(exprCols, insertPlan.tableSchema.Columns[idx])
@@ -4166,10 +4186,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
 		Path:               ld.Path,
+		Format:             ld.Format,
 		Table:              ld.Table,
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
+		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
@@ -4727,9 +4749,39 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.TableToTables[0].NewTable.Schema.L,
 			v.TableToTables[0].NewTable.Name.L, "", authErr)
-	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt, *ast.FlashBackDatabaseStmt:
-		// Recover table command can only be executed by administrator.
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.RecoverTableStmt:
+		if v.Table == nil {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		} else {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+		}
+	case *ast.FlashBackTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+	case *ast.FlashBackDatabaseStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.DBName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.DBName.L, "", "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.DBName.L, "", "", authErr)
 	case *ast.FlashBackToTimestampStmt:
 		// Flashback cluster can only be executed by user with `super` privilege.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -5167,7 +5219,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
-	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File, Capture: pc.Capture, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())

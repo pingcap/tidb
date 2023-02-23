@@ -528,7 +528,6 @@ import (
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
-	remote                "REMOTE"
 	remove                "REMOVE"
 	reorganize            "REORGANIZE"
 	repair                "REPAIR"
@@ -654,6 +653,7 @@ import (
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
 	briefType             "BRIEF"
+	burstable             "BURSTABLE"
 	cast                  "CAST"
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
@@ -661,6 +661,7 @@ import (
 	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
+	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
 	exact                 "EXACT"
@@ -709,6 +710,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
@@ -733,8 +735,7 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
-	rruRate               "RRU_PER_SEC"
-	wruRate               "WRU_PER_SEC"
+	ruRate                "RU_PER_SEC"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -936,6 +937,7 @@ import (
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
+	LoadDataWithFormatStmt     "Load data with format statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
 	UnlockStatsStmt            "Unlock statistic statement"
@@ -1117,10 +1119,10 @@ import (
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
-	LocationOpt                            "Data file location of LOAD DATA"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
+	NullDefinedByClause                    "NULL DEFINED BY clause in LOAD DATA statement"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1600,33 +1602,31 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt LengthNum
+	"RU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt LengthNum
+|	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
-	}
-|	"CPU" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
-	}
-|	"IO_READ_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
-	}
-|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
 
 PlacementOptionList:
@@ -1692,6 +1692,10 @@ DirectPlacementOption:
 |	"LEARNER_CONSTRAINTS" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
+	}
+|	"SURVIVAL_PREFERENCES" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionSurvivalPreferences, StrValue: $3}
 	}
 
 PlacementPolicyOption:
@@ -6227,7 +6231,6 @@ UnReservedKeyword:
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
-|	"REMOTE"
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
@@ -6555,6 +6558,7 @@ NotKeywordToken:
 |	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
+|	"DEFINED"
 |	"DOT"
 |	"DUMP"
 |	"EXTRACT"
@@ -6624,6 +6628,7 @@ NotKeywordToken:
 |	"CONSTRAINTS"
 |	"PRIMARY_REGION"
 |	"SCHEDULE"
+|	"SURVIVAL_PREFERENCES"
 |	"LEADER_CONSTRAINTS"
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
@@ -6631,8 +6636,8 @@ NotKeywordToken:
 |	"TIDB_JSON"
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
-|	"RRU_PER_SEC"
-|	"WRU_PER_SEC"
+|	"RU_PER_SEC"
+|	"BURSTABLE"
 
 /************************************************************************************
  *
@@ -11503,6 +11508,7 @@ Statement:
 |	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	LoadStatsStmt
 |	LockStatsStmt
 |	UnlockStatsStmt
@@ -11576,6 +11582,7 @@ TraceableStmt:
 		$$ = sel
 	}
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	SavepointStmt
@@ -13041,7 +13048,7 @@ ResourceGroupNameOption:
 	}
 |	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+		$$ = &ast.ResourceGroupNameOption{Value: $3}
 	}
 
 PasswordOrLockOptions:
@@ -13769,17 +13776,18 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocationOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
-			FileLocRef:         $3.(ast.FileLocRefTp),
+			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
-			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $13.(uint64),
+			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
+			IgnoreLines:        $14.(uint64),
 		}
-		if x.FileLocRef == ast.FileLocClient {
+		if $3 != nil {
+			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
 			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
@@ -13792,8 +13800,45 @@ LoadDataStmt:
 		if $12 != nil {
 			x.LinesInfo = $12.(*ast.LinesClause)
 		}
-		if $15 != nil {
-			x.ColumnAssignments = $15.([]*ast.Assignment)
+		if $13 != nil {
+			x.NullInfo = $13.(*ast.NullDefinedBy)
+		}
+		if $16 != nil {
+			x.ColumnAssignments = $16.([]*ast.Assignment)
+		}
+		columns := []*ast.ColumnName{}
+		for _, v := range x.ColumnsAndUserVars {
+			if v.ColumnName != nil {
+				columns = append(columns, v.ColumnName)
+			}
+		}
+		x.Columns = columns
+
+		$$ = x
+	}
+
+// see https://github.com/pingcap/tidb/issues/40499
+LoadDataWithFormatStmt:
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	{
+		x := &ast.LoadDataStmt{
+			FileLocRef:         ast.FileLocServerOrRemote,
+			Path:               $5,
+			Format:             $7,
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
+		}
+		if $3 != nil {
+			x.FileLocRef = ast.FileLocClient
+			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
+			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
+			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
+				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
+			}
+		}
+		if $14 != nil {
+			x.ColumnAssignments = $14.([]*ast.Assignment)
 		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
@@ -13828,32 +13873,20 @@ LocalOpt:
 		$$ = $1
 	}
 
-LocationOpt:
-	{
-		$$ = ast.FileLocServer
-	}
-|	"LOCAL"
-	{
-		$$ = ast.FileLocClient
-	}
-|	"REMOTE"
-	{
-		$$ = ast.FileLocRemote
-	}
-
 Fields:
 	{
-		escape := "\\"
+		defaultEscaped := byte('\\')
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    escape[0],
+			Escaped:    &defaultEscaped,
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
+		defaultEscaped := byte('\\')
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    []byte("\\")[0],
+			Escaped:    &defaultEscaped,
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
@@ -13861,18 +13894,20 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = item.Value
 			case ast.Enclosed:
-				var enclosed byte
+				var enclosed *byte = nil
 				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
+					b := item.Value[0]
+					enclosed = &b
 				}
 				fieldsClause.Enclosed = enclosed
 				if item.OptEnclosed {
 					fieldsClause.OptEnclosed = true
 				}
 			case ast.Escaped:
-				var escaped byte
+				var escaped *byte = nil
 				if len(item.Value) > 0 {
-					escaped = item.Value[0]
+					b := item.Value[0]
+					escaped = &b
 				}
 				fieldsClause.Escaped = escaped
 			}
@@ -13979,6 +14014,19 @@ LinesTerminated:
 |	"TERMINATED" "BY" FieldTerminator
 	{
 		$$ = $3
+	}
+
+NullDefinedByClause:
+	{
+		$$ = nil
+	}
+|	"NULL" "DEFINED" "BY" TextString
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value}
+	}
+|	"NULL" "DEFINED" "BY" TextString "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value, OptEnclosed: true}
 	}
 
 LoadDataSetSpecOpt:
@@ -14666,6 +14714,21 @@ PlanReplayerStmt:
 			Capture:    true,
 			SQLDigest:  $4,
 			PlanDigest: $5,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
+		}
+
+		$$ = x
+	}
+|	"PLAN" "REPLAYER" "CAPTURE" "REMOVE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Remove:     true,
+			SQLDigest:  $5,
+			PlanDigest: $6,
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,

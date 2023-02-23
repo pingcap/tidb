@@ -28,6 +28,7 @@ var NonPreparedPlanCacheableOp = map[string]struct{}{
 	ast.EQ:       {},
 	ast.LT:       {},
 	ast.GT:       {},
+	ast.In:       {},
 }
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.

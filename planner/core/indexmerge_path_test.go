@@ -302,6 +302,31 @@ func TestMVIndexFullScan(t *testing.T) {
 	tk.MustGetErrMsg(`select /*+ use_index(t, kj) */ count(*) from t`, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
+func TestMVIndexEmptyArray(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(j json, index kj((cast(j as signed array))))`)
+	tk.MustExec(`insert into t values ('[1]')`)
+	tk.MustExec(`insert into t values ('[1, 2]')`)
+	tk.MustExec(`insert into t values ('[]')`)
+	tk.MustExec(`insert into t values (NULL)`)
+
+	for _, cond := range []string{
+		"json_contains(j, '[]')",
+		"json_contains(j, '[1]')",
+		"json_contains(j, '[1, 2]')",
+		"json_contains(j, '[1, 10]')",
+		"json_overlaps(j, '[]')",
+		"json_overlaps(j, '[1]')",
+		"json_overlaps(j, '[1, 2]')",
+		"json_overlaps(j, '[1, 10]')",
+	} {
+		tk.MustQuery(fmt.Sprintf("select /*+ use_index_merge(t) */ * from t where %v", cond)).Sort().Check(
+			tk.MustQuery(fmt.Sprintf("select /*+ ignore_index(t, kj) */ * from t where %v", cond)).Sort().Rows())
+	}
+}
+
 func TestMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -364,12 +389,21 @@ func randMVIndexCond(condType int, valOpts randMVIndexValOpts) string {
 	case 0: // member_of
 		return fmt.Sprintf(`(%v member of (j))`, randMVIndexValue(valOpts))
 	case 1: // json_contains
-		return fmt.Sprintf(`json_contains(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+		return fmt.Sprintf(`json_contains(j, '%v')`, randArray(valOpts))
 	case 2: // json_overlaps
-		return fmt.Sprintf(`json_overlaps(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+		return fmt.Sprintf(`json_overlaps(j, '%v')`, randArray(valOpts))
 	default: // others
 		return fmt.Sprintf(`a < %v`, rand.Intn(valOpts.distinct))
 	}
+}
+
+func randArray(opts randMVIndexValOpts) string {
+	n := rand.Intn(5) // n can be 0
+	var vals []string
+	for i := 0; i < n; i++ {
+		vals = append(vals, randMVIndexValue(opts))
+	}
+	return "[" + strings.Join(vals, ", ") + "]"
 }
 
 type randMVIndexValOpts struct {

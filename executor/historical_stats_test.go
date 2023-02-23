@@ -262,7 +262,9 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 
-	variable.HistoricalStatsDuration.Store(1 * time.Second)
+	tk.MustExec("set @@global.tidb_historical_stats_duration = '1s'")
+	duration := variable.HistoricalStatsDuration.Load()
+	fmt.Println(duration.String())
 	time.Sleep(2 * time.Second)
 	err = dom.StatsHandle().ClearOutdatedHistoryStats()
 	require.NoError(t, err)
@@ -364,4 +366,34 @@ PARTITION p0 VALUES LESS THAN (6)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
 	require.NotNil(t, jsTable.Partitions["global"])
+}
+
+func TestDumpHistoricalStatsFallback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, index idx(b))
+PARTITION BY RANGE ( a ) (
+PARTITION p0 VALUES LESS THAN (6)
+)`)
+	// dump historical stats
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+
+	// dump historical stats
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	// assert no historical stats task generated
+	require.Equal(t, tblID, int64(-1))
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	h := dom.StatsHandle()
+	jt, err := h.DumpHistoricalStatsBySnapshot("test", tbl.Meta(), oracle.GoTimeToTS(time.Now()))
+	require.NoError(t, err)
+	require.NotNil(t, jt)
+	require.False(t, jt.IsHistoricalStats)
 }

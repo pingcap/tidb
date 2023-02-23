@@ -7,13 +7,16 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -94,6 +97,9 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
 
 func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
+	if err := resp.Err(); err != nil {
+		return nil, err
+	}
 	for _, event := range resp.Events {
 		te, err := t.toTaskEvent(ctx, event)
 		if err != nil {
@@ -110,6 +116,7 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
+			log.Warn("[log backup advancer] Meet error during receiving the task event.", logutil.ShortError(err))
 			ch <- errorEvent(err)
 			return false
 		}
@@ -118,9 +125,9 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		}
 		return true
 	}
-
-	go func() {
-		defer close(ch)
+	collectRemaining := func() {
+		log.Info("[log backup advancer] Start collecting remaining events in the channel.", zap.Int("remained", len(c)))
+		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
 		for {
 			select {
 			case resp, ok := <-c:
@@ -130,21 +137,32 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 				if !handleResponse(resp) {
 					return
 				}
-			case <-ctx.Done():
-				// drain the remain event from channel.
-				for {
-					select {
-					case resp, ok := <-c:
-						if !ok {
-							return
-						}
-						if !handleResponse(resp) {
-							return
-						}
-					default:
-						return
-					}
+			default:
+				return
+			}
+		}
+	}
+
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case resp, ok := <-c:
+				failpoint.Inject("advancer_close_channel", func() {
+					// We cannot really close the channel, just simulating it.
+					ok = false
+				})
+				if !ok {
+					ch <- errorEvent(io.EOF)
+					return
 				}
+				if !handleResponse(resp) {
+					return
+				}
+			case <-ctx.Done():
+				collectRemaining()
+				ch <- errorEvent(ctx.Err())
+				return
 			}
 		}
 	}()

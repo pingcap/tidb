@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -71,9 +72,11 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -118,6 +121,7 @@ const (
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
+	nmProxyProtocolFallbackable  = "proxy-protocol-fallbackable"
 	nmAffinityCPU                = "affinity-cpus"
 
 	nmInitializeSecure            = "initialize-secure"
@@ -167,6 +171,7 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
+	proxyProtocolFallbackable  = flagBoolean(nmProxyProtocolFallbackable, false, "enable proxy protocol fallback mode. If it is enabled, connection will return the client IP address when the client does not send PROXY Protocol Header and it will not return any error. (Note: This feature it does NOT follow the PROXY Protocol SPEC)")
 
 	// Bootstrap and security
 	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
@@ -199,9 +204,22 @@ func main() {
 	}
 	setupLog()
 	setupExtensions()
+	setupStmtSummary()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
+
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
+		clusterID, err := config.GetAutoScalerClusterID()
+		terror.MustNil(err)
+
+		err = tiflashcompute.InitGlobalTopoFetcher(
+			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
+			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
+			clusterID,
+			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
+		terror.MustNil(err)
+	}
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
@@ -217,7 +235,7 @@ func main() {
 	setupBinlogClient()
 	setupMetrics()
 
-	keyspaceName := config.GetGlobalKeyspaceName()
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
@@ -463,7 +481,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
@@ -543,6 +560,9 @@ func overrideConfig(cfg *config.Config) {
 	}
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
+	}
+	if actualFlags[nmProxyProtocolFallbackable] {
+		cfg.ProxyProtocol.Fallbackable = *proxyProtocolFallbackable
 	}
 
 	// Sanity check: can't specify both options
@@ -843,6 +863,7 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 }
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+	dom.StopAutoAnalyze()
 	if graceful {
 		done := make(chan struct{})
 		svr.GracefulDown(context.Background(), done)
@@ -855,6 +876,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	closeStmtSummary()
 	topsql.Close()
 }
 
@@ -868,4 +890,26 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func setupStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		err := stmtsummaryv2.Setup(&stmtsummaryv2.Config{
+			Filename:       instanceCfg.StmtSummaryFilename,
+			FileMaxSize:    instanceCfg.StmtSummaryFileMaxSize,
+			FileMaxDays:    instanceCfg.StmtSummaryFileMaxDays,
+			FileMaxBackups: instanceCfg.StmtSummaryFileMaxBackups,
+		})
+		if err != nil {
+			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
+		}
+	}
+}
+
+func closeStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		stmtsummaryv2.Close()
+	}
 }

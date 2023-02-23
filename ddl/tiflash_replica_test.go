@@ -303,7 +303,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 			}
 
 			onceChecker.Store(job.ID, true)
-			go backgroundExec(store, "create table t2 like t1", doneCh)
+			go backgroundExec(store, "test", "create table t2 like t1", doneCh)
 		}
 	}
 	originalHook := dom.DDL().GetHook()

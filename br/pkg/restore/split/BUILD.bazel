@@ -42,7 +42,9 @@ go_library(
 
 go_test(
     name = "split_test",
+    timeout = "short",
     srcs = ["sum_sorted_test.go"],
+    flaky = True,
     deps = [
         ":split",
         "@com_github_stretchr_testify//require",
