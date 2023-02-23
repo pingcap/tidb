@@ -223,7 +223,6 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	isCommonHandle := w.table.Meta().IsCommonHandle
 	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
@@ -240,10 +239,15 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				return false, nil
 			}
 
-			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
+			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue)
 			if err != nil {
 				return false, err
 			}
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.index.Meta().Columns))
+			if err != nil {
+				return false, err
+			}
+
 			tempIdxVal = tempIdxVal.FilterOverwritten()
 
 			// Extract the operations on the original index and replay them later.
@@ -254,19 +258,9 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 					continue
 				}
 
-				if elem.Handle == nil {
-					// If the handle is not found in the value of the temp index, it means
-					// 1) This is not a deletion marker, the handle is in the key or the origin value.
-					// 2) This is a deletion marker, but the handle is in the key of temp index.
-					elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, len(w.index.Meta().Columns))
-					if err != nil {
-						return false, err
-					}
-				}
-
 				originIdxKey := make([]byte, len(indexKey))
 				copy(originIdxKey, indexKey)
-				tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
+				tablecodec.TempIndexKey2IndexKey(originIdxKey)
 
 				idxRecord := &temporaryIndexRecord{
 					handle: elem.Handle,
@@ -300,4 +294,19 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	logutil.BgLogger().Debug("[ddl] merge temp index txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
+}
+
+func decodeTempIndexHandleFromIndexKV(indexKey kv.Key, tmpVal tablecodec.TempIndexValue, idxColLen int) (ret tablecodec.TempIndexValue, err error) {
+	for _, elem := range tmpVal {
+		if elem.Handle == nil {
+			// If the handle is not found in the value of the temp index, it means
+			// 1) This is not a deletion marker, the handle is in the key or the origin value.
+			// 2) This is a deletion marker, but the handle is in the key of temp index.
+			elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, idxColLen)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return tmpVal, nil
 }
