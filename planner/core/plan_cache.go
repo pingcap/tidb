@@ -37,10 +37,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
 )
 
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
@@ -202,9 +200,7 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	// so you don't need to consider whether prepared.useCache is enabled.
 	plan := stmt.CachedPlan.(Plan)
 	names := stmt.CachedNames.(types.NameSlice)
-	err := RebuildPlan4CachedPlan(plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
@@ -239,9 +235,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 			return nil, nil, false, nil
 		}
 	}
-	err := RebuildPlan4CachedPlan(cachedVal.Plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -309,11 +303,24 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p Plan) error {
+func RebuildPlan4CachedPlan(p Plan) (successful bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
+	if !sc.UseCache {
+		return false // no need to rebuild range in this case
+	}
+
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
-	return rebuildRange(p)
+	if err := rebuildRange(p); err != nil {
+		// TODO: log or warn this error
+		return false
+	}
+	if !sc.UseCache {
+		// In this case that UseCache flag from `true` to `false`, some over-optimized operations must be
+		// triggered when rebuilding ranges, return an error then.
+		return false
+	}
+	return true
 }
 
 func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
