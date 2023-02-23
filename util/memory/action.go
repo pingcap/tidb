@@ -145,7 +145,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(PanicMemoryExceed + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action
