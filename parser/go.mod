@@ -11,7 +11,7 @@ require (
 	go.uber.org/goleak v1.1.10
 	go.uber.org/zap v1.18.1
 	golang.org/x/exp v0.0.0-20220428152302-39d4317da171
-	golang.org/x/text v0.3.7
+	golang.org/x/text v0.3.8
 	modernc.org/parser v1.0.2
 	modernc.org/y v1.0.1
 )
@@ -23,7 +23,7 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	golang.org/x/lint v0.0.0-20190930215403-16217165b5de // indirect
-	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023 // indirect
+	golang.org/x/tools v0.1.12 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 	modernc.org/golex v1.0.1 // indirect
