@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -633,6 +634,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 }
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
+	fmt.Println(">>>> ", len(is.IdxCols), is.AccessCondition)
 	if len(is.IdxCols) == 0 {
 		is.Ranges = ranger.FullRange()
 		return
@@ -641,6 +643,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	if err != nil {
 		return err
 	}
+	fmt.Println(">>>>>>> result >>> ", res.AccessConds, res.RemainedConds, res.Ranges, len(res.Ranges))
 	if isUnsafeRange(is.AccessCondition, res) {
 		return errors.New("rebuild range for cached plan failed")
 	}
@@ -657,7 +660,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 func isUnsafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult) (unsafe bool) {
 	if len(rebuiltResult.RemainedConds) > 0 || // the ranger generates some other extra conditions
 		len(rebuiltResult.AccessConds) != len(accessConds) || // not all access conditions are used
-		len(rebuiltResult.Ranges) == 0 { // get a full range
+		len(rebuiltResult.Ranges) == 0 { // get an empty range
 		return true
 	}
 	return false
