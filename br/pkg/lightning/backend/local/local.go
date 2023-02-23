@@ -1365,11 +1365,12 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// check if worker has error in this round
 		select {
 		case <-workerCtx.Done():
+			groupErr := workGroup.Wait()
 			err2 := retryErr.Load()
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
-			return errors.Trace(workGroup.Wait())
+			return errors.Trace(groupErr)
 		default:
 		}
 	}
