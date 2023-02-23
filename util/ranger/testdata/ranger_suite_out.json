@@ -93,8 +93,9 @@
       {
         "SQL": "select * from t where a = 1 and b in (1, 2) and c > 1;",
         "Plan": [
-          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
+          "Selection_7 0.67 root  eq(test.t.a, 1), gt(test.t.c, 1), in(test.t.b, 1, 2)",
+          "└─IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "  └─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 2 2"
