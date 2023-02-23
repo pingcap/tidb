@@ -1269,7 +1269,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		jobFromWorkerCh = make(chan *regionJob)
 		// jobWg is the number of jobs that need to be processed by worker in this round.
 		jobWg              sync.WaitGroup
-		needRetryJobs      []*regionJob
+		jobsNeedRetry      []*regionJob
 		retryErr           atomic.Error
 		retryGoroutineDone = make(chan struct{})
 	)
@@ -1308,7 +1308,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
 					zap.Time("waitUntil", job.waitUntil))
-				needRetryJobs = append(needRetryJobs, job)
+				jobsNeedRetry = append(jobsNeedRetry, job)
 			case ingested, needRescan:
 			}
 			jobWg.Done()
@@ -1323,8 +1323,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 	var pendingJobs []*regionJob
 	for {
-		pendingJobs = append(pendingJobs, needRetryJobs...)
-		needRetryJobs = nil
+		pendingJobs = append(pendingJobs, jobsNeedRetry...)
+		jobsNeedRetry = nil
 		log.FromContext(ctx).Info("import engine pending jobs", zap.Int("count", len(pendingJobs)))
 
 		newJobs, err := local.prepareAndGenerateUnfinishedJob(
