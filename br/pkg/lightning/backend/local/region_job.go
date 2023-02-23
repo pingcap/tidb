@@ -339,7 +339,7 @@ func (j *regionJob) ingest(
 	clientFactory ImportClientFactory,
 	splitCli split.SplitClient,
 	supportMultiIngest bool,
-	checkWriteStall bool,
+	shouldCheckWriteStall bool,
 ) error {
 	switch j.stage {
 	case regionScanned, ingested:
@@ -353,7 +353,7 @@ func (j *regionJob) ingest(
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
-		resp, err := j.doIngest(ctx, clientFactory, supportMultiIngest, checkWriteStall)
+		resp, err := j.doIngest(ctx, clientFactory, supportMultiIngest, shouldCheckWriteStall)
 		if err == nil && resp.GetError() == nil {
 			j.convertStageTo(ingested)
 			return nil
@@ -389,7 +389,7 @@ func (j *regionJob) ingest(
 	return nil
 }
 
-func (j *regionJob) checkWriteStall(
+func (j *regionJob) shouldCheckWriteStall(
 	ctx context.Context,
 	region *split.RegionInfo,
 	clientFactory ImportClientFactory,
@@ -418,10 +418,10 @@ func (j *regionJob) doIngest(
 	ctx context.Context,
 	clientFactory ImportClientFactory,
 	supportMultiIngest bool,
-	checkWriteStall bool,
+	shouldCheckWriteStall bool,
 ) (*sst.IngestResponse, error) {
-	if checkWriteStall {
-		writeStall, resp, err := j.checkWriteStall(ctx, j.region, clientFactory)
+	if shouldCheckWriteStall {
+		writeStall, resp, err := j.shouldCheckWriteStall(ctx, j.region, clientFactory)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
