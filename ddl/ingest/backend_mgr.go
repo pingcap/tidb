@@ -110,8 +110,10 @@ func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,
 func (m *backendCtxManager) Unregister(jobID int64) {
 	bc, exist := m.Load(jobID)
 	if !exist {
+		logutil.BgLogger().Warn("xxx----------------------------------- bctx Unregister isn't exist", zap.Int64("jobID", jobID))
 		return
 	}
+	logutil.BgLogger().Warn("xxx----------------------------------- bctx Unregister is exist", zap.Int64("jobID", jobID))
 	bc.EngMgr.UnregisterAll(jobID)
 	bc.backend.Close()
 	m.memRoot.Release(StructSizeBackendCtx)

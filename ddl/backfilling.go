@@ -211,8 +211,8 @@ type backfillCtx struct {
 }
 
 func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp model.ReorgType,
-	schemaName string, tbl table.Table, isDistributed bool) *backfillCtx {
-	if isDistributed {
+	schemaName string, tbl table.Table) *backfillCtx {
+	if id == -1 {
 		id = int(backfillContextID.Add(1))
 	}
 	return &backfillCtx{
@@ -359,12 +359,13 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	lastLogTime := time.Now()
 	startTime := lastLogTime
 	jobID := task.getJobID()
-	rc := d.getReorgCtx(jobID)
 
 	isDistReorg := task.bfJob != nil
 	if isDistReorg {
 		w.initPartitionIndexInfo(task)
+		jobID = -1 * jobID
 	}
+	rc := d.getReorgCtx(jobID)
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
@@ -914,7 +915,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl)
 			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
 				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 			if err != nil {
@@ -927,7 +928,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl)
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, i, b.tbl, reorgInfo.currElement.ID, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker

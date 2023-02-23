@@ -74,7 +74,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		}
 
 		var bf backfiller
-		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl, true))
+		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, -1, se, bfMeta.ReorgTp, schemaName, tbl))
 		if err != nil {
 			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
 				err = nil
@@ -263,6 +263,7 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 		if runningPID != getJobWithoutPartition {
 			runningPID = bJobs[0].PhysicalTableID
 		}
+		logutil.BgLogger().Warn("xxx-------------------- get tasks", zap.Int64("pid", runningPID), zap.String("bjob", bJobs[0].AbbrStr()))
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {
 			task, err := d.backfillJob2Task(tbl, bJ)

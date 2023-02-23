@@ -1977,7 +1977,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, false),
+			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
 			indexes:       indexes,
 			rowDecoder:    rowDecoder,
 			defaultVals:   make([]types.Datum, len(t.WritableCols())),
@@ -2121,7 +2121,7 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 		return err
 	}
-	ingest.LitBackCtxMgr.Unregister(bfJob.ID)
+	ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 	bc.SetDone()
 	return nil
 }

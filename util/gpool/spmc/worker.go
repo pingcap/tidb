@@ -71,7 +71,6 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 						break
 					}
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
-					log.Info("yyy---------worker Done a task", zap.Uint64("taskID", f.TaskID()))
 					f.Done()
 				}
 			}

@@ -91,10 +91,12 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 func (m *engineManager) Unregister(jobID, indexID int64) {
 	ei, exist := m.Load(indexID)
 	if !exist {
+		logutil.BgLogger().Warn("xxx----------------------------------- em Unregister isn't exist", zap.Int64("jobID", jobID), zap.Int64("idxID", indexID))
 		return
 	}
 
 	ei.Clean()
+	logutil.BgLogger().Warn("xxx----------------------------------- em Unregister is exist", zap.Int64("jobID", jobID), zap.Int64("idxID", indexID))
 	m.Delete(indexID)
 	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
@@ -118,6 +120,7 @@ func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
 // UnregisterAll delete all engineInfo from the engineManager.
 func (m *engineManager) UnregisterAll(jobID int64) {
 	for _, idxID := range m.Keys() {
+		logutil.BgLogger().Warn("xxx----------------------------------- em UnregisterAll", zap.Int64("jobID", jobID), zap.Int64("idxID", idxID))
 		m.Unregister(jobID, idxID)
 	}
 }
