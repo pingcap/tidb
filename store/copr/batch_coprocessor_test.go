@@ -15,16 +15,21 @@
 package copr
 
 import (
+	"context"
 	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // StoreID: [1, storeCount]
@@ -120,13 +125,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, nil, time.Second, false, 0)
+		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, time.Second, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, nil, time.Second, false, 0)
+		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, time.Second, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -204,4 +209,23 @@ func TestConsistentHash(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestTopoFetcherBackoff(t *testing.T) {
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	expectErr := errors.New("Cannot find proper topo from AutoScaler")
+	var retryNum int
+	start := time.Now()
+	for {
+		retryNum++
+		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
+			break
+		}
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+	}
+	dura := time.Since(start)
+	// fetchTopoMaxBackoff is milliseconds.
+	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
+	require.GreaterOrEqual(t, dura, 30*time.Second)
+	require.LessOrEqual(t, dura, 50*time.Second)
 }

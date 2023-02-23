@@ -1113,3 +1113,45 @@ func TestSetJobScheduleWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "16:11 +0800", val)
 }
+
+func TestTiDBEnableResourceControl(t *testing.T) {
+	// setup the hooks for test
+	enable := false
+	EnableGlobalResourceControlFunc = func() { enable = true }
+	DisableGlobalResourceControlFunc = func() { enable = false }
+	setGlobalResourceControlFunc := func(enable bool) {
+		if enable {
+			EnableGlobalResourceControlFunc()
+		} else {
+			DisableGlobalResourceControlFunc()
+		}
+	}
+	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
+
+	// Default false
+	require.Equal(t, resourceControlEnabled.Value, Off)
+	require.Equal(t, enable, false)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, enable, true)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+	require.Equal(t, enable, false)
+}

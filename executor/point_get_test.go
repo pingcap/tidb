@@ -825,3 +825,20 @@ func TestPointGetIssue25167(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery("select * from t as of timestamp @a where a = 1").Check(testkit.Rows())
 }
+
+func TestPointGetIssue40194(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	tk.MustExec("prepare s from 'select * from t1 where id=1'")
+	tk.MustExec("set @@tidb_enable_plan_replayer_capture=1")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
+	tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("update t1 set v=v+1")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
+}

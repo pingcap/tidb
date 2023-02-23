@@ -90,7 +90,7 @@ func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 }
 
 func (s *SelectIntoExec) escapeField(f []byte) []byte {
-	if s.intoOpt.FieldsInfo.Escaped == 0 {
+	if s.intoOpt.FieldsInfo.Escaped == nil {
 		return f
 	}
 	s.escapeBuf = s.escapeBuf[:0]
@@ -101,7 +101,8 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 			// we always escape 0
 			escape = true
 			b = '0'
-		case b == s.intoOpt.FieldsInfo.Escaped || b == s.intoOpt.FieldsInfo.Enclosed:
+		case (s.intoOpt.FieldsInfo.Escaped != nil && b == *s.intoOpt.FieldsInfo.Escaped) ||
+			(s.intoOpt.FieldsInfo.Enclosed != nil && b == *s.intoOpt.FieldsInfo.Enclosed):
 			escape = true
 		case !s.enclosed && len(s.intoOpt.FieldsInfo.Terminated) > 0 && b == s.intoOpt.FieldsInfo.Terminated[0]:
 			// if field is enclosed, we only escape line terminator, otherwise both field and line terminator will be escaped
@@ -110,8 +111,8 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 			// we always escape line terminator
 			escape = true
 		}
-		if escape {
-			s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
+		if escape && s.intoOpt.FieldsInfo.Escaped != nil {
+			s.escapeBuf = append(s.escapeBuf, *s.intoOpt.FieldsInfo.Escaped)
 		}
 		s.escapeBuf = append(s.escapeBuf, b)
 	}
@@ -130,14 +131,14 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	encloseFlag := false
 	var encloseByte byte
 	encloseOpt := false
-	if s.intoOpt.FieldsInfo.Enclosed != byte(0) {
-		encloseByte = s.intoOpt.FieldsInfo.Enclosed
+	if s.intoOpt.FieldsInfo.Enclosed != nil {
+		encloseByte = *s.intoOpt.FieldsInfo.Enclosed
 		encloseFlag = true
 		encloseOpt = s.intoOpt.FieldsInfo.OptEnclosed
 	}
 	nullTerm := []byte("\\N")
-	if s.intoOpt.FieldsInfo.Escaped != byte(0) {
-		nullTerm[0] = s.intoOpt.FieldsInfo.Escaped
+	if s.intoOpt.FieldsInfo.Escaped != nil {
+		nullTerm[0] = *s.intoOpt.FieldsInfo.Escaped
 	} else {
 		nullTerm = []byte("NULL")
 	}

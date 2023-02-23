@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
@@ -533,6 +533,15 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, n
 	return
 }
 
+// SetBindRecordStatusByDigest set a BindRecord's status to the storage and bind cache.
+func (h *BindHandle) SetBindRecordStatusByDigest(newStatus, sqlDigest string) (ok bool, err error) {
+	oldRecord, err := h.GetBindRecordBySQLDigest(sqlDigest)
+	if err != nil {
+		return false, err
+	}
+	return h.SetBindRecordStatus(oldRecord.OriginalSQL, nil, newStatus)
+}
+
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.
 func (h *BindHandle) GCBindRecord() (err error) {
 	h.bindInfo.Lock()
@@ -883,7 +892,7 @@ func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
-	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
+	bindableStmts := stmtsummaryv2.GetMoreThanCntBindableStmt(captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {

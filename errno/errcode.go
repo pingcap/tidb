@@ -915,12 +915,14 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
+	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
@@ -1039,9 +1041,10 @@ const (
 	ErrLazyUniquenessCheckFailure          = 8147
 	ErrUnsupportedColumnInTTLConfig        = 8148
 	ErrTTLColumnCannotDrop                 = 8149
-	ErrSetTTLEnableForNonTTLTable          = 8150
+	ErrSetTTLOptionForNonTTLTable          = 8150
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1091,6 +1094,9 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
+	ErrResourceGroupExists                = 8248
+	ErrResourceGroupNotExists             = 8249
+	ErrResourceGroupSupportDisabled       = 8250
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

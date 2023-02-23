@@ -7,13 +7,15 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"path"
 	"testing"
 
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -138,11 +140,12 @@ func TestIntegration(t *testing.T) {
 	defer etcd.Server.Stop()
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
-	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestStreamClose", func(t *testing.T) { testStreamClose(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -210,31 +213,6 @@ func testBasic(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Et
 	rangeIsEmpty(t, []byte(streamhelper.RangesOf(taskName)), etcd)
 }
 
-func testForwardProgress(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Etcd) {
-	ctx := context.Background()
-	taskName := "many_tables"
-	taskInfo := simpleTask(taskName, 65)
-	defer func() {
-		require.NoError(t, metaCli.DeleteTask(ctx, taskName))
-	}()
-
-	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
-	task, err := metaCli.GetTask(ctx, taskName)
-	require.NoError(t, err)
-	require.NoError(t, task.Step(ctx, 1, 41))
-	require.NoError(t, task.Step(ctx, 1, 42))
-	require.NoError(t, task.Step(ctx, 2, 40))
-	rs, err := task.Ranges(ctx)
-	require.NoError(t, err)
-	require.Equal(t, simpleRanges(65), rs)
-	store1Checkpoint, err := task.MinNextBackupTS(ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, store1Checkpoint, uint64(42))
-	store2Checkpoint, err := task.MinNextBackupTS(ctx, 2)
-	require.NoError(t, err)
-	require.Equal(t, store2Checkpoint, uint64(40))
-}
-
 func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient) {
 	var (
 		taskName = "my_task"
@@ -298,7 +276,7 @@ func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient
 		require.NoError(t, err)
 	}
 
-	task := streamhelper.NewTask(&metaCli, backup.StreamBackupTaskInfo{Name: taskName})
+	task := streamhelper.NewTask(&metaCli, backuppb.StreamBackupTaskInfo{Name: taskName})
 	task.UploadGlobalCheckpoint(ctx, 1003)
 
 	globalTS, err := task.GetGlobalCheckPointTS(ctx)
@@ -320,6 +298,7 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
 	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+
 	first := <-ch
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
@@ -335,29 +314,130 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
-	_, ok := <-ch
-	require.False(t, ok)
+	fifth, ok := <-ch
+	require.True(t, ok)
+	require.Equal(t, fifth.Type, streamhelper.EventErr)
+	require.Error(t, fifth.Err, context.Canceled)
+	item, ok := <-ch
+	require.False(t, ok, "%v", item)
+}
+
+func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	taskName := "close_simple"
+	taskInfo := simpleTask(taskName, 4)
+
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
+	ch := make(chan streamhelper.TaskEvent, 1024)
+	require.NoError(t, metaCli.Begin(ctx, ch))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName))
+	first := <-ch
+	require.Equal(t, first.Type, streamhelper.EventAdd)
+	require.Equal(t, first.Name, taskName)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
+	second := <-ch
+	require.Equal(t, second.Type, streamhelper.EventDel, "%s", second)
+	require.Equal(t, second.Name, taskName, "%s", second)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel", "return"))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel")
+	// We need to make the channel file some events hence we can simulate the closed channel.
+	taskName2 := "close_simple2"
+	taskInfo2 := simpleTask(taskName2, 4)
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+
+	third := <-ch
+	require.Equal(t, third.Type, streamhelper.EventErr)
+	require.Error(t, third.Err, io.EOF)
+	item, ok := <-ch
+	require.False(t, ok, "%#v", item)
 }
 
 func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx := context.Background()
 	task := "simple"
 	req := require.New(t)
-	getCheckpoint := func() uint64 {
-		resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
-		req.NoError(err)
-		if len(resp.Kvs) == 0 {
-			return 0
-		}
-		req.Len(resp.Kvs, 1)
-		return binary.BigEndian.Uint64(resp.Kvs[0].Value)
-	}
+
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
-	req.EqualValues(5, getCheckpoint())
+	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(5, ts)
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
-	req.EqualValues(18, getCheckpoint())
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(18, ts)
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
-	req.EqualValues(18, getCheckpoint())
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(18, ts)
 	req.NoError(metaCli.ClearV3GlobalCheckpointForTask(ctx, task))
-	req.EqualValues(0, getCheckpoint())
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(0, ts)
+}
+
+func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	var (
+		ctx      = context.Background()
+		taskName = "stop_task"
+		req      = require.New(t)
+		taskInfo = streamhelper.TaskInfo{
+			PBInfo: backuppb.StreamBackupTaskInfo{
+				Name:    taskName,
+				StartTs: 0,
+			},
+		}
+		storeID           = "5"
+		storageCheckpoint = make([]byte, 8)
+	)
+
+	// put task
+	req.NoError(metaCli.PutTask(ctx, taskInfo))
+	t2, err := metaCli.GetTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(taskInfo.PBInfo.Name, t2.Info.Name)
+
+	// upload global checkpoint
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, taskName, 100))
+	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(100, ts)
+
+	//upload storage checkpoint
+	key := path.Join(streamhelper.StorageCheckpointOf(taskName), storeID)
+	binary.BigEndian.PutUint64(storageCheckpoint, 90)
+	_, err = metaCli.Put(ctx, key, string(storageCheckpoint))
+	req.NoError(err)
+
+	task := streamhelper.NewTask(&metaCli.MetaDataClient, taskInfo.PBInfo)
+	ts, err = task.GetStorageCheckpoint(ctx)
+	req.NoError(err)
+	req.EqualValues(ts, 90)
+
+	// pause task
+	req.NoError(metaCli.PauseTask(ctx, taskName))
+	resp, err := metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
+	req.NoError(err)
+	req.EqualValues(1, len(resp.Kvs))
+
+	// stop task
+	err = metaCli.DeleteTask(ctx, taskName)
+	req.NoError(err)
+
+	// check task and other meta infomations not existed
+	_, err = metaCli.GetTask(ctx, taskName)
+	req.Error(err)
+
+	ts, err = task.GetStorageCheckpoint(ctx)
+	req.NoError(err)
+	req.EqualValues(ts, 0)
+
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(0, ts)
+
+	resp, err = metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
+	req.NoError(err)
+	req.EqualValues(0, len(resp.Kvs))
 }

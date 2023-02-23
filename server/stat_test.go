@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -46,7 +47,7 @@ func TestUptime(t *testing.T) {
 	}()
 	require.NoError(t, err)
 
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
 	require.NoError(t, err)
 
 	tidbdrv := NewTiDBDriver(store)

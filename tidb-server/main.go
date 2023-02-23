@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
@@ -70,9 +72,11 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -117,11 +121,14 @@ const (
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
+	nmProxyProtocolFallbackable  = "proxy-protocol-fallbackable"
 	nmAffinityCPU                = "affinity-cpus"
 
 	nmInitializeSecure            = "initialize-secure"
 	nmInitializeInsecure          = "initialize-insecure"
+	nmInitializeSQLFile           = "initialize-sql-file"
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
+	nmKeyspaceName                = "keyspace-name"
 )
 
 var (
@@ -164,11 +171,14 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
+	proxyProtocolFallbackable  = flagBoolean(nmProxyProtocolFallbackable, false, "enable proxy protocol fallback mode. If it is enabled, connection will return the client IP address when the client does not send PROXY Protocol Header and it will not return any error. (Note: This feature it does NOT follow the PROXY Protocol SPEC)")
 
-	// Security
+	// Bootstrap and security
 	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
 	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
 	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
+	keyspaceName                = flag.String(nmKeyspaceName, "", "keyspace name.")
 )
 
 func main() {
@@ -194,9 +204,22 @@ func main() {
 	}
 	setupLog()
 	setupExtensions()
+	setupStmtSummary()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
+
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
+		clusterID, err := config.GetAutoScalerClusterID()
+		terror.MustNil(err)
+
+		err = tiflashcompute.InitGlobalTopoFetcher(
+			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
+			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
+			clusterID,
+			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
+		terror.MustNil(err)
+	}
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
@@ -211,9 +234,16 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	resourcemanager.GlobalResourceManager.Start()
-	storage, dom := createStoreAndDomain()
+
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+
+	resourcemanager.InstanceResourceManager.Start()
+	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
+	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
+	}
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -225,7 +255,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.GlobalResourceManager.Stop()
+		resourcemanager.InstanceResourceManager.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -303,12 +333,18 @@ func registerMetrics() {
 	}
 }
 
-func createStoreAndDomain() (kv.Storage, *domain.Domain) {
+func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
-	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
+	}
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
+	copr.GlobalMPPFailedStoreProber.Run()
 	err = infosync.CheckTiKVVersion(storage, *semver.New(versioninfo.TiKVMinVersion))
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
@@ -445,7 +481,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
@@ -526,10 +561,13 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
+	if actualFlags[nmProxyProtocolFallbackable] {
+		cfg.ProxyProtocol.Fallbackable = *proxyProtocolFallbackable
+	}
 
 	// Sanity check: can't specify both options
 	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
-		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		err = fmt.Errorf("the options -initialize-insecure and -initialize-secure are mutually exclusive")
 		terror.MustNil(err)
 	}
 	// The option --initialize-secure=true ensures that a secure bootstrap is used.
@@ -548,8 +586,22 @@ func overrideConfig(cfg *config.Config) {
 	// which is not supported on windows. Only the insecure bootstrap
 	// method is supported.
 	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
-		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		err = fmt.Errorf("the option -initialize-secure is not supported on Windows")
 		terror.MustNil(err)
+	}
+	// Initialize SQL File is used to run a set of SQL statements after first bootstrap.
+	// It is important in the use case that you want to set GLOBAL variables, which
+	// are persisted to the cluster and not read from a config file.
+	if actualFlags[nmInitializeSQLFile] {
+		if _, err := os.Stat(*initializeSQLFile); err != nil {
+			err = fmt.Errorf("can not access -initialize-sql-file %s", *initializeSQLFile)
+			terror.MustNil(err)
+		}
+		cfg.InitializeSQLFile = *initializeSQLFile
+	}
+
+	if actualFlags[nmKeyspaceName] {
+		cfg.KeyspaceName = *keyspaceName
 	}
 }
 
@@ -642,7 +694,7 @@ func setGlobalVars() {
 	} else {
 		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 	}
-	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
@@ -786,16 +838,7 @@ func setupMetrics() {
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
-	callBackCount := 0
-	successCallBack := func() {
-		callBackCount++
-		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
-		if callBackCount >= 5 {
-			callBackCount = 0
-			metrics.KeepAliveCounter.Inc()
-		}
-	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
@@ -814,20 +857,26 @@ func setupTracing() {
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
+	copr.GlobalMPPFailedStoreProber.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+	dom.StopAutoAnalyze()
 	if graceful {
 		done := make(chan struct{})
 		svr.GracefulDown(context.Background(), done)
+		// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
+		// See https://github.com/pingcap/tidb/issues/40038 for details.
+		svr.KillSysProcesses()
 	} else {
 		svr.TryGracefulDown()
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	closeStmtSummary()
 	topsql.Close()
 }
 
@@ -841,4 +890,26 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func setupStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		err := stmtsummaryv2.Setup(&stmtsummaryv2.Config{
+			Filename:       instanceCfg.StmtSummaryFilename,
+			FileMaxSize:    instanceCfg.StmtSummaryFileMaxSize,
+			FileMaxDays:    instanceCfg.StmtSummaryFileMaxDays,
+			FileMaxBackups: instanceCfg.StmtSummaryFileMaxBackups,
+		})
+		if err != nil {
+			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
+		}
+	}
+}
+
+func closeStmtSummary() {
+	instanceCfg := config.GetGlobalConfig().Instance
+	if instanceCfg.StmtSummaryEnablePersistent {
+		stmtsummaryv2.Close()
+	}
 }

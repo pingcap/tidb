@@ -56,8 +56,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
-		0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session())})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session())})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -162,7 +161,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
+			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
+			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
@@ -264,6 +264,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					c_timestamp timestamp,
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_date_default date default current_date,
+					c_date_default_2 date default curdate(),
 					c_varchar_default varchar(20) default "current_timestamp",
 					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
 					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
@@ -276,6 +278,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
 					ORDER BY column_name`,
 	).Check(testkit.Rows(
+		"c_date_default CURRENT_DATE ",
+		"c_date_default_2 CURRENT_DATE ",
 		"c_datetime <nil> ",
 		"c_datetime_default CURRENT_TIMESTAMP ",
 		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
@@ -300,47 +304,50 @@ func TestSomeTables(t *testing.T) {
 	tk.SetSession(se)
 	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
-		Info:    "do something",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		Info:              "do something",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      2,
-		User:    "user-2",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc2",
-		State:   2,
-		Info:    strings.Repeat("x", 101),
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg2",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      3,
-		User:    "user-3",
-		Host:    "127.0.0.1",
-		Port:    "12345",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc3",
-		State:   1,
-		Info:    "check port",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                3,
+		User:              "user-3",
+		Host:              "127.0.0.1",
+		Port:              "12345",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc3",
+		State:             1,
+		Info:              "check port",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg3",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 ", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -357,30 +364,32 @@ func TestSomeTables(t *testing.T) {
 
 	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:            2,
-		User:          "user-2",
-		Host:          "localhost",
-		Command:       byte(2),
-		Digest:        "abc2",
-		State:         2,
-		Info:          strings.Repeat("x", 101),
-		CurTxnStartTS: 410090409861578752,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		CurTxnStartTS:     410090409861578752,
+		ResourceGroupName: "rg2",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -394,11 +403,11 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1", "in transaction", "<nil>"),
 		))
 }
 
@@ -531,18 +540,168 @@ func TestSlowQuery(t *testing.T) {
 	slowLogFileName := "tidb_slow.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	expectedRes := [][]interface{}{
+		{"2019-02-12 19:33:56.571953",
+			"406315658548871171",
+			"root",
+			"localhost",
+			"6",
+			"57",
+			"0.12",
+			"4.895492",
+			"0.4",
+			"0.2",
+			"0.000000003",
+			"2",
+			"0.000000002",
+			"0.00000001",
+			"0.000000003",
+			"0.19",
+			"0.21",
+			"0.01",
+			"0",
+			"0.18",
+			"[txnLock]",
+			"0.03",
+			"0",
+			"15",
+			"480",
+			"1",
+			"8",
+			"0.3824278",
+			"0.161",
+			"0.101",
+			"0.092",
+			"1.71",
+			"1",
+			"100001",
+			"100000",
+			"100",
+			"10",
+			"10",
+			"10",
+			"100",
+			"test",
+			"",
+			"0",
+			"42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772",
+			"t1:1,t2:2",
+			"0.1",
+			"0.2",
+			"0.03",
+			"127.0.0.1:20160",
+			"0.05",
+			"0.6",
+			"0.8",
+			"0.0.0.0:20160",
+			"70724",
+			"65536",
+			"0",
+			"0",
+			"0",
+			"0",
+			"10",
+			"",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"1",
+			"0",
+			"0",
+			"abcd",
+			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
+			"",
+			"update t set i = 2;",
+			"select * from t_slim;"},
+		{"2021-09-08 14:39:54.506967",
+			"427578666238083075",
+			"root",
+			"172.16.0.0",
+			"40507",
+			"0",
+			"0",
+			"25.571605962",
+			"0.002923536",
+			"0.006800973",
+			"0.002100764",
+			"0",
+			"0",
+			"0",
+			"0.000015801",
+			"25.542014572",
+			"0",
+			"0.002294647",
+			"0.000605473",
+			"12.483",
+			"[tikvRPC regionMiss tikvRPC regionMiss regionMiss]",
+			"0",
+			"0",
+			"624",
+			"172064",
+			"60",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"rtdb",
+			"",
+			"0",
+			"124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"856544",
+			"0",
+			"86.635049185",
+			"0.015486658",
+			"100.054",
+			"0",
+			"0",
+			"",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"",
+			"",
+			"",
+			"",
+			"INSERT INTO ...;",
+		},
+	}
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	re.Check(expectedRes)
+
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	expectedRes[0][0] = "2019-02-12 11:33:56.571953"
+	expectedRes[1][0] = "2021-09-08 06:39:54.506967"
+	re.Check(expectedRes)
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -574,7 +733,11 @@ func TestColumnStatistics(t *testing.T) {
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
 	store := testkit.CreateMockStore(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-table-has-column-slow.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
@@ -1521,10 +1684,6 @@ func TestVariablesInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skip("skip test when concurrent DDL is disabled")
-	}
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")

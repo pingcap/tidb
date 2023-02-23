@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
-
 package metadatalocktest
 
 import (
@@ -254,6 +252,47 @@ func TestMDLBasicBatchPointGet(t *testing.T) {
 	tk.MustExec("commit")
 
 	wg.Wait()
+	require.Less(t, ts1, ts2)
+}
+
+func TestMDLAddForeignKey(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t1(id int key);")
+	tk.MustExec("create table t2(id int key);")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values(1);")
+
+	var wg sync.WaitGroup
+	var ddlErr error
+	wg.Add(1)
+	var ts2 time.Time
+	go func() {
+		defer wg.Done()
+		ddlErr = tkDDL.ExecToErr("alter table test.t2 add foreign key (id) references t1(id)")
+		ts2 = time.Now()
+	}()
+
+	time.Sleep(2 * time.Second)
+
+	ts1 := time.Now()
+	tk.MustExec("commit")
+
+	wg.Wait()
+	require.Error(t, ddlErr)
+	require.Equal(t, "[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`id`) REFERENCES `t1` (`id`))", ddlErr.Error())
 	require.Less(t, ts1, ts2)
 }
 

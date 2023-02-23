@@ -223,11 +223,19 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
+		if req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
+			resp.Results = []*kvrpcpb.PessimisticLockKeyResult{
+				{
+					Type: kvrpcpb.PessimisticLockKeyResultType_LockResultFailed,
+				},
+			}
+		}
 		return resp, nil
 	}
 	if result.WakeupSleepTime == lockwaiter.WakeUpThisWaiter {
-		if req.Force {
+		if req.Force || req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 			req.WaitTimeout = lockwaiter.LockNoWait
+			resp = &kvrpcpb.PessimisticLockResponse{}
 			_, err := svr.mvccStore.PessimisticLock(reqCtx, req, resp)
 			resp.Errors, resp.RegionError = convertToPBErrors(err)
 			if err == nil {
@@ -556,7 +564,7 @@ func (svr *Server) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteRangeReques
 // SQL push down commands.
 
 // Coprocessor implements the tikvpb.TikvServer interface.
-func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*coprocessor.Response, error) {
+func (svr *Server) Coprocessor(ctx context.Context, req *coprocessor.Request) (*coprocessor.Response, error) {
 	reqCtx, err := newRequestCtx(svr, req.Context, "Coprocessor")
 	if err != nil {
 		return &coprocessor.Response{OtherError: convertToKeyError(err).String()}, nil
@@ -565,13 +573,69 @@ func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*co
 	if reqCtx.regErr != nil {
 		return &coprocessor.Response{RegionError: reqCtx.regErr}, nil
 	}
-	return cophandler.HandleCopRequest(reqCtx.getDBReader(), svr.mvccStore.lockStore, req), nil
+	resp := cophandler.HandleCopRequest(reqCtx.getDBReader(), svr.mvccStore.lockStore, req)
+	resp.BatchResponses = svr.StoreBatchCoprocessor(ctx, req)
+	return resp, nil
+}
+
+// StoreBatchCoprocessor handle batched tasks in the same store.
+func (svr *Server) StoreBatchCoprocessor(ctx context.Context, req *coprocessor.Request) []*coprocessor.StoreBatchTaskResponse {
+	if len(req.Tasks) == 0 {
+		return nil
+	}
+	tasks := req.Tasks
+	batchResps := make([]*coprocessor.StoreBatchTaskResponse, 0, len(tasks))
+	handleBatchResp := func(task *coprocessor.StoreBatchTask) {
+		var err error
+		batchResp := &coprocessor.StoreBatchTaskResponse{
+			TaskId: task.TaskId,
+		}
+		defer func() {
+			if err != nil {
+				batchResp.OtherError = err.Error()
+			}
+			batchResps = append(batchResps, batchResp)
+		}()
+		bytes, err := req.Marshal()
+		if err != nil {
+			return
+		}
+		taskReq := &coprocessor.Request{}
+		// deep clone req
+		if err = taskReq.Unmarshal(bytes); err != nil {
+			return
+		}
+		taskReq.Tasks = nil
+		taskReq.IsCacheEnabled = false
+		taskReq.Ranges = task.Ranges
+		taskReq.Context.RegionId = task.RegionId
+		taskReq.Context.RegionEpoch = task.RegionEpoch
+		taskReq.Context.Peer = task.Peer
+		resp, err := svr.Coprocessor(ctx, taskReq)
+		if err != nil {
+			return
+		}
+		batchResp.RegionError = resp.RegionError
+		batchResp.Locked = resp.Locked
+		batchResp.OtherError = resp.OtherError
+		batchResp.ExecDetailsV2 = resp.ExecDetailsV2
+		batchResp.Data = resp.Data
+	}
+	for _, task := range tasks {
+		handleBatchResp(task)
+	}
+	return batchResps
 }
 
 // CoprocessorStream implements the tikvpb.TikvServer interface.
 func (svr *Server) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
 	// TODO
 	return nil
+}
+
+// GetLockWaitHistory implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitHistory(context.Context, *kvrpcpb.GetLockWaitHistoryRequest) (*kvrpcpb.GetLockWaitHistoryResponse, error) {
+	return &kvrpcpb.GetLockWaitHistoryResponse{}, nil
 }
 
 // RegionError represents a region error

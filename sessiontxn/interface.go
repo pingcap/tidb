@@ -136,10 +136,17 @@ type TxnContextProvider interface {
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context, node ast.StmtNode) error
+	// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+	// a pessimistic select-for-update statements.
+	OnHandlePessimisticStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// OnStmtCommit is the hook that should be called when a statement is executed successfully.
+	OnStmtCommit(ctx context.Context) error
+	// OnStmtRollback is the hook that should be called when a statement fails to execute.
+	OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error
 	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
 	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
@@ -160,8 +167,10 @@ type TxnManager interface {
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
@@ -176,6 +185,9 @@ type TxnManager interface {
 	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context, node ast.StmtNode) error
+	// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+	// a pessimistic select-for-update statements.
+	OnHandlePessimisticStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	// This method is not required to be called for every error in the statement,
 	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.
@@ -183,6 +195,10 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// OnStmtCommit is the hook that should be called when a statement is executed successfully.
+	OnStmtCommit(ctx context.Context) error
+	// OnStmtRollback is the hook that should be called when a statement fails to execute.
+	OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error
 	// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
 	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.

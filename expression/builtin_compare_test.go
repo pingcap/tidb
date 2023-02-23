@@ -406,3 +406,17 @@ func TestGreatestLeastFunc(t *testing.T) {
 	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
 }
+
+func TestRefineArgsWithCastEnum(t *testing.T) {
+	ctx := createContext(t)
+	zeroUintConst := primitiveValsToConstants(ctx, []interface{}{uint64(0)})[0]
+	enumType := types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"1", "2", "3"}).AddFlag(mysql.EnumSetAsIntFlag).Build()
+	enumCol := &Column{RetType: &enumType}
+
+	f := funcs[ast.EQ].(*compareFunctionClass)
+	require.NotNil(t, f)
+
+	args := f.refineArgsByUnsignedFlag(ctx, []Expression{zeroUintConst, enumCol})
+	require.Equal(t, zeroUintConst, args[0])
+	require.Equal(t, enumCol, args[1])
+}

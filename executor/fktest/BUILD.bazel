@@ -15,6 +15,7 @@ go_test(
         "//infoschema",
         "//kv",
         "//meta/autoid",
+        "//parser",
         "//parser/ast",
         "//parser/auth",
         "//parser/format",

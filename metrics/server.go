@@ -42,7 +42,7 @@ var (
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblSQLType})
+		}, []string{LblSQLType, LblDb})
 
 	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -89,7 +89,7 @@ var (
 			Subsystem: "server",
 			Name:      "execute_error_total",
 			Help:      "Counter of execute errors.",
-		}, []string{LblType})
+		}, []string{LblType, LblDb})
 
 	CriticalErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -118,14 +118,6 @@ var (
 			Subsystem: "monitor",
 			Name:      "time_jump_back_total",
 			Help:      "Counter of system time jumps backward.",
-		})
-
-	KeepAliveCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "keep_alive_total",
-			Help:      "Counter of TiDB keep alive.",
 		})
 
 	PlanCacheCounter = prometheus.NewCounterVec(
@@ -278,6 +270,14 @@ var (
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
+
+	TiFlashFailedMPPStoreState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tiflash_failed_store",
+			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
+		}, []string{LblAddress})
 
 	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{

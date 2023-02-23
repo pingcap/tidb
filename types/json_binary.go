@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -576,6 +578,26 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		buf = append(buf, bj.Value...)
 	}
 	return buf
+}
+
+// GetValue return the primitive value of the JSON.
+func (bj BinaryJSON) GetValue() any {
+	switch bj.TypeCode {
+	case JSONTypeCodeInt64:
+		return bj.GetInt64()
+	case JSONTypeCodeUint64:
+		return bj.GetUint64()
+	case JSONTypeCodeDuration:
+		return bj.GetDuration()
+	case JSONTypeCodeFloat64:
+		return bj.GetFloat64()
+	case JSONTypeCodeString:
+		return bj.GetString()
+	case JSONTypeCodeDate, JSONTypeCodeDatetime:
+		return bj.GetTime()
+	}
+	logutil.BgLogger().Error("unreachable JSON type", zap.Any("type", bj.TypeCode))
+	return nil
 }
 
 // CreateBinaryJSON creates a BinaryJSON from interface.

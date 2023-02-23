@@ -515,10 +515,12 @@ func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
 				Charset:   row.GetString(6), //charset
 				Collation: row.GetString(7), //collation
 			}
-			// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+			// If it is SQL command prepare / execute, we should remove the arguments
 			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 			if row.GetInt64(4) == 1 {
-				stmt.Query = row.GetString(2) //normalizedSQL
+				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
+					stmt.Query = stmt.Query[:idx]
+				}
 			}
 			return stmt
 		}

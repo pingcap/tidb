@@ -301,6 +301,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID)
 			if err != nil {
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
@@ -404,6 +405,11 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	schemaID := recoverInfo.SchemaID
 	tblInfo := recoverInfo.TableInfo
+	if tblInfo.TTLInfo != nil {
+		// force disable TTL job schedule for recovered table
+		tblInfo.TTLInfo.Enable = false
+	}
+
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
@@ -528,6 +534,9 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
 		if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 			err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
+			if err != nil {
+				return
+			}
 		}
 	})
 

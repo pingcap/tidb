@@ -15,6 +15,7 @@
 package util
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -232,4 +233,53 @@ func (t *TCPConnWithIOCounter) Write(b []byte) (n int, err error) {
 	n, err = t.TCPConn.Write(b)
 	t.c.Add(uint64(n))
 	return n, err
+}
+
+// ReadLine tries to read a complete line from bufio.Reader.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
+	var resByte []byte
+	lineByte, isPrefix, err := reader.ReadLine()
+	if isPrefix {
+		// Need to read more data.
+		resByte = make([]byte, len(lineByte), len(lineByte)*2)
+	} else {
+		resByte = make([]byte, len(lineByte))
+	}
+	// Use copy here to avoid shallow copy problem.
+	copy(resByte, lineByte)
+	if err != nil {
+		return resByte, err
+	}
+	var tempLine []byte
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		resByte = append(resByte, tempLine...) // nozero
+		// Use maxLineSize to check the single line length.
+		if len(resByte) > maxLineSize {
+			return resByte, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
+		}
+		if err != nil {
+			return resByte, err
+		}
+	}
+	return resByte, err
+}
+
+// ReadLines tries to read lines from bufio.Reader.
+// count specifies the number of lines.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
+	lines := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		line, err := ReadLine(reader, maxLineSize)
+		if err == io.EOF && len(lines) > 0 {
+			return lines, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
 }

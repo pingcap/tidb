@@ -417,6 +417,9 @@ func (s *Server) startHTTPServer() {
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
 	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
+	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
+	router.Handle("/test/ttl/trigger/{db}/{table}", &ttlJobTriggerHandler{tikvHandlerTool.Store.(kv.Storage)})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -461,8 +464,14 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {
+		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
-			fullPath := fmt.Sprintf("tikv://%s", s.cfg.Path)
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
 			store, err := store.New(fullPath)
 			if err != nil {
 				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))

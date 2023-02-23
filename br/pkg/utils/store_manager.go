@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -136,7 +137,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if mgr.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
 	}
