@@ -92,7 +92,7 @@ const (
 	pBegin              = "begin"
 	pEnd                = "end"
 	pIsBackground       = "isBackground"
-	pType               = "pType"
+	pType               = "type"
 )
 
 // For query string

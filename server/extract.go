@@ -18,6 +18,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -62,7 +63,7 @@ func (eh *extractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 
 func buildExtractTask(params map[string]string) (*domain.ExtractTask, error) {
 	extractTaskType := params[pType]
-	switch extractTaskType {
+	switch strings.ToLower(extractTaskType) {
 	case extractPlanTaskType:
 		return buildExtractPlanTask(params)
 	}

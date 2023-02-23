@@ -137,14 +137,18 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 		logutil.BgLogger().Error("collect stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
-	p := w.packageExtractPlanRecords(records)
+	p, err := w.packageExtractPlanRecords(ctx, records)
+	if err != nil {
+		logutil.BgLogger().Error("package stmt summary records failed for extract plan task", zap.Error(err))
+		return "", err
+	}
 	return w.dumpExtractPlanPackage(p)
 }
 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]stmtSummaryHistoryRecord, error) {
 	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, SCHEMA_NAME, TABLE_NAMES, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, PLAN FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE SUMMARY_END_TIME > '%s' OR SUMMARY_BEGIN_TIME < '%s'",
+	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, TABLE_NAMES, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE SUMMARY_END_TIME > '%s' OR SUMMARY_BEGIN_TIME < '%s'",
 		task.Begin.Format(types.TimeFormat), task.End.Format(types.TimeFormat)))
 	if err != nil {
 		return nil, err
@@ -154,20 +158,16 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 	for _, row := range rows {
 		record := stmtSummaryHistoryRecord{}
 		record.stmtType = row.GetString(0)
-		record.schemaName = row.GetString(1)
-		record.digest = row.GetString(3)
-		record.planDigest = row.GetString(4)
-		record.sql = row.GetString(5)
-		record.plan = row.GetString(6)
-		if !checkRecordValid(record) {
-			continue
-		}
+		record.digest = row.GetString(2)
+		record.planDigest = row.GetString(3)
+		record.sql = row.GetString(4)
+		record.binaryPlan = row.GetString(5)
 		key := stmtSummaryHistoryKey{
 			digest:     record.digest,
 			planDigest: record.planDigest,
 		}
 		record.tables = make([]tableNamePair, 0)
-		tables := row.GetString(2)
+		tables := row.GetString(1)
 		setRecord := true
 
 		for _, t := range strings.Split(tables, ",") {
@@ -182,9 +182,16 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 			if err != nil {
 				return nil, err
 			}
+			record.schemaName = dbName
+			// skip internal schema record
+			switch strings.ToLower(record.schemaName) {
+			case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
+				setRecord = false
+				break
+			}
 			record.tables = append(record.tables, tableNamePair{DBName: dbName, TableName: tblName, IsView: t.Meta().IsView()})
 		}
-		if setRecord {
+		if setRecord && checkRecordValid(record) {
 			collectMap[key] = record
 		}
 	}
@@ -201,7 +208,7 @@ func checkRecordValid(r stmtSummaryHistoryRecord) bool {
 	return true
 }
 
-func (w *extractWorker) packageExtractPlanRecords(records map[stmtSummaryHistoryKey]stmtSummaryHistoryRecord) *extractPlanPackage {
+func (w *extractWorker) packageExtractPlanRecords(ctx context.Context, records map[stmtSummaryHistoryKey]stmtSummaryHistoryRecord) (*extractPlanPackage, error) {
 	p := &extractPlanPackage{}
 	p.sqls = make([]string, 0)
 	p.plans = make([]string, 0)
@@ -213,18 +220,28 @@ func (w *extractWorker) packageExtractPlanRecords(records map[stmtSummaryHistory
 			p.skippedSQLs = append(p.skippedSQLs, record.sql)
 			continue
 		}
-		// skip internal schema record
-		switch strings.ToLower(record.schemaName) {
-		case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
-			continue
-		}
 		p.sqls = append(p.sqls, record.sql)
-		p.plans = append(p.plans, record.plan)
+		plan, err := w.decodeBinaryPlan(ctx, record.binaryPlan)
+		if err != nil {
+			return nil, err
+		}
+		p.plans = append(p.plans, plan)
 		for _, tbl := range record.tables {
 			p.tables[tbl] = struct{}{}
 		}
 	}
-	return p
+	return p, nil
+}
+
+func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (string, error) {
+	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT tidb_decode_binary_plan('%s')", bPlan))
+	if err != nil {
+		return "", err
+	}
+	plan := rows[0].GetString(0)
+	return strings.Trim(plan, "\n"), nil
 }
 
 // dumpExtractPlanPackage will dump the information about sqls collected in stmt_summary_history
@@ -367,7 +384,7 @@ type stmtSummaryHistoryRecord struct {
 	digest     string
 	planDigest string
 	sql        string
-	plan       string
+	binaryPlan string
 }
 
 // GenerateExtractFile generates extract stmt file

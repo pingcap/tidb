@@ -443,7 +443,7 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 		return err
 	}
 	for table := range tables {
-		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
+		_, err := fmt.Fprintf(zf, "%s.%s;", table.DBName, table.TableName)
 		if err != nil {
 			return err
 		}
