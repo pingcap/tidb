@@ -38,12 +38,14 @@ Sort	10000.00	root		test.t2.c2
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where t1.c1 > 0;
 id	estRows	task	access object	operator info
-TableReader	3333.33	root		data:TableRangeScan
-└─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf], keep order:false, stats:pseudo
+Selection	3333.33	root		gt(test.t1.c1, 0)
+└─TableReader	3333.33	root		data:TableRangeScan
+  └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
-IndexReader	10.00	root		index:IndexRangeScan
-└─IndexRangeScan	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+Selection	10.00	root		eq(test.t1.c2, 1)
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
 HashJoin	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
@@ -82,10 +84,11 @@ TopN	1.00	root		test.t2.c2, offset:0, count:1
     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
-IndexLookUp	11.08	root		
-├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:pseudo
-└─Selection(Probe)	11.08	cop[tikv]		lt(test.t1.c3, 1)
-  └─TableRowIDScan	33.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Selection	11.08	root		eq(test.t1.c2, 1), gt(test.t1.c1, 1), lt(test.t1.c3, 1)
+└─IndexLookUp	11.08	root		
+  ├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	11.08	cop[tikv]		lt(test.t1.c3, 1)
+    └─TableRowIDScan	33.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
 Selection	0.33	root		gt(test.t1.c2, 1)
@@ -468,7 +471,7 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format = 'brief' select null or a > 1 from t;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		or(<nil>, gt(test.t.a, 1))->Column#2
+Projection	10000.00	root		or(istrue_with_null(cast(<nil>, double BINARY)), gt(test.t.a, 1))->Column#2
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 for update;
@@ -481,9 +484,10 @@ begin;
 insert tb values ('1');
 explain format = 'brief' select * from ta where a = 1;
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
+Selection	8000.00	root		eq(cast(test.ta.a, double BINARY), 1)
+└─TableReader	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		eq(cast(test.ta.a, double BINARY), 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));
@@ -654,19 +658,22 @@ Point_Get	1.00	root	table:t	handle:0
 explain format = 'brief' select * from t where _tidb_rowid > 0;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		test.t.a
-└─TableReader	10000.00	root		data:TableRangeScan
-  └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
+└─Selection	8000.00	root		gt(test.t._tidb_rowid, 0)
+  └─TableReader	10000.00	root		data:TableRangeScan
+    └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select a, _tidb_rowid from t where a > 0;
 id	estRows	task	access object	operator info
-TableReader	3333.33	root		data:Selection
-└─Selection	3333.33	cop[tikv]		gt(test.t.a, 0)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Selection	3333.33	root		gt(test.t.a, 0)
+└─TableReader	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(test.t.a, 0)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where _tidb_rowid > 0 and a > 0;
 id	estRows	task	access object	operator info
 Projection	2666.67	root		test.t.a
-└─TableReader	2666.67	root		data:Selection
-  └─Selection	2666.67	cop[tikv]		gt(test.t.a, 0)
-    └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
+└─Selection	2666.67	root		gt(test.t._tidb_rowid, 0), gt(test.t.a, 0)
+  └─TableReader	2666.67	root		data:Selection
+    └─Selection	2666.67	cop[tikv]		gt(test.t.a, 0)
+      └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'brief' select * from (select * from t order by (select 2)) t order by a, b;
@@ -731,23 +738,26 @@ insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
 analyze table t;
 explain format = 'brief' select * from t where a = 1;
 id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(test.t.a, 00:00:01.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+Selection	1.00	root		eq(test.t.a, 00:00:01.000000)
+└─TableReader	1.00	root		data:Selection
+  └─Selection	1.00	cop[tikv]		eq(test.t.a, 00:00:01.000000)
+    └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where b = "1000-01-01";
 id	estRows	task	access object	operator info
-TableReader	1.00	root		data:Selection
-└─Selection	1.00	cop[tikv]		eq(test.t.b, 1000-01-01 00:00:00.000000)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+Selection	1.00	root		eq(test.t.b, 1000-01-01 00:00:00.000000)
+└─TableReader	1.00	root		data:Selection
+  └─Selection	1.00	cop[tikv]		eq(test.t.b, 1000-01-01 00:00:00.000000)
+    └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int);
 insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
 analyze table t with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		ge(test.t.a, 3), le(test.t.a, 8)
-  └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
+Selection	0.00	root		ge(test.t.a, 3), le(test.t.a, 8)
+└─TableReader	0.00	root		data:Selection
+  └─Selection	0.00	cop[tikv]		ge(test.t.a, 3), le(test.t.a, 8)
+    └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int, b int, index idx_ab(a, b));
 explain format = 'brief' select a, b from t where a in (1) order by b;
@@ -774,12 +784,12 @@ create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
 
-digraph TableReader_7 {
-subgraph cluster7{
+digraph Selection_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_7"
+"Selection_8" -> "TableReader_7"
 }
 subgraph cluster6{
 node [style=filled, color=lightgrey]
@@ -794,9 +804,10 @@ drop table if exists t;
 create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
 explain format = 'brief' select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
-IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+Selection	0.10	root		eq(test.t.a, "0xfa34e1093cb428485734e3917f000000"), eq(test.t.b, "xb")
+└─IndexLookUp	0.10	root		
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
