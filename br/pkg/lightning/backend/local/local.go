@@ -357,7 +357,7 @@ type local struct {
 	localStoreDir string
 
 	workerConcurrency int
-	batchWriteKVPairs int
+	kvWriteBatchSize  int
 	checkpointEnabled bool
 
 	dupeConcurrency int
@@ -492,7 +492,7 @@ func NewLocalBackend(
 		localStoreDir:     localFile,
 		workerConcurrency: rangeConcurrency * 2,
 		dupeConcurrency:   rangeConcurrency * 2,
-		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
+		kvWriteBatchSize:  cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
 		maxOpenFiles:      mathutil.Max(maxOpenFiles, openFilesLowerThreshold),
 
@@ -1169,7 +1169,7 @@ func (local *local) writeAndIngestPairs(
 
 	err := job.writeToTiKV(ctx,
 		local.importClientFactory,
-		local.batchWriteKVPairs,
+		local.kvWriteBatchSize,
 		local.bufferPool,
 		local.writeLimiter)
 	if err != nil {
