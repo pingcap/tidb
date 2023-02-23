@@ -37,16 +37,15 @@ type SimpleAllocator struct {
 type stdAllocator struct {
 }
 
-func (a *stdAllocator) Alloc(capacity int) []byte {
+func (*stdAllocator) Alloc(capacity int) []byte {
 	return make([]byte, 0, capacity)
 }
 
-func (a *stdAllocator) AllocWithLen(length int, capacity int) []byte {
+func (*stdAllocator) AllocWithLen(length int, capacity int) []byte {
 	return make([]byte, length, capacity)
 }
 
-func (a *stdAllocator) Reset() {
-}
+func (*stdAllocator) Reset() {}
 
 var _ Allocator = &stdAllocator{}
 

@@ -25,6 +25,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var (
@@ -48,6 +49,10 @@ var (
 	CurrentCoprCacheHitRatioGTE80Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE100Count is CurrentCoprCacheHitRatioGTE100Count
 	CurrentCoprCacheHitRatioGTE100Count atomic.Uint64
+	// CurrentTiflashTableScanCount count the number of tiflash table scan and tiflash partition table scan
+	CurrentTiflashTableScanCount atomic.Uint64
+	// CurrentTiflashTableScanWithFastScanCount count the number of tiflash table scan and tiflash partition table scan which use fastscan
+	CurrentTiflashTableScanWithFastScanCount atomic.Uint64
 )
 
 const (
@@ -88,8 +93,10 @@ type coprCacheUsageData struct {
 }
 
 type tiFlashUsageData struct {
-	PushDown         uint64 `json:"pushDown"`
-	ExchangePushDown uint64 `json:"exchangePushDown"`
+	PushDown              uint64 `json:"pushDown"`
+	ExchangePushDown      uint64 `json:"exchangePushDown"`
+	TableScan             uint64 `json:"tableScan"`
+	TableScanWithFastScan uint64 `json:"tableScanWithFastScan"`
 }
 
 // builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
@@ -159,14 +166,14 @@ func getSQLSum(sqlTypeData *sqlType) uint64 {
 	return result
 }
 
-func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
+func readSQLMetric(timepoint time.Time, sqlResult *sqlUsageData) error {
 	ctx := context.TODO()
 	promQL := "avg(tidb_executor_statement_total{}) by (type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
 		return err
 	}
-	analysisSQLUsage(result, SQLResult)
+	analysisSQLUsage(result, sqlResult)
 	return nil
 }
 
@@ -204,17 +211,16 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 	return result, err
 }
 
-func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+func analysisSQLUsage(promResult pmodel.Value, sqlResult *sqlUsageData) {
 	if promResult == nil {
 		return
 	}
-	switch promResult.Type() {
-	case pmodel.ValVector:
+	if promResult.Type() == pmodel.ValVector {
 		matrix := promResult.(pmodel.Vector)
 		for _, m := range matrix {
 			v := m.Value
 			promLable := string(m.Metric[pmodel.LabelName("type")])
-			SQLResult.SQLType[promLable] = uint64(v)
+			sqlResult.SQLType[promLable] = uint64(v)
 		}
 	}
 }
@@ -225,8 +231,10 @@ func RotateSubWindow() {
 		BeginAt:      time.Now(),
 		ExecuteCount: CurrentExecuteCount.Swap(0),
 		TiFlashUsage: tiFlashUsageData{
-			PushDown:         CurrentTiFlashPushDownCount.Swap(0),
-			ExchangePushDown: CurrentTiFlashExchangePushDownCount.Swap(0),
+			PushDown:              CurrentTiFlashPushDownCount.Swap(0),
+			ExchangePushDown:      CurrentTiFlashExchangePushDownCount.Swap(0),
+			TableScan:             CurrentTiflashTableScanCount.Swap(0),
+			TableScanWithFastScan: CurrentTiflashTableScanWithFastScanCount.Swap(0),
 		},
 		CoprCacheUsage: coprCacheUsageData{
 			GTE0:   CurrentCoprCacheHitRatioGTE0Count.Swap(0),
@@ -246,7 +254,8 @@ func RotateSubWindow() {
 
 	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 	if err != nil {
-		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.",
+			zap.Error(err))
 	}
 
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
@@ -290,6 +299,8 @@ func getWindowData() []*windowData {
 			thisWindow.ExecuteCount += rotatedSubWindows[i].ExecuteCount
 			thisWindow.TiFlashUsage.PushDown += rotatedSubWindows[i].TiFlashUsage.PushDown
 			thisWindow.TiFlashUsage.ExchangePushDown += rotatedSubWindows[i].TiFlashUsage.ExchangePushDown
+			thisWindow.TiFlashUsage.TableScan += rotatedSubWindows[i].TiFlashUsage.TableScan
+			thisWindow.TiFlashUsage.TableScanWithFastScan += rotatedSubWindows[i].TiFlashUsage.TableScanWithFastScan
 			thisWindow.CoprCacheUsage.GTE0 += rotatedSubWindows[i].CoprCacheUsage.GTE0
 			thisWindow.CoprCacheUsage.GTE1 += rotatedSubWindows[i].CoprCacheUsage.GTE1
 			thisWindow.CoprCacheUsage.GTE10 += rotatedSubWindows[i].CoprCacheUsage.GTE10

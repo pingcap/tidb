@@ -16,6 +16,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -32,7 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -65,10 +66,10 @@ func TestPostSettings(t *testing.T) {
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
 	require.True(t, variable.ProcessGeneralLog.Load())
-	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.On, val)
 
@@ -84,10 +85,10 @@ func TestPostSettings(t *testing.T) {
 	require.False(t, variable.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
-	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
 	require.Equal(t, variable.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
@@ -119,7 +120,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, true, config.GetGlobalConfig().CheckMb4ValueInUTF8)
+	require.Equal(t, true, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	txn1, err := dbt.GetDB().Begin()
 	require.NoError(t, err)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
@@ -134,7 +135,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, false, config.GetGlobalConfig().CheckMb4ValueInUTF8)
+	require.Equal(t, false, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	dbt.MustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test deadlock_history_capacity
@@ -185,7 +186,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// restore original value.
-	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
 
 func TestAllServerInfo(t *testing.T) {
@@ -264,15 +265,15 @@ func TestTiFlashReplica(t *testing.T) {
 
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(ddlutil.IsEmulatorGCEnable())
 
 	// Disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
-	ddl.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
@@ -281,7 +282,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Set GC safe point and enable GC.
 	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	resp, err := ts.fetchStatus("/tiflash/replica")
+	resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder := json.NewDecoder(resp.Body)
 	var data []tableFlashReplicaInfo
@@ -298,7 +299,7 @@ func TestTiFlashReplica(t *testing.T) {
 	dbt.MustExec("use tidb")
 	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -309,18 +310,18 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
 	require.Equal(t, false, data[0].Available)
 
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(`{"id":184,"region_count":3,"flash_region_count":3}`)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "[schema:1146]Table which ID = 84 does not exist.", string(body))
+	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
 	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	body, err = io.ReadAll(resp.Body)
@@ -328,7 +329,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "", string(body))
 
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -342,7 +343,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Should not take effect.
 	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 	checkFunc := func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
+		resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
@@ -369,7 +370,7 @@ func TestTiFlashReplica(t *testing.T) {
 	// Test for partition table.
 	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
 	dbt.MustExec("alter table test set tiflash replica 0;")
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -387,10 +388,10 @@ func TestTiFlashReplica(t *testing.T) {
 
 	// Mock for partition 1 replica was available.
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/tiflash/replica")
+	resp, err = ts.fetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
@@ -403,16 +404,16 @@ func TestTiFlashReplica(t *testing.T) {
 
 	// Mock for partition 0,2 replica was available.
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	err = resp.Body.Close()
 	require.NoError(t, err)
 	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	resp, err = ts.postStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	checkFunc = func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
+		resp, err := ts.fetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
 		decoder = json.NewDecoder(resp.Body)
 		err = decoder.Decode(&data)
@@ -579,4 +580,89 @@ func TestGetSchemaStorage(t *testing.T) {
 		tables[0].IndexLength,
 		tables[0].DataFree,
 	})
+}
+
+func TestTTL(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database test_ttl")
+	dbt.MustExec("use test_ttl")
+	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
+
+	getJobCnt := func(status string) int {
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		if status != "" {
+			selectSQL += " where status = '" + status + "'"
+		}
+
+		rs, err := db.Query(selectSQL)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, rs.Close())
+		}()
+
+		cnt := -1
+		rowNum := 0
+		for rs.Next() {
+			rowNum++
+			require.Equal(t, 1, rowNum)
+			require.NoError(t, rs.Scan(&cnt))
+		}
+		require.NoError(t, rs.Err())
+		return cnt
+	}
+
+	waitAllJobsFinish := func() {
+		start := time.Now()
+		for time.Since(start) < time.Minute {
+			cnt := getJobCnt("running")
+			if cnt == 0 {
+				return
+			}
+		}
+		require.Fail(t, "timeout for waiting job finished")
+	}
+
+	doTrigger := func() (map[string]interface{}, error) {
+		resp, err := ts.postStatus("/test/ttl/trigger/test_ttl/t1", "application/json", nil)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		var obj map[string]interface{}
+		require.NoError(t, json.Unmarshal(body, &obj))
+		return obj, nil
+	}
+
+	expectedJobCnt := 1
+	obj, err := doTrigger()
+	require.NoError(t, err)
+	if err != nil {
+		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
+		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		waitAllJobsFinish()
+		obj, err = doTrigger()
+		require.NoError(t, err)
+		expectedJobCnt++
+	}
+
+	_, ok := obj["table_result"]
+	require.True(t, ok)
+	require.Equal(t, expectedJobCnt, getJobCnt(""))
 }

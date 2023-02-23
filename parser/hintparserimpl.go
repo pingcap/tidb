@@ -16,13 +16,13 @@ package parser
 import (
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
+//revive:disable:exported
 var (
 	ErrWarnOptimizerHintUnsupportedHint = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintUnsupportedHint)
 	ErrWarnOptimizerHintInvalidToken    = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidToken)
@@ -30,6 +30,8 @@ var (
 	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintParseError)
 	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidInteger)
 )
+
+//revive:enable:exported
 
 // hintScanner implements the yyhintLexer interface
 type hintScanner struct {
@@ -51,7 +53,7 @@ func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 		n, e := strconv.ParseUint(lit, 10, 64)
 		if e != nil {
 			hs.AppendError(ErrWarnOptimizerHintInvalidInteger.GenWithStackByArgs(lit))
-			return int(unicode.ReplacementChar)
+			return hintInvalid
 		}
 		lval.number = n
 		return hintIntLit
@@ -108,7 +110,7 @@ func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	}
 
 	hs.AppendError(ErrWarnOptimizerHintInvalidToken.GenWithStackByArgs(errorTokenType, lit, tok))
-	return int(unicode.ReplacementChar)
+	return hintInvalid
 }
 
 type hintParser struct {

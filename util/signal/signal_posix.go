@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build linux || darwin || freebsd || unix
-// +build linux darwin freebsd unix
 
 package signal
 
@@ -53,6 +52,6 @@ func SetupSignalHandler(shutdownFunc func(bool)) {
 	go func() {
 		sig := <-closeSignalChan
 		logutil.BgLogger().Info("got signal to exit", zap.Stringer("signal", sig))
-		shutdownFunc(sig == syscall.SIGQUIT)
+		shutdownFunc(sig != syscall.SIGHUP)
 	}()
 }

@@ -30,7 +30,7 @@ func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *ProjectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *ProjectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	proj := impl.plan.(*plannercore.PhysicalProjection)
 	impl.cost = proj.GetCost(children[0].GetPlan().Stats().RowCount) + children[0].GetCost()
 	return impl.cost
@@ -52,8 +52,8 @@ type TiDBSelectionImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (sel *TiDBSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CPUFactor + children[0].GetCost()
+func (sel *TiDBSelectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -68,8 +68,8 @@ type TiKVSelectionImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().CopCPUFactor + children[0].GetCost()
+func (sel *TiKVSelectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
+	sel.cost = children[0].GetPlan().Stats().RowCount*sel.plan.SCtx().GetSessionVars().GetCopCPUFactor() + children[0].GetCost()
 	return sel.cost
 }
 
@@ -84,9 +84,9 @@ type TiDBHashAggImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (agg *TiDBHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true, false)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
@@ -109,9 +109,9 @@ type TiKVHashAggImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (agg *TiKVHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false, false)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
@@ -139,7 +139,7 @@ type TiDBTopNImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *TiDBTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	topN := impl.plan.(*plannercore.PhysicalTopN)
 	childCount := children[0].GetPlan().Stats().RowCount
 	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
@@ -157,7 +157,7 @@ type TiKVTopNImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *TiKVTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *TiKVTopNImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	topN := impl.plan.(*plannercore.PhysicalTopN)
 	childCount := children[0].GetPlan().Stats().RowCount
 	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
@@ -175,7 +175,7 @@ type UnionAllImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *UnionAllImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	var childMaxCost float64
 	for _, child := range children {
 		childCost := child.GetCost()
@@ -183,14 +183,14 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 			childMaxCost = childCost
 		}
 	}
-	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
+	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().GetConcurrencyFactor()
 	// Children of UnionAll are executed in parallel.
 	impl.cost = selfCost + childMaxCost
 	return impl.cost
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *UnionAllImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+func (*UnionAllImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
 	return costLimit
 }
 
@@ -205,7 +205,7 @@ type ApplyImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *ApplyImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *ApplyImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	apply := impl.plan.(*plannercore.PhysicalApply)
 	impl.cost = apply.GetCost(
 		children[0].GetPlan().Stats().RowCount,
@@ -244,7 +244,7 @@ type MaxOneRowImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *MaxOneRowImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	impl.cost = children[0].GetCost()
 	return impl.cost
 }
@@ -265,7 +265,7 @@ func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *WindowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *WindowImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	impl.cost = children[0].GetCost()
 	return impl.cost
 }

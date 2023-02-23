@@ -16,12 +16,11 @@ package parser_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseHint(t *testing.T) {
@@ -262,7 +261,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() READ_FROM_STORAGE(TIKV[e])",
+			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() SEMI_JOIN_REWRITE() READ_FROM_STORAGE(TIKV[e])",
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: model.NewCIStr("READ_FROM_STORAGE"),
@@ -284,6 +283,9 @@ func TestParseHint(t *testing.T) {
 				},
 				{
 					HintName: model.NewCIStr("HASH_AGG"),
+				},
+				{
+					HintName: model.NewCIStr("SEMI_JOIN_REWRITE"),
 				},
 				{
 					HintName: model.NewCIStr("READ_FROM_STORAGE"),

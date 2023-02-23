@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -42,7 +41,7 @@ func TestMergePartialResult4FirstRow(t *testing.T) {
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeString, 5, "0", "2", "0"),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5, enumE, enumC, enumE),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 5, setE, setED, setE),
 	}
@@ -86,7 +85,7 @@ func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeString:
 			val := row.GetString(0)
 			memDeltas = append(memDeltas, int64(len(val)))

@@ -18,16 +18,21 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/privilege/privileges.(*JWKSImpl).LoadJWKS4AuthToken.func1"),
 	}
-	testbridge.WorkaroundGoCheckFlags()
+	testsetup.SetupForCommonTest()
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()

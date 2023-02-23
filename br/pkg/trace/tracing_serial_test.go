@@ -20,7 +20,7 @@ func jobA(ctx context.Context) {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	jobB(ctx)
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 }
 
 func jobB(ctx context.Context) {
@@ -28,7 +28,7 @@ func jobB(ctx context.Context) {
 		span1 := span.Tracer().StartSpan("jobB", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestSpan(t *testing.T) {
@@ -46,7 +46,7 @@ func TestSpan(t *testing.T) {
 	require.NoError(t, err)
 	s := string(content)
 	// possible result:
-	// "jobA      22:02:02.545296  20.621764ms\n"
-	// "  └─jobB  22:02:02.545297  10.293444ms\n"
-	require.Regexp(t, `^jobA.*2[0-9]\.[0-9]+ms\n  └─jobB.*1[0-9]\.[0-9]+ms\n$`, s)
+	// "jobA      22:02:02.545296  200.621764ms\n"
+	// "  └─jobB  22:02:02.545297  100.293444ms\n"
+	require.Regexp(t, `^jobA.*2[0-9][0-9]\.[0-9]+ms\n  └─jobB.*1[0-9][0-9]\.[0-9]+ms\n$`, s)
 }

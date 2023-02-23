@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "syncutil",
+    srcs = [
+        "mutex_deadlock.go",  #keep
+        "mutex_sync.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/syncutil",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_sasha_s_go_deadlock//:go-deadlock"],  #keep
+)

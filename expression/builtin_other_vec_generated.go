@@ -19,7 +19,6 @@ package expression
 import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -52,7 +51,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			hasNull[i] = true
 		}
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	var compareResult int
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -83,7 +82,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		if err := args[j].VecEvalInt(b.ctx, input, buf1); err != nil {
 			return err
 		}
-		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().Flag)
+		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
 		args1 := buf1.Int64s()
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
@@ -588,7 +587,7 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			}
 			arg0 := buf0.GetJSON(i)
 			arg1 := buf1.GetJSON(i)
-			compareResult = json.CompareBinary(arg0, arg1)
+			compareResult = types.CompareBinaryJSON(arg0, arg1)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1

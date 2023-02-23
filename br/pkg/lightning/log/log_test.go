@@ -15,37 +15,61 @@
 package log_test
 
 import (
+	"io"
+	"os"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func TestLog(t *testing.T) {
-	TestingT(t)
-}
-
-type logSuite struct{}
-
-var _ = Suite(&logSuite{})
-
-func (s *logSuite) TestConfigAdjust(c *C) {
+func TestConfigAdjust(t *testing.T) {
 	cfg := &log.Config{}
 	cfg.Adjust()
-	c.Assert(cfg.Level, Equals, "info")
+	require.Equal(t, "info", cfg.Level)
 
 	cfg.File = "."
 	err := log.InitLogger(cfg, "info")
-	c.Assert(err, ErrorMatches, "can't use directory as log file name")
-	log.L().Named("xx")
+	require.EqualError(t, err, "can't use directory as log file name")
 }
 
-func (s *logSuite) TestTestLogger(c *C) {
+func TestTestLogger(t *testing.T) {
 	logger, buffer := log.MakeTestLogger()
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
-	c.Assert(
-		buffer.Stripped(), Equals,
-		`{"$lvl":"WARN","$msg":"the message","number":123456,"array":[7,8,9]}`,
-	)
+	require.Equal(t, `{"$lvl":"WARN","$msg":"the message","number":123456,"array":[7,8,9]}`, buffer.Stripped())
+}
+
+func TestInitStdoutLogger(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	msg := "logger is initialized to stdout"
+	outputC := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n := 0
+		for {
+			nn, err := r.Read(buf[n:])
+			if nn == 0 || err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			n += nn
+		}
+		outputC <- string(buf[:n])
+	}()
+
+	logCfg := &log.Config{File: "-"}
+	err = log.InitLogger(logCfg, "info")
+	require.NoError(t, err)
+	log.L().Info(msg)
+
+	os.Stdout = oldStdout
+	require.NoError(t, w.Close())
+	output := <-outputC
+	require.NoError(t, r.Close())
+	require.Contains(t, output, msg)
 }

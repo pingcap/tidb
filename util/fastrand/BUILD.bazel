@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fastrand",
+    srcs = ["random.go"],
+    importpath = "github.com/pingcap/tidb/util/fastrand",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "fastrand_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "random_test.go",
+    ],
+    embed = [":fastrand"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

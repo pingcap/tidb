@@ -28,18 +28,21 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -48,6 +51,7 @@ func TestTopology(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+	integration.BeforeTestExternal(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -64,15 +68,15 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
-	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 	require.NoError(t, err)
 
 	topology, err := info.getTopologyFromEtcd(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
@@ -82,7 +86,7 @@ func TestTopology(t *testing.T) {
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
 	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
 
-	err = util.DeleteKeyFromEtcd(nonTTLKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
 
 	// Refresh and re-test if the key exists
@@ -97,7 +101,7 @@ func TestTopology(t *testing.T) {
 
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 	require.Equal(t, info.getTopologyInfo(), *topology)
 
 	// check ttl key
@@ -105,7 +109,7 @@ func TestTopology(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ttlExists)
 
-	err = util.DeleteKeyFromEtcd(ttlKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	err = util.DeleteKeyFromEtcd(ttlKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
 
 	err = info.updateTopologyAliveness(ctx)
@@ -149,7 +153,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -209,4 +213,66 @@ func TestPutBundlesRetry(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, got.IsEmpty())
 	})
+}
+
+func TestTiFlashManager(t *testing.T) {
+	ctx := context.Background()
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
+	tiflash := NewMockTiFlash()
+	SetMockTiFlash(tiflash)
+
+	require.NoError(t, err)
+
+	// SetTiFlashPlacementRule/GetTiFlashGroupRules
+	rule := MakeNewRule(1, 2, []string{"a"})
+	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+	require.Equal(t, "table-1-r", rules[0].ID)
+	require.Equal(t, 2, rules[0].Count)
+	require.Equal(t, []string{"a"}, rules[0].LocationLabels)
+	require.Equal(t, false, rules[0].Override, false)
+	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
+
+	// PostTiFlashAccelerateSchedule
+	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
+	z, ok := tiflash.SyncStatus[1]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	// GetTiFlashStoresStat
+	stats, err := GetTiFlashStoresStat(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Count)
+
+	// DeleteTiFlashPlacementRule
+	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 0, len(rules))
+
+	// ConfigureTiFlashPDForTable
+	require.Nil(t, ConfigureTiFlashPDForTable(1, 2, &[]string{"a"}))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rules))
+
+	// ConfigureTiFlashPDForPartitions
+	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
+		{
+			ID:       2,
+			Name:     model.NewCIStr("p"),
+			LessThan: []string{},
+		},
+	}, 3, &[]string{}, 100)
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
+	require.NoError(t, err)
+	// Have table 1 and 2
+	require.Equal(t, 2, len(rules))
+	z, ok = tiflash.SyncStatus[2]
+	require.Equal(t, true, ok)
+	require.Equal(t, true, z.Accel)
+
+	CloseTiFlashManager(ctx)
 }

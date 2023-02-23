@@ -85,7 +85,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
 	case types.KindInt64:
-		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+		if n.Type.GetFlag()&mysql.IsBooleanFlag != 0 {
 			if n.GetInt64() > 0 {
 				ctx.WriteKeyWord("TRUE")
 			} else {
@@ -103,11 +103,11 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindString:
 		// This part is used to process flag HasStringWithoutDefaultCharset, which means if we have this flag and the
 		// charset is mysql.DefaultCharset, we don't need to write the default.
-		if n.Type.Charset != "" &&
+		if n.Type.GetCharset() != "" &&
 			!ctx.Flags.HasStringWithoutCharset() &&
-			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.Charset != mysql.DefaultCharset) {
+			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.GetCharset() != mysql.DefaultCharset) {
 			ctx.WritePlain("_")
-			ctx.WriteKeyWord(n.Type.Charset)
+			ctx.WriteKeyWord(n.Type.GetCharset())
 		}
 		// Replace '\' to '\\' regardless of sql_mode "NO_BACKSLASH_ESCAPES", which is the same as MySQL.
 		ctx.WriteString(strings.ReplaceAll(n.GetString(), "\\", "\\\\"))
@@ -116,7 +116,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindMysqlDecimal:
 		ctx.WritePlain(n.GetMysqlDecimal().String())
 	case types.KindBinaryLiteral:
-		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+		if n.Type.GetFlag()&mysql.UnsignedFlag != 0 {
 			ctx.WritePlainf("x'%x'", n.GetBytes())
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
@@ -149,7 +149,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindNull:
 		s = "NULL"
 	case types.KindInt64:
-		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+		if n.Type.GetFlag()&mysql.IsBooleanFlag != 0 {
 			if n.GetInt64() > 0 {
 				s = "TRUE"
 			} else {
@@ -165,11 +165,13 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindFloat64:
 		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64)
 	case types.KindString, types.KindBytes:
-		s = strconv.Quote(n.GetString())
+		// If sql_mode='ANSI_QUOTES', strings with double-quotes will be taken as an identifier.
+		// See #35281.
+		s = WrapInSingleQuotes(n.GetString())
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral:
-		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+		if n.Type.GetFlag()&mysql.UnsignedFlag != 0 {
 			s = fmt.Sprintf("x'%x'", n.GetBytes())
 		} else {
 			s = n.GetBinaryLiteral().ToBitLiteralString(true)
@@ -180,13 +182,31 @@ func (n *ValueExpr) Format(w io.Writer) {
 	fmt.Fprint(w, s)
 }
 
+// WrapInSingleQuotes escapes single quotes and backslashs
+// and adds single quotes arond the string
+func WrapInSingleQuotes(inStr string) string {
+	s := strings.ReplaceAll(inStr, "\\", "\\\\")
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return fmt.Sprintf("'%s'", s)
+}
+
+// UnwrapFromSingleQuotes the reverse of WrapInSingleQuotes
+// but also allows non single quoted strings
+func UnwrapFromSingleQuotes(inStr string) string {
+	if len(inStr) < 2 || inStr[:1] != "'" || inStr[len(inStr)-1:] != "'" {
+		return inStr
+	}
+	s := strings.ReplaceAll(inStr[1:len(inStr)-1], "\\\\", "\\")
+	return strings.ReplaceAll(s, `''`, `'`)
+}
+
 // newValueExpr creates a ValueExpr with value, and sets default field type.
 func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
 	ve := &ValueExpr{}
-	// We need to keep the ve.Type.Collate equals to ve.Datum.collation.
+	// We need to keep the ve.Type.GetCollate() equals to ve.Datum.collation.
 	types.DefaultTypeForValue(value, &ve.Type, charset, collate)
 	ve.Datum.SetValue(value, &ve.Type)
 	ve.projectionOffset = -1
@@ -223,7 +243,7 @@ type ParamMarkerExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
+func (*ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("?")
 	return nil
 }
@@ -235,7 +255,7 @@ func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
 }
 
 // Format the ExprNode into a Writer.
-func (n *ParamMarkerExpr) Format(w io.Writer) {
+func (*ParamMarkerExpr) Format(_ io.Writer) {
 	panic("Not implemented")
 }
 

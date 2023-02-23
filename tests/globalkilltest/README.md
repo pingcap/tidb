@@ -73,8 +73,6 @@ Usage: ./run-tests.sh [options]
 
 * Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 
-* Run a embedded [tcp proxy](https://github.com/inetaf/tcpproxy) before PD. Stop & restart the proxy to simulate connection between TiDB and PD lost & restored.
-
 
 ## Usage
 

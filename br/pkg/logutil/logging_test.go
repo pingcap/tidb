@@ -5,6 +5,7 @@ package logutil_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,15 +32,15 @@ func assertTrimEqual(t *testing.T, f zapcore.Field, expect string) {
 
 func newFile(j int) *backuppb.File {
 	return &backuppb.File{
-		Name:         fmt.Sprint(j),
-		StartKey:     []byte(fmt.Sprint(j)),
-		EndKey:       []byte(fmt.Sprint(j + 1)),
+		Name:         strconv.Itoa(j),
+		StartKey:     []byte(strconv.Itoa(j)),
+		EndKey:       []byte(strconv.Itoa(j + 1)),
 		TotalKvs:     uint64(j),
 		TotalBytes:   uint64(j),
 		StartVersion: uint64(j),
 		EndVersion:   uint64(j + 1),
 		Crc64Xor:     uint64(j),
-		Sha256:       []byte(fmt.Sprint(j)),
+		Sha256:       []byte(strconv.Itoa(j)),
 		Cf:           "write",
 		Size_:        uint64(j),
 	}

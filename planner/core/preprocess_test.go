@@ -16,70 +16,41 @@ package core_test
 
 import (
 	"context"
+	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testValidatorSuite{})
-
-type testValidatorSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	ctx   sessionctx.Context
-	is    infoschema.InfoSchema
-}
-
-func (s *testValidatorSuite) SetUpTest(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-
-	s.ctx = s.se.(sessionctx.Context)
-
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-}
-
-func (s *testValidatorSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
-	stmts, err1 := session.Parse(s.ctx, sql)
-	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
-	c.Assert(stmts, HasLen, 1)
+func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql string, inPrepare bool, terr error) {
+	stmts, err := session.Parse(ctx, sql)
+	require.NoErrorf(t, err, "sql: %s", sql)
+	require.Len(t, stmts, 1)
 	stmt := stmts[0]
 	var opts []core.PreprocessOpt
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err := core.Preprocess(s.ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))...)
-	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
+	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
-func (s *testValidatorSuite) TestValidator(c *C) {
+func TestValidator(t *testing.T) {
 	tests := []struct {
 		sql       string
 		inPrepare bool
@@ -158,8 +129,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
-		{"create table t", false, ddl.ErrTableMustHaveColumns},
-		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
+		{"create table t", false, dbterror.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -255,7 +226,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")},
 		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
@@ -282,11 +253,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// issue 21082
-		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
 		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
-		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"ALTER TABLE t ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 
 		// issue 20295
 		// issue 11193
@@ -297,6 +268,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 
+		// issue 34713
+		{"SELECT CAST(1 AS DATETIME(7));", true, types.ErrTooBigPrecision.GenWithStackByArgs(7, "CAST", types.MaxFsp)},
+		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
+
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
@@ -304,63 +279,149 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	_, err := s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	for _, tt := range tests {
-		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
+		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
 	}
 }
 
-func (s *testValidatorSuite) TestForeignKey(c *C) {
-	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
-	c.Assert(err, IsNil)
+func TestForeignKey(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(a int, b int, c int)")
+	tk.MustExec("create table test.t2(d int)")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t(e int)")
 
-	_, err = s.se.Execute(context.Background(), "create table test.t2(d int)")
-	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
 
-	_, err = s.se.Execute(context.Background(), "create database test2")
-	c.Assert(err, IsNil)
-
-	_, err = s.se.Execute(context.Background(), "create table test2.t(e int)")
-	c.Assert(err, IsNil)
-
-	s.is = s.dom.InfoSchema()
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
-
-	_, err = s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+	tk.MustExec("use test")
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }
 
-func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
-	ctx := context.Background()
-	execSQLList := []string{
-		"use test",
-		"create table tb(id int);",
-		"create global temporary table temp(id int) on commit delete rows;",
-		"create global temporary table temp1(id int) on commit delete rows;",
-		"create temporary table ltemp1(id int);",
-		"create database test2",
-		"create global temporary table test2.temp2(id int) on commit delete rows;",
+func TestDropGlobalTempTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tb(id int);")
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows;")
+	tk.MustExec("create global temporary table temp1(id int) on commit delete rows;")
+	tk.MustExec("create temporary table ltemp1(id int);")
+	tk.MustExec("create database test2")
+	tk.MustExec("create global temporary table test2.temp2(id int) on commit delete rows;")
+
+	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.temp1", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, temp1", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test2.temp2, temp1", false, nil)
+}
+
+func TestErrKeyPart0(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestErrKeyPart")
+	tk.MustExec("use TestErrKeyPart")
+	err := tk.ExecToErr("CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	require.EqualError(t, err, "[planner:1391]Key part 'a' length cannot be 0")
+	err = tk.ExecToErr("create table t (a int, b varchar(255), key (b(0)))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+	err = tk.ExecToErr("create table t (a int, b varchar(255))")
+	require.NoError(t, err)
+	err = tk.ExecToErr("alter table t add index (b(0))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+}
+
+// For issue #30328
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
 	}
-	for _, execSQL := range execSQLList {
-		_, err := s.se.Execute(ctx, execSQL)
-		c.Assert(err, IsNil)
+}
+
+func TestPreprocessCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, t1, t2;")
+	tk.MustExec("create table t  (c int);insert into t values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t1 (a int);insert into t1 values (0), (1), (2), (3), (4);")
+	tk.MustExec("create table t2 (b int);insert into t2 values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t11111 (d int);insert into t11111 values (1), (2), (3), (4), (5);")
+	tk.MustExec("drop table if exists tbl_1;\nCREATE TABLE `tbl_1` (\n  `col_2` char(65) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n  `col_3` int(11) NOT NULL\n);")
+	testCases := []struct {
+		before string
+		after  string
+	}{
+		{
+			"create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;",
+			"CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `test`.`v1` AS WITH `t1` AS (SELECT `a` FROM `test`.`t2` WHERE `t2`.`a`=3 UNION SELECT `t2`.`a`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`a`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( SELECT(WITH t1 AS ( WITH qn AS ( SELECT 10 * a AS a FROM t1 ) SELECT 10 * a AS a FROM qn ) SELECT *  FROM t1  LIMIT 1  )  FROM t2  WHERE t2.b = 3 UNION SELECT t2.b + 1  FROM t1, t2 WHERE t1.a = t2.b) SELECT * FROM t1",
+			"WITH `t1` AS (SELECT (WITH `t1` AS (WITH `qn` AS (SELECT 10*`a` AS `a` FROM `test`.`t1`) SELECT 10*`a` AS `a` FROM `qn`) SELECT * FROM `t1` LIMIT 1) FROM `test`.`t2` WHERE `t2`.`b`=3 UNION SELECT `t2`.`b`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`b`) SELECT * FROM `t1`",
+		},
+		{
+			"with recursive cte_8932 (col_34891,col_34892) AS ( with recursive cte_8932 (col_34893,col_34894,col_34895) AS ( with tbl_1 (col_34896,col_34897,col_34898,col_34899) AS ( select 1, \"2\",3,col_3 from tbl_1 ) select cte_as_8958.col_34896,cte_as_8958.col_34898,cte_as_8958.col_34899 from tbl_1 as cte_as_8958 UNION DISTINCT select col_34893 + 1,concat(col_34894, 1),col_34895 + 1 from cte_8932 where col_34893 < 5 ) select cte_as_8959.col_34893,cte_as_8959.col_34895 from cte_8932 as cte_as_8959 ) select * from cte_8932 as cte_as_8960 order by cte_as_8960.col_34891,cte_as_8960.col_34892;",
+			"WITH RECURSIVE `cte_8932` (`col_34891`, `col_34892`) AS (WITH RECURSIVE `cte_8932` (`col_34893`, `col_34894`, `col_34895`) AS (WITH `tbl_1` (`col_34896`, `col_34897`, `col_34898`, `col_34899`) AS (SELECT 1,_UTF8MB4'2',3,`col_3` FROM `test`.`tbl_1`) SELECT `cte_as_8958`.`col_34896`,`cte_as_8958`.`col_34898`,`cte_as_8958`.`col_34899` FROM `tbl_1` AS `cte_as_8958` UNION SELECT `col_34893`+1,CONCAT(`col_34894`, 1),`col_34895`+1 FROM `cte_8932` WHERE `col_34893`<5) SELECT `cte_as_8959`.`col_34893`,`cte_as_8959`.`col_34895` FROM `cte_8932` AS `cte_as_8959`) SELECT * FROM `cte_8932` AS `cte_as_8960` ORDER BY `cte_as_8960`.`col_34891`,`cte_as_8960`.`col_34892`",
+		},
+		{
+			"with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t11` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`test`.`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"with t1 as (with t1 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( WITH t1 AS ( SELECT * FROM t ) SELECT ( WITH t2 AS ( SELECT * FROM t ) SELECT * FROM t limit 1 ) FROM t1, t2 ) \n\nSELECT\n* \nFROM\n\tt1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT (WITH `t2` AS (SELECT * FROM `test`.`t`) SELECT * FROM `test`.`t` LIMIT 1) FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t123 AS (WITH t11111 AS ( SELECT * FROM test.t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, test.t2 ) SELECT * FROM t11111;",
+			"WITH `t123` AS (WITH `t11111` AS (SELECT * FROM `test`.`t1`) SELECT (WITH `t2` AS (SELECT (WITH `t23` AS (SELECT * FROM `t11111`) SELECT * FROM `t23` LIMIT 1) FROM `t11111`) SELECT * FROM `t2` LIMIT 1) FROM (`t11111`) JOIN `test`.`t2`) SELECT * FROM `test`.`t11111`",
+		},
 	}
-	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
-	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp", false, nil)
-	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
-	s.runSQL(c, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
-	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
+	for _, tc := range testCases {
+		stmts, warnings, err := parser.New().ParseSQL(tc.before)
+		require.Len(t, warnings, 0)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+
+		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
+		require.NoError(t, err)
+
+		var rs strings.Builder
+		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
+		require.NoError(t, err)
+		require.Equal(t, tc.after, rs.String())
+	}
 }

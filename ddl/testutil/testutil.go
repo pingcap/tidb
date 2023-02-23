@@ -22,14 +22,17 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SessionExecInGoroutine export for testing.
-func SessionExecInGoroutine(s kv.Storage, sql string, done chan error) {
-	ExecMultiSQLInGoroutine(s, "test_db", []string{sql}, done)
+func SessionExecInGoroutine(s kv.Storage, dbName, sql string, done chan error) {
+	ExecMultiSQLInGoroutine(s, dbName, []string{sql}, done)
 }
 
 // ExecMultiSQLInGoroutine exports for testing.
@@ -53,7 +56,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 				return
 			}
 			if rs != nil {
-				done <- errors.Errorf("RecordSet should be empty.")
+				done <- errors.Errorf("RecordSet should be empty")
 				return
 			}
 			done <- nil
@@ -68,7 +71,7 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	if err != nil {
 		return nil, err
 	}
-	err = se.NewTxn(context.Background())
+	err = sessiontxn.NewTxn(context.Background(), se)
 	if err != nil {
 		return nil, err
 	}
@@ -80,4 +83,14 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 			return true, nil
 		})
 	return allHandles, err
+}
+
+// FindIdxInfo is to get IndexInfo by index name.
+func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	if err != nil {
+		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
+		return nil
+	}
+	return tbl.Meta().FindIndexByName(idxName)
 }

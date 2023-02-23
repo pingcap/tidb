@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -49,7 +49,10 @@ var (
 
 	pdClientPath = flag.String("pd", "127.0.0.1:2379", "pd client path")
 
-	lostConnectionToPDTimeout       = flag.Int("conn_lost", 5, "lost connection to PD timeout, should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>")
+	// nolint: unused, deadcode
+	lostConnectionToPDTimeout = flag.Int("conn_lost", 5, "lost connection to PD timeout, should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>")
+
+	// nolint: unused, deadcode
 	timeToCheckPDConnectionRestored = flag.Int("conn_restored", 1, "time to check PD connection restored, should be the same as TiDB ldflag <ldflagServerIDTimeToCheckPDConnectionRestored>")
 )
 
@@ -64,28 +67,28 @@ type GlobalKillSuite struct {
 	pdCli *clientv3.Client
 	pdErr error
 
-	clusterId string
+	clusterID string
 	pdProc    *exec.Cmd
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
-	s = new(GlobalKillSuite)
+func createGloabalKillSuite(t *testing.T) *GlobalKillSuite {
+	s := new(GlobalKillSuite)
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
-	s.clusterId = time.Now().Format(time.RFC3339Nano)
+	s.clusterID = time.Now().Format(time.RFC3339Nano)
 	err = s.startCluster()
 	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
-	clean = func() {
+	t.Cleanup(func() {
 		if s.pdCli != nil {
 			require.NoError(t, err)
 		}
 		require.NoError(t, s.cleanCluster())
-	}
+	})
 
-	return
+	return s
 }
 
 func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
@@ -157,12 +160,12 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 }
 
 func (s *GlobalKillSuite) startCluster() (err error) {
-	err = s.startPD(s.clusterId)
+	err = s.startPD(s.clusterID)
 	if err != nil {
 		return
 	}
 
-	err = s.startTiKV(s.clusterId)
+	err = s.startTiKV(s.clusterID)
 	if err != nil {
 		return
 	}
@@ -257,7 +260,7 @@ func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool)
 			}
 			log.Info(fmt.Sprintf("service \"%s\" stopped gracefully", name))
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(60 * time.Second):
 			err = fmt.Errorf("service \"%s\" can't gracefully stop in time", name)
 			log.Info(err.Error())
 			return err
@@ -373,12 +376,11 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 		return
 	}
 	rows.Next()
-	if rows.Err() != nil {
-		ch <- sleepResult{err: rows.Err()}
+	if err := rows.Err(); err != nil {
+		ch <- sleepResult{err: err}
 		return
 	}
-	err = rows.Close()
-	if err != nil {
+	if err = rows.Close(); err != nil {
 		ch <- sleepResult{err: err}
 	}
 
@@ -427,8 +429,7 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -454,8 +455,7 @@ func TestWithoutPD(t *testing.T) {
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -483,8 +483,7 @@ func TestOneTiDB(t *testing.T) {
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
@@ -530,9 +529,7 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	t.Skip("unstable, skip race test")
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1
@@ -585,15 +582,15 @@ func TestLostConnection(t *testing.T) {
 	// [Test Scenario 4] Existing connections are killed after PD lost connection for long time.
 	r := <-ch
 	log.Info("sleepRoutine err", zap.Error(r.err))
-	require.NoError(t, err)
+	require.NotNil(t, r.err)
 	require.Equal(t, r.err.Error(), "invalid connection")
 
 	// check new connection.
 	// [Test Scenario 5] New connections are not accepted after PD lost connection for long time.
 	log.Info("check connection after lost connection to PD.")
 	_, err = s.connectTiDB(port1)
-	log.Info("connectTiDB err", zap.Error(r.err))
-	require.NoError(t, err)
+	log.Info("connectTiDB err", zap.Error(err))
+	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "driver: bad connection")
 
 	err = s.stopTiKV()

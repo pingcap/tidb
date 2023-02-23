@@ -21,12 +21,12 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"unicode"
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
 )
 
+// Digest stores the fixed length hash value.
 type Digest struct {
 	b   []byte
 	str string
@@ -170,9 +170,6 @@ func (d *sqlDigester) normalize(sql string) {
 		if tok == invalid {
 			break
 		}
-		if tok == unicode.ReplacementChar && d.lexer.r.eof() {
-			break
-		}
 		if pos.Offset == len(sql) {
 			break
 		}
@@ -235,7 +232,7 @@ func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
 			case "force", "use", "ignore":
 				for {
 					tok, _, lit := d.lexer.scan()
-					if tok == 0 || (tok == unicode.ReplacementChar && d.lexer.r.eof()) {
+					if (tok == 0 && d.lexer.r.eof()) || tok == invalid {
 						break
 					}
 					if lit == ")" {
@@ -390,7 +387,7 @@ func (d *sqlDigester) isLit(t token) (beLit bool) {
 	return
 }
 
-func (d *sqlDigester) isNumLit(tok int) (beNum bool) {
+func (*sqlDigester) isNumLit(tok int) (beNum bool) {
 	switch tok {
 	case intLit, decLit, floatLit, hexLit:
 		beNum = true
@@ -399,7 +396,7 @@ func (d *sqlDigester) isNumLit(tok int) (beNum bool) {
 	return
 }
 
-func (d *sqlDigester) isComma(tok token) (isComma bool) {
+func (*sqlDigester) isComma(tok token) (isComma bool) {
 	isComma = tok.lit == ","
 	return
 }

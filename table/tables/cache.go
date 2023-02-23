@@ -20,26 +20,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-)
-
-// RenewLeaseType define the type for renew lease.
-type RenewLeaseType int
-
-const (
-	// RenewReadLease means renew read lease.
-	RenewReadLease RenewLeaseType = iota + 1
-	// RenewWriteLease means renew write lease.
-	RenewWriteLease
 )
 
 var (
@@ -49,8 +42,29 @@ var (
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
-	handle    StateRemote
-	renewCh   chan func()
+	totalSize int64
+	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
+	tokenLimit
+}
+
+type tokenLimit chan StateRemote
+
+func (t tokenLimit) TakeStateRemoteHandle() StateRemote {
+	handle := <-t
+	return handle
+}
+
+func (t tokenLimit) TakeStateRemoteHandleNoWait() StateRemote {
+	select {
+	case handle := <-t:
+		return handle
+	default:
+		return nil
+	}
+}
+
+func (t tokenLimit) PutStateRemoteHandle(handle StateRemote) {
+	t <- handle
 }
 
 // cacheData pack the cache data and lease.
@@ -60,11 +74,9 @@ type cacheData struct {
 	kv.MemBuffer
 }
 
-func leaseFromTS(ts uint64) uint64 {
-	// TODO make this configurable in the following PRs
-	const defaultLeaseDuration time.Duration = 3 * time.Second
+func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
 	physicalTime := oracle.GetTimeFromTS(ts)
-	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
+	lease := oracle.GoTimeToTS(physicalTime.Add(leaseDuration))
 	return lease
 }
 
@@ -78,60 +90,69 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
+func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool /*loading*/) {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
-		return nil
+		return nil, false
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
 		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
-		// TODO make this configurable in the following PRs
-		if distance >= 0 && distance <= (1500*time.Millisecond) {
-			c.renewCh <- c.renewLease(ts, RenewReadLease, data)
+
+		var triggerFailpoint bool
+		failpoint.Inject("mockRenewLeaseABA1", func(_ failpoint.Value) {
+			triggerFailpoint = true
+		})
+
+		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
+			if h := c.TakeStateRemoteHandleNoWait(); h != nil {
+				go c.renewLease(h, ts, data, leaseDuration)
+			}
 		}
-		return data.MemBuffer
+		// If data is not nil, but data.MemBuffer is nil, it means the data is being
+		// loading by a background goroutine.
+		return data.MemBuffer, data.MemBuffer == nil
 	}
-	return nil
+	return nil, false
 }
 
 // newCachedTable creates a new CachedTable Instance
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
+		tokenLimit:  make(chan StateRemote, 1),
 	}
 	return ret, nil
 }
 
 // Init is an extra operation for cachedTable after TableFromMeta,
 // Because cachedTable need some additional parameter that can't be passed in TableFromMeta.
-func (c *cachedTable) Init(renewCh chan func(), exec sqlexec.SQLExecutor) error {
-	c.renewCh = renewCh
+func (c *cachedTable) Init(exec sqlexec.SQLExecutor) error {
 	raw, ok := exec.(sqlExec)
 	if !ok {
 		return errors.New("Need sqlExec rather than sqlexec.SQLExecutor")
 	}
-	c.handle = NewStateRemote(raw)
+	handle := NewStateRemote(raw)
+	c.PutStateRemoteHandle(handle)
 	return nil
 }
 
-func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, error) {
+func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer, uint64, int64, error) {
 	buffer, err := newMemBuffer(store)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	var startTS uint64
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	totalSize := int64(0)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		startTS = txn.StartTS()
-		if startTS >= lease {
-			return errors.New("the loaded data is outdated for caching")
-		}
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
 			return errors.Trace(err)
@@ -139,11 +160,14 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		defer it.Close()
 
 		for it.Valid() && it.Key().HasPrefix(prefix) {
+			key := it.Key()
 			value := it.Value()
-			err = buffer.Set(it.Key(), value)
+			err = buffer.Set(key, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			totalSize += int64(len(key))
+			totalSize += int64(len(value))
 			err = it.Next()
 			if err != nil {
 				return errors.Trace(err)
@@ -152,98 +176,186 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		return nil
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, totalSize, err
 	}
 
-	return buffer, startTS, nil
+	return buffer, startTS, totalSize, nil
 }
 
-func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error {
+func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
+	if h := c.TakeStateRemoteHandle(); h != nil {
+		go c.updateLockForRead(ctx, h, store, ts, leaseDuration)
+	}
+}
+
+func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote, store kv.Storage, ts uint64, leaseDuration time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+		}
+		c.PutStateRemoteHandle(handle)
+	}()
+
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
-	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(ctx, tid, lease)
+	lease := leaseFromTS(ts, leaseDuration)
+	succ, err := handle.LockForRead(ctx, tid, lease)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("lock cached table for read", zap.Error(err))
+		return
 	}
 	if succ {
-		mb, startTS, err := c.loadDataFromOriginalTable(store, lease)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		c.cacheData.Store(&cacheData{
-			Start:     startTS,
+			Start:     ts,
 			Lease:     lease,
-			MemBuffer: mb,
+			MemBuffer: nil, // Async loading, this will be set later.
 		})
+
+		// Make the load data process async, in case that loading data takes longer the
+		// lease duration, then the loaded data get staled and that process repeats forever.
+		go func() {
+			start := time.Now()
+			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
+			metrics.LoadTableCacheDurationHistogram.Observe(time.Since(start).Seconds())
+			if err != nil {
+				log.Info("load data from table fail", zap.Error(err))
+				return
+			}
+
+			tmp := c.cacheData.Load().(*cacheData)
+			if tmp != nil && tmp.Start == ts {
+				c.cacheData.Store(&cacheData{
+					Start:     startTS,
+					Lease:     tmp.Lease,
+					MemBuffer: mb,
+				})
+				atomic.StoreInt64(&c.totalSize, totalSize)
+			}
+		}()
 	}
 	// Current status is not suitable to cache.
-	return nil
 }
 
+const cachedTableSizeLimit = 64 * (1 << 20)
+
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
+func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
+		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	now := txn.StartTS()
-	start := time.Now()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
-	if err != nil {
-		return nil, errors.Trace(err)
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
+	return c.TableCommon.AddRecord(sctx, r, opts...)
+}
+
+func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle *cachedTable) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if txnCtx.CachedTables == nil {
+		txnCtx.CachedTables = make(map[int64]interface{})
 	}
-	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
-	return c.TableCommon.AddRecord(ctx, r, opts...)
+	if _, ok := txnCtx.CachedTables[tid]; !ok {
+		txnCtx.CachedTables[tid] = handle
+	}
 }
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return err
+	// Prevent furthur writing when the table is already too large.
+	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
+		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	now := txn.StartTS()
-	start := time.Now()
-	err = c.handle.LockForWrite(ctx, c.Meta().ID, leaseFromTS(now))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	txn, err := ctx.Txn(true)
+func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
+	return c.TableCommon.RemoveRecord(sctx, h, r)
+}
+
+// TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
+var TestMockRenewLeaseABA2 chan struct{}
+
+func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData, leaseDuration time.Duration) {
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
+		c.PutStateRemoteHandle(handle)
+		<-TestMockRenewLeaseABA2
+		c.TakeStateRemoteHandle()
+	})
+
+	defer c.PutStateRemoteHandle(handle)
+
+	tid := c.Meta().ID
+	lease := leaseFromTS(ts, leaseDuration)
+	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
 	if err != nil {
-		return err
+		if !kv.IsTxnRetryableError(err) {
+			log.Warn("Renew read lease error", zap.Error(err))
+		}
+		return
 	}
-	now := txn.StartTS()
-	start := time.Now()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
+	if newLease > 0 {
+		c.cacheData.Store(&cacheData{
+			Start:     data.Start,
+			Lease:     newLease,
+			MemBuffer: data.MemBuffer,
+		})
+	}
+
+	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
+		TestMockRenewLeaseABA2 <- struct{}{}
+	})
+}
+
+const cacheTableWriteLease = 5 * time.Second
+
+func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error) {
+	writeLockLease, err := c.lockForWrite(ctx)
+	atomic.StoreUint64(leasePtr, writeLockLease)
+	wg <- err
+	if err != nil {
+		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		return
+	}
+
+	t := time.NewTicker(cacheTableWriteLease / 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			if err := c.renew(ctx, leasePtr); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
+				return
+			}
+		case <-exit:
+			return
+		}
+	}
+}
+
+func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
+	oldLease := atomic.LoadUint64(leasePtr)
+	physicalTime := oracle.GetTimeFromTS(oldLease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
+
+	h := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(h)
+
+	succ, err := h.RenewWriteLease(ctx, c.Meta().ID, newLease)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
-	return c.TableCommon.RemoveRecord(ctx, h, r)
+	if succ {
+		atomic.StoreUint64(leasePtr, newLease)
+	}
+	return nil
 }
 
-func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) func() {
-	return func() {
-		tid := c.Meta().ID
-		lease := leaseFromTS(ts)
-		succ, err := c.handle.RenewLease(context.Background(), tid, lease, op)
-		if err != nil {
-			log.Warn("Renew read lease error", zap.Error(err))
-		}
-		if succ {
-			c.cacheData.Store(&cacheData{
-				Start:     data.Start,
-				Lease:     lease,
-				MemBuffer: data.MemBuffer,
-			})
-		}
-	}
+func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
+	handle := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(handle)
+
+	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }

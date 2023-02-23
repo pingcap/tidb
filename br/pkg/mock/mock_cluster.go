@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +24,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
@@ -86,30 +84,13 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	statusURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	addrURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
-
+	server.RunInGoTest = true
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
-	cfg.Port = uint(addrPort)
+	// let tidb random select a port
+	cfg.Port = 0
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = uint(statusPort)
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
@@ -119,11 +100,11 @@ func (mock *Cluster) Start() error {
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err != nil {
+		if err1 := svr.Run(); err1 != nil {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 
@@ -141,6 +122,7 @@ func (mock *Cluster) Stop() {
 	if mock.HttpServer != nil {
 		_ = mock.HttpServer.Close()
 	}
+	view.Stop()
 }
 
 type configOverrider func(*mysql.Config)
@@ -184,7 +166,8 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
-		resp, err := http.Get(statusURL) // nolint:noctx
+		// #nosec G107
+		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
 			// Ignore errors.
 			_, _ = io.ReadAll(resp.Body)

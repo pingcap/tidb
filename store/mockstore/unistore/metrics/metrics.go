@@ -15,10 +15,7 @@
 package metrics
 
 import (
-	"net/http"
-
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -101,7 +98,8 @@ var (
 		})
 )
 
-func init() {
+// RegisterMetrics register the metrics related to unistore.
+func RegisterMetrics() {
 	prometheus.MustRegister(RaftWriterWait)
 	prometheus.MustRegister(WriteWaiteStepOne)
 	prometheus.MustRegister(WriteWaiteStepTwo)
@@ -112,5 +110,4 @@ func init() {
 	prometheus.MustRegister(LockUpdate)
 	prometheus.MustRegister(RaftBatchSize)
 	prometheus.MustRegister(LatchWait)
-	http.Handle("/metrics", promhttp.Handler())
 }

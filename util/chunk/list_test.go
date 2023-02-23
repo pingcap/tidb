@@ -20,10 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,13 +83,13 @@ func TestList(t *testing.T) {
 
 func TestListMemoryUsage(t *testing.T) {
 	fieldTypes := make([]*types.FieldType, 0, 5)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeJSON))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
 
-	jsonObj, err := json.ParseBinaryFromString("1")
+	jsonObj, err := types.ParseBinaryJSONFromString("1")
 	require.NoError(t, err)
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
@@ -119,10 +118,10 @@ func TestListMemoryUsage(t *testing.T) {
 
 func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes := make([]*types.FieldType, 0, 4)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDatetime))
+	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeDuration))
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)

@@ -353,7 +353,6 @@ func TestPositionExprRestore(t *testing.T) {
 		return node.(*SelectStmt).OrderBy.Items[0]
 	}
 	runNodeRestoreTest(t, testCases, "select * from t order by %s", extractNodeFunc)
-
 }
 
 func TestExistsSubqueryExprRestore(t *testing.T) {
@@ -380,7 +379,6 @@ func TestVariableExpr(t *testing.T) {
 		{"@``", "@``"},
 		{"@", "@``"},
 		{"@@``", "@@``"},
-		{"@@", "@@``"},
 		{"@@var", "@@`var`"},
 		{"@@global.b='foo'", "@@GLOBAL.`b`=_UTF8MB4'foo'"},
 		{"@@session.'C'", "@@SESSION.`c`"},

@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessionctx",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/sessionctx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//extension",
+        "//kv",
+        "//metrics",
+        "//parser/model",
+        "//sessionctx/sessionstates",
+        "//sessionctx/variable",
+        "//util",
+        "//util/kvcache",
+        "//util/plancache",
+        "//util/sli",
+        "//util/topsql/stmtstats",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "sessionctx_test",
+    timeout = "short",
+    srcs = [
+        "context_test.go",
+        "main_test.go",
+    ],
+    embed = [":sessionctx"],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

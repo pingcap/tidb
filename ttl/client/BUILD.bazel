@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "client",
+    srcs = [
+        "command.go",
+        "notification.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ttl/client",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ddl/util",
+        "//util/logutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "client_test",
+    timeout = "short",
+    srcs = ["command_test.go"],
+    embed = [":client"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_tests_v3//integration",
+    ],
+)

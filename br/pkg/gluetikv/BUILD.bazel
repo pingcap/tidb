@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "gluetikv",
+    srcs = ["glue.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/gluetikv",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/glue",
+        "//br/pkg/summary",
+        "//br/pkg/utils",
+        "//br/pkg/version/build",
+        "//config",
+        "//domain",
+        "//kv",
+        "//store/driver",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)
+
+go_test(
+    name = "gluetikv_test",
+    timeout = "short",
+    srcs = ["glue_test.go"],
+    embed = [":gluetikv"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

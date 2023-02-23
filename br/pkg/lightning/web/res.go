@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build dev
-// +build dev
 
 package web
 

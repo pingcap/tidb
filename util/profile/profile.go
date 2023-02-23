@@ -25,6 +25,7 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/texttree"
 )
 
@@ -43,7 +44,7 @@ func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) 
 	return c.profileToDatums(p)
 }
 
-func (c *Collector) profileToFlamegraphNode(p *profile.Profile) (*flamegraphNode, error) {
+func (*Collector) profileToFlamegraphNode(p *profile.Profile) (*flamegraphNode, error) {
 	err := p.CheckValid()
 	if err != nil {
 		return nil, err
@@ -69,11 +70,16 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 // cpuProfileGraph returns the CPU profile flamegraph which is organized by tree form
 func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	buffer := &bytes.Buffer{}
-	if err := pprof.StartCPUProfile(buffer); err != nil {
-		panic(err)
+	pc := cpuprofile.NewCollector()
+	err := pc.StartCPUProfile(buffer)
+	if err != nil {
+		return nil, err
 	}
 	time.Sleep(CPUProfileInterval)
-	pprof.StopCPUProfile()
+	err = pc.StopCPUProfile()
+	if err != nil {
+		return nil, err
+	}
 	return c.ProfileReaderToDatums(buffer)
 }
 
@@ -102,7 +108,7 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 }
 
 // ParseGoroutines returns the groutine list for given string representation
-func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
+func (*Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 	content, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err

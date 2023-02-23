@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "split",
+    srcs = [
+        "client.go",
+        "region.go",
+        "split.go",
+        "sum_sorted.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/split",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/conn/util",
+        "//br/pkg/errors",
+        "//br/pkg/httputil",
+        "//br/pkg/lightning/config",
+        "//br/pkg/logutil",
+        "//br/pkg/redact",
+        "//br/pkg/utils",
+        "//kv",
+        "//store/pdtypes",
+        "@com_github_google_btree//:btree",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@com_github_pingcap_kvproto//pkg/tikvpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_multierr//:multierr",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "split_test",
+    timeout = "short",
+    srcs = ["sum_sorted_test.go"],
+    flaky = True,
+    deps = [
+        ":split",
+        "@com_github_stretchr_testify//require",
+    ],
+)

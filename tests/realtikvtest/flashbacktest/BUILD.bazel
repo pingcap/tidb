@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "flashbacktest_test",
+    srcs = [
+        "flashback_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//ddl",
+        "//ddl/util",
+        "//domain",
+        "//errno",
+        "//meta",
+        "//parser/model",
+        "//testkit",
+        "//testkit/testsetup",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

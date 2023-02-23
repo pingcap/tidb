@@ -8,7 +8,7 @@ driver = "file"
 dsn = "/tmp/backup_restore_test/cpts.pb"
 
 [tikv-importer]
-backend = "importer"
+backend = "local"
 
 [mydumper]
 read-block-size = 1

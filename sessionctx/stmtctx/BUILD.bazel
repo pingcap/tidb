@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stmtctx",
+    srcs = ["stmtctx.go"],
+    importpath = "github.com/pingcap/tidb/sessionctx/stmtctx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//util/disk",
+        "//util/execdetails",
+        "//util/memory",
+        "//util/resourcegrouptag",
+        "//util/topsql/stmtstats",
+        "//util/tracing",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_exp//slices",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "stmtctx_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "stmtctx_test.go",
+    ],
+    embed = [":stmtctx"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testsetup",
+        "//util/execdetails",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

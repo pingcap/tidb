@@ -3,5 +3,5 @@ CREATE TABLE `test` (
   `s1` char(10) NOT NULL,
   `s2` char(10) NOT NULL,
   `s3` char(10) DEFAULT NULL,
-  PRIMARY KEY (`s1`,`s2`)
+  PRIMARY KEY (`s1`,`s2`) /*T![clustered_index] NONCLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=3 PRE_SPLIT_REGIONS=3 */;

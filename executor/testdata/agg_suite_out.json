@@ -54,7 +54,7 @@
         "  ├─Apply(Build) 1.00 root  CARTESIAN left outer join",
         "  │ ├─Apply(Build) 1.00 root  CARTESIAN left outer join",
         "  │ │ ├─HashAgg(Build) 1.00 root  funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->test.test.a",
-        "  │ │ │ └─Projection 10000.00 root  cast(test.test.a, decimal(32,0) BINARY)->Column#28, test.test.a",
+        "  │ │ │ └─Projection 10000.00 root  cast(test.test.a, decimal(10,0) BINARY)->Column#28, test.test.a",
         "  │ │ │   └─TableReader 10000.00 root  data:TableFullScan",
         "  │ │ │     └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
         "  │ │ └─Projection(Probe) 1.00 root  <nil>->Column#12",

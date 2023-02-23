@@ -33,7 +33,9 @@ func newLongType() types.FieldType {
 
 func newStringType() types.FieldType {
 	ft := types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
+	charset, collate := types.DefaultCharsetForType(mysql.TypeVarchar)
+	ft.SetCharset(charset)
+	ft.SetCollate(collate)
 	return *ft
 }
 
@@ -71,7 +73,7 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("e"),
+			Name: model.NewCIStr("x"),
 			Columns: []*model.IndexColumn{
 				{
 					Name:   model.NewCIStr("e"),
@@ -249,14 +251,14 @@ func MockSignedTable() *model.TableInfo {
 		FieldType: newDateType(),
 		ID:        12,
 	}
-	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.NotNullFlag
-	col2.Flag = mysql.NotNullFlag
-	col4.Flag = mysql.NotNullFlag
-	col5.Flag = mysql.NotNullFlag
-	col6.Flag = mysql.NoDefaultValueFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.NotNullFlag)
+	col2.SetFlag(mysql.NotNullFlag)
+	col4.SetFlag(mysql.NotNullFlag)
+	col5.SetFlag(mysql.NotNullFlag)
+	col6.SetFlag(mysql.NoDefaultValueFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
@@ -322,10 +324,10 @@ func MockUnsignedTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        3,
 	}
-	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
+	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag)
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.UnsignedFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
@@ -353,8 +355,8 @@ func MockNoPKTable() *model.TableInfo {
 		ID:        3,
 	}
 	// Column 'a', 'b' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.UnsignedFlag
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       model.NewCIStr("t3"),
@@ -399,9 +401,13 @@ func MockContext() sessionctx.Context {
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},
 	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
 	ctx.GetSessionVars().CurrentDB = "test"
-	do := &domain.Domain{}
-	if err := do.CreateStatsHandle(ctx); err != nil {
+	do := domain.NewMockDomain()
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	domain.BindDomain(ctx, do)
@@ -431,4 +437,175 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	tableInfo.Partition = partition
 	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	return is
+}
+
+// MockRangePartitionTable mocks a range partition table for test
+func MockRangePartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:       41,
+			Name:     model.NewCIStr("p1"),
+			LessThan: []string{"16"},
+		},
+		{
+			ID:       42,
+			Name:     model.NewCIStr("p2"),
+			LessThan: []string{"32"},
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt1")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}
+
+// MockHashPartitionTable mocks a hash partition table for test
+func MockHashPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   51,
+			Name: model.NewCIStr("p1"),
+		},
+		{
+			ID:   52,
+			Name: model.NewCIStr("p2"),
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt2")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeHash,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}
+
+// MockListPartitionTable mocks a list partition table for test
+func MockListPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   61,
+			Name: model.NewCIStr("p1"),
+			InValues: [][]string{
+				{
+					"1",
+				},
+			},
+		},
+		{
+			ID:   62,
+			Name: model.NewCIStr("p2"),
+			InValues: [][]string{
+				{
+					"2",
+				},
+			},
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt3")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeList,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}
+
+// MockStateNoneColumnTable is only used for plan related tests.
+func MockStateNoneColumnTable() *model.TableInfo {
+	// column: a, b
+	// PK: a
+	// indeices: b
+	indices := []*model.IndexInfo{
+		{
+			Name: model.NewCIStr("b"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+		},
+	}
+	pkColumn := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    0,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        1,
+	}
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("b"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	col1 := &model.ColumnInfo{
+		State:     model.StateNone,
+		Offset:    2,
+		Name:      model.NewCIStr("c"),
+		FieldType: newLongType(),
+		ID:        3,
+	}
+	pkColumn.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag)
+	col0.SetFlag(mysql.NotNullFlag)
+	col1.SetFlag(mysql.UnsignedFlag)
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
+		Indices:    indices,
+		Name:       model.NewCIStr("T_StateNoneColumn"),
+		PKIsHandle: true,
+	}
+	return table
 }

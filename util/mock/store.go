@@ -32,51 +32,56 @@ type Store struct {
 func (s *Store) GetClient() kv.Client { return s.Client }
 
 // GetMPPClient implements kv.Storage interface.
-func (s *Store) GetMPPClient() kv.MPPClient { return nil }
+func (*Store) GetMPPClient() kv.MPPClient { return nil }
 
 // GetOracle implements kv.Storage interface.
-func (s *Store) GetOracle() oracle.Oracle { return nil }
+func (*Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
-func (s *Store) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) { return nil, nil }
+func (*Store) Begin(_ ...tikv.TxnOption) (kv.Transaction, error) { return nil, nil }
 
 // GetSnapshot implements kv.Storage interface.
-func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
+func (*Store) GetSnapshot(_ kv.Version) kv.Snapshot { return nil }
 
 // Close implements kv.Storage interface.
-func (s *Store) Close() error { return nil }
+func (*Store) Close() error { return nil }
 
 // UUID implements kv.Storage interface.
-func (s *Store) UUID() string { return "mock" }
+func (*Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion(txnScope string) (kv.Version, error) { return kv.Version{}, nil }
+func (*Store) CurrentVersion(_ string) (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
-func (s *Store) SupportDeleteRange() bool { return false }
+func (*Store) SupportDeleteRange() bool { return false }
 
 // Name implements kv.Storage interface.
-func (s *Store) Name() string { return "UtilMockStorage" }
+func (*Store) Name() string { return "UtilMockStorage" }
 
 // Describe implements kv.Storage interface.
-func (s *Store) Describe() string {
+func (*Store) Describe() string {
 	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
 }
 
 // GetMemCache implements kv.Storage interface
-func (s *Store) GetMemCache() kv.MemManager {
+func (*Store) GetMemCache() kv.MemManager {
 	return nil
 }
 
 // ShowStatus implements kv.Storage interface.
-func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }
+func (*Store) ShowStatus(_ context.Context, _ string) (interface{}, error) { return nil, nil }
 
 // GetMinSafeTS implements kv.Storage interface.
-func (s *Store) GetMinSafeTS(txnScope string) uint64 {
+func (*Store) GetMinSafeTS(_ string) uint64 {
 	return 0
 }
 
 // GetLockWaits implements kv.Storage interface.
-func (s *Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+func (*Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
+}
+
+// GetCodec implements kv.Storage interface.
+func (*Store) GetCodec() tikv.Codec {
+	return nil
 }

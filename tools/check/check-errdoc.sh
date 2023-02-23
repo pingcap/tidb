@@ -23,5 +23,5 @@ set -euo pipefail
 cd -P .
 
 cp errors.toml /tmp/errors.toml.before
-./tools/bin/errdoc-gen --source . --ignore parser --module github.com/pingcap/tidb --output errors.toml
+./tools/bin/errdoc-gen --source . --ignore parser,tidb-binlog --module github.com/pingcap/tidb --output errors.toml
 diff -q errors.toml /tmp/errors.toml.before

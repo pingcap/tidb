@@ -5,7 +5,7 @@
 set -eu
 
 run_sql "drop database if exists file_size"
-run_sql "create database file_size"
+run_sql "create database file_size DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 export DUMPLING_TEST_DATABASE=file_size
 run_sql "create table t (a varchar(255))"
 
@@ -14,8 +14,8 @@ chars_20="1111_0000_1111_0000_"
 # insert 100 records, each occupies 20 bytes
 run_sql "insert into t values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/('$chars_20')/g");"
 
-# dumping with file size = 311 bytes, actually 10 rows
-run_dumpling -F 311B
+# dumping with file size = 348 bytes, actually 10 rows
+run_dumpling -F 348B
 
 # the dumping result is expected to be:
 # 10 files for insertion(each conatins 10 records / 200 bytes)

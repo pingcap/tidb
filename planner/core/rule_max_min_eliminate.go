@@ -36,7 +36,7 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return a.eliminateMaxMin(p, opt), nil
 }
 
@@ -85,7 +85,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen, p.ctx.GetSessionVars().RangeMaxSize)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
@@ -154,7 +154,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}); err != nil {
+		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
 			return nil, false
 		}
 		aggs = append(aggs, newAgg)
@@ -173,7 +173,7 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *l
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
 			sel = LogicalSelection{}.Init(ctx, agg.blockOffset)
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
@@ -223,7 +223,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *logicalOptimizeOp
 		// Limit+Sort operators are sorted by value, but ENUM/SET field types are sorted by name.
 		cols := agg.GetUsedCols()
 		for _, col := range cols {
-			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
+			if col.RetType.GetType() == mysql.TypeEnum || col.RetType.GetType() == mysql.TypeSet {
 				return agg
 			}
 		}
@@ -254,56 +254,56 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {
-			buffer.WriteString(fmt.Sprintf("add selection[%v],", sel.ID()))
+			buffer.WriteString(fmt.Sprintf("add %v_%v,", sel.TP(), sel.ID()))
 		}
 		if sort != nil {
-			buffer.WriteString(fmt.Sprintf("add sort[%v],", sort.ID()))
+			buffer.WriteString(fmt.Sprintf("add %v_%v,", sort.TP(), sort.ID()))
 		}
-		buffer.WriteString(fmt.Sprintf("add limit[%v] during eliminating agg[%v] %s function", limit.ID(), agg.ID(), agg.AggFuncs[0].Name))
+		buffer.WriteString(fmt.Sprintf("add %v_%v during eliminating %v_%v %s function", limit.TP(), limit.ID(), agg.TP(), agg.ID(), agg.AggFuncs[0].Name))
 		return buffer.String()
-	}()
+	}
 	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] has only one function[%s] without group by", agg.ID(), agg.AggFuncs[0].Name))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has only one function[%s] without group by", agg.TP(), agg.ID(), agg.AggFuncs[0].Name))
 		if sel != nil {
-			buffer.WriteString(fmt.Sprintf(", the columns in agg[%v] shouldn't be NULL and needs NULL to be filtered out", agg.ID()))
+			buffer.WriteString(fmt.Sprintf(", the columns in %v_%v shouldn't be NULL and needs NULL to be filtered out", agg.TP(), agg.ID()))
 		}
 		if sort != nil {
-			buffer.WriteString(fmt.Sprintf(", the columns in agg[%v] should be sorted", agg.ID()))
+			buffer.WriteString(fmt.Sprintf(", the columns in %v_%v should be sorted", agg.TP(), agg.ID()))
 		}
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*LogicalJoin, opt *logicalOptimizeOp) {
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] splited into aggs[", originAgg.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v splited into [", originAgg.TP(), originAgg.ID()))
 		for i, agg := range aggs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("%v", agg.ID()))
+			buffer.WriteString(fmt.Sprintf("%v_%v", agg.TP(), agg.ID()))
 		}
-		buffer.WriteString("], and add joins[")
+		buffer.WriteString("], and add [")
 		for i, join := range joins {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("%v", join.ID()))
+			buffer.WriteString(fmt.Sprintf("%v_%v", join.TP(), join.ID()))
 		}
-		buffer.WriteString(fmt.Sprintf("] to connect them during eliminating agg[%v] multi min/max functions", originAgg.ID()))
+		buffer.WriteString(fmt.Sprintf("] to connect them during eliminating %v_%v multi min/max functions", originAgg.TP(), originAgg.ID()))
 		return buffer.String()
-	}()
+	}
 	reason := func() string {
-		buffer := bytes.NewBufferString("each column is sorted and can benefit from index/primary key in agg[")
+		buffer := bytes.NewBufferString("each column is sorted and can benefit from index/primary key in [")
 		for i, agg := range aggs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("%v", agg.ID()))
+			buffer.WriteString(fmt.Sprintf("%v_%v", agg.TP(), agg.ID()))
 		}
 		buffer.WriteString("] and none of them has group by clause")
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
 }

@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -92,12 +92,10 @@ func (iter *multiQueriesChunkIter) nextRows() {
 	for iter.id < len(iter.queries) {
 		rows := iter.rows
 		if rows != nil {
-			err = rows.Close()
-			if err != nil {
+			if err = rows.Close(); err != nil {
 				return
 			}
-			err = rows.Err()
-			if err != nil {
+			if err = rows.Err(); err != nil {
 				return
 			}
 		}
@@ -370,6 +368,25 @@ func (td *multiQueriesChunk) Close() error {
 	return td.SQLRowIter.Close()
 }
 
-func (td *multiQueriesChunk) RawRows() *sql.Rows {
+func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
+}
+
+var serverSpecialComments = map[version.ServerType][]string{
+	version.ServerTypeMySQL: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeTiDB: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeMariaDB: {
+		"/*!40101 SET NAMES binary*/;",
+		"SET FOREIGN_KEY_CHECKS=0;",
+	},
+}
+
+func getSpecialComments(serverType version.ServerType) []string {
+	return serverSpecialComments[serverType]
 }

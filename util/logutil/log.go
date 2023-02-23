@@ -111,37 +111,30 @@ func InitLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
-	_, _, err = initGRPCLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	initGRPCLogger(gl)
 	return nil
 }
 
-func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
-	// Copy Config struct by assignment.
-	config := cfg.Config
-	var l *zap.Logger
-	var err error
-	var prop *log.ZapProperties
+func initGRPCLogger(gl *zap.Logger) {
+	level := zapcore.ErrorLevel
+	verbosity := 0
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		config.Level = "debug"
-		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		gzap.ReplaceGrpcLoggerV2WithVerbosity(l, 999)
-	} else {
-		config.Level = "error"
-		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		gzap.ReplaceGrpcLoggerV2(l)
+		verbosity = 999
+		level = zapcore.DebugLevel
 	}
 
-	return l, prop, nil
+	newgl := gl.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		oldcore, ok := core.(*log.TextIOCore)
+		if !ok {
+			return oldcore
+		}
+		newcore := oldcore.Clone()
+		leveler := zap.NewAtomicLevel()
+		leveler.SetLevel(level)
+		newcore.LevelEnabler = leveler
+		return newcore
+	}))
+	gzap.ReplaceGrpcLoggerV2WithVerbosity(newgl, verbosity)
 }
 
 // ReplaceLogger replace global logger instance with given log config.
@@ -179,12 +172,14 @@ func SetLevel(level string) error {
 
 type ctxLogKeyType struct{}
 
-var ctxLogKey = ctxLogKeyType{}
+// CtxLogKey indicates the context key for logger
+// public for test usage.
+var CtxLogKey = ctxLogKeyType{}
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
 func Logger(ctx context.Context) *zap.Logger {
-	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxlogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		return ctxlogger
 	}
 	return log.L()
@@ -198,30 +193,31 @@ func BgLogger() *zap.Logger {
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint64("conn", connID)))
+	return context.WithValue(ctx, CtxLogKey, logger.With(zap.Uint64("conn", connID)))
 }
 
 // WithTraceLogger attaches trace identifier to context
 func WithTraceLogger(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connID, logger))
+	return context.WithValue(ctx, CtxLogKey, wrapTraceLogger(ctx, connID, logger))
 }
 
 func wrapTraceLogger(ctx context.Context, connID uint64, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		tl := &traceLog{ctx: ctx}
-		traceCore := log.NewTextCore(log.NewTextEncoder(&log.Config{}), tl, tl).
-			With([]zapcore.Field{zap.Uint64("conn", connID)})
+		// cfg.Format == "", never return error
+		enc, _ := log.NewTextEncoder(&log.Config{})
+		traceCore := log.NewTextCore(enc, tl, tl).With([]zapcore.Field{zap.Uint64("conn", connID)})
 		return zapcore.NewTee(traceCore, core)
 	}))
 }
@@ -230,7 +226,7 @@ type traceLog struct {
 	ctx context.Context
 }
 
-func (t *traceLog) Enabled(_ zapcore.Level) bool {
+func (*traceLog) Enabled(_ zapcore.Level) bool {
 	return true
 }
 
@@ -239,19 +235,19 @@ func (t *traceLog) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (t *traceLog) Sync() error {
+func (*traceLog) Sync() error {
 	return nil
 }
 
 // WithKeyValue attaches key/value to context.
 func WithKeyValue(ctx context.Context, key, value string) context.Context {
 	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = log.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
+	return context.WithValue(ctx, CtxLogKey, logger.With(zap.String(key, value)))
 }
 
 // TraceEventKey presents the TraceEventKey in span log.

@@ -21,46 +21,61 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
+// Pool is the worker pool.
 type Pool struct {
 	limit   int
 	workers chan *Worker
 	name    string
+	metrics *metric.Metrics
 }
 
+// Worker is the worker struct.
 type Worker struct {
 	ID int64
 }
 
+// NewPool creates a new worker pool.
 func NewPool(ctx context.Context, limit int, name string) *Pool {
 	workers := make(chan *Worker, limit)
 	for i := 0; i < limit; i++ {
 		workers <- &Worker{ID: int64(i + 1)}
 	}
 
-	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
+	metrics, ok := metric.FromContext(ctx)
+	if ok {
+		metrics.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
+	}
 	return &Pool{
 		limit:   limit,
 		workers: workers,
 		name:    name,
+		metrics: metrics,
 	}
 }
 
+// Apply gets a worker from the pool.
 func (pool *Pool) Apply() *Worker {
 	start := time.Now()
 	worker := <-pool.workers
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-	metric.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
+	if pool.metrics != nil {
+		pool.metrics.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+		pool.metrics.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
+	}
 	return worker
 }
 
+// Recycle puts a worker back to the pool.
 func (pool *Pool) Recycle(worker *Worker) {
 	if worker == nil {
 		panic("invalid restore worker")
 	}
 	pool.workers <- worker
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	if pool.metrics != nil {
+		pool.metrics.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	}
 }
 
+// HasWorker returns whether the pool has worker.
 func (pool *Pool) HasWorker() bool {
 	return len(pool.workers) > 0
 }

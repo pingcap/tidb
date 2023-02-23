@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "brietest_test",
+    timeout = "moderate",
+    srcs = [
+        "backup_restore_test.go",
+        "binlog_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//config",
+        "//parser/mysql",
+        "//sessionctx/binloginfo",
+        "//store/mockstore/mockcopr",
+        "//testkit",
+        "//testkit/testsetup",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

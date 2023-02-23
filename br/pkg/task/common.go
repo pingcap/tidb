@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -20,19 +21,22 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -72,10 +76,16 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagDryRun            = "dry-run"
+	// TODO used for local test, should be removed later
+	flagSkipAWS             = "skip-aws"
+	flagCloudAPIConcurrency = "cloud-api-concurrency"
+	flagWithSysTable        = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
+	defaultCloudAPIConcurrency  = 8
 
 	flagCipherType    = "crypter.method"
 	flagCipherKey     = "crypter.key"
@@ -85,7 +95,22 @@ const (
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
+
+	flagFullBackupType = "type"
 )
+
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
+
+const (
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {
@@ -117,6 +142,41 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
 	return
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) {
+	var (
+		tlsConfig *tls.Config
+		err       error
+	)
+
+	if cfg.TLS.IsEnabled() {
+		tlsConfig, err = cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	log.Info("trying to connect to etcd", zap.Strings("addr", cfg.PD))
+	etcdCLI, err := clientv3.New(clientv3.Config{
+		TLS:              tlsConfig,
+		Endpoints:        cfg.PD,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                cfg.GRPCKeepaliveTime,
+				Timeout:             cfg.GRPCKeepaliveTimeout,
+				PermitWithoutStream: false,
+			}),
+			grpc.WithBlock(),
+			grpc.WithReturnConnectionError(),
+		},
+		Context: ctx,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return etcdCLI, nil
 }
 
 // Config is the common configuration for all BRIE tasks.
@@ -155,6 +215,7 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
+	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
 	TableFilter        filter.Filter `json:"-" toml:"-"`
 	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
@@ -168,6 +229,12 @@ type Config struct {
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// whether there's explicit filter
+	ExplicitFilter bool `json:"-" toml:"-"`
+
+	// KeyspaceName is the name of the keyspace of the task
+	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -220,6 +287,21 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 }
 
+// HiddenFlagsForStream temporary hidden flags that stream cmd not support.
+func HiddenFlagsForStream(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(flagChecksumConcurrency)
+	_ = flags.MarkHidden(flagRateLimit)
+	_ = flags.MarkHidden(flagRateLimitUnit)
+	_ = flags.MarkHidden(flagRemoveTiFlash)
+	_ = flags.MarkHidden(flagCipherType)
+	_ = flags.MarkHidden(flagCipherKey)
+	_ = flags.MarkHidden(flagCipherKeyFile)
+	_ = flags.MarkHidden(flagSwitchModeInterval)
+
+	storage.HiddenFlagsForStream(flags)
+}
+
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
 func DefineDatabaseFlags(command *cobra.Command) {
 	command.Flags().String(flagDatabase, "", "database name")
@@ -234,10 +316,15 @@ func DefineTableFlags(command *cobra.Command) {
 }
 
 // DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
-func DefineFilterFlags(command *cobra.Command, defaultFilter []string) {
+func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
 	flags.Bool(flagCaseSensitive, false, "whether the table names used in --filter should be case-sensitive")
+
+	if setHidden {
+		_ = flags.MarkHidden(flagFilter)
+		_ = flags.MarkHidden(flagCaseSensitive)
+	}
 }
 
 // ParseTLSTripleFromFlags parses the (ca, cert, key) triple from flags.
@@ -399,12 +486,12 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.Tables = make(map[string]struct{})
 	var caseSensitive bool
 	if filterFlag := flags.Lookup(flagFilter); filterFlag != nil {
-		var f filter.Filter
-		f, err = filter.Parse(filterFlag.Value.(pflag.SliceValue).GetSlice())
+		cfg.ExplicitFilter = flags.Changed(flagFilter)
+		cfg.FilterStr = filterFlag.Value.(pflag.SliceValue).GetSlice()
+		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cfg.TableFilter = f
 		caseSensitive, err = flags.GetBool(flagCaseSensitive)
 		if err != nil {
 			return errors.Trace(err)
@@ -495,6 +582,7 @@ func NewMgr(ctx context.Context,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
 	needDomain bool,
+	versionCheckerType conn.VersionCheckerType,
 ) (*conn.Mgr, error) {
 	var (
 		tlsConf *tls.Config
@@ -518,17 +606,18 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
-		checkRequirements, needDomain,
+		ctx, g, pdAddress, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		checkRequirements, needDomain, versionCheckerType,
 	)
 }
 
 // GetStorage gets the storage backend from the config.
 func GetStorage(
 	ctx context.Context,
+	storageName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -552,7 +641,7 @@ func ReadBackupMeta(
 	fileName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storage.ExternalStorage, *backuppb.BackupMeta, error) {
-	u, s, err := GetStorage(ctx, cfg)
+	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -669,4 +758,30 @@ func normalizePDURL(pd string, useTLS bool) (string, error) {
 // see details https://github.com/pingcap/br/issues/675#issuecomment-753780742
 func gcsObjectNotFound(err error) bool {
 	return errors.Cause(err) == gcs.ErrObjectNotExist // nolint:errorlint
+}
+
+// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+// progress of ebs backup. and user can get the progress through `kubectl get job`
+// todo: maybe change to http api later
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64, progressFile string) {
+	// remove tmp file
+	defer func() {
+		_ = os.Remove(progressFile)
+	}()
+
+	for progress.GetCurrent() < total {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+		cur := progress.GetCurrent()
+		p := float64(cur) / float64(total)
+		p *= 100
+		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		if err != nil {
+			log.Warn("failed to update tmp progress file", zap.Error(err))
+		}
+	}
 }

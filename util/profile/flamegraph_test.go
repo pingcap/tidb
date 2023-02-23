@@ -23,18 +23,20 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestProfileToDatum(t *testing.T) {
+	defer view.Stop()
 	file, err := os.Open("testdata/test.pprof")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := file.Close()
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	data, err := (&Collector{}).ProfileReaderToDatums(file)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	datums := [][]types.Datum{
 		types.MakeDatums(`root`, "100%", "100%", 0, 0, `root`),

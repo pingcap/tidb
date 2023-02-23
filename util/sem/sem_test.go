@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -82,8 +81,8 @@ func TestIsInvisibleSysVar(t *testing.T) {
 
 	assert.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible
 	assert.False(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
+	assert.False(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
 
-	assert.True(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
 	assert.True(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8))
 	assert.True(IsInvisibleSysVar(variable.TiDBConfig))
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableSlowLog))
@@ -102,5 +101,7 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableTelemetry))
 	assert.True(IsInvisibleSysVar(variable.TiDBRowFormatVersion))
 	assert.True(IsInvisibleSysVar(variable.TiDBRedactLog))
-	assert.True(IsInvisibleSysVar(variable.TiDBSlowLogMasking))
+	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
+	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
 }

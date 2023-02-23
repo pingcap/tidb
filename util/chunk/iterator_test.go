@@ -43,7 +43,7 @@ func TestIteratorOnSel(t *testing.T) {
 }
 
 func checkEqual(it Iterator, exp []int64, t *testing.T) {
-	require.Equal(t, len(exp), it.Len())
+	require.Len(t, exp, it.Len())
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		require.Equal(t, exp[i], row.GetInt64(0))
 	}

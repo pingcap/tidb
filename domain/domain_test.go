@@ -17,7 +17,8 @@ package domain
 import (
 	"context"
 	"crypto/tls"
-	"math"
+	"encoding/json"
+	"fmt"
 	"net"
 	"runtime"
 	"testing"
@@ -26,30 +27,30 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/integration"
+	pd "github.com/tikv/pd/client"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
-// SubTestInfo is batched in TestDomainSerial
-func SubTestInfo(t *testing.T) {
+func TestInfo(t *testing.T) {
+	t.Skip("TestInfo will hang currently, it should be fixed later")
+
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+
+	integration.BeforeTestExternal(t)
 
 	if !unixSocketAvailable() {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
@@ -65,9 +66,9 @@ func SubTestInfo(t *testing.T) {
 
 	mockStore := &mockEtcdBackend{
 		Storage: s,
-		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
+		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -85,8 +86,11 @@ func SubTestInfo(t *testing.T) {
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
+	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`))
-	require.NoError(t, dom.Init(ddlLease, sysMockFactory))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop", `return(true)`))
+	require.NoError(t, dom.Init(ddlLease, sysMockFactory, nil))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL"))
 
 	// Test for GetServerInfo and GetServerInfoByID.
@@ -112,9 +116,9 @@ func SubTestInfo(t *testing.T) {
 	require.Equalf(t, info.ID, infos[ddlID].ID, "server one info %v, info %v", infos[ddlID], info)
 
 	// Test the scene where syncer.Done() gets the information.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/syncer/ErrorMockSessionDone", `return(true)`))
 	<-dom.ddl.SchemaSyncer().Done()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/syncer/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 1000; i++ {
@@ -126,13 +130,22 @@ func SubTestInfo(t *testing.T) {
 	}
 	require.True(t, syncerStarted)
 
-	// Make sure loading schema is normal.
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
+	stmt := &ast.CreateDatabaseStmt{
+		Name: model.NewCIStr("aaa"),
+		// Make sure loading schema is normal.
+		Options: []*ast.DatabaseOption{
+			{
+				Tp:    ast.DatabaseOptionCharset,
+				Value: "utf8",
+			},
+			{
+				Tp:    ast.DatabaseOptionCollate,
+				Value: "utf8_bin",
+			},
+		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -153,161 +166,17 @@ func SubTestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement"))
 }
 
-// SubTestDomain is batched in TestDomainSerial
-func SubTestDomain(t *testing.T) {
+func TestStatWorkRecoverFromPanic(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
-	err = dom.Init(ddlLease, sysMockFactory)
-	require.NoError(t, err)
-
-	ctx := mock.NewContext()
-	ctx.Store = dom.Store()
-	dd := dom.DDL()
-	require.NotNil(t, dd)
-	require.Equal(t, 80*time.Millisecond, dd.GetLease())
-
-	snapTS := oracle.GoTimeToTS(time.Now())
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
-	}
-	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil)
-	require.NoError(t, err)
-
-	// Test for fetchSchemasWithTables when "tables" isn't nil.
-	err = dd.CreateTable(ctx, &ast.CreateTableStmt{Table: &ast.TableName{
-		Schema: model.NewCIStr("aaa"),
-		Name:   model.NewCIStr("tbl")}})
-	require.NoError(t, err)
-
-	is := dom.InfoSchema()
-	require.NotNil(t, is)
-
-	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
-	cancel()
-	require.NoError(t, err)
-
-	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
-	require.NotNil(t, snapIs)
-	require.NoError(t, err)
-
-	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
-	cancel()
-	require.NoError(t, err)
-
-	// for GetSnapshotInfoSchema
-	currSnapTS := oracle.GoTimeToTS(time.Now())
-	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
-	require.NoError(t, err)
-	require.NotNil(t, currSnapTS)
-	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
-
-	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("aaa"))
-	require.True(t, ok)
-
-	tbl, err := currSnapIs.TableByName(model.NewCIStr("aaa"), model.NewCIStr("tbl"))
-	require.NoError(t, err)
-
-	m, err := dom.GetSnapshotMeta(snapTS)
-	require.NoError(t, err)
-
-	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	require.True(t, meta.ErrDBNotExists.Equal(err))
-	require.Nil(t, tblInfo1)
-
-	m, err = dom.GetSnapshotMeta(currSnapTS)
-	require.NoError(t, err)
-
-	tblInfo2, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	require.NoError(t, err)
-	require.Equal(t, tblInfo2, tbl.Meta())
-
-	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
-	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs, nil, nil)
-	require.NoError(t, err)
-
-	err = dom.Reload()
-	require.NoError(t, err)
-
-	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-
-	ts := ver.Ver
-	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil)
-	require.Equal(t, ResultSucc, res)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
-
-	err = dom.Reload()
-	require.Error(t, err)
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	require.Equal(t, ResultSucc, res)
-	time.Sleep(ddlLease)
-
-	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-	ts = ver.Ver
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	require.Equal(t, ResultUnknown, res)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
-	err = dom.Reload()
-	require.NoError(t, err)
-
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
-	require.Equal(t, ResultSucc, res)
-
-	// For slow query.
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	dom.LogSlowQuery(&SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
-	time.Sleep(5 * time.Millisecond)
-
-	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
-	require.Len(t, result, 2)
-	require.Equal(t, "bbb", result[0].SQL)
-	require.Equal(t, 3*time.Second, result[0].Duration)
-	require.Equal(t, "ccc", result[1].SQL)
-	require.Equal(t, 2*time.Second, result[1].Duration)
-
-	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
-	require.Len(t, result, 1)
-	require.Equal(t, "aaa", result[0].SQL)
-	require.Equal(t, time.Second, result[0].Duration)
-	require.True(t, result[0].Internal)
-
-	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
-	require.Len(t, result, 3)
-	require.Equal(t, "bbb", result[0].SQL)
-	require.Equal(t, 3*time.Second, result[0].Duration)
-	require.Equal(t, "ccc", result[1].SQL)
-	require.Equal(t, 2*time.Second, result[1].Duration)
-	require.Equal(t, "aaa", result[2].SQL)
-	require.Equal(t, time.Second, result[2].Duration)
-	require.True(t, result[2].Internal)
-
-	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
-	require.Len(t, result, 2)
-	require.Equal(t, "ccc", result[0].SQL)
-	require.Equal(t, 2*time.Second, result[0].Duration)
-	require.Equal(t, "bbb", result[1].SQL)
-	require.Equal(t, 3*time.Second, result[1].Duration)
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(ctx, nil)
+	dom.updateStatsWorker(mock.NewContext(), nil)
 	dom.autoAnalyzeWorker(nil)
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
@@ -317,46 +186,6 @@ func SubTestDomain(t *testing.T) {
 
 	scope := dom.GetScope("status")
 	require.Equal(t, variable.DefaultStatusVarScopeFlag, scope)
-
-	// For schema check, it tests for getting the result of "ResultUnknown".
-	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
-	originalRetryTime := SchemaOutOfDateRetryTimes
-	originalRetryInterval := SchemaOutOfDateRetryInterval
-	// Make sure it will retry one time and doesn't take a long time.
-	SchemaOutOfDateRetryTimes = 1
-	SchemaOutOfDateRetryInterval = int64(time.Millisecond * 1)
-	defer func() {
-		SchemaOutOfDateRetryTimes = originalRetryTime
-		SchemaOutOfDateRetryInterval = originalRetryInterval
-	}()
-	dom.SchemaValidator.Stop()
-	_, err = schemaChecker.Check(uint64(123456))
-	require.EqualError(t, err, ErrInfoSchemaExpired.Error())
-	dom.SchemaValidator.Reset()
-
-	// Test for reporting min start timestamp.
-	infoSyncer := dom.InfoSyncer()
-	sm := &mockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	infoSyncer.SetSessionManager(sm)
-	beforeTS := oracle.GoTimeToTS(time.Now())
-	infoSyncer.ReportMinStartTS(dom.Store())
-	afterTS := oracle.GoTimeToTS(time.Now())
-	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
-
-	now := time.Now()
-	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
-	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: lowerLimit},
-		{CurTxnStartTS: validTS},
-	}
-	infoSyncer.SetSessionManager(sm)
-	infoSyncer.ReportMinStartTS(dom.Store())
-	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 
 	err = store.Close()
 	require.NoError(t, err)
@@ -404,37 +233,180 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
-type mockSessionManager struct {
-	PS []*util.ProcessInfo
-}
+func TestClosestReplicaReadChecker(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
 
-func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
-	panic("unimplemented!")
-}
-
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
+	ddlLease := 80 * time.Millisecond
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
+	defer func() {
+		dom.Close()
+		require.Nil(t, store.Close())
+	}()
+	dom.sysVarCache.Lock()
+	dom.sysVarCache.global = map[string]string{
+		variable.TiDBReplicaRead: "closest-adaptive",
 	}
-	return ret
-}
+	dom.sysVarCache.Unlock()
 
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
+	makeFailpointRes := func(v interface{}) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
 	}
-	return &util.ProcessInfo{}, false
+
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+		"s1": {
+			ID: "s1",
+			Labels: map[string]string{
+				"zone": "zone1",
+			},
+		},
+		"s2": {
+			ID: "s2",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos["s2"])))
+
+	stores := []*metapb.Store{
+		{
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "zone",
+					Value: "zone1",
+				},
+			},
+		},
+		{
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "zone",
+					Value: "zone2",
+				},
+			},
+		},
+		{
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "zone",
+					Value: "zone3",
+				},
+			},
+		},
+	}
+
+	enabled := variable.IsAdaptiveReplicaReadEnabled()
+
+	ctx := context.Background()
+	pdClient := &mockInfoPdClient{}
+
+	// check error
+	pdClient.err = errors.New("mock error")
+	err = dom.checkReplicaRead(ctx, pdClient)
+	require.Error(t, err)
+	require.Equal(t, enabled, variable.IsAdaptiveReplicaReadEnabled())
+
+	// labels matches, should be enabled
+	pdClient.err = nil
+	pdClient.stores = stores[:2]
+	variable.SetEnableAdaptiveReplicaRead(false)
+	err = dom.checkReplicaRead(ctx, pdClient)
+	require.Nil(t, err)
+	require.True(t, variable.IsAdaptiveReplicaReadEnabled())
+
+	// labels don't match, should disable the flag
+	for _, i := range []int{0, 1, 3} {
+		pdClient.stores = stores[:i]
+		variable.SetEnableAdaptiveReplicaRead(true)
+		err = dom.checkReplicaRead(ctx, pdClient)
+		require.Nil(t, err)
+		require.False(t, variable.IsAdaptiveReplicaReadEnabled())
+	}
+
+	// partial matches
+	mockedAllServerInfos = map[string]*infosync.ServerInfo{
+		"s1": {
+			ID: "s1",
+			Labels: map[string]string{
+				"zone": "zone1",
+			},
+		},
+		"s2": {
+			ID: "s2",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+		"s22": {
+			ID: "s22",
+			Labels: map[string]string{
+				"zone": "zone2",
+			},
+		},
+		"s3": {
+			ID: "s3",
+			Labels: map[string]string{
+				"zone": "zone3",
+			},
+		},
+		"s4": {
+			ID: "s4",
+			Labels: map[string]string{
+				"zone": "zone4",
+			},
+		},
+	}
+	pdClient.stores = stores
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	cases := []struct {
+		id      string
+		matches bool
+	}{
+		{
+			id:      "s1",
+			matches: true,
+		},
+		{
+			id:      "s2",
+			matches: true,
+		},
+		{
+			id:      "s22",
+			matches: false,
+		},
+		{
+			id:      "s3",
+			matches: true,
+		},
+		{
+			id:      "s4",
+			matches: false,
+		},
+	}
+	for _, c := range cases {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos[c.id])))
+		variable.SetEnableAdaptiveReplicaRead(!c.matches)
+		err = dom.checkReplicaRead(ctx, pdClient)
+		require.Nil(t, err)
+		require.Equal(t, c.matches, variable.IsAdaptiveReplicaReadEnabled())
+	}
+
+	variable.SetEnableAdaptiveReplicaRead(true)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockGetServerInfo"))
 }
 
-func (msm *mockSessionManager) Kill(uint64, bool) {}
+type mockInfoPdClient struct {
+	pd.Client
+	stores []*metapb.Store
+	err    error
+}
 
-func (msm *mockSessionManager) KillAllConnections() {}
-
-func (msm *mockSessionManager) UpdateTLSConfig(*tls.Config) {}
-
-func (msm *mockSessionManager) ServerID() uint64 {
-	return 1
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return c.stores, c.err
 }

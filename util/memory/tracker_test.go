@@ -17,14 +17,17 @@ package memory
 import (
 	"errors"
 	"math/rand"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,15 +35,27 @@ func TestSetLabel(t *testing.T) {
 	tracker := NewTracker(1, -1)
 	require.Equal(t, 1, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
 	tracker.SetLabel(2)
 	require.Equal(t, 2, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Equal(t, int64(-1), tracker.GetBytesLimit())
 	require.Nil(t, tracker.getParent())
 	require.Equal(t, 0, len(tracker.mu.children))
+}
+
+func TestSetLabel2(t *testing.T) {
+	tracker := NewTracker(1, -1)
+	tracker2 := NewTracker(2, -1)
+	tracker2.AttachTo(tracker)
+	tracker2.Consume(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.SetLabel(10)
+	require.Equal(t, tracker.BytesConsumed(), int64(10))
+	tracker2.Detach()
+	require.Equal(t, tracker.BytesConsumed(), int64(0))
 }
 
 func TestConsume(t *testing.T) {
@@ -70,6 +85,99 @@ func TestConsume(t *testing.T) {
 	require.Equal(t, int64(100), tracker.BytesConsumed())
 }
 
+func TestRelease(t *testing.T) {
+	debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(100)
+	parentTracker := NewGlobalTracker(LabelForGlobalAnalyzeMemory, -1)
+	tracker := NewTracker(1, -1)
+	tracker.AttachToGlobalTracker(parentTracker)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	EnableGCAwareMemoryTrack.Store(false)
+	tracker.Consume(100)
+	require.Equal(t, int64(100), tracker.BytesConsumed())
+	require.Equal(t, int64(100), parentTracker.BytesConsumed())
+	tracker.Release(100)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+
+	EnableGCAwareMemoryTrack.Store(true)
+	tracker.Consume(100)
+	require.Equal(t, int64(100), tracker.BytesConsumed())
+	require.Equal(t, int64(100), parentTracker.BytesConsumed())
+	tracker.Release(100)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+	require.Equal(t, int64(100), parentTracker.BytesReleased())
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer waitGroup.Done()
+			tracker.Consume(10)
+		}()
+	}
+	waitGroup.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer waitGroup.Done()
+			tracker.Release(10)
+		}()
+	}
+	waitGroup.Wait()
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+}
+
+func TestBufferedConsumeAndRelease(t *testing.T) {
+	debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(100)
+	parentTracker := NewGlobalTracker(LabelForGlobalAnalyzeMemory, -1)
+	tracker := NewTracker(1, -1)
+	tracker.AttachToGlobalTracker(parentTracker)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	EnableGCAwareMemoryTrack.Store(true)
+	bufferedMemSize := int64(0)
+	tracker.BufferedConsume(&bufferedMemSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	tracker.BufferedConsume(&bufferedMemSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(TrackMemWhenExceeds), tracker.BytesConsumed())
+	bufferedReleaseSize := int64(0)
+	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesReleased())
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+}
+
 func TestOOMAction(t *testing.T) {
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
@@ -91,8 +199,8 @@ func TestOOMAction(t *testing.T) {
 	require.False(t, action1.called)
 	require.False(t, action2.called)
 	tracker.Consume(10000)
-	require.True(t, action1.called)
-	require.False(t, action2.called)
+	require.True(t, action2.called)
+	require.False(t, action1.called)
 	tracker.Consume(10000)
 	require.True(t, action1.called)
 	require.True(t, action2.called)
@@ -102,29 +210,45 @@ func TestOOMAction(t *testing.T) {
 	action1 = &mockAction{}
 	action2 = &mockAction{}
 	action3 := &mockAction{}
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
+	tracker.SetActionOnExceed(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	tracker.SetActionOnExceed(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
+	require.False(t, action3.called)
+	require.False(t, action2.called)
 	require.False(t, action1.called)
-	require.False(t, action2.called)
-	require.False(t, action3.called)
 	tracker.Consume(80)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.False(t, action2.called)
-	require.False(t, action3.called)
+	require.False(t, action1.called)
 	tracker.Consume(20)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.True(t, action2.called) // SoftLimit fallback
-	require.True(t, action3.called) // HardLimit
+	require.True(t, action1.called) // HardLimit
+
+	// test fallback
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 = &mockAction{}
+	action4 := &mockAction{}
+	action5 := &mockAction{}
+	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewAction(action2)
+	tracker.FallbackOldAndSetNewAction(action3)
+	tracker.FallbackOldAndSetNewAction(action4)
+	tracker.FallbackOldAndSetNewAction(action5)
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action4, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action4.SetFinished()
+	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action3.SetFinished()
+	action2.SetFinished()
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
 	BaseOOMAction
 	called   bool
 	priority int64
-}
-
-func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
@@ -277,7 +401,7 @@ func TestMaxConsumed(t *testing.T) {
 		}
 		consumed += b
 		tracker.Consume(b)
-		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+		maxConsumed = mathutil.Max(maxConsumed, consumed)
 
 		require.Equal(t, consumed, r.BytesConsumed())
 		require.Equal(t, maxConsumed, r.MaxConsumed())
@@ -330,7 +454,6 @@ func TestGlobalTracker(t *testing.T) {
 	}()
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
-
 }
 
 func parseByteUnit(str string) (int64, error) {

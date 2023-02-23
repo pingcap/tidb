@@ -12,7 +12,7 @@ TABLE_NAME="t"
 run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
-run_sql "create database $DB_NAME;"
+run_sql "create database $DB_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table $DB_NAME.$TABLE_NAME (a int(255));"
 
 # insert 100 records
@@ -20,7 +20,7 @@ run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' 
 
 # dumping with consistency none
 export DUMPLING_TEST_DATABASE=$DB_NAME
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/ChaosBrokenMySQLConn=1*return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/ChaosBrokenWriterConn=1*return;github.com/pingcap/tidb/dumpling/export/ChaosBrokenMetaConn=1*return"
 run_dumpling --consistency=none --loglevel debug
 
 # check data record count

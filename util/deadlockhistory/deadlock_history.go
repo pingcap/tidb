@@ -51,21 +51,21 @@ const (
 
 // WaitChainItem represents an entry in a deadlock's wait chain.
 type WaitChainItem struct {
-	TryLockTxn     uint64
 	SQLDigest      string
 	Key            []byte
 	AllSQLDigests  []string
+	TryLockTxn     uint64
 	TxnHoldingLock uint64
 }
 
 // DeadlockRecord represents a deadlock events, and contains multiple transactions' information.
 type DeadlockRecord struct {
+	OccurTime time.Time
+	WaitChain []WaitChainItem
 	// The ID doesn't need to be set manually and it's set when it's added into the DeadlockHistory by invoking its Push
 	// method.
 	ID          uint64
-	OccurTime   time.Time
 	IsRetryable bool
-	WaitChain   []WaitChainItem
 }
 
 var columnValueGetterMap = map[string]func(rec *DeadlockRecord, waitChainIdx int) types.Datum{
@@ -113,19 +113,16 @@ func (r *DeadlockRecord) ToDatum(waitChainIdx int, columnName string) types.Datu
 
 // DeadlockHistory is a collection for maintaining recent several deadlock events. All its public APIs are thread safe.
 type DeadlockHistory struct {
-	sync.RWMutex
-
 	deadlocks []*DeadlockRecord
-
 	// The `head` and `size` makes the `deadlocks` array behaves like a deque. The valid elements are
 	// deadlocks[head:head+size], or deadlocks[head:] + deadlocks[:head+size-len] if `head+size` exceeds the array's
 	// length.
 	head int
 	size int
-
 	// currentID is used to allocate IDs for deadlock records pushed to the queue that's unique in the deadlock
 	// history queue instance.
 	currentID uint64
+	sync.RWMutex
 }
 
 // NewDeadlockHistory creates an instance of DeadlockHistory

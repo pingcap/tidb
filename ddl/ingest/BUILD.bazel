@@ -1,0 +1,60 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ingest",
+    srcs = [
+        "backend.go",
+        "backend_mgr.go",
+        "config.go",
+        "disk_root.go",
+        "engine.go",
+        "engine_mgr.go",
+        "env.go",
+        "mem_root.go",
+        "message.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/ingest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/backend/local",
+        "//br/pkg/lightning/checkpoints",
+        "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
+        "//br/pkg/lightning/errormanager",
+        "//br/pkg/lightning/glue",
+        "//br/pkg/lightning/log",
+        "//config",
+        "//kv",
+        "//parser",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx/variable",
+        "//table",
+        "//util",
+        "//util/dbterror",
+        "//util/generic",
+        "//util/logutil",
+        "//util/mathutil",
+        "//util/size",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "ingest_test",
+    timeout = "short",
+    srcs = [
+        "env_test.go",
+        "mem_root_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":ingest",
+        "//config",
+        "@com_github_stretchr_testify//require",
+    ],
+)

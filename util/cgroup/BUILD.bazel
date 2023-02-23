@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cgroup",
+    srcs = [
+        "cgroup.go",
+        "cgroup_cpu.go",
+        "cgroup_cpu_linux.go",
+        "cgroup_cpu_unsupport.go",
+        "cgroup_memory.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/cgroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cgroup_test",
+    timeout = "short",
+    srcs = [
+        "cgroup_cpu_test.go",
+        "cgroup_mock_test.go",
+    ],
+    embed = [":cgroup"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

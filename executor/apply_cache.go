@@ -17,10 +17,10 @@ package executor
 import (
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 

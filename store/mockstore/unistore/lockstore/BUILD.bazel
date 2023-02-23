@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lockstore",
+    srcs = [
+        "arena.go",
+        "iterator.go",
+        "load_dump.go",
+        "lockstore.go",
+    ],
+    importpath = "github.com/pingcap/tidb/store/mockstore/unistore/lockstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "lockstore_test",
+    timeout = "short",
+    srcs = [
+        "lockstore_test.go",
+        "main_test.go",
+    ],
+    embed = [":lockstore"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

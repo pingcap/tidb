@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util"
 )
 
 // OptimizeTraceHandler serve http
@@ -55,6 +56,7 @@ func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		statusPort:         oth.statusPort,
 		urlPath:            fmt.Sprintf("optimize_trace/dump/%s", name),
 		downloadedFilename: "optimize_trace",
+		scheme:             util.InternalHTTPSchema(),
 	}
 	handleDownloadFile(handler, w, req)
 }

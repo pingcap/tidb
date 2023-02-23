@@ -67,7 +67,7 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
@@ -79,7 +79,7 @@ func (b noopBackend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig,
 	return nil
 }
 
-func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
+func (b noopBackend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
 	return nil
 }
 
@@ -97,14 +97,14 @@ func (b noopBackend) CheckRequirements(context.Context, *backend.CheckCtx) error
 // name. The returned table info does not need to be precise if the encoder,
 // is not requiring them, but must at least fill in the following fields for
 // TablesFromMeta to succeed:
-//  - Name
-//  - State (must be model.StatePublic)
-//  - ID
-//  - Columns
-//     * Name
-//     * State (must be model.StatePublic)
-//     * Offset (must be 0, 1, 2, ...)
-//  - PKIsHandle (true = do not generate _tidb_rowid)
+//   - Name
+//   - State (must be model.StatePublic)
+//   - ID
+//   - Columns
+//   - Name
+//   - State (must be model.StatePublic)
+//   - Offset (must be 0, 1, 2, ...)
+//   - PKIsHandle (true = do not generate _tidb_rowid)
 func (b noopBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return nil, nil
 }
@@ -140,7 +140,7 @@ func (b noopBackend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uuid.UUID) (backend.EngineWriter, error) {
-	return noopWriter{}, nil
+	return Writer{}, nil
 }
 
 func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
@@ -153,6 +153,10 @@ func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.T
 
 func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
 	return nil
+}
+
+func (b noopBackend) TotalMemoryConsume() int64 {
+	return 0
 }
 
 type noopEncoder struct{}
@@ -174,16 +178,23 @@ func (r noopRow) Size() uint64 {
 func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows, *verification.KVChecksum) {
 }
 
-type noopWriter struct{}
+// Writer define a local writer that do nothing.
+type Writer struct{}
 
-func (w noopWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
 	return nil
 }
 
-func (w noopWriter) IsSynced() bool {
+func (w Writer) IsSynced() bool {
 	return true
 }
 
-func (w noopWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
-	return nil, nil
+func (w Writer) Close(context.Context) (backend.ChunkFlushStatus, error) {
+	return trueStatus{}, nil
+}
+
+type trueStatus struct{}
+
+func (s trueStatus) Flushed() bool {
+	return true
 }

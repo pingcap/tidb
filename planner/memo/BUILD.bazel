@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memo",
+    srcs = [
+        "expr_iterator.go",
+        "group.go",
+        "group_expr.go",
+        "implementation.go",
+        "pattern.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/memo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//expression",
+        "//planner/core",
+        "//planner/property",
+    ],
+)
+
+go_test(
+    name = "memo_test",
+    timeout = "short",
+    srcs = [
+        "expr_iterator_test.go",
+        "group_expr_test.go",
+        "group_test.go",
+        "main_test.go",
+        "pattern_test.go",
+    ],
+    embed = [":memo"],
+    flaky = True,
+    deps = [
+        "//domain",
+        "//expression",
+        "//infoschema",
+        "//parser",
+        "//parser/model",
+        "//planner/core",
+        "//planner/property",
+        "//sessionctx/variable",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

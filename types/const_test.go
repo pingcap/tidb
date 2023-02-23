@@ -83,8 +83,7 @@ func TestSQLMode(t *testing.T) {
 }
 
 func TestRealAsFloatMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -105,8 +104,7 @@ func TestRealAsFloatMode(t *testing.T) {
 }
 
 func TestPipesAsConcatMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET sql_mode='PIPES_AS_CONCAT';")
@@ -115,8 +113,7 @@ func TestPipesAsConcatMode(t *testing.T) {
 }
 
 func TestIssue22387(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode=''")
@@ -128,8 +125,7 @@ func TestIssue22387(t *testing.T) {
 }
 
 func TestIssue22389(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -145,8 +141,7 @@ func TestIssue22389(t *testing.T) {
 }
 
 func TestIssue22390(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -163,8 +158,7 @@ func TestIssue22390(t *testing.T) {
 }
 
 func TestIssue22442(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='';")
@@ -175,8 +169,7 @@ func TestIssue22442(t *testing.T) {
 }
 
 func TestIssue22444(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
@@ -187,8 +180,7 @@ func TestIssue22444(t *testing.T) {
 }
 
 func TestIssue22445(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
@@ -200,8 +192,7 @@ func TestIssue22445(t *testing.T) {
 }
 
 func TestIssue22446(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
@@ -212,8 +203,7 @@ func TestIssue22446(t *testing.T) {
 }
 
 func TestIssue22447(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
@@ -226,8 +216,7 @@ func TestIssue22447(t *testing.T) {
 }
 
 func TestNoUnsignedSubtractionMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
@@ -312,8 +301,7 @@ func TestNoUnsignedSubtractionMode(t *testing.T) {
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -332,8 +320,7 @@ func TestHighNotPrecedenceMode(t *testing.T) {
 }
 
 func TestIgnoreSpaceMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -351,8 +338,7 @@ func TestIgnoreSpaceMode(t *testing.T) {
 	tk.MustExec("DROP TABLE BIT_AND;")
 	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
-	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE BIT_AND(a bigint);")
 	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 
@@ -360,44 +346,35 @@ func TestIgnoreSpaceMode(t *testing.T) {
 	tk.MustExec("DROP TABLE NOW;")
 	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
-	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE NOW(a bigint);")
 	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
 
 	tk.MustExec("set sql_mode='IGNORE_SPACE'")
-	_, err = tk.Exec("CREATE TABLE COUNT (a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE COUNT (a bigint);")
 	tk.MustExec("CREATE TABLE `COUNT` (a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
-	_, err = tk.Exec("CREATE TABLE COUNT(a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE COUNT(a bigint);")
 	tk.MustExec("CREATE TABLE test.COUNT(a bigint);")
 	tk.MustExec("DROP TABLE COUNT;")
 
-	_, err = tk.Exec("CREATE TABLE BIT_AND (a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE BIT_AND (a bigint);")
 	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
-	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE BIT_AND(a bigint);")
 	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
 	tk.MustExec("DROP TABLE BIT_AND;")
 
-	_, err = tk.Exec("CREATE TABLE NOW (a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE NOW (a bigint);")
 	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
-	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
-	require.Error(t, err)
+	tk.MustExecToErr("CREATE TABLE NOW(a bigint);")
 	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
 	tk.MustExec("DROP TABLE NOW;")
-
 }
 
 func TestNoBackslashEscapesMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set sql_mode=''")

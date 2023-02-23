@@ -90,24 +90,182 @@ type tidbEncoder struct {
 	columnCnt int
 }
 
+type encodingBuilder struct{}
+
+// NewEncodingBuilder creates an EncodingBuilder with TiDB backend implementation.
+func NewEncodingBuilder() backend.EncodingBuilder {
+	return new(encodingBuilder)
+}
+
+// NewEncoder creates a KV encoder.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	se := kv.NewSession(options, log.FromContext(ctx))
+	if options.SQLMode.HasStrictMode() {
+		se.GetSessionVars().SkipUTF8Check = false
+		se.GetSessionVars().SkipASCIICheck = false
+	}
+
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
+}
+
+// MakeEmptyRows creates an empty KV rows.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+	return tidbRows(nil)
+}
+
+type targetInfoGetter struct {
+	db *sql.DB
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with TiDB backend implementation.
+func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
+	return &targetInfoGetter{
+		db: db,
+	}
+}
+
+// FetchRemoteTableModels obtains the models of all tables given the schema name.
+// It implements the `backend.TargetInfoGetter` interface.
+// TODO: refactor
+func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	var err error
+	tables := []*model.TableInfo{}
+	s := common.SQLWithRetry{
+		DB:     b.db,
+		Logger: log.FromContext(ctx),
+	}
+
+	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+		var versionStr string
+		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
+			return err
+		}
+		serverInfo := version.ParseServerInfo(versionStr)
+
+		rows, e := tx.Query(`
+			SELECT table_name, column_name, column_type, generation_expression, extra
+			FROM information_schema.columns
+			WHERE table_schema = ?
+			ORDER BY table_name, ordinal_position;
+		`, schemaName)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		var (
+			curTableName string
+			curColOffset int
+			curTable     *model.TableInfo
+		)
+		for rows.Next() {
+			var tableName, columnName, columnType, generationExpr, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
+				return e
+			}
+			if tableName != curTableName {
+				curTable = &model.TableInfo{
+					Name:       model.NewCIStr(tableName),
+					State:      model.StatePublic,
+					PKIsHandle: true,
+				}
+				tables = append(tables, curTable)
+				curTableName = tableName
+				curColOffset = 0
+			}
+
+			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+			var flag uint
+			if strings.HasSuffix(columnType, "unsigned") {
+				flag |= mysql.UnsignedFlag
+			}
+			if strings.Contains(columnExtra, "auto_increment") {
+				flag |= mysql.AutoIncrementFlag
+			}
+
+			ft := types.FieldType{}
+			ft.SetFlag(flag)
+			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
+				Name:                model.NewCIStr(columnName),
+				Offset:              curColOffset,
+				State:               model.StatePublic,
+				FieldType:           ft,
+				GeneratedExprString: generationExpr,
+			})
+			curColOffset++
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// shard_row_id/auto random is only available after tidb v4.0.0
+		// `show table next_row_id` is also not available before tidb v4.0.0
+		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
+			return nil
+		}
+
+		// init auto id column for each table
+		for _, tbl := range tables {
+			tblName := common.UniqueTable(schemaName, tbl.Name.O)
+			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, info := range autoIDInfos {
+				for _, col := range tbl.Columns {
+					if col.Name.O == info.Column {
+						switch info.Type {
+						case "AUTO_INCREMENT":
+							col.AddFlag(mysql.AutoIncrementFlag)
+						case "AUTO_RANDOM":
+							col.AddFlag(mysql.PriKeyFlag)
+							tbl.PKIsHandle = true
+							// set a stub here, since we don't really need the real value
+							tbl.AutoRandomBits = 1
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return tables, err
+}
+
+// CheckRequirements performs the check whether the backend satisfies the version requirements.
+// It implements the `backend.TargetInfoGetter` interface.
+func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
+	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
+	return nil
+}
+
 type tidbBackend struct {
-	db          *sql.DB
-	onDuplicate string
-	errorMgr    *errormanager.ErrorManager
+	db               *sql.DB
+	onDuplicate      string
+	errorMgr         *errormanager.ErrorManager
+	encBuilder       backend.EncodingBuilder
+	targetInfoGetter backend.TargetInfoGetter
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
+func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
 	switch onDuplicate {
 	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
 	default:
-		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
+		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
+	return backend.MakeBackend(&tidbBackend{
+		db:               db,
+		onDuplicate:      onDuplicate,
+		errorMgr:         errorMgr,
+		encBuilder:       NewEncodingBuilder(),
+		targetInfoGetter: NewTargetInfoGetter(db),
+	})
 }
 
 func (row tidbRow) Size() uint64 {
@@ -308,9 +466,19 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
 	// column permutation with default, thus enc.columnCnt > len(row).
 	if len(row) < enc.columnCnt {
+		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
+		// there are enc.columnCnt elements to insert but fewer columns in row
 		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", kv.RowArrayMarshaler(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
+	}
+
+	if len(row) > len(enc.columnIdx) {
+		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
+		// in the table
+		logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
+			zap.Array("data", kv.RowArrayMarshaler(row)))
+		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
 	var encoded strings.Builder
@@ -344,12 +512,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 }
 
 // EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
-func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
+func EncodeRowForRecord(ctx context.Context, encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
 	enc := tidbEncoder{
 		tbl:  encTable,
 		mode: sqlMode,
 	}
-	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
+	resRow, err := enc.Encode(log.FromContext(ctx), row, 0, columnPermutation, "", 0)
 	if err != nil {
 		// if encode can't succeed, fallback to record the raw input strings
 		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
@@ -365,7 +533,7 @@ func (be *tidbBackend) Close() {
 }
 
 func (be *tidbBackend) MakeEmptyRows() kv.Rows {
-	return tidbRows(nil)
+	return be.encBuilder.MakeEmptyRows()
 }
 
 func (be *tidbBackend) RetryImportDelay() time.Duration {
@@ -384,18 +552,11 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 }
 
 func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	log.L().Info("skipping check requirements for tidb backend")
-	return nil
+	return be.targetInfoGetter.CheckRequirements(ctx, nil)
 }
 
-func (be *tidbBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	se := kv.NewSession(options)
-	if options.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
+func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return be.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
@@ -422,7 +583,7 @@ func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table
 	return nil
 }
 
-func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
+func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
 	return nil
 }
 
@@ -436,7 +597,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case utils.IsRetryableError(err):
+			case common.IsRetryableError(err):
 				// retry next loop
 			case be.errorMgr.TypeErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -456,13 +617,18 @@ rowLoop:
 	return nil
 }
 
+func (be *tidbBackend) TotalMemoryConsume() int64 {
+	return 0
+}
+
 type stmtTask struct {
 	rows tidbRows
 	stmt string
 }
 
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
-//   insert into t1 values (111), (222), (333), (444);
+//
+//	insert into t1 values (111), (222), (333), (444);
 func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
 	rows := r.(tidbRows)
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
@@ -490,10 +656,12 @@ func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, column
 }
 
 // WriteRowsToDB write rows in row-by-row mode, which will insert multiple rows like this:
-//   insert into t1 values (111);
-//   insert into t1 values (222);
-//   insert into t1 values (333);
-//   insert into t1 values (444);
+//
+//	insert into t1 values (111);
+//	insert into t1 values (222);
+//	insert into t1 values (333);
+//	insert into t1 values (444);
+//
 // See more details in br#1366: https://github.com/pingcap/br/issues/1366
 func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
 	rows := r.(tidbRows)
@@ -544,7 +712,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 			_, err := be.db.ExecContext(ctx, stmt)
 			if err != nil {
 				if !common.IsContextCanceledError(err) {
-					log.L().Error("execute statement failed",
+					log.FromContext(ctx).Error("execute statement failed",
 						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
 				}
 				// It's batch mode, just return the error.
@@ -552,11 +720,11 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
-				err = be.errorMgr.RecordTypeError(ctx, log.L(), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
+				err = be.errorMgr.RecordTypeError(ctx, log.FromContext(ctx), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
 				if err == nil {
 					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 					break
@@ -573,107 +741,8 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-//nolint:nakedret // TODO: refactor
-func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
-	s := common.SQLWithRetry{
-		DB:     be.db,
-		Logger: log.L(),
-	}
-
-	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
-		var versionStr string
-		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
-			return err
-		}
-		serverInfo := version.ParseServerInfo(versionStr)
-
-		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, generation_expression, extra
-			FROM information_schema.columns
-			WHERE table_schema = ?
-			ORDER BY table_name, ordinal_position;
-		`, schemaName)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
-
-		var (
-			curTableName string
-			curColOffset int
-			curTable     *model.TableInfo
-		)
-		for rows.Next() {
-			var tableName, columnName, columnType, generationExpr, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
-				return e
-			}
-			if tableName != curTableName {
-				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
-					State:      model.StatePublic,
-					PKIsHandle: true,
-				}
-				tables = append(tables, curTable)
-				curTableName = tableName
-				curColOffset = 0
-			}
-
-			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
-			var flag uint
-			if strings.HasSuffix(columnType, "unsigned") {
-				flag |= mysql.UnsignedFlag
-			}
-			if strings.Contains(columnExtra, "auto_increment") {
-				flag |= mysql.AutoIncrementFlag
-			}
-			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:   model.NewCIStr(columnName),
-				Offset: curColOffset,
-				State:  model.StatePublic,
-				FieldType: types.FieldType{
-					Flag: flag,
-				},
-				GeneratedExprString: generationExpr,
-			})
-			curColOffset++
-		}
-		if rows.Err() != nil {
-			return rows.Err()
-		}
-		// shard_row_id/auto random is only available after tidb v4.0.0
-		// `show table next_row_id` is also not available before tidb v4.0.0
-		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
-			return nil
-		}
-
-		// init auto id column for each table
-		for _, tbl := range tables {
-			tblName := common.UniqueTable(schemaName, tbl.Name.O)
-			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for _, info := range autoIDInfos {
-				for _, col := range tbl.Columns {
-					if col.Name.O == info.Column {
-						switch info.Type {
-						case "AUTO_INCREMENT":
-							col.Flag |= mysql.AutoIncrementFlag
-						case "AUTO_RANDOM":
-							col.Flag |= mysql.PriKeyFlag
-							tbl.PKIsHandle = true
-							// set a stub here, since we don't really need the real value
-							tbl.AutoRandomBits = 1
-						}
-					}
-				}
-			}
-
-		}
-		return nil
-	})
-	return
+func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {
@@ -766,8 +835,8 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	if err := rows.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rows.Err() != nil {
-		return nil, errors.Trace(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return autoIDInfos, nil
 }

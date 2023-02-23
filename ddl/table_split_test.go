@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-
-	"github.com/tikv/client-go/v2/tikv"
-
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestTableSplit(t *testing.T) {

@@ -19,18 +19,27 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
@@ -54,8 +63,10 @@ var dynamicPrivs = []string{
 	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
+	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 }
 var dynamicPrivLock sync.Mutex
+var defaultTokenLife = 15 * time.Minute
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -63,6 +74,15 @@ type UserPrivileges struct {
 	user string
 	host string
 	*Handle
+	extensionAccessCheckFuncs []extension.AccessCheckFunc
+}
+
+// NewUserPrivileges creates a new UserPrivileges
+func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPrivileges {
+	return &UserPrivileges{
+		Handle:                    handle,
+		extensionAccessCheckFuncs: extension.GetAccessCheckFuncs(),
+	}
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
@@ -121,9 +141,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
 	tblLowerName := strings.ToLower(table)
+
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
-	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+	semEnabled := sem.IsEnabled()
+	if semEnabled && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
 		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
@@ -136,30 +158,27 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
-	switch dbLowerName {
-	case util.InformationSchemaName.L:
+	if util.IsMemDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
-			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
+			mysql.ShowViewPriv, mysql.LockTablesPriv:
 			return false
 		}
-		return true
-	// We should be very careful of limiting privileges, so ignore `mysql` for now.
-	case util.PerformanceSchemaName.L:
-		if perfschema.IsPredefinedTable(table) {
-			switch priv {
-			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
-				return false
+		if dbLowerName == util.InformationSchemaName.L {
+			return true
+		} else if dbLowerName == util.MetricSchemaName.L {
+			// PROCESS is the same with SELECT for metrics_schema.
+			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
+				priv |= mysql.ProcessPriv
 			}
 		}
-	case util.MetricSchemaName.L:
-		if infoschema.IsMetricTable(table) {
-			switch priv {
-			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+	}
+
+	for _, fn := range p.extensionAccessCheckFuncs {
+		for _, dynPriv := range fn(db, table, column, priv, semEnabled) {
+			if !p.RequestDynamicVerification(activeRoles, dynPriv, false) {
 				return false
-			// PROCESS is the same with SELECT for metrics_schema.
-			case mysql.SelectPriv:
-				priv |= mysql.ProcessPriv
 			}
 		}
 	}
@@ -194,27 +213,32 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	if pwd == "" {
 		return true
 	}
-	if record.AuthPlugin == mysql.AuthNativePassword {
+	switch record.AuthPlugin {
+	case mysql.AuthNativePassword:
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthCachingSha2Password {
+	case mysql.AuthCachingSha2Password:
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
-	}
-
-	if record.AuthPlugin == mysql.AuthSocket {
+	case mysql.AuthTiDBSM3Password:
+		if len(pwd) == mysql.SM3PWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	case mysql.AuthSocket:
+		return true
+	case mysql.AuthTiDBAuthToken:
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -233,8 +257,8 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
-// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
+func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
@@ -243,6 +267,9 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		return "", errors.New("Failed to get user record")
+	}
+	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		return record.AuthPlugin, nil
 	}
 	// zero-length auth string means no password for native and caching_sha2 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
@@ -256,6 +283,22 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	return "", errors.New("Failed to get plugin for user")
 }
 
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	if !p.isValidHash(record) {
+		return "", errors.New("Failed to get plugin for user")
+	}
+	return record.AuthPlugin, nil
+}
+
 // MatchIdentity implements the Manager interface.
 func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
@@ -267,6 +310,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 		return record.User, record.Host, true
 	}
 	return "", "", false
+}
+
+// MatchUserResourceGroupName implements the Manager interface.
+func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	if record != nil {
+		return record.User, true
+	}
+	return "", false
 }
 
 // GetAuthWithoutVerification implements the Manager interface.
@@ -292,96 +345,298 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
-// ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (success bool) {
+func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
+	if sub, ok := claims[jwtRepo.SubjectKey]; !ok {
+		return errors.New("lack 'sub'")
+	} else if sub != record.User {
+		return fmt.Errorf("Wrong 'sub': %s", sub)
+	}
+
+	if email, ok := claims[openid.EmailKey]; !ok {
+		return errors.New("lack 'email'")
+	} else if email != record.Email {
+		return fmt.Errorf("Wrong 'email': %s", email)
+	}
+
+	now := time.Now()
+	val, ok := claims[jwtRepo.IssuedAtKey]
+	if !ok {
+		return errors.New("lack 'iat'")
+	} else if iat, ok := val.(time.Time); !ok {
+		return fmt.Errorf("iat: %v is not a value of time.Time", val)
+	} else if now.After(iat.Add(tokenLife)) {
+		return errors.New("the token has been out of its life time")
+	} else if now.Before(iat) {
+		return errors.New("the token is issued at a future time")
+	}
+
+	if val, ok = claims[jwtRepo.ExpirationKey]; !ok {
+		return errors.New("lack 'exp'")
+	} else if exp, ok := val.(time.Time); !ok {
+		return fmt.Errorf("exp: %v is not a value of time.Time", val)
+	} else if now.After(exp) {
+		return errors.New("the token has been expired")
+	}
+
+	// `iss` is not required if `token_issuer` is empty in `mysql.user`
+	if iss, ok := claims[jwtRepo.IssuerKey]; ok && iss != record.AuthTokenIssuer {
+		return fmt.Errorf("Wrong 'iss': %s", iss)
+	} else if !ok && len(record.AuthTokenIssuer) > 0 {
+		return errors.New("lack 'iss'")
+	}
+
+	return nil
+}
+
+// CheckPasswordExpired checks whether the password has been expired.
+func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
+	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
+	if record.PasswordExpired {
+		if isSandBoxModeEnabled {
+			return true, nil
+		}
+		return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+	}
+	if record.PasswordLifeTime != 0 {
+		lifeTime := record.PasswordLifeTime
+		if lifeTime == -1 {
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
+			if err != nil {
+				return false, err
+			}
+			lifeTime, err = strconv.ParseInt(pwdLifeTimeStr, 10, 64)
+			if err != nil {
+				return false, err
+			}
+		}
+		if lifeTime > 0 && record.PasswordLastChanged.AddDate(0, 0, int(lifeTime)).Before(time.Now()) {
+			if isSandBoxModeEnabled {
+				return true, nil
+			}
+			return false, ErrMustChangePasswordLogin.GenWithStackByArgs()
+		}
+	}
+	return false, nil
+}
+
+// GenerateAccountAutoLockErr implements the Manager interface.
+func GenerateAccountAutoLockErr(failedLoginAttempts int64,
+	user, host, lockTime, remainTime string) error {
+	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
+		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
+		"consecutive failed logins.", user, host, lockTime,
+		remainTime, failedLoginAttempts))
+	return ErUserAccessDeniedForUserAccountBlockedByPasswordLock.FastGenByArgs(user, host,
+		lockTime, remainTime, failedLoginAttempts)
+}
+
+// VerifyAccountAutoLockInMemory implements the Manager interface.
+func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string) (bool, error) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchUser(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", user), zap.String("authHost", host))
+		return false, ErrAccessDenied.FastGenByArgs(user, host)
+	}
+
+	if record.AutoAccountLocked {
+		// If it is locked, need to check whether it can be automatically unlocked.
+		lockTime := record.PasswordLockTimeDays
+		if lockTime == -1 {
+			return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")
+		}
+		lastChanged := record.AutoLockedLastChanged
+		d := time.Now().Unix() - lastChanged
+		if d > lockTime*24*60*60 {
+			return record.AutoAccountLocked, nil
+		}
+		lds := strconv.FormatInt(lockTime, 10)
+		rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
+		return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, lds, rds)
+	}
+	return record.AutoAccountLocked, nil
+}
+
+// IsAccountAutoLockEnabled implements the Manager interface.
+func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool {
+	// If the service is started using skip-grant-tables, the system ignores whether
+	// to enable the automatic account locking feature after continuous login failure.
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
-		success = true
-		return
+		return false
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchUser(user, host)
+	if record == nil {
+		return false
+	}
+	// For failed-login tracking and temporary locking to occur, an account's FAILED_LOGIN_ATTEMPTS
+	// and PASSWORD_LOCK_TIME options both must be nonzero.
+	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html
+	if record.FailedLoginAttempts == 0 || record.PasswordLockTimeDays == 0 {
+		return false
+	}
+	return true
+}
+
+// BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
+func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
+	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+}
+
+// BuildPasswordLockingJSON builds PasswordLocking JSON string.
+func BuildPasswordLockingJSON(failedLoginAttempts int64,
+	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+	var passwordLockingArray []string
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
+	if autoAccountLocked != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
+	}
+	if autoLockedLastChanged != "" {
+		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", autoLockedLastChanged))
+	}
+
+	newAttributesStr := fmt.Sprintf("{\"Password_locking\": {%s}}", strings.Join(passwordLockingArray, ","))
+	return newAttributesStr
+}
+
+// ConnectionVerification implements the Manager interface.
+func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (info privilege.VerificationInfo, err error) {
+	hasPassword := "YES"
+	if len(authentication) == 0 {
+		hasPassword = "NO"
 	}
 
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
-			zap.String("user", user), zap.String("host", host))
+	record := mysqlPriv.connectionVerification(authUser, authHost)
+
+	if SkipWithGrant {
+		p.user = authUser
+		p.host = authHost
+		// special handling to existing users or root user initialized with insecure
+		if record == nil || record.ResourceGroup == "" {
+			info.ResourceGroupName = "default"
+		} else {
+			info.ResourceGroupName = record.ResourceGroup
+		}
 		return
 	}
 
-	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get authUser privilege record fail",
+			zap.String("authUser", authUser), zap.String("authHost", authHost))
+		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+
+	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
-		if !p.checkSSL(globalPriv, tlsState) {
+		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
-				zap.String("user", user), zap.String("host", host))
-			success = false
-			return
+				zap.String("authUser", authUser), zap.String("authHost", authHost))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	}
+
+	pwd := record.AuthenticationString
+	if !p.isValidHash(record) {
+		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+
+	// If the user uses session token to log in, skip checking record.AuthPlugin.
+	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
+		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
+			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+		if len(authentication) == 0 {
+			logutil.BgLogger().Error("empty authentication")
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		tokenString := string(hack.String(authentication[:len(authentication)-1]))
+		var (
+			claims map[string]interface{}
+		)
+		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
+			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
+			logutil.BgLogger().Error("check claims failed", zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if len(pwd) > 0 && len(authentication) > 0 {
+		switch record.AuthPlugin {
+		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
+		case mysql.AuthNativePassword:
+			hpwd, err := auth.DecodePassword(pwd)
+			if err != nil {
+				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+
+			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+			}
+
+			if !authok {
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthSocket:
+			if string(authentication) != authUser && string(authentication) != pwd {
+				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
+					zap.String("socket_user", string(authentication)),
+					zap.String("authentication_string", pwd))
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		default:
+			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if len(pwd) > 0 || len(authentication) > 0 {
+		if record.AuthPlugin != mysql.AuthSocket {
+			info.FailedDueToWrongPassword = true
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.BgLogger().Error("try to login a locked account",
-			zap.String("user", user), zap.String("host", host))
-		success = false
-		return
+		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
-	pwd := record.AuthenticationString
-	if !p.isValidHash(record) {
-		return
-	}
-
-	// empty password
-	if len(pwd) == 0 && len(authentication) == 0 {
-		p.user = user
-		p.host = record.Host
-		success = true
-		return
-	}
-
-	if len(pwd) == 0 || len(authentication) == 0 {
-		if record.AuthPlugin != mysql.AuthSocket {
-			return
-		}
-	}
-
-	if record.AuthPlugin == mysql.AuthNativePassword {
-		hpwd, err := auth.DecodePassword(pwd)
-		if err != nil {
-			logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-			return
-		}
-
-		if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-			return
-		}
-	} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
-		authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
-		if err != nil {
-			logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
-		}
-
-		if !authok {
-			return
-		}
-	} else if record.AuthPlugin == mysql.AuthSocket {
-		if string(authentication) != user && string(authentication) != pwd {
-			logutil.BgLogger().Error("Failed socket auth", zap.String("user", user),
-				zap.String("socket_user", string(authentication)),
-				zap.String("authentication_string", pwd))
-			return
-		}
+	// special handling to existing users or root user initialized with insecure
+	if record.ResourceGroup == "" {
+		info.ResourceGroupName = "default"
 	} else {
-		logutil.BgLogger().Error("unknown authentication plugin", zap.String("user", user), zap.String("plugin", record.AuthPlugin))
-		return
+		info.ResourceGroupName = record.ResourceGroup
 	}
-
-	p.user = user
-	p.host = record.Host
-	success = true
+	// Skip checking password expiration if the session is migrated from another session.
+	// Otherwise, the user cannot log in or execute statements after migration.
+	if user.AuthPlugin != mysql.AuthTiDBSessionToken {
+		info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	}
 	return
+}
+
+// AuthSuccess is to make the permission take effect.
+func (p *UserPrivileges) AuthSuccess(authUser, authHost string) {
+	p.user = authUser
+	p.host = authHost
 }
 
 type checkResult int
@@ -651,6 +906,10 @@ func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
 func RegisterDynamicPrivilege(privName string) error {
+	if len(privName) == 0 {
+		return errors.New("privilege name should not be empty")
+	}
+
 	privNameInUpper := strings.ToUpper(privName)
 	if len(privNameInUpper) > 32 {
 		return errors.New("privilege name is longer than 32 characters")
@@ -675,4 +934,120 @@ func GetDynamicPrivileges() []string {
 	privCopy := make([]string, len(dynamicPrivs))
 	copy(privCopy, dynamicPrivs)
 	return privCopy
+}
+
+// RemoveDynamicPrivilege is used for test only
+func RemoveDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+	for idx, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func init() {
+	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
+	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
+}
+
+// PasswordLocking is the User_attributes->>"$.Password_locking".
+// It records information about failed-login tracking and temporary account locking.
+type PasswordLocking struct {
+	FailedLoginCount      int64
+	PasswordLockTimeDays  int64
+	AutoAccountLocked     bool
+	AutoLockedLastChanged int64
+	FailedLoginAttempts   int64
+}
+
+// ParseJSON parses information about PasswordLocking.
+func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.BinaryJSON) error {
+	var err error
+
+	passwordLocking.FailedLoginAttempts, err =
+		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
+	if err != nil {
+		return err
+	}
+	passwordLocking.FailedLoginAttempts = mathutil.Min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
+	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
+
+	passwordLocking.PasswordLockTimeDays, err =
+		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+	if err != nil {
+		return err
+	}
+	passwordLocking.PasswordLockTimeDays = mathutil.Min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
+	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
+
+	passwordLocking.FailedLoginCount, err =
+		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")
+	if err != nil {
+		return err
+	}
+
+	passwordLocking.AutoLockedLastChanged, err =
+		extractTimeUnixFromJSON(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
+	if err != nil {
+		return err
+	}
+
+	passwordLocking.AutoAccountLocked, err =
+		extractBoolFromJSON(passwordLockingJSON, "$.Password_locking.auto_account_locked")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func extractInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, err error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return 0, err
+	}
+	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		return BJ.GetInt64(), nil
+	}
+	return 0, nil
+}
+
+func extractTimeUnixFromJSON(json types.BinaryJSON, pathExpr string) (int64, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return -1, err
+	}
+	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, err := BJ.Unquote()
+		if err != nil {
+			return -1, err
+		}
+		t, err := time.ParseInLocation(time.UnixDate, value, time.Local)
+		if err != nil {
+			return -1, err
+		}
+		return t.Unix(), nil
+	}
+	return 0, nil
+}
+
+func extractBoolFromJSON(json types.BinaryJSON, pathExpr string) (bool, error) {
+	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
+	if err != nil {
+		return false, err
+	}
+	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, err := BJ.Unquote()
+		if err != nil {
+			return false, err
+		}
+		if value == "Y" {
+			return true, nil
+		}
+	}
+	return false, nil
 }

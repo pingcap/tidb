@@ -26,6 +26,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -34,31 +36,35 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 type domainMap struct {
+	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
-	mu      sync.Mutex
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
-	// If this is the only domain instance, and the caller doesn't provide store.
-	if len(dm.domains) == 1 && store == nil {
-		for _, r := range dm.domains {
-			return r, nil
+	if store == nil {
+		for _, d := range dm.domains {
+			// return available domain if any
+			return d, nil
 		}
+		return nil, errors.New("can not find available domain for a nil store")
 	}
 
 	key := store.UUID()
+
 	d = dm.domains[key]
 	if d != nil {
 		return
@@ -76,11 +82,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		onClose := func() {
-			dm.Delete(store)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
+
+		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
+			ddlInjector = injector.Injector
 		}
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		err1 = d.Init(ddlLease, sysFactory)
+		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -93,6 +101,9 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return nil, err
 	}
 	dm.domains[key] = d
+	d.SetOnClose(func() {
+		dm.Delete(store)
+	})
 
 	return
 }
@@ -209,12 +220,20 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
-		transactionDurationPessimisticAbort.Observe(duration)
+		if isInternal {
+			transactionDurationPessimisticAbortInternal.Observe(duration)
+		} else {
+			transactionDurationPessimisticAbortGeneral.Observe(duration)
+		}
 	} else {
-		transactionDurationOptimisticAbort.Observe(duration)
+		if isInternal {
+			transactionDurationOptimisticAbortInternal.Observe(duration)
+		} else {
+			transactionDurationOptimisticAbortGeneral.Observe(duration)
+		}
 	}
 }
 
@@ -229,9 +248,9 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// Handle the stmt commit/rollback.
 		if se.txn.Valid() {
 			if meetsErr != nil {
-				se.StmtRollback()
+				se.StmtRollback(ctx, false)
 			} else {
-				se.StmtCommit()
+				se.StmtCommit(ctx)
 			}
 		}
 	}
@@ -254,16 +273,20 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	isInternal := false
+	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
+		isInternal = true
+	}
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
-			recordAbortTxnDuration(sessVars)
+			recordAbortTxnDuration(sessVars, isInternal)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
-			recordAbortTxnDuration(sessVars)
+			recordAbortTxnDuration(sessVars, isInternal)
 		}
 		return meetsErr
 	}
@@ -292,7 +315,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sessVars.IsAutocommit())
 		}
-		err = se.NewTxn(ctx)
+		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.

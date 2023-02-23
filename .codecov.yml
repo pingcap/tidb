@@ -43,4 +43,5 @@ ignore:
   - "executor/seqtest/.*"
   - "metrics/.*"
   - "expression/generator/.*"
+  - "br/pkg/mock/.*"
 

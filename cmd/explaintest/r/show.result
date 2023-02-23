@@ -1,0 +1,5 @@
+set tidb_cost_model_version=1;
+show tables like '%xx';
+Tables_in_test (%xx)
+show databases like '%xx';
+Database (%xx)

@@ -17,33 +17,113 @@ package kv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-// RunInNewTxn will run the f in a new transaction environment.
+const (
+	// TimeToPrintLongTimeInternalTxn is the duration if the internal transaction lasts more than it,
+	// TiDB prints a log message.
+	TimeToPrintLongTimeInternalTxn = time.Minute * 5
+)
+
+var globalInnerTxnTsBox = innerTxnStartTsBox{
+	innerTSLock:        sync.Mutex{},
+	innerTxnStartTsMap: make(map[uint64]struct{}, 256),
+}
+
+type innerTxnStartTsBox struct {
+	innerTSLock        sync.Mutex
+	innerTxnStartTsMap map[uint64]struct{}
+}
+
+func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
+	ib.innerTSLock.Lock()
+	ib.innerTxnStartTsMap[startTS] = struct{}{}
+	ib.innerTSLock.Unlock()
+}
+
+func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
+	ib.innerTSLock.Lock()
+	delete(ib.innerTxnStartTsMap, startTS)
+	ib.innerTSLock.Unlock()
+}
+
+// GetMinInnerTxnStartTS get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox.
+func GetMinInnerTxnStartTS(now time.Time, startTSLowerLimit uint64,
+	curMinStartTS uint64) uint64 {
+	return globalInnerTxnTsBox.getMinStartTS(now, startTSLowerLimit, curMinStartTS)
+}
+
+func (ib *innerTxnStartTsBox) getMinStartTS(now time.Time, startTSLowerLimit uint64,
+	curMinStartTS uint64) uint64 {
+	minStartTS := curMinStartTS
+	ib.innerTSLock.Lock()
+	for innerTS := range ib.innerTxnStartTsMap {
+		PrintLongTimeInternalTxn(now, innerTS, true)
+		if innerTS > startTSLowerLimit && innerTS < minStartTS {
+			minStartTS = innerTS
+		}
+	}
+	ib.innerTSLock.Unlock()
+	return minStartTS
+}
+
+// PrintLongTimeInternalTxn print the internal transaction information.
+// runByFunction	true means the transaction is run by `RunInNewTxn`,
+//
+//	false means the transaction is run by internal session.
+func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool) {
+	if startTS > 0 {
+		innerTxnStartTime := oracle.GetTimeFromTS(startTS)
+		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
+			callerName := "internal session"
+			if runByFunction {
+				callerName = "RunInNewTxn"
+			}
+			infoHeader := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
+
+			logutil.BgLogger().Info(infoHeader,
+				zap.Duration("time", now.Sub(innerTxnStartTime)), zap.Uint64("startTS", startTS),
+				zap.Time("start time", innerTxnStartTime))
+		}
+	}
+}
+
+// RunInNewTxn will run the f in a new transaction environment, should be used by inner txn only.
 func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
 		err           error
 		originalTxnTS uint64
 		txn           Transaction
 	)
+
+	defer func() {
+		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
+	}()
+
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err
 		}
+		setRequestSourceForInnerTxn(ctx, txn)
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()
+			globalInnerTxnTsBox.storeInnerTxnTS(originalTxnTS)
 		}
 
 		err = f(ctx, txn)
@@ -64,6 +144,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			if v := val.(string); len(v) > 0 {
 				switch v {
 				case "retry_once":
+					//nolint:noloopclosure
 					if i == 0 {
 						err = ErrTxnRetryable
 					}
@@ -109,4 +190,27 @@ func BackOff(attempts uint) int {
 	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond // #nosec G404
 	time.Sleep(sleep)
 	return int(sleep)
+}
+
+func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
+	if source := ctx.Value(RequestSourceKey); source != nil {
+		requestSource := source.(RequestSource)
+		if requestSource.RequestSourceType != "" {
+			if !requestSource.RequestSourceInternal {
+				logutil.Logger(ctx).Warn("`RunInNewTxn` should be used by inner txn only")
+			}
+			txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
+			txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+			return
+		}
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if intest.InTest {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
+			"the `RequestSourceTypeKey` is missing in the context")
+	}
 }

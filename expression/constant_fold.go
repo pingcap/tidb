@@ -40,7 +40,10 @@ func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
 	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
-	e.GetType().Charset, e.GetType().Collate = expr.GetType().Charset, expr.GetType().Collate
+
+	charset, collate := expr.GetType().GetCharset(), expr.GetType().GetCollate()
+	e.GetType().SetCharset(charset)
+	e.GetType().SetCollate(collate)
 	e.SetRepertoire(expr.Repertoire())
 	return e
 }
@@ -62,7 +65,7 @@ func isNullHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return &Constant{Value: value, RetType: expr.RetType}, false
 	}
-	if mysql.HasNotNullFlag(arg0.GetType().Flag) {
+	if mysql.HasNotNullFlag(arg0.GetType().GetFlag()) {
 		return NewZero(), false
 	}
 	return expr, false
@@ -123,7 +126,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 				foldedExpr, isDeferred := foldConstant(args[i+1])
 				isDeferredConst = isDeferredConst || isDeferred
 				if _, isConst := foldedExpr.(*Constant); isConst {
-					foldedExpr.GetType().Decimal = expr.GetType().Decimal
+					foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
 					return foldedExpr, isDeferredConst
 				}
 				return foldedExpr, isDeferredConst
@@ -140,7 +143,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 		foldedExpr, isDeferred := foldConstant(args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
 		if _, isConst := foldedExpr.(*Constant); isConst {
-			foldedExpr.GetType().Decimal = expr.GetType().Decimal
+			foldedExpr.GetType().SetDecimal(expr.GetType().GetDecimal())
 			return foldedExpr, isDeferredConst
 		}
 		return foldedExpr, isDeferredConst
@@ -175,7 +178,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 			}
 		}
 		if !allConstArg {
-			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
+			// try to optimize on the situation when not all arguments are const
+			// for most functions, if one of the arguments are NULL, the result can be a constant (NULL or something else)
+			//
+			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
+			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
+			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))
@@ -216,9 +224,9 @@ func foldConstant(expr Expression) (Expression, bool) {
 			// set right not null flag for constant value
 			switch value.Kind() {
 			case types.KindNull:
-				retType.Flag &= ^mysql.NotNullFlag
+				retType.DelFlag(mysql.NotNullFlag)
 			default:
-				retType.Flag |= mysql.NotNullFlag
+				retType.AddFlag(mysql.NotNullFlag)
 			}
 		}
 		if err != nil {

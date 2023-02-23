@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "unistore",
+    srcs = [
+        "cluster.go",
+        "mock.go",
+        "pd.go",
+        "raw_handler.go",
+        "rpc.go",
+        "testutil.go",
+    ],
+    importpath = "github.com/pingcap/tidb/store/mockstore/unistore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/terror",
+        "//store/mockstore/unistore/config",
+        "//store/mockstore/unistore/lockstore",
+        "//store/mockstore/unistore/server",
+        "//store/mockstore/unistore/tikv",
+        "//tablecodec",
+        "//util/codec",
+        "//util/topsql/state",
+        "@com_github_golang_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_pingcap_kvproto//pkg/debugpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/mpp",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//metadata",
+    ],
+)
+
+go_test(
+    name = "unistore_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "pd_test.go",
+        "raw_handler_test.go",
+    ],
+    embed = [":unistore"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

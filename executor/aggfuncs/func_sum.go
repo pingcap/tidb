@@ -174,11 +174,11 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	if e.retTp == nil {
 		return errors.New("e.retTp of sum should not be nil")
 	}
-	frac := e.retTp.Decimal
+	frac := e.retTp.GetDecimal()
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -358,6 +358,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 		if p.isNull {
 			p.val = *input
 			p.isNull = false

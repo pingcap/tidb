@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -70,7 +69,7 @@ func TestDumpBinaryTime(t *testing.T) {
 	d = dumpBinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	myDuration, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
+	myDuration, _, err := types.ParseDuration(sc, "0000-00-00 00:00:00.000000", 6)
 	require.NoError(t, err)
 	d = dumpBinaryTime(myDuration.Duration)
 	require.Equal(t, []byte{0}, d)
@@ -186,7 +185,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
 
-	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
 	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -194,7 +193,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
-	duration, err := types.ParseDuration(sc, "11:30:45", 0)
+	duration, _, err := types.ParseDuration(sc, "11:30:45", 0)
 	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
@@ -235,7 +234,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, "sname", mustDecodeStr(t, bs))
 
 	js := types.Datum{}
-	binaryJSON, err := json.ParseBinaryFromString(`{"a": 1, "b": 2}`)
+	binaryJSON, err := types.ParseBinaryJSONFromString(`{"a": 1, "b": 2}`)
 	require.NoError(t, err)
 	js.SetMysqlJSON(binaryJSON)
 	columns[0].Type = mysql.TypeJSON

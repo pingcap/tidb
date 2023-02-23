@@ -103,22 +103,31 @@ func makeJSONSchema(schema *backuppb.Schema) (*jsonSchema, error) {
 	if err := json.Unmarshal(schema.Db, &result.DB); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := json.Unmarshal(schema.Table, &result.Table); err != nil {
-		return nil, errors.Trace(err)
+
+	if schema.Table != nil {
+		if err := json.Unmarshal(schema.Table, &result.Table); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return result, nil
 }
 
 func fromJSONSchema(jSchema *jsonSchema) (*backuppb.Schema, error) {
 	schema := jSchema.Schema
+	if schema == nil {
+		schema = &backuppb.Schema{}
+	}
+
 	var err error
 	schema.Db, err = json.Marshal(jSchema.DB)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	schema.Table, err = json.Marshal(jSchema.Table)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if jSchema.Table != nil {
+		schema.Table, err = json.Marshal(jSchema.Table)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return schema, nil
 }
@@ -157,6 +166,7 @@ func makeJSONBackupMeta(meta *backuppb.BackupMeta) (*jsonBackupMeta, error) {
 
 func fromJSONBackupMeta(jMeta *jsonBackupMeta) (*backuppb.BackupMeta, error) {
 	meta := jMeta.BackupMeta
+
 	for _, schema := range jMeta.Schemas {
 		s, err := fromJSONSchema(schema)
 		if err != nil {

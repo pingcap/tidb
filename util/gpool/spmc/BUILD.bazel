@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spmc",
+    srcs = [
+        "option.go",
+        "spmcpool.go",
+        "worker.go",
+        "worker_loop_queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/gpool/spmc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//metrics",
+        "//resourcemanager",
+        "//resourcemanager/pooltask",
+        "//resourcemanager/util",
+        "//util/gpool",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "spmc_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "spmcpool_benchmark_test.go",
+        "spmcpool_test.go",
+        "worker_loop_queue_test.go",
+    ],
+    embed = [":spmc"],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//resourcemanager/pooltask",
+        "//resourcemanager/util",
+        "//testkit/testsetup",
+        "//util",
+        "//util/gpool",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

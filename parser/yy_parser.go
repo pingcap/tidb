@@ -52,6 +52,8 @@ var (
 	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)
 	// ErrWrongValue returns for wrong value
 	ErrWrongValue = terror.ClassParser.NewStd(mysql.ErrWrongValue)
+	// ErrWarnDeprecatedSyntax return when the syntax was deprecated
+	ErrWarnDeprecatedSyntax = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntax)
 	// ErrWarnDeprecatedSyntaxNoReplacement return when the syntax was deprecated and there is no replacement.
 	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
 	// ErrWarnDeprecatedIntegerDisplayWidth share the same code 1681, and it will be returned when length is specified in integer.
@@ -70,11 +72,16 @@ func TrimComment(txt string) string {
 	return specCodeEnd.ReplaceAllString(txt, "")
 }
 
+//revive:disable:exported
+
+// ParserConfig is the parser config.
 type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
 	SkipPositionRecording       bool
 }
+
+//revive:enable:exported
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
@@ -126,10 +133,12 @@ func New() *Parser {
 	return p
 }
 
+// SetStrictDoubleTypeCheck enables/disables strict double type check.
 func (parser *Parser) SetStrictDoubleTypeCheck(val bool) {
 	parser.strictDoubleFieldType = val
 }
 
+// SetParserConfig sets the parser config.
 func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
@@ -139,18 +148,16 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 // ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	resetParams(parser)
+	parser.lexer.reset(sql)
 	for _, p := range params {
 		if err := p.ApplyOn(parser); err != nil {
 			return nil, nil, err
 		}
 	}
-	sql = parser.lexer.tryDecodeToUTF8String(sql)
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	var l yyLexer
-	parser.lexer.reset(sql)
-	l = &parser.lexer
+	var l yyLexer = &parser.lexer
 	yyParse(l, parser)
 
 	warns, errs := l.Errors()
@@ -218,12 +225,12 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 		return
 	}
 	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset+len(lastField.Text()) >= len(parser.src)-1 {
-		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+	if lastField.Offset+len(lastField.OriginalText()) >= len(parser.src)-1 {
+		lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 	}
 }
 
-func (parser *Parser) startOffset(v *yySymType) int {
+func (*Parser) startOffset(v *yySymType) int {
 	return v.offset
 }
 
@@ -258,7 +265,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 			return toDecimal(l, lval, str)
 		}
 		l.AppendError(l.Errorf("integer literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	switch {
@@ -290,10 +297,10 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 		e := err.(*strconv.NumError)
 		if e.Err == strconv.ErrRange {
 			l.AppendError(types.ErrIllegalValueForType.GenWithStackByArgs("double", str))
-			return int(unicode.ReplacementChar)
+			return invalid
 		}
 		l.AppendError(l.Errorf("float literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	lval.item = n
@@ -305,7 +312,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 	h, err := ast.NewHexLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("hex literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = h
 	return hexLit
@@ -316,7 +323,7 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	b, err := ast.NewBitLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("bit literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = b
 	return bitLit
@@ -336,8 +343,9 @@ func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
 	switch v := num.(type) {
 	case int64:
 		return v, ""
+	default:
+		return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
 	}
-	return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
 }
 
 func isRevokeAllGrant(roleOrPrivList []*ast.RoleOrPriv) bool {
@@ -396,7 +404,6 @@ var (
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
-	p.lexer.encoding = charset.UTF8Encoding
 }
 
 // ParseParam represents the parameter of parsing.
@@ -414,6 +421,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
+	p.lexer.connection = charset.FindEncoding(string(c))
 	return nil
 }
 
@@ -436,6 +444,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.encoding = charset.NewEncoding(string(c))
+	p.lexer.client = charset.FindEncoding(string(c))
 	return nil
 }

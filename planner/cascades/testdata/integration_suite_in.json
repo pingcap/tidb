@@ -124,7 +124,7 @@
   {
     "name": "TestMemTableScan",
     "cases": [
-      "select * from information_schema.processlist"
+      "select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist"
     ]
   },
   {
@@ -142,7 +142,7 @@
   {
     "name": "TestCascadePlannerHashedPartTable",
     "cases": [
-      "select * from pt1"
+      "select * from pt1 order by a"
     ]
   },
   {
