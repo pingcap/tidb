@@ -2155,6 +2155,8 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		dbt.MustExec("prepare stmt2 from 'select * from test'")
 		dbt.MustExec("execute stmt2")
 		dbt.MustExec("replace into test(a) values(6);")
+		// test for CTE
+		dbt.MustExec("WITH RECURSIVE cte (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM cte WHERE n < 5) SELECT * FROM cte;")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
 		require.Equal(t, originStmtCnt["CreateTable"]+1, currentStmtCnt["CreateTable"])
