@@ -288,26 +288,37 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.CreateIndexStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.CreateTableStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.InsertStmt:
-		dbLabels := getDbFromResultNode(x.Table.TableRefs)
-		for _, db := range dbLabels {
-			dbLabelSet[db] = struct{}{}
+		var dbLabels []string
+		if x.Table != nil {
+			dbLabels = getDbFromResultNode(x.Table.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
 		}
 		dbLabels = getDbFromResultNode(x.Select)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.DropIndexStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.DropTableStmt:
 		tables := x.Tables
 		for _, table := range tables {
@@ -401,7 +412,9 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 			return getDbFromResultNode(x.From.TableRefs)
 		}
 	case *ast.TableName:
-		dbLabels = append(dbLabels, x.DBInfo.Name.O)
+		if x.DBInfo != nil {
+			dbLabels = append(dbLabels, x.DBInfo.Name.O)
+		}
 	case *ast.Join:
 		if x.Left != nil {
 			dbs := getDbFromResultNode(x.Left)
