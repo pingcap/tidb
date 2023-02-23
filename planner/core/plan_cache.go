@@ -407,7 +407,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if isUnsafeRange(x.AccessConditions, ranges) {
+				if isUnsafeRange(x.AccessConditions, ranges, false) {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
@@ -415,9 +415,13 @@ func rebuildRange(p Plan) error {
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true // general unsigned int primary key
 					}
 				}
 				if pkCol != nil {
@@ -429,7 +433,7 @@ func rebuildRange(p Plan) error {
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
-					}) {
+					}, unsignedIntHandle) {
 						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
@@ -472,7 +476,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) != len(x.IndexValues) || isUnsafeRange(x.AccessConditions, ranges) {
+				if len(ranges.Ranges) != len(x.IndexValues) || isUnsafeRange(x.AccessConditions, ranges, false) {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
@@ -480,9 +484,13 @@ func rebuildRange(p Plan) error {
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true // general unsigned int primary key
 					}
 				}
 				if pkCol != nil {
@@ -494,7 +502,7 @@ func rebuildRange(p Plan) error {
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
-					}) {
+					}, unsignedIntHandle) {
 						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					for i := range ranges {
@@ -605,7 +613,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			if err != nil {
 				return err
 			}
-			if isUnsafeRange(ts.AccessCondition, res) {
+			if isUnsafeRange(ts.AccessCondition, res, false) {
 				return errors.New("rebuild range for cached plan failed")
 			}
 			ts.Ranges = res.Ranges
@@ -629,7 +637,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 				Ranges:        ts.Ranges,
 				AccessConds:   accessConds,
 				RemainedConds: remainingConds,
-			}) {
+			}, true) {
 				return errors.New("rebuild range for cached plan failed")
 			}
 		} else {
@@ -648,7 +656,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	if err != nil {
 		return err
 	}
-	if isUnsafeRange(is.AccessCondition, res) {
+	if isUnsafeRange(is.AccessCondition, res, false) {
 		return errors.New("rebuild range for cached plan failed")
 	}
 	is.Ranges = res.Ranges
@@ -661,12 +669,14 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 // For example, the first time the planner can build a range `(2, 5)` from `a>2 and a<(?)5`, but if the
 // parameter changes to `(?)1`, then it'll get an unsafe range `(empty)`.
 // To make plan-cache safer, let the planner abandon the cached plan if it gets an unsafe range here.
-func isUnsafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult) (unsafe bool) {
+func isUnsafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult, unsignedIntHandle bool) (unsafe bool) {
 	if len(rebuiltResult.RemainedConds) > 0 || // the ranger generates some other extra conditions
 		len(rebuiltResult.AccessConds) != len(accessConds) || // not all access conditions are used
-		len(rebuiltResult.Ranges) == 0 { // get an empty range
+		len(rebuiltResult.Ranges) == 0 || // get an empty range
+		(len(accessConds) > 0 && ranger.HasFullRange(rebuiltResult.Ranges, unsignedIntHandle)) { // have a full range
 		return true
 	}
+
 	return false
 }
 
