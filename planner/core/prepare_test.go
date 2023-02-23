@@ -2087,7 +2087,7 @@ func TestIssue28246(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("9223372036854775807"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // fail to build the range
 }
 
 func TestIssue29805(t *testing.T) {
