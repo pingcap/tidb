@@ -2997,7 +2997,7 @@ type mockProxyProtocolProxy struct {
 	clientAddr    string
 	backendIsSock bool
 	ln            net.Listener
-	run           atomic.Bool
+	run           bool
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -3007,6 +3007,7 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
+		run:           false,
 	}
 }
 
@@ -3015,12 +3016,12 @@ func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
 }
 
 func (p *mockProxyProtocolProxy) Run() (err error) {
-	p.run.Store(true)
+	p.run = true
 	p.ln, err = net.Listen("tcp", p.frontend)
 	if err != nil {
 		return err
 	}
-	for p.run.Load() {
+	for p.run {
 		conn, err := p.ln.Accept()
 		if err != nil {
 			break
@@ -3031,7 +3032,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 }
 
 func (p *mockProxyProtocolProxy) Close() error {
-	p.run.Store(false)
+	p.run = false
 	if p.ln != nil {
 		return p.ln.Close()
 	}
