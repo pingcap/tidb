@@ -204,8 +204,8 @@ func (p *Pool) release() {
 	p.cond.Broadcast()
 }
 
-// ReleaseAndWait is like Release, it waits all workers to exit.
-func (p *Pool) ReleaseAndWait() {
+// Wait waits all workers to exit.
+func (p *Pool) Wait() {
 	if p.IsClosed() {
 		return
 	}
