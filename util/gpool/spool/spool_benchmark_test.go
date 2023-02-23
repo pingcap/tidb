@@ -13,12 +13,12 @@ import (
 const (
 	RunTimes           = 1e6
 	PoolCap            = 5e4
-	BenchParam         = 10
+	BenchParam         = 35
 	DefaultExpiredTime = 10 * time.Second
 )
 
 func demoFunc() {
-	f(35)
+	f(BenchParam)
 }
 
 func demoPoolFunc(args interface{}) {
