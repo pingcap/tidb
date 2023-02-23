@@ -415,8 +415,10 @@ func (s *streamMgr) checkRestoreRunning(ctx context.Context) error {
 		}
 		if resp.Mode == import_sstpb.SwitchMode_Import {
 			return errors.Errorf("The store %s is in import mode, "+
-				"there may be a lightning/restore task runing, "+
-				"please stop or wait finishing at first", store.GetAddress())
+				"there may be a lightning/restore task running, "+
+				"please stop or wait finishing at first."+
+				"If the lightning/restore task is terminated or killed, "+
+				"please wait 10 minutes for tikv to reback from import mode to normal mode", store.GetAddress())
 		}
 	}
 
