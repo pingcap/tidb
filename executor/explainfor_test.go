@@ -734,12 +734,11 @@ func TestIssue28696(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[4][0])
-	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[5][0])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
+	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[4][0])
 
 	res = tk.MustQuery("explain format = 'brief' select a from t1 where b = 'bbcsa';")
 	require.Len(t, res.Rows(), 5)
@@ -780,13 +779,12 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 7)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 6)
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
+	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
-	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[4][4])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[5][0])
-	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[5][4])
+	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[4][4])
 
 	// test for cluster index in indexMerge
 	tk.MustExec("drop table if exists t;")
@@ -800,13 +798,12 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[2][0])
-	require.Equal(t, "range:(0,3), keep order:false, stats:pseudo", res.Rows()[2][4])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Equal(t, "range:(1,+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[1][0])
+	require.Equal(t, "range:(0,3), keep order:false, stats:pseudo", res.Rows()[1][4])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Equal(t, "range:(1,+inf], keep order:false, stats:pseudo", res.Rows()[2][4])
 
 	// test for prefix index
 	tk.MustExec("drop table if exists t1;")
@@ -821,7 +818,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
@@ -830,7 +827,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
 
 	// rewrite the origin indexMerge test
 	tk.MustExec("drop table if exists t;")
