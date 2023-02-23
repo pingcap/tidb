@@ -360,11 +360,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName interface{}
 		var partitionIDs []int64
+		indexName := make([]interface{}, 1)
 		ifExists := make([]bool, 1)
 		indexID := make([]int64, 1)
-		if err := job.DecodeArgs(&indexName, &ifExists[0], &indexID[0], &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName[0], &ifExists[0], &indexID[0], &partitionIDs); err != nil {
 			if err = job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 				return errors.Trace(err)
 			}
