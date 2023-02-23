@@ -476,6 +476,7 @@ func (e *LoadDataWorker) processStream(
 			return
 		}
 
+	TrySendTask:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -484,6 +485,7 @@ func (e *LoadDataWorker) processStream(
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
 				return ErrQueryInterrupted
 			}
+			goto TrySendTask
 		case e.commitTaskQueue <- commitTask{e.curBatchCnt, e.rows}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
