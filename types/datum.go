@@ -2534,12 +2534,3 @@ func (d Datum) EstimatedMemUsage() int64 {
 	}
 	return int64(bytesConsumed)
 }
-
-// CalcBytesHash is used to calculate the hash value of data
-func CalcBytesHash(data []byte, nr1, nr2 uint64) (uint64, uint64) {
-	for _, d := range data {
-		nr1 ^= ((nr1&63)+nr2)*(uint64(d)) + (nr1 << 8)
-		nr2 += 3
-	}
-	return nr1, nr2
-}
