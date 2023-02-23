@@ -38,7 +38,7 @@ type PDRegionScanner struct {
 }
 
 // Updates the service GC safe point for the cluster.
-// Returns the latest service GC safe point.
+// Returns the minimal service GC safe point accross all services.
 // If the arguments is `0`, this would remove the service safe point.
 func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)

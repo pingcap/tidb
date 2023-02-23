@@ -191,18 +191,13 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
 		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
 	if len(targets) == 0 {
-		c.checkpointsMu.Lock()
-		defer c.checkpointsMu.Unlock()
-		return c.checkpoints.MinValue(), nil
+		return minValue.Value, nil
 	}
 	err := c.tryAdvance(ctx, len(targets), func(i int) kv.KeyRange { return targets[i].Key })
 	if err != nil {
 		return 0, err
 	}
-	c.checkpointsMu.Lock()
-	ts := c.checkpoints.MinValue()
-	c.checkpointsMu.Unlock()
-	return ts, nil
+	return minValue.Value, nil
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -405,10 +400,15 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	}
 	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint-1)
 	if err != nil {
-		return errors.Annotate(err, "failed to update service GC safe point")
+		return errors.Annotatef(err,
+			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
+			c.lastCheckpoint-1, p)
 	}
-	if p >= c.lastCheckpoint-1 {
-		log.Info("updated log backup GC safe point.", zap.Uint64("checkpoint", p))
+	if p <= c.lastCheckpoint-1 {
+		log.Info("updated log backup GC safe point.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+	}
+	if p > c.lastCheckpoint-1 {
+		log.Warn("update log backup GC safe point failed: stale.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
 	}
 	return nil
 }
