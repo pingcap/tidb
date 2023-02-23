@@ -367,7 +367,7 @@ type local struct {
 	localWriterMemCacheSize int64
 	supportMultiIngest      bool
 
-	checkTiKVAvaliable  bool
+	shouldCheckTiKV     bool
 	duplicateDetection  bool
 	duplicateDetectOpt  dupDetectOpt
 	duplicateDB         *pebble.DB
@@ -500,7 +500,7 @@ func NewLocalBackend(
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		duplicateDetection:      duplicateDetection,
 		duplicateDetectOpt:      dupDetectOpt{duplicateDetection && cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		checkTiKVAvaliable:      cfg.App.CheckRequirements,
+		shouldCheckTiKV:         cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		keyAdapter:              keyAdapter,
 		errorMgr:                errorMgr,
@@ -1140,7 +1140,7 @@ func (local *local) writeAndIngestPairs(
 		failpoint.Return(
 			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
 	})
-	if local.checkTiKVAvaliable {
+	if local.shouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
 			var (
 				store *pdtypes.StoreInfo
