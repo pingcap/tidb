@@ -1242,7 +1242,8 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
-	// TODO: Add cases for adding DEFAULT partition (should work if there are no DEFAULT partition defined)
+	tk.MustExec(`alter table t add partition (partition pDef values in (default, 6))`)
+	tk.MustContainErrMsg(`alter table t add partition (partition pDef2 values in (10, default))`, `[ddl:1495]Multiple definition of same constant in list partitioning`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1252,7 +1253,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	require.True(t, part.Type == model.PartitionTypeList)
 
 	require.Equal(t, "`id`", part.Expr)
-	require.Len(t, part.Definitions, 5)
+	require.Len(t, part.Definitions, 6)
 	require.Equal(t, [][]string{{"1"}, {"2"}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
 	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
@@ -1263,6 +1264,8 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
 	require.Equal(t, [][]string{{"8"}, {"9"}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
+	require.Equal(t, [][]string{{"DEFAULT"}, {"6"}}, part.Definitions[5].InValues)
+	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
 	errorCases := []struct {
 		sql string
@@ -1356,10 +1359,50 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	    partition p3 values in ((5,null))
 	);`)
 	tk.MustExec(`alter table t add partition (
-		partition p4 values in ((7,'a')),
-		partition p5 values in ((8,'a')));`)
+			partition p4 values in ((7,'a')),
+			partition p5 values in ((8,'a')));`)
+	// We only support a single DEFAULT (catch-all),
+	// Not a DEFAULT per column in LIST COLUMNS!
+	tk.MustGetErrMsg(`alter table t add partition (
+			partition pDef values in (10, default))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
+	tk.MustGetErrCode(`alter table t add partition (
+			partition pDef values in ((10, default)))`, errno.ErrParse)
+	tk.MustGetErrMsg(`alter table t add partition (
+			partition pDef values in (default, 10))`, `[ddl:1653]Inconsistency in usage of column lists for partitioning`)
+	tk.MustGetErrCode(`alter table t add partition (
+			partition pDef values in ((default, 10)))`, errno.ErrParse)
+	tk.MustGetErrCode(`alter table t add partition (
+			partition pDef values in ((9,'a'), (default, 10, 'q'))`, errno.ErrParse)
+	tk.MustGetErrCode(`alter table t add partition (
+			partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default))`)
+	tk.MustGetErrMsg(`alter table t add partition (
+		partition pDef2 values in (default))`,
+		"[ddl:1495]Multiple definition of same constant in list partitioning")
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9, 'c'), default))`)
+	// DEFAULT cannot be within parentheses (i.e. like a list).
+	tk.MustGetErrCode(`alter table t add partition (
+		partition pDef values in ((9, 'c'), (default)))`, errno.ErrParse)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default, (9,'c')))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9,'d'), default))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in (default, (9,'c'), (10, 'd')))`)
+	tk.MustExec(`alter table t drop partition pDef`)
+	tk.MustExec(`alter table t add partition (
+		partition pDef values in ((9,'d'), default, (10, 'd')))`)
+	// After a default value is included in a partition,
+	// it can no longer support ADD PARTITION, but should do REORGANIZE instead.
+	tk.MustGetErrCode(`alter table t add partition (
+		partition pDef values in ((9,'a'), (10, default, 'q'))`, errno.ErrParse)
 
-	// TODO: Add cases for adding DEFAULT partition (should work if there are no DEFAULT partition defined)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1371,7 +1414,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "", part.Expr)
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
-	require.Len(t, part.Definitions, 5)
+	require.Len(t, part.Definitions, 6)
 	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
 	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
@@ -1382,21 +1425,26 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
 	require.Equal(t, [][]string{{"8", `'a'`}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
+	require.Equal(t, [][]string{{"9", `'d'`}, {`DEFAULT`}, {`10`, `'d'`}}, part.Definitions[5].InValues)
+	require.Equal(t, model.NewCIStr("pDef"), part.Definitions[5].Name)
 
 	errorCases := []struct {
 		sql string
 		err *terror.Error
 	}{
-		{"alter table t add partition (partition p4 values in ((7,'b')))",
+		{"alter table t add partition (partition p3 values in ((7,'b')))",
 			dbterror.ErrSameNamePartition,
 		},
-		{"alter table t add partition (partition p6 values less than ((7,'a')))",
+		{"alter table t add partition (partition p4 values less than ((7,'a')))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in ((5,null)))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
-		{"alter table t add partition (partition p6 values in ((7,'a')))",
+		{"alter table t add partition (partition p6 values in ((9,'d')))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
+		{"alter table t add partition (partition p6 values in (default))",
 			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (('a','a')))",

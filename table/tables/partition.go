@@ -385,6 +385,9 @@ type ForListColumnPruning struct {
 	schema  *expression.Schema
 	names   types.NameSlice
 	colIdx  int
+
+	// catch-all partition / DEFAULT
+	defaultPartID int64
 }
 
 // ListPartitionGroup indicate the group index of the column value in a partition.
@@ -915,9 +918,15 @@ func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Pars
 
 func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Parser, defs []model.PartitionDefinition) error {
 	sc := lp.ctx.GetSessionVars().StmtCtx
+DEFS:
 	for partitionIdx, def := range defs {
 		for groupIdx, vs := range def.InValues {
 			// TODO: Add support for DEFAULT partition
+			// TODO: Use correct constant for "DEFAULT"
+			if len(vs) == 1 && vs[0] == "DEFAULT" {
+				lp.defaultPartID = def.ID
+				continue DEFS
+			}
 			keyBytes, err := lp.genConstExprKey(lp.ctx, sc, vs[lp.colIdx], lp.schema, lp.names, p)
 			if err != nil {
 				return errors.Trace(err)
