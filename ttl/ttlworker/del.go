@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -86,69 +84,7 @@ type ttlDeleteTask struct {
 }
 
 func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum) {
-	tracer := metrics.PhaseTracerFromCtx(ctx)
-	defer tracer.EnterPhase(tracer.Phase())
-	tracer.EnterPhase(metrics.PhaseOther)
-
-	leftRows := t.rows
-	se := newTableSession(rawSe, t.tbl, t.expire)
-	for len(leftRows) > 0 {
-		maxBatch := variable.TTLDeleteBatchSize.Load()
-		var delBatch [][]types.Datum
-		if int64(len(leftRows)) < maxBatch {
-			delBatch = leftRows
-			leftRows = nil
-		} else {
-			delBatch = leftRows[0:maxBatch]
-			leftRows = leftRows[maxBatch:]
-		}
-
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
-		if err != nil {
-			t.statistics.IncErrorRows(len(delBatch))
-			logutil.BgLogger().Warn(
-				"build delete SQL in TTL failed",
-				zap.Error(err),
-				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
-			)
-			return
-		}
-
-		tracer.EnterPhase(metrics.PhaseWaitToken)
-		if err = globalDelRateLimiter.Wait(ctx); err != nil {
-			t.statistics.IncErrorRows(len(delBatch))
-			return
-		}
-		tracer.EnterPhase(metrics.PhaseOther)
-
-		sqlStart := time.Now()
-		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
-		sqlInterval := time.Since(sqlStart)
-		if err != nil {
-			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
-			needRetry = needRetry && ctx.Err() == nil
-			logutil.BgLogger().Warn(
-				"delete SQL in TTL failed",
-				zap.Error(err),
-				zap.String("SQL", sql),
-				zap.Bool("needRetry", needRetry),
-			)
-
-			if needRetry {
-				if retryRows == nil {
-					retryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
-				}
-				retryRows = append(retryRows, delBatch...)
-			} else {
-				t.statistics.IncErrorRows(len(delBatch))
-			}
-			continue
-		}
-
-		metrics.DeleteSuccessDuration.Observe(sqlInterval.Seconds())
-		t.statistics.IncSuccessRows(len(delBatch))
-	}
-	return retryRows
+	return nil
 }
 
 type ttlDelRetryItem struct {
