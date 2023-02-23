@@ -8,7 +8,8 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 30,
+    race = "on",
+    shard_count = 20,
     deps = [
         "//config",
         "//executor",
