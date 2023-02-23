@@ -438,9 +438,8 @@ func (j *regionJob) doIngest(
 	}
 
 	var resp *sst.IngestResponse
-	for i := 0; i < len(j.writeResult.sstMeta); i += batch {
-		start := i * batch
-		end := mathutil.Min((i+1)*batch, len(j.writeResult.sstMeta))
+	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
+		end := mathutil.Min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
