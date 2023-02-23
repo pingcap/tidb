@@ -13,7 +13,6 @@ go_library(
     deps = [
         "//metrics",
         "//resourcemanager",
-        "//resourcemanager/pooltask",
         "//resourcemanager/util",
         "//util/gpool",
         "@com_github_pingcap_errors//:errors",
@@ -26,10 +25,17 @@ go_library(
 
 go_test(
     name = "spool_test",
-    srcs = ["worker_loop_queue_test.go"],
+    srcs = [
+        "spool_benchmark_test.go",
+        "spool_test.go",
+        "worker_loop_queue_test.go",
+    ],
     embed = [":spool"],
     deps = [
+        "//resourcemanager/util",
         "@com_github_stretchr_testify//require",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
     ],
 )
