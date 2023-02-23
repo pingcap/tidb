@@ -41,6 +41,12 @@ import (
 
 type jobStageTp string
 
+// nil -> regionScanned: create a new region job
+// regionScanned -> wrote: write the data to TiKV
+// wrote -> ingested: ingest the data to TiKV
+// ingested -> nil: finish the job
+// regionScanned / wrote -> needRescan: need to rescan the data, maybe region is expanded.
+// needRescan -> nil: discard the job. caller will create a new job from unfinishedRanges.
 const (
 	regionScanned jobStageTp = "regionScanned"
 	wrote         jobStageTp = "wrote"
@@ -309,7 +315,7 @@ func (j *regionJob) writeToTiKV(
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
-		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size),
+		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
 		zap.Stringer("takeTime", time.Since(begin)))
 
