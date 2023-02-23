@@ -40,6 +40,7 @@ go_library(
         "//kv",
         "//parser/model",
         "//parser/mysql",
+        "//store/pdtypes",
         "//table",
         "//tablecodec",
         "//types",
