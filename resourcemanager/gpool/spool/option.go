@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-const defaultTaskChanLen = 1
-
 // Option represents the optional function.
 type Option func(opts *Options)
 
@@ -42,7 +40,7 @@ type Options struct {
 	// used for more than `ExpiryDuration`.
 	ExpiryDuration time.Duration
 
-	// Max number of goroutine blocking on pool.Submit.
+	// Max number of goroutine blocking on pool.Run.
 	// 0 (default value) means no such limit.
 	MaxBlockingTasks int
 
@@ -84,31 +82,5 @@ func WithNonblocking(nonblocking bool) Option {
 func WithPanicHandler(panicHandler func(interface{})) Option {
 	return func(opts *Options) {
 		opts.PanicHandler = panicHandler
-	}
-}
-
-// TaskOption represents the optional function.
-type TaskOption func(opts *TaskOptions)
-
-func loadTaskOptions(options ...TaskOption) *TaskOptions {
-	opts := new(TaskOptions)
-	for _, option := range options {
-		option(opts)
-	}
-	if opts.Concurrency == 0 {
-		opts.Concurrency = 1
-	}
-	return opts
-}
-
-// TaskOptions contains all options
-type TaskOptions struct {
-	Concurrency int
-}
-
-// WithConcurrency is to set the concurrency of task.
-func WithConcurrency(c int) TaskOption {
-	return func(opts *TaskOptions) {
-		opts.Concurrency = c
 	}
 }

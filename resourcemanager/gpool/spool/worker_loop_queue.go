@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
 )
 
 var (
@@ -38,7 +37,7 @@ type loopQueue struct {
 	isFull bool
 }
 
-func newWorkerLoopQueue[T any, U any, C any, CT any, TF pooltask.Context[CT]](size int) *loopQueue {
+func newWorkerLoopQueue(size int) *loopQueue {
 	return &loopQueue{
 		items: make([]*goWorker, size),
 		size:  size,
@@ -182,6 +181,7 @@ func (wq *loopQueue) reset() {
 
 Releasing:
 	if w := wq.detach(); w != nil {
+		w.task <- nil
 		goto Releasing
 	}
 	wq.items = wq.items[:0]

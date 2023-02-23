@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,16 +24,9 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/prometheus/client_golang/prometheus"
-	atomicutil "go.uber.org/atomic"
 )
 
-// Pool is a single producer, multiple consumer goroutine pool.
-// T is the type of the task. We can treat it as input.
-// U is the type of the result. We can treat it as output.
-// C is the type of the const parameter. if Our task look like y = ax + b, C acts like b as const parameter.
-// CT is the type of the context. It needs to be read/written parallel.
-// TF is the type of the context getter. It is used to get a context.
-// if we don't need to use CT/TF, we can define CT as any and TF as NilContext.
+// Pool is a single goroutine pool.
 type Pool struct {
 	workerCache sync.Pool
 	lock        sync.Locker
@@ -42,8 +35,8 @@ type Pool struct {
 
 	workers *loopQueue
 	options *Options
+	gpool.BasePool
 
-	waitingTask        atomicutil.Uint32
 	capacity           atomic.Int32
 	running            atomic.Int32
 	state              atomic.Int32
@@ -60,21 +53,22 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	}
 	result := &Pool{
 		stopCh:             make(chan struct{}),
-		lock:               gpool.NewSpinLock(),
+		lock:               &sync.Mutex{},
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		options:            opts,
 	}
+	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))
 	result.workerCache.New = func() interface{} {
 		return &goWorker{
 			pool: result,
+			task: make(chan func()),
 		}
 	}
 	result.capacity.Add(size)
 	result.concurrencyMetrics.Set(float64(size))
 	result.workers = newWorkerLoopQueue(int(size))
 	result.cond = sync.NewCond(result.lock)
-	// TODO: remove comment
 	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
@@ -105,7 +99,6 @@ func (p *Pool) purgePeriodically() {
 		p.lock.Lock()
 		expiredWorkers := p.workers.retrieveExpiry(p.options.ExpiryDuration)
 		p.lock.Unlock()
-
 		// Notify obsolete workers to stop.
 		// This notification must be outside the p.lock, since w.task
 		// may be blocking and may consume a lot of time if many workers
@@ -119,7 +112,7 @@ func (p *Pool) purgePeriodically() {
 		// or another case where the pool capacity has been Tuned up,
 		// while some invokers still get stuck in "p.cond.Wait()",
 		// then it ought to wake all those invokers.
-		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) || p.waitingTask.Load() > 0 {
+		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) {
 			p.cond.Broadcast()
 		}
 	}
@@ -141,6 +134,44 @@ func (p *Pool) Tune(size int) {
 		p.cond.Broadcast()
 		return
 	}
+}
+
+// Run submits a task to this pool.
+func (p *Pool) Run(task func()) error {
+	if p.IsClosed() {
+		return gpool.ErrPoolClosed
+	}
+	var w *goWorker
+	if w = p.retrieveWorker(); w == nil {
+		return gpool.ErrPoolOverload
+	}
+	w.task <- task
+	return nil
+}
+
+// RunWithConcurrency submits a task to this pool with concurrency.
+func (p *Pool) RunWithConcurrency(task func(), concurrency int) (err error) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for i := 0; i < concurrency; i++ {
+		if p.IsClosed() {
+			return gpool.ErrPoolClosed
+		}
+		var w *goWorker
+		if w = p.retrieveWorker(); w == nil {
+			if i != 0 {
+				return gpool.ErrPoolOverload
+			}
+			return nil
+		}
+		t := func() {
+			wg.Done()
+			task()
+		}
+		wg.Add(1)
+		w.task <- t
+	}
+	return nil
 }
 
 // Running returns the number of workers currently running.
@@ -182,9 +213,7 @@ func (p *Pool) addWaiting(delta int) {
 
 // release closes this pool and releases the worker queue.
 func (p *Pool) release() {
-	if !p.state.CompareAndSwap(gpool.OPENED, gpool.CLOSED) {
-		return
-	}
+	p.state.Store(gpool.CLOSED)
 	p.lock.Lock()
 	p.workers.reset()
 	p.lock.Unlock()
@@ -193,30 +222,26 @@ func (p *Pool) release() {
 	p.cond.Broadcast()
 }
 
-func isClose(exitCh chan struct{}) bool {
-	select {
-	case <-exitCh:
-		return true
-	default:
-	}
-	return false
-}
-
 // ReleaseAndWait is like Release, it waits all workers to exit.
 func (p *Pool) ReleaseAndWait() {
-	if p.IsClosed() || isClose(p.stopCh) {
+	if p.IsClosed() {
 		return
 	}
-	close(p.stopCh)
 	p.release()
+	defer close(p.stopCh)
 	defer resourcemanager.InstanceResourceManager.Unregister(p.Name())
 	for {
 		// Wait for all workers to exit and all task to be completed.
-		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {
+		if p.Running() == 0 && p.heartbeatDone.Load() {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// Close is a alias of ReleaseAndWait. It is implement of client-go.Pool
+func (p *Pool) Close() {
+	p.ReleaseAndWait()
 }
 
 func (p *Pool) run() error {
@@ -238,12 +263,11 @@ func (p *Pool) retrieveWorker() (w *goWorker) {
 	}
 
 	p.lock.Lock()
-
 	w = p.workers.detach()
 	if w != nil { // first try to fetch the worker from the queue
 		p.lock.Unlock()
 	} else if capacity := p.Cap(); capacity == -1 || capacity > p.Running() {
-		// if the worker queue is empty and we don't run out of the pool capacity,
+		// if the worker queue is empty, and we don't run out of the pool capacity,
 		// then just spawn a new worker goroutine.
 		p.lock.Unlock()
 		spawnWorker()
@@ -302,12 +326,8 @@ func (p *Pool) revertWorker(worker *goWorker) bool {
 	err := p.workers.insert(worker)
 	if err != nil {
 		p.lock.Unlock()
-		if err == errQueueIsFull && p.waitingTask.Load() > 0 {
-			return true
-		}
 		return false
 	}
-
 	// Notify the invoker stuck in 'retrieveWorker()' of there is an available worker in the worker queue.
 	p.cond.Signal()
 	p.lock.Unlock()
