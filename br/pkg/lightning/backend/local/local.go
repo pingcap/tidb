@@ -1251,7 +1251,6 @@ func (local *local) writeAndIngestPairs(
 		log.FromContext(ctx).Warn("meet retryable error when ingesting",
 			log.ShortError(err), zap.Stringer("job stage", job.stage))
 		job.lastRetryableErr = err
-		return nil
 	}
 	return nil
 }
