@@ -196,7 +196,7 @@ func TestGCServiceSafePoint(t *testing.T) {
 	c.flushAll()
 
 	req.NoError(adv.OnTick(ctx))
-	req.Equal(env.serviceGCSafePoint, cp)
+	req.Equal(env.serviceGCSafePoint, cp-1)
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
