@@ -322,7 +322,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 	if checkTs > safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint is too early. " +
 			"Maybe there is a bit BR/Lightning/CDC task, " +
-			"or a long transaction is running" +
+			"or a long transaction is running " +
 			"or need a tidb without setting keyspace-name to calculate and update gc safe point.")
 	}
 	return nil
@@ -2096,11 +2096,6 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
-	if w.store.GetCodec().GetKeyspace() != nil {
-		logutil.BgLogger().Info("[gc worker] skip doGCPlacementRules when keyspace_name is set.", zap.String("uuid", w.uuid))
-		return nil
-	}
-
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
