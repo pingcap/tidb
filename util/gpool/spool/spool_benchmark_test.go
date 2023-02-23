@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/tiancaiamao/gp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -104,6 +105,23 @@ func BenchmarkSpoolPool(b *testing.B) {
 	}
 }
 
+func BenchmarkGPPool(b *testing.B) {
+	var wg sync.WaitGroup
+	p := gp.New(PoolCap, 10*time.Second)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(RunTimes)
+		for j := 0; j < RunTimes; j++ {
+			p.Go(func() {
+				demoFunc()
+				wg.Done()
+			})
+		}
+		wg.Wait()
+	}
+}
+
 func BenchmarkGoroutinesThroughput(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < RunTimes; j++ {
@@ -133,6 +151,17 @@ func BenchmarkSpoolPoolThroughput(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < RunTimes; j++ {
 			_ = p.Run(demoFunc)
+		}
+	}
+}
+
+func BenchmarkGPPoolThroughput(b *testing.B) {
+	p := gp.New(PoolCap, 10*time.Second)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < RunTimes; j++ {
+			p.Go(demoFunc)
 		}
 	}
 }

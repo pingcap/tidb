@@ -143,6 +143,7 @@ func (p *Pool) Tune(size int) {
 	}
 }
 
+// Run submits a task to this pool.
 func (p *Pool) Run(task func()) error {
 	if p.IsClosed() {
 		return gpool.ErrPoolClosed
@@ -194,9 +195,7 @@ func (p *Pool) addWaiting(delta int) {
 
 // release closes this pool and releases the worker queue.
 func (p *Pool) release() {
-	if !p.state.CompareAndSwap(gpool.OPENED, gpool.CLOSED) {
-		return
-	}
+	p.state.Store(gpool.CLOSED)
 	p.lock.Lock()
 	p.workers.reset()
 	p.lock.Unlock()
@@ -205,18 +204,9 @@ func (p *Pool) release() {
 	p.cond.Broadcast()
 }
 
-func isClose(exitCh chan struct{}) bool {
-	select {
-	case <-exitCh:
-		return true
-	default:
-	}
-	return false
-}
-
 // ReleaseAndWait is like Release, it waits all workers to exit.
 func (p *Pool) ReleaseAndWait() {
-	if p.IsClosed() || isClose(p.stopCh) {
+	if p.IsClosed() {
 		return
 	}
 	close(p.stopCh)
