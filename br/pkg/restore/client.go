@@ -1458,7 +1458,6 @@ func (rc *Client) execChecksum(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	table := tbl.OldTable
 	if checksumResp.Checksum != table.Crc64Xor ||
 		checksumResp.TotalKvs != table.TotalKvs ||
@@ -1473,7 +1472,7 @@ func (rc *Client) execChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-
+	logger.Info("success in validate checksum")
 	loadStatCh <- &tbl
 	return nil
 }
