@@ -23,6 +23,7 @@ go_test(
         "//parser/mysql",
         "//planner/core",
         "//testkit",
+        "//tests/realtikvtest",
         "//types",
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",
