@@ -116,10 +116,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if v := ctx.Value("____GetPlanFromSessionPlanCacheErr"); v != nil { // for testing
-		return nil, nil, errors.New("____GetPlanFromSessionPlanCacheErr")
-	}
-
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
