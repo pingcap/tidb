@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -277,6 +278,10 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 }
 
 func TestForeignKeyCheckAndLock(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip()
+	}
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
