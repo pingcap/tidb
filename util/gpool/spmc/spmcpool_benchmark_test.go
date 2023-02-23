@@ -29,6 +29,15 @@ const (
 	DefaultExpiredTime = 10 * time.Second
 )
 
+func f(n int) {
+	var useStack [100]byte
+	if n == 0 {
+		return
+	}
+	_ = useStack[3]
+	f(n - 1)
+}
+
 func BenchmarkGPool(b *testing.B) {
 	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", 10, rmutil.UNKNOWN)
 	if err != nil {
@@ -36,6 +45,7 @@ func BenchmarkGPool(b *testing.B) {
 	}
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
+		f(100)
 		return struct{}{}
 	})
 	b.ResetTimer()
@@ -88,6 +98,7 @@ func BenchmarkGoCommon(b *testing.B) {
 
 		for n := 0; n < 6; n++ {
 			wg.Run(func() {
+				f(100)
 				item, ok := <-sema
 				if !ok {
 					return

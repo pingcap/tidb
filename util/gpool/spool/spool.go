@@ -68,13 +68,13 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	result.workerCache.New = func() interface{} {
 		return &goWorker{
 			pool: result,
+			task: make(chan func()),
 		}
 	}
 	result.capacity.Add(size)
 	result.concurrencyMetrics.Set(float64(size))
 	result.workers = newWorkerLoopQueue(int(size))
 	result.cond = sync.NewCond(result.lock)
-	// TODO: remove comment
 	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
@@ -141,6 +141,18 @@ func (p *Pool) Tune(size int) {
 		p.cond.Broadcast()
 		return
 	}
+}
+
+func (p *Pool) Run(task func()) error {
+	if p.IsClosed() {
+		return gpool.ErrPoolClosed
+	}
+	var w *goWorker
+	if w = p.retrieveWorker(); w == nil {
+		return gpool.ErrPoolOverload
+	}
+	w.task <- task
+	return nil
 }
 
 // Running returns the number of workers currently running.
@@ -238,7 +250,6 @@ func (p *Pool) retrieveWorker() (w *goWorker) {
 	}
 
 	p.lock.Lock()
-
 	w = p.workers.detach()
 	if w != nil { // first try to fetch the worker from the queue
 		p.lock.Unlock()
@@ -302,9 +313,6 @@ func (p *Pool) revertWorker(worker *goWorker) bool {
 	err := p.workers.insert(worker)
 	if err != nil {
 		p.lock.Unlock()
-		if err == errQueueIsFull {
-			return true
-		}
 		return false
 	}
 

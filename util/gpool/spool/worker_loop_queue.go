@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/resourcemanager/pooltask"
 )
 
 var (
@@ -38,7 +37,7 @@ type loopQueue struct {
 	isFull bool
 }
 
-func newWorkerLoopQueue[T any, U any, C any, CT any, TF pooltask.Context[CT]](size int) *loopQueue {
+func newWorkerLoopQueue(size int) *loopQueue {
 	return &loopQueue{
 		items: make([]*goWorker, size),
 		size:  size,
