@@ -69,10 +69,6 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
-	if v := ctx.Value("____GeneratePlanCacheStmtWithASTErr"); v != nil { // for testing
-		return nil, nil, 0, errors.New("____GeneratePlanCacheStmtWithASTErr")
-	}
-
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)

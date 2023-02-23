@@ -318,45 +318,6 @@ func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
-func TestNonPreparedPlanCacheFallback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int)`)
-	for i := 0; i < 5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
-	}
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	// inject a fault to GeneratePlanCacheStmtWithAST
-	ctx := context.WithValue(context.Background(), "____GeneratePlanCacheStmtWithASTErr", struct{}{})
-	tk.MustQueryWithContext(ctx, "select * from t where a in (1, 2)").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot generate PlanCacheStmt
-	tk.MustQueryWithContext(ctx, "select * from t where a in (1, 3)").Sort().Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot generate PlanCacheStmt
-	tk.MustQuery("select * from t where a in (1, 2)").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select * from t where a in (1, 3)").Sort().Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // no error
-
-	// inject a fault to GetPlanFromSessionPlanCache
-	tk.MustQuery("select * from t where a=1").Check(testkit.Rows("1")) // cache this plan
-	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2")) // plan from cache
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	ctx = context.WithValue(context.Background(), "____GetPlanFromSessionPlanCacheErr", struct{}{})
-	tk.MustQueryWithContext(ctx, "select * from t where a=3").Check(testkit.Rows("3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // fallback to the normal opt-path
-	tk.MustQueryWithContext(ctx, "select * from t where a=4").Check(testkit.Rows("4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // fallback to the normal opt-path
-	tk.MustQueryWithContext(context.Background(), "select * from t where a=0").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // use the cached plan if no error
-
-	// inject a fault to RestoreASTWithParams
-	ctx = context.WithValue(context.Background(), "____GetPlanFromSessionPlanCacheErr", struct{}{})
-	ctx = context.WithValue(ctx, "____RestoreASTWithParamsErr", struct{}{})
-	_, err := tk.ExecWithContext(ctx, "select * from t where a=1")
-	require.NotNil(t, err)
-}
-
 func TestNonPreparedPlanCacheFastPointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
