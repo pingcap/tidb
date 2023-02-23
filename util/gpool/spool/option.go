@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-const defaultTaskChanLen = 1
-
 // Option represents the optional function.
 type Option func(opts *Options)
 
