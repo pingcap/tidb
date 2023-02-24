@@ -537,7 +537,7 @@ func (job *Job) GetNeedReorgIndexIDs() []int64 {
 	return ret
 }
 
-// GetNeedReorgIndexIDs is encode index IDs int64 array to string
+// SetNeedReorgIndexIDs is encode index IDs int64 array to string
 func (job *Job) SetNeedReorgIndexIDs(ids []int64) {
 	idStrs := make([]string, len(ids))
 	for i, id := range ids {
