@@ -51,12 +51,15 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'gs://1' INTO TABLE t (@v) SET wrong=@v")
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): storage abc not support yet")
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 8154 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): failed to get region of bucket no-network")
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 8155 (HY000): Access to the source file has been denied. Please check the URI, access key and secret access key are correct")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
-	checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 8156 (HY000): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
 
 	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
 	//s.server.CreateObject(fakestorage.Object{
