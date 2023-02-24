@@ -213,6 +213,18 @@ func (p *baseTxnContextProvider) OnHandlePessimisticStmtStart(_ context.Context)
 	return nil
 }
 
+// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
+// select-for-update statement.
+func (p *baseTxnContextProvider) OnPessimisticLockError(_ context.Context, _ error) error {
+	return nil
+}
+
+// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *baseTxnContextProvider) OnHandlePessimisticStmtEnd(_ context.Context, _ bool) error {
+	return nil
+}
+
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
@@ -521,9 +533,10 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	return nil
 }
 
-// OnStmtRetry is the hook that should be called when a statement is retried internally.
-func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
+// select-for-update statement.
+func (p *basePessimisticTxnContextProvider) OnPessimisticLockError(ctx context.Context, lockErr error) error {
+	if err := p.baseTxnContextProvider.OnPessimisticLockError(ctx, lockErr); err != nil {
 		return err
 	}
 	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
@@ -534,27 +547,21 @@ func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) err
 	return nil
 }
 
-// OnStmtCommit is the hook that should be called when a statement is executed successfully.
-func (p *basePessimisticTxnContextProvider) OnStmtCommit(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtCommit(ctx); err != nil {
+// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
+	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtEnd(ctx, isSuccessful); err != nil {
 		return err
 	}
 	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
-		if err := p.txn.DoneAggressiveLocking(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// OnStmtRollback is the hook that should be called when a statement fails to execute.
-func (p *basePessimisticTxnContextProvider) OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error {
-	if err := p.baseTxnContextProvider.OnStmtRollback(ctx, isForPessimisticRetry); err != nil {
-		return err
-	}
-	if !isForPessimisticRetry && p.txn != nil && p.txn.IsInAggressiveLockingMode() {
-		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
-			return err
+		if isSuccessful {
+			if err := p.txn.DoneAggressiveLocking(ctx); err != nil {
+				return err
+			}
+		} else {
+			if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

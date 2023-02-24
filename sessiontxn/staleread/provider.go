@@ -170,6 +170,18 @@ func (p *StalenessTxnContextProvider) OnHandlePessimisticStmtStart(_ context.Con
 	return nil
 }
 
+// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
+// select-for-update statement.
+func (p *StalenessTxnContextProvider) OnPessimisticLockError(_ context.Context, _ error) error {
+	return nil
+}
+
+// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *StalenessTxnContextProvider) OnHandlePessimisticStmtEnd(_ context.Context, _ bool) error {
+	return nil
+}
+
 // ActivateTxn activates the transaction.
 func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {

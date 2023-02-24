@@ -137,8 +137,14 @@ type TxnContextProvider interface {
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
-	// a pessimistic select-for-update statements.
+	// a pessimistic select-for-update statement.
 	OnHandlePessimisticStmtStart(ctx context.Context) error
+	// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
+	// select-for-update statement.
+	OnPessimisticLockError(ctx context.Context, lockErr error) error
+	// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+	// select-for-update statement.
+	OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
@@ -186,8 +192,14 @@ type TxnManager interface {
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
-	// a pessimistic select-for-update statements.
+	// a pessimistic select-for-update statement.
 	OnHandlePessimisticStmtStart(ctx context.Context) error
+	// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
+	// select-for-update statement.
+	OnPessimisticLockError(ctx context.Context, lockErr error) error
+	// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+	// select-for-update statement.
+	OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	// This method is not required to be called for every error in the statement,
 	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.

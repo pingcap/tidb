@@ -883,7 +883,7 @@ func (c *chunkRowRecordSet) Close() error {
 	return nil
 }
 
-func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (_ sqlexec.RecordSet, retErr error) {
 	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		terror.Log(e.Close())
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
@@ -894,6 +894,13 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		isSuccessful := retErr == nil
+		err1 := txnManager.OnHandlePessimisticStmtEnd(ctx, isSuccessful)
+		if retErr == nil && err1 != nil {
+			retErr = err1
+		}
+	}()
 
 	isFirstAttempt := true
 
@@ -1015,6 +1022,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	if err != nil {
 		return err
 	}
+	defer func() {
+		isSuccessful := err == nil
+		err1 := txnManager.OnHandlePessimisticStmtEnd(ctx, isSuccessful)
+		if err == nil && err1 != nil {
+			err = err1
+		}
+	}()
 
 	isFirstAttempt := true
 
@@ -1104,6 +1118,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	err = txnManager.OnPessimisticLockError(ctx, lockErr)
+	if err != nil {
+		return nil, err
+	}
 	action, err := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
