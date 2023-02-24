@@ -107,7 +107,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return ErrLoadDataURI.GenWithStackByArgs(getMsgFromBRError(err))
 		}
 		if b.GetLocal() != nil {
-			return ErrLoadDataURI.GenWithStackByArgs("don't support load data from tidb-server's disk")
+			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
 		}
 		return e.loadFromRemote(ctx, b, filename)
 	case ast.FileLocClient:
@@ -410,7 +410,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		)
 	case LoadDataFormatParquet:
 		if e.loadRemoteInfo.store == nil {
-			return errors.New("parquet format requires remote storage")
+			return ErrLoadParquetFromLocal
 		}
 		parser, err = mydump.NewParquetParser(
 			ctx,
@@ -419,7 +419,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			e.loadRemoteInfo.path,
 		)
 	default:
-		err = errors.Errorf("unsupported format: %s", e.format)
+		err = ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
 	}
 	if err != nil {
 		return ErrLoadDataURI.GenWithStackByArgs(err.Error())

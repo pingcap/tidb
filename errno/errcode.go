@@ -1045,9 +1045,13 @@ const (
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
 	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
-	ErrLoadDataInvalidURI                  = 8154
-	ErrLoadDataCantAccess                  = 8155
-	ErrLoadDataNoFile                      = 8156
+	ErrLoadDataFromServerDisk              = 8154
+	ErrLoadParquetFromLocal                = 8155
+	ErrLoadDataUnsupportedFormat           = 8156
+	ErrLoadDataInvalidURI                  = 8157
+	ErrLoadDataCantAccess                  = 8158
+	ErrLoadDataNoFile                      = 8159
+	ErrLoadDataWrongConfig                 = 8161
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

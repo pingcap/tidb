@@ -77,7 +77,10 @@ var (
 	errTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
 
-	ErrLoadDataURI        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidURI)
-	ErrLoadDataCantAccess = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantAccess)
-	ErrLoadDataNoFile     = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataNoFile)
+	ErrLoadDataFromServerDisk    = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataFromServerDisk)
+	ErrLoadParquetFromLocal      = dbterror.ClassExecutor.NewStd(mysql.ErrLoadParquetFromLocal)
+	ErrLoadDataUnsupportedFormat = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedFormat)
+	ErrLoadDataURI               = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidURI)
+	ErrLoadDataCantAccess        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantAccess)
+	ErrLoadDataNoFile            = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataNoFile)
 )
