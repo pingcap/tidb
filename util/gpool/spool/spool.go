@@ -256,7 +256,7 @@ func (p *Pool) retrieveWorker() (w *goWorker) {
 	if w != nil { // first try to fetch the worker from the queue
 		p.lock.Unlock()
 	} else if capacity := p.Cap(); capacity == -1 || capacity > p.Running() {
-		// if the worker queue is empty and we don't run out of the pool capacity,
+		// if the worker queue is empty, and we don't run out of the pool capacity,
 		// then just spawn a new worker goroutine.
 		p.lock.Unlock()
 		spawnWorker()
