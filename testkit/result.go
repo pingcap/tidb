@@ -144,14 +144,14 @@ func (res *Result) CheckContain(expected string) {
 	res.require.Equal(true, false, comment)
 }
 
-// CheckContainMore checks whether the result contains the expected string
-func (res *Result) CheckContainMore(expecteds []string) {
+// MultiCheckContain checks whether the result contains strings in `expecteds`
+func (res *Result) MultiCheckContain(expecteds []string) {
 	for _, expected := range expecteds {
 		res.CheckContain(expected)
 	}
 }
 
-// CheckNotContain checks whether the result contains the expected string
+// CheckNotContain checks whether the result doesn't contain the expected string
 func (res *Result) CheckNotContain(unexpected string) {
 	for _, row := range res.rows {
 		for _, colValue := range row {
@@ -163,8 +163,8 @@ func (res *Result) CheckNotContain(unexpected string) {
 	}
 }
 
-// CheckNotContainMore checks whether the result contains the expected strings
-func (res *Result) CheckNotContainMore(unexpecteds []string) {
+// MultiCheckNotContain checks whether the result doesn't contain the strings in `expected`
+func (res *Result) MultiCheckNotContain(unexpecteds []string) {
 	for _, unexpected := range unexpecteds {
 		res.CheckNotContain(unexpected)
 	}

@@ -2155,14 +2155,14 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM tkey14 WHERE col3 IS NULL").Check(testkit.Rows("4"))
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey14 WHERE col3 IS NULL")
 	result.CheckContain("partition:p1")
-	result.CheckNotContainMore([]string{"partition:p0", "partition:p2", "partition:p3"})
+	result.MultiCheckNotContain([]string{"partition:p0", "partition:p2", "partition:p3"})
 
 	tk.MustExec("CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)\n" +
 		"PARTITION BY KEY (col3) PARTITIONS 4")
 	tk.MustExec("INSERT INTO tkey15 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', NULL, 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', NULL, 4)")
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey15 WHERE col3 IS NULL")
 	result.CheckContain("partition:p1")
-	result.CheckNotContainMore([]string{"partition:p0", "partition:p2", "partition:p3"})
+	result.MultiCheckNotContain([]string{"partition:p0", "partition:p2", "partition:p3"})
 
 	tk.MustExec("CREATE TABLE tkey12_2 (col1 INT, col2 INT ,col3 INT ,col4 INT , UNIQUE KEY(col2, col3)" +
 		") PARTITION BY KEY(col2, col3) PARTITIONS 4")
@@ -2170,14 +2170,14 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 		"(5,5,5,5), (6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12)," +
 		"(13,13,13,13),(14,14,null,14)")
 	result = tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL")
-	result.CheckNotContainMore([]string{"partition:p1", "partition:p0", "partition:p3"})
+	result.MultiCheckNotContain([]string{"partition:p1", "partition:p0", "partition:p3"})
 	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL").Check(testkit.Rows("1 2 <nil> 2"))
 	result = tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2")
-	result.CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	result.MultiCheckContain([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
 	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 = 2").Check(testkit.Rows("1 2 <nil> 2"))
-	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 = 2").MultiCheckContain([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
 	tk.MustQuery("SELECT * FROM tkey12_2 WHERE col2 IS NULL")
-	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 IS NULL").CheckContainMore([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
+	tk.MustQuery("EXPLAIN SELECT * FROM tkey12_2 WHERE col2 IS NULL").MultiCheckContain([]string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"})
 	// Get the partition information from information_schema.partitions
 	result = tk.MustQuery("select PARTITION_NAME,PARTITION_ORDINAL_POSITION,PARTITION_METHOD,PARTITION_EXPRESSION " +
 		"FROM information_schema.partitions where TABLE_NAME = 'tkey12_2'")
