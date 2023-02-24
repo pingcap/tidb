@@ -37,10 +37,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
 )
 
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
@@ -202,9 +200,7 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	// so you don't need to consider whether prepared.useCache is enabled.
 	plan := stmt.CachedPlan.(Plan)
 	names := stmt.CachedNames.(types.NameSlice)
-	err := RebuildPlan4CachedPlan(plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
@@ -239,9 +235,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 			return nil, nil, false, nil
 		}
 	}
-	err := RebuildPlan4CachedPlan(cachedVal.Plan)
-	if err != nil {
-		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -309,11 +303,24 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p Plan) error {
+func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
+	if !sc.UseCache {
+		return false // plan-cache is disabled for this query
+	}
+
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
-	return rebuildRange(p)
+	if err := rebuildRange(p); err != nil {
+		// TODO: log or warn this error.
+		return false // fail to rebuild ranges
+	}
+	if !sc.UseCache {
+		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
+		// over-optimized operations were triggered, return `false` for safety here.
+		return false
+	}
+	return true
 }
 
 func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
@@ -400,26 +407,34 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of the range has changed")
+				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
+					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
 					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true
+					}
 				}
 				if pkCol != nil {
-					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
+					ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
-					if len(ranges) == 0 {
-						return errors.New("failed to rebuild range: the length of the range has changed")
+					if !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+						Ranges:        ranges,
+						AccessConds:   accessConds,
+						RemainedConds: remainingConds,
+					}, unsignedIntHandle, nil) {
+						return errors.New("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -461,26 +476,34 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) != len(x.IndexValues) || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of the range has changed")
+				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
+					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
 				var pkCol *expression.Column
+				var unsignedIntHandle bool
 				if x.TblInfo.PKIsHandle {
 					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
 						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
 					}
+					if !x.TblInfo.IsCommonHandle {
+						unsignedIntHandle = true
+					}
 				}
 				if pkCol != nil {
-					ranges, _, _, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
+					ranges, accessConds, remainingConds, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType, 0)
 					if err != nil {
 						return err
 					}
-					if len(ranges) != len(x.Handles) {
-						return errors.New("failed to rebuild range: the length of the range has changed")
+					if len(ranges) != len(x.Handles) && !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
+						Ranges:        ranges,
+						AccessConds:   accessConds,
+						RemainedConds: remainingConds,
+					}, unsignedIntHandle, nil) {
+						return errors.New("rebuild to get an unsafe range")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
@@ -590,11 +613,14 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			if err != nil {
 				return err
 			}
-			if len(res.AccessConds) != len(ts.AccessCondition) {
-				return errors.New("rebuild range for cached plan failed")
+			if !isSafeRange(ts.AccessCondition, res, false, ts.Ranges) {
+				return errors.New("rebuild to get an unsafe range")
 			}
 			ts.Ranges = res.Ranges
 		} else {
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
 			ts.Ranges = ranger.FullRange()
 		}
 	} else {
@@ -605,11 +631,22 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
+			ranges, accessConds, remainingConds, err := ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
 			if err != nil {
 				return err
 			}
+			if !isSafeRange(ts.AccessCondition, &ranger.DetachRangeResult{
+				Ranges:        ts.Ranges,
+				AccessConds:   accessConds,
+				RemainedConds: remainingConds,
+			}, true, ts.Ranges) {
+				return errors.New("rebuild to get an unsafe range")
+			}
+			ts.Ranges = ranges
 		} else {
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
@@ -617,19 +654,38 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 }
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
-	if len(is.IdxCols) == 0 {
-		is.Ranges = ranger.FullRange()
-		return
-	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
 	}
-	if len(res.AccessConds) != len(is.AccessCondition) {
-		return errors.New("rebuild range for cached plan failed")
+	if !isSafeRange(is.AccessCondition, res, false, is.Ranges) {
+		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
 	return
+}
+
+// checkRebuiltRange checks whether the re-built range is safe.
+// To re-use a cached plan, the planner needs to rebuild the access range, but as
+// parameters change, some unsafe ranges may occur.
+// For example, the first time the planner can build a range `(2, 5)` from `a>2 and a<(?)5`, but if the
+// parameter changes to `(?)1`, then it'll get an unsafe range `(empty)`.
+// To make plan-cache safer, let the planner abandon the cached plan if it gets an unsafe range here.
+func isSafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult,
+	unsignedIntHandle bool, originalRange ranger.Ranges) (safe bool) {
+	if len(rebuiltResult.RemainedConds) > 0 || // the ranger generates some other extra conditions
+		len(rebuiltResult.AccessConds) != len(accessConds) || // not all access conditions are used
+		len(rebuiltResult.Ranges) == 0 { // get an empty range
+		return false
+	}
+
+	if len(accessConds) > 0 && // if have accessConds, and
+		ranger.HasFullRange(rebuiltResult.Ranges, unsignedIntHandle) && // get an full range, and
+		originalRange != nil && !ranger.HasFullRange(originalRange, unsignedIntHandle) { // the original range is not a full range
+		return false
+	}
+
+	return true
 }
 
 // CheckPreparedPriv checks the privilege of the prepared statement
