@@ -1042,6 +1042,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnsupportedPrimaryKeyTypeWithTTL: mysql.Message("Unsupported clustered primary key type FLOAT/DOUBLE for TTL", nil),
 	ErrLoadDataFromServerDisk:           mysql.Message("The path of INFILE '%s' needs to specify the parameter of LOCAL first", nil),
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
+	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
 	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
 	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Please check the URI, access key and secret access key are correct", nil),

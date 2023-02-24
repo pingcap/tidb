@@ -79,6 +79,7 @@ var (
 
 	ErrLoadDataFromServerDisk    = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataFromServerDisk)
 	ErrLoadParquetFromLocal      = dbterror.ClassExecutor.NewStd(mysql.ErrLoadParquetFromLocal)
+	ErrLoadDataEmptyPath         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataEmptyPath)
 	ErrLoadDataUnsupportedFormat = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedFormat)
 	ErrLoadDataURI               = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidURI)
 	ErrLoadDataCantAccess        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantAccess)

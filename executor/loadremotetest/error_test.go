@@ -53,14 +53,14 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err, "ERROR 1054 (42S22): Unknown column 'wrong' in 'field list'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 'abc://1' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8157 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
+		"ERROR 8158 (HY000): The URI of INFILE is invalid. Reason: storage abc not support yet. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'")
 	err = s.tk.ExecToErr("LOAD DATA INFILE 's3://no-network' INTO TABLE t;")
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8158 (HY000): Access to the source file has been denied. Please check the URI, access key and secret access key are correct")
+		"ERROR 8159 (HY000): Access to the source file has been denied. Please check the URI, access key and secret access key are correct")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8159 (HY000): Failed to read source files. Reason: failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'. Please check the INFILE path is correct")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'. Please check the INFILE path is correct")
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
@@ -73,17 +73,29 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
 		FORMAT '123' INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8156 (HY000): The FORMAT '123' is not supported")
+		"ERROR 8157 (HY000): The FORMAT '123' is not supported")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
 		FORMAT 'sqldumpfile' INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8159 (HY000): Failed to read source files. Reason: syntax error: unexpected Integer (1) at offset 1, expecting start of row. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: syntax error: unexpected Integer (1) at offset 1, expecting start of row. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
 		INTO TABLE t LINES STARTING BY '\n';`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		`ERROR 8161 (HY000): STARTING BY '
+		`ERROR 8162 (HY000): STARTING BY '
 ' cannot contain TERMINATED BY '
 '`)
+
+	// TODO: fix these tests
+	//s.tk.MustExec("CREATE TABLE t2 (c1 INT, c2 INT, c3 INT);")
+	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+	//	INTO TABLE t2;`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err,
+	//	"ERROR 1261 (01000): Row 1 doesn't contain data for all columns")
+	//s.tk.MustExec("CREATE TABLE t3 (c1 INT);")
+	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+	//	INTO TABLE t3;`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err,
+	//	"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
 
 	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
 

@@ -76,21 +76,18 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 
 	if e.loadDataWorker.Path == "" {
-		return ErrLoadDataURI.GenWithStackByArgs("INFILE path is empty")
-	}
-	if !e.loadDataWorker.table.Meta().IsBaseTable() {
-		return ErrLoadDataURI.GenWithStackByArgs("can only load data into base tables")
+		return ErrLoadDataEmptyPath
 	}
 
 	// CSV-like
 	if e.loadDataWorker.format == "" {
 		if e.loadDataWorker.NullInfo != nil && e.loadDataWorker.NullInfo.OptEnclosed &&
 			(e.loadDataWorker.FieldsInfo == nil || e.loadDataWorker.FieldsInfo.Enclosed == nil) {
-			return ErrLoadDataURI.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 		}
 		// TODO: support lines terminated is "".
 		if len(e.loadDataWorker.LinesInfo.Terminated) == 0 {
-			return ErrLoadDataURI.GenWithStackByArgs("don't support load data terminated is nil")
+			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("don't support load data terminated is nil")
 		}
 	}
 
