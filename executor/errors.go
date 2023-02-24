@@ -82,5 +82,6 @@ var (
 	ErrLoadDataUnsupportedFormat = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedFormat)
 	ErrLoadDataURI               = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidURI)
 	ErrLoadDataCantAccess        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantAccess)
-	ErrLoadDataNoFile            = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataNoFile)
+	ErrLoadDataCantRead          = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantRead)
+	ErrLoadDataWrongFormatConfig = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataWrongFormatConfig)
 )

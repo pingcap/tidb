@@ -154,7 +154,7 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	fileReader, err := s.Open(ctx, filename)
 	if err != nil {
-		return ErrLoadDataNoFile.GenWithStackByArgs(getMsgFromBRError(err))
+		return ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
 	}
 	defer fileReader.Close()
 
@@ -419,10 +419,10 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			e.loadRemoteInfo.path,
 		)
 	default:
-		err = ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
+		return ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
 	}
 	if err != nil {
-		return ErrLoadDataURI.GenWithStackByArgs(err.Error())
+		return ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
@@ -442,10 +442,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 
 	err = group.Wait()
 	e.SetMessage()
-	if err != nil {
-		return ErrLoadDataURI.GenWithStackByArgs(err.Error())
-	}
-	return nil
+	return err
 }
 
 // processStream process input stream from network
@@ -632,7 +629,10 @@ func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) err
 			if errors.Cause(err) == io.EOF {
 				return nil
 			}
-			return err
+			return ErrLoadDataCantRead.GenWithStackByArgs(
+				err.Error(),
+				"Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)",
+			)
 		}
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.

@@ -1346,7 +1346,7 @@ yyy",5,xx"xxxx,8
 		},
 	}
 	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkers, false, nil)
-	require.ErrorContains(t, err, "starting-by cannot contain (line) terminator")
+	require.ErrorContains(t, err, "STARTING BY 'x\nxx' cannot contain TERMINATED BY '\n'")
 }
 
 func TestCharsetConversion(t *testing.T) {

@@ -1648,7 +1648,37 @@ transaction aborted because lazy uniqueness check is enabled and an error occurr
 
 ["executor:8154"]
 error = '''
-LOAD DATA raises error(s): %s
+The path of INFILE '%s' needs to specify the parameter of LOCAL first
+'''
+
+["executor:8155"]
+error = '''
+Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage
+'''
+
+["executor:8156"]
+error = '''
+The FORMAT '%s' is not supported
+'''
+
+["executor:8157"]
+error = '''
+The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+'''
+
+["executor:8158"]
+error = '''
+Access to the source file has been denied. Please check the URI, access key and secret access key are correct
+'''
+
+["executor:8159"]
+error = '''
+Failed to read source files. Reason: %s. %s
+'''
+
+["executor:8161"]
+error = '''
+
 '''
 
 ["executor:8212"]

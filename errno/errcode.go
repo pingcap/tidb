@@ -1050,8 +1050,9 @@ const (
 	ErrLoadDataUnsupportedFormat           = 8156
 	ErrLoadDataInvalidURI                  = 8157
 	ErrLoadDataCantAccess                  = 8158
-	ErrLoadDataNoFile                      = 8159
-	ErrLoadDataWrongConfig                 = 8161
+	ErrLoadDataCantRead                    = 8159
+	ErrLoadDataPhysicalImportTableNotEmpty = 8160
+	ErrLoadDataWrongFormatConfig           = 8161
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

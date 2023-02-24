@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
@@ -59,17 +60,33 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8156 (HY000): failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'")
+		"ERROR 8159 (HY000): Failed to read source files. Reason: failed to read gcs file, file info: input.bucket='wrong-bucket', input.key='p'. Please check the INFILE path is correct")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "t.tsv",
+		},
+		Content: []byte("1\t2\n" +
+			"1\t4\n"),
+	})
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+		FORMAT '123' INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 8156 (HY000): The FORMAT '123' is not supported")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+		FORMAT 'sqldumpfile' INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 8159 (HY000): Failed to read source files. Reason: syntax error: unexpected Integer (1) at offset 1, expecting start of row. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+		INTO TABLE t LINES STARTING BY '\n';`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		`ERROR 8161 (HY000): STARTING BY '
+' cannot contain TERMINATED BY '
+'`)
 
 	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
-	//s.server.CreateObject(fakestorage.Object{
-	//	ObjectAttrs: fakestorage.ObjectAttrs{
-	//		BucketName: "test-tsv",
-	//		Name:       "t.tsv",
-	//	},
-	//	Content: []byte("1\t2\n" +
-	//		"1\t4\n"),
-	//})
+
 	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
 	//	INTO TABLE t;`, gcsEndpoint))
 	//checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'")
