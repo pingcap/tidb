@@ -156,6 +156,24 @@ func (p *Pool) Run(task func()) error {
 	return nil
 }
 
+// RunWithConcurrency submits a task to this pool with concurrency.
+func (p *Pool) RunWithConcurrency(task func(), concurrency int) error {
+	for i := 0; i < concurrency; i++ {
+		if p.IsClosed() {
+			return gpool.ErrPoolClosed
+		}
+		var w *goWorker
+		if w = p.retrieveWorker(); w == nil {
+			if i != 0 {
+				return gpool.ErrPoolOverload
+			}
+			return nil
+		}
+		w.task <- task
+	}
+	return nil
+}
+
 // Running returns the number of workers currently running.
 func (p *Pool) Running() int {
 	return int(p.running.Load())
