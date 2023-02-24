@@ -289,6 +289,33 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// < v6.7
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v4.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForGetModeRPC())
+		require.Error(t, err)
+	}
+
+	{
+		// = v6.7
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v6.7.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForGetModeRPC())
+		require.NoError(t, err)
+	}
+
+	{
+		// > v6.7
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v7.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForGetModeRPC())
+		require.NoError(t, err)
+	}
+
+	{
 		build.ReleaseVersion = "v4.0.0-rc.1"
 		mock.getAllStores = func() []*metapb.Store {
 			// TiKV v4.0.0-rc.2 with BR v4.0.0-rc.1 is ok
