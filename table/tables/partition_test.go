@@ -777,7 +777,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 	}{
 		{
 			createSQL: "CREATE TABLE tkey0 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
-			insertSQL: "INSERT INTO tkey0 VALUES(1, SYSDATE(), 1, 1), (2, SYSDATE(), 2, 2), (3, SYSDATE(), 3, 3), (4, SYSDATE(), 4, 4)",
+			insertSQL: "INSERT INTO tkey0 VALUES(1, '2023-02-22', 1, 1), (2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4)",
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey0",
@@ -817,7 +817,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey7 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-			insertSQL: "INSERT INTO tkey7 VALUES(1, SYSDATE(), 1, 1), (1, SYSDATE(), 2, 1),(2, SYSDATE(), 2, 2), (3, SYSDATE(), 3, 3), (4, SYSDATE(), 4, 4),(4, SYSDATE(), 5, 4)",
+			insertSQL: "INSERT INTO tkey7 VALUES(1, '2023-02-22', 1, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4)",
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey7",
@@ -864,7 +864,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey8 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,PRIMARY KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-			insertSQL: "INSERT INTO tkey8 VALUES(1, SYSDATE(), 111, 1), (1, SYSDATE(), 2, 1),(2, SYSDATE(), 218, 2), (3, SYSDATE(), 3, 3), (4, SYSDATE(), 4, 4),(4, SYSDATE(), 5, 4),(5, SYSDATE(), 5, 5),(5, SYSDATE(), 50, 2),(6, SYSDATE(), 62, 2),(60, SYSDATE(), 6, 5),(70, SYSDATE(), 50, 2),(80, SYSDATE(), 62, 2),(100, SYSDATE(), 62, 2),(2000, SYSDATE(), 6, 5),(400, SYSDATE(), 50, 2),(90, SYSDATE(), 62, 2)",
+			insertSQL: "INSERT INTO tkey8 VALUES(1, '2023-02-22', 111, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 218, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4),(5, '2023-02-22', 5, 5),(5, '2023-02-22', 50, 2),(6, '2023-02-22', 62, 2),(60, '2023-02-22', 6, 5),(70, '2023-02-22', 50, 2),(80, '2023-02-22', 62, 2),(100, '2023-02-22', 62, 2),(2000, '2023-02-22', 6, 5),(400, '2023-02-22', 50, 2),(90, '2023-02-22', 62, 2)",
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey8",
@@ -911,7 +911,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey6 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 VARCHAR(12) NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
-			insertSQL: "INSERT INTO tkey6 VALUES(1, SYSDATE(), 'linpin', 1), (2, SYSDATE(), 'zhangsan', 2), (3, SYSDATE(), 'anqila', 3), (4, SYSDATE(), 'xingtian', 4),(1, SYSDATE(), 'renleifeng', 5), (2, SYSDATE(), 'peilin', 2),(1, SYSDATE(), 'abcdeeg', 7), (2, SYSDATE(), 'rpstdfed', 8)",
+			insertSQL: "INSERT INTO tkey6 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', 'zhangsan', 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', 'xingtian', 4),(1, '2023-02-22', 'renleifeng', 5), (2, '2023-02-22', 'peilin', 2),(1, '2023-02-22', 'abcdeeg', 7), (2, '2023-02-22', 'rpstdfed', 8)",
 			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey6",
@@ -2159,7 +2159,7 @@ func TestKeyPartitionTableMixed(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)\n" +
 		"PARTITION BY KEY (col3) PARTITIONS 4")
-	tk.MustExec("INSERT INTO tkey15 VALUES(1, SYSDATE(), 'linpin', 1), (2, SYSDATE(), NULL, 2), (3, SYSDATE(), 'anqila', 3), (4, SYSDATE(), NULL, 4)")
+	tk.MustExec("INSERT INTO tkey15 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', NULL, 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', NULL, 4)")
 	result = tk.MustQuery("EXPLAIN SELECT count(*) FROM tkey15 WHERE col3 IS NULL")
 	result.CheckContain("partition:p1")
 	result.CheckNotContainMore([]string{"partition:p0", "partition:p2", "partition:p3"})
@@ -2208,10 +2208,10 @@ func TestKeyPartitionWithDifferentCharsets(t *testing.T) {
 		"PARTITION BY KEY(col3) " +
 		"PARTITIONS 4")
 	// ignore tail spaces
-	err := tk.ExecToErr("INSERT INTO tkey29 VALUES(1, SYSDATE(), 'linpin', 1), (1, SYSDATE(), 'linpin ', 5)")
+	err := tk.ExecToErr("INSERT INTO tkey29 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'linpin ', 5)")
 	require.Regexp(t, "Duplicate entry 'linpin ' for key 'tkey29.col3'", err)
 	// case sensitive
-	tk.MustExec("INSERT INTO tkey29 VALUES(3, SYSDATE(), 'abc', 1), (4, SYSDATE(), 'ABC ', 5)")
+	tk.MustExec("INSERT INTO tkey29 VALUES(3, '2023-02-22', 'abc', 1), (4, '2023-02-22', 'ABC ', 5)")
 
 	tk.MustExec("CREATE TABLE tkey30 (" +
 		"col1 INT NOT NULL," +
@@ -2223,10 +2223,10 @@ func TestKeyPartitionWithDifferentCharsets(t *testing.T) {
 		"PARTITION BY KEY(col3) " +
 		"PARTITIONS 4")
 	// case insensitive
-	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, SYSDATE(), 'linpin', 1), (1, SYSDATE(), 'LINPIN', 5)")
+	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN', 5)")
 	require.Regexp(t, "Duplicate entry 'LINPIN' for key 'tkey30.col3'", err)
 	// ignore tail spaces
-	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, SYSDATE(), 'linpin', 1), (1, SYSDATE(), 'LINPIN ', 5)")
+	err = tk.ExecToErr("INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN ', 5)")
 	require.Regexp(t, "Duplicate entry 'LINPIN ' for key 'tkey30.col3'", err)
 
 	tk.MustExec("CREATE TABLE tkey31 (" +
@@ -2238,9 +2238,9 @@ func TestKeyPartitionWithDifferentCharsets(t *testing.T) {
 		") CHARSET=gbk COLLATE=gbk_chinese_ci " +
 		"PARTITION BY KEY(col3) " +
 		"PARTITIONS 4")
-	err = tk.ExecToErr("INSERT INTO tkey31 VALUES(1, SYSDATE(), '刘德华', 1), (1, SYSDATE(), '刘德华 ', 5)")
+	err = tk.ExecToErr("INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (1, '2023-02-22', '刘德华 ', 5)")
 	require.Regexp(t, "Duplicate entry '刘德华 ' for key 'tkey31.col3'", err)
-	tk.MustExec("INSERT INTO tkey31 VALUES(1, SYSDATE(), '刘德华', 1), (5, SYSDATE(), '张学友', 5),(6, SYSDATE(), '艾伦', 6), (7, SYSDATE(), '宁采臣', 7)")
+	tk.MustExec("INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (5, '2023-02-22', '张学友', 5),(6, '2023-02-22', '艾伦', 6), (7, '2023-02-22', '宁采臣', 7)")
 	tk.MustQuery("SELECT * FROM tkey31 partition(p0)").Check(testkit.Rows("1 2023-02-22 刘德华 1"))
 	tk.MustQuery("SELECT * FROM tkey31 partition(p1)").Check(testkit.Rows("6 2023-02-22 艾伦 6"))
 	tk.MustQuery("SELECT * FROM tkey31 partition(p2)").Check(testkit.Rows("5 2023-02-22 张学友 5"))
