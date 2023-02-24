@@ -618,7 +618,10 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 			ts.Ranges = res.Ranges
 		} else {
-			return errors.New("fail to build ranges, cannot get the primary key column")
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
+			ts.Ranges = ranger.FullRange()
 		}
 	} else {
 		var pkCol *expression.Column
@@ -641,7 +644,10 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 				return errors.New("rebuild to get an unsafe range")
 			}
 		} else {
-			return errors.New("fail to build ranges, cannot get the primary key column")
+			if len(ts.AccessCondition) > 0 {
+				return errors.New("fail to build ranges, cannot get the primary key column")
+			}
+			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
 	return
