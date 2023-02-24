@@ -403,6 +403,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
 	d.newReorgCtx((-1 * bfJob.JobID), bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
+	// use RunWithRecover
 	d.wg.Run(func() {
 		defer func() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
@@ -755,6 +756,7 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 				leaseStr, jobID, pTblID, batch)
 		}
 
+		logutil.BgLogger().Warn("xxx-------------------- get jobs", zap.Int64("pid", pTblID), zap.String("sql", getJobsSQL))
 		bJobs, err = GetBackfillJobs(se, BackgroundSubtaskTable, getJobsSQL, "get_mark_backfill_job")
 		if err != nil {
 			return err

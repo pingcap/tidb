@@ -48,6 +48,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
+	logutil.BgLogger().Warn("xxx----------------------------------- FinishImport", zap.Int64("indexID", indexID))
 	err := ei.ImportAndClean()
 	if err != nil {
 		return err
