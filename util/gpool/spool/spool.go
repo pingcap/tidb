@@ -165,10 +165,11 @@ func (p *Pool) RunWithConcurrency(task func(), concurrency int) (err error) {
 			}
 			return nil
 		}
-		task = func() {
+		t := func() {
 			wg.Done()
+			task()
 		}
-		w.task <- task
+		w.task <- t
 		wg.Add(1)
 	}
 	return nil
