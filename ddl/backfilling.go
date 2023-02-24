@@ -1176,7 +1176,7 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, pTblMeta *BackfillJobRangeMeta) error {
 	isFirstOps := !sJobCtx.isMultiPhyTbl
 	batchSize := sJobCtx.batchSize
-	startKey, endKey := pTblMeta.StartKey, pTblMeta.EndKey
+	startKey, endKey := kv.Key(pTblMeta.StartKey), kv.Key(pTblMeta.EndKey)
 	bJobs := make([]*BackfillJob, 0, batchSize)
 	for {
 		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
@@ -1194,6 +1194,12 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		isFirstOps = false
 
 		remains := kvRanges[len(batchTasks):]
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+		}
 		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
 		logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
 			zap.Int64("physicalID", pTblMeta.PhyTblID),
@@ -1203,7 +1209,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 			zap.String("startHandle", hex.EncodeToString(startKey)),
 			zap.String("endHandle", hex.EncodeToString(endKey)))
 
-		if len(remains) == 0 {
+		if startKey.Cmp(endKey) >= 0 {
 			break
 		}
 
@@ -1217,7 +1223,6 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 			}
 			time.Sleep(RetrySQLInterval)
 		}
-		startKey = remains[0].StartKey
 	}
 	return nil
 }
