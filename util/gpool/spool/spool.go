@@ -27,12 +27,6 @@ import (
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
-// T is the type of the task. We can treat it as input.
-// U is the type of the result. We can treat it as output.
-// C is the type of the const parameter. if Our task look like y = ax + b, C acts like b as const parameter.
-// CT is the type of the context. It needs to be read/written parallel.
-// TF is the type of the context getter. It is used to get a context.
-// if we don't need to use CT/TF, we can define CT as any and TF as NilContext.
 type Pool struct {
 	workerCache sync.Pool
 	lock        sync.Locker
