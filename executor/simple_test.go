@@ -146,5 +146,4 @@ func TestSetResourceGroup(t *testing.T) {
 	tk.MustQuery("SELECT RESOURCE_GROUP FROM information_schema.processlist").Check(testkit.Rows("rg1"))
 	tk.MustExec("SET RESOURCE GROUP ``")
 	tk.MustQuery("SELECT RESOURCE_GROUP FROM information_schema.processlist").Check(testkit.Rows(""))
-
 }
