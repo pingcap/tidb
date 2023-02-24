@@ -133,3 +133,18 @@ func TestUserAttributes(t *testing.T) {
 	rootTK.MustExec("alter user usr1 resource group rg1")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }
+
+func TestSetResourceGroup(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
+	tk.MustContainErrMsg("SET RESOURCE GROUP rg1", "Unknown resource group 'rg1'")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+	tk.MustQuery("SELECT RESOURCE_GROUP FROM information_schema.processlist").Check(testkit.Rows(""))
+	tk.MustExec("SET RESOURCE GROUP rg1")
+	tk.MustQuery("SELECT RESOURCE_GROUP FROM information_schema.processlist").Check(testkit.Rows("rg1"))
+	tk.MustExec("SET RESOURCE GROUP ``")
+	tk.MustQuery("SELECT RESOURCE_GROUP FROM information_schema.processlist").Check(testkit.Rows(""))
+
+}

@@ -3677,6 +3677,9 @@ func TestDDL(t *testing.T) {
 		{"drop resource group x,y", false, ""},
 		{"drop resource group if exists x,y", false, ""},
 
+		{"set resource group x;", true, "SET RESOURCE GROUP `x`"},
+		{"set resource group x y", false, ""},
+
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},
 		{"CREATE ROLE RESOURCE", false, ""},
 

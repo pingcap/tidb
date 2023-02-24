@@ -216,6 +216,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeShutdown(x)
 	case *ast.AdminStmt:
 		err = e.executeAdmin(x)
+	case *ast.SetResourceGroupStmt:
+		err = e.executeSetResourceGroupName(x)
 	}
 	e.done = true
 	return err
@@ -2838,5 +2840,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		// it will check the timestamp first to decide whether the plan cache should be flushed.
 		domain.GetDomain(e.ctx).SetExpiredTimeStamp4PC(now)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
+	if s.Name.L != "" {
+		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
+			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
+		}
+	}
+
+	e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
 	return nil
 }

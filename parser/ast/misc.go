@@ -58,6 +58,7 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &SetResourceGroupStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -3860,3 +3861,25 @@ var NewHexLiteral func(string) (interface{}, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
 var NewBitLiteral func(string) (interface{}, error)
+
+// SetResourceGroupStmt is a statement to set the resource group name for current session.
+type SetResourceGroupStmt struct {
+	stmtNode
+	Name model.CIStr
+}
+
+func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET RESOURCE GROUP ")
+	ctx.WriteName(n.Name.O)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetResourceGroupStmt)
+	return v.Leave(n)
+}
