@@ -2426,9 +2426,8 @@ func (p *PhysicalHashAgg) adjustXStagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	if !p.SCtx().GetSessionVars().EnableEliminateLocalAgg43StageDistinctAgg || len(groupingSets) == 0 {
 		// when the variable is true OR it's a single distinct agg, using the 3 phase adjustment.
 		return p.adjust3StagePhaseAgg(partialAgg, finalAgg, groupingSets, mpp)
-	} else {
-		return p.adjust2StagePhaseAgg(partialAgg, finalAgg, groupingSets, mpp)
 	}
+	return p.adjust2StagePhaseAgg(partialAgg, finalAgg, groupingSets, mpp)
 }
 
 // adjust3StagePhaseAgg generate 3 stage aggregation for single/multi count distinct if applicable.
