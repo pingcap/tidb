@@ -1412,7 +1412,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		_, err1 = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ','`, path))
 		mysqlErr, ok := err1.(*mysql.MySQLError)
 		require.True(t, ok)
-		require.Equal(t, "LOAD DATA raises error(s): mock commit one task error", mysqlErr.Message)
+		require.Equal(t, "mock commit one task error", mysqlErr.Message)
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"))
 
 		dbt.MustExec("drop table if exists pn")
