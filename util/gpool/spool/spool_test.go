@@ -47,7 +47,6 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			j := i
 			_ = p.Run(func() {
 				time.Sleep(1 * time.Second)
 			})
@@ -72,6 +71,16 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 	wg.Wait()
 }
 
-func TestReleaseWhenRunningPool(t *testing.T) {
+func TestPoolRunWithConcurrency(t *testing.T) {
+	var wg sync.WaitGroup
+	p, err := NewPool("TestAntsPoolWaitToGetWorker", PoolCap, util.UNKNOWN)
+	require.NoError(t, err)
+	defer p.ReleaseAndWait()
 
+	wg.Add(1000)
+	_ = p.RunWithConcurrency(func() {
+		defer wg.Done()
+		demoPoolFunc(100)
+	}, 1000)
+	wg.Wait()
 }
