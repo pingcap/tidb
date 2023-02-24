@@ -17,6 +17,7 @@ package spool
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ import (
 
 func TestSPool(t *testing.T) {
 	var wg sync.WaitGroup
-	p, err := NewPool("TestAntsPoolWaitToGetWorker", PoolCap, util.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewPool("TestAntsPoolWaitToGetWorker", PoolCap, util.UNKNOWN)
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 
@@ -36,4 +37,41 @@ func TestSPool(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestReleaseWhenRunningPool(t *testing.T) {
+	var wg sync.WaitGroup
+	p, err := NewPool("TestReleaseWhenRunningPool", 1, util.UNKNOWN)
+	require.NoError(t, err)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			j := i
+			_ = p.Run(func() {
+				time.Sleep(1 * time.Second)
+			})
+		}
+	}()
+
+	go func() {
+		t.Log("start bbb")
+		defer wg.Done()
+		for i := 100; i < 130; i++ {
+			j := i
+			_ = p.Run(func() {
+				t.Log("do task", j)
+				time.Sleep(1 * time.Second)
+			})
+		}
+	}()
+
+	time.Sleep(3 * time.Second)
+	p.ReleaseAndWait()
+	t.Log("wait for all goroutines to exit...")
+	wg.Wait()
+}
+
+func TestReleaseWhenRunningPool(t *testing.T) {
+
 }

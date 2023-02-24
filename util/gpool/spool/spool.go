@@ -151,7 +151,9 @@ func (p *Pool) Run(task func()) error {
 }
 
 // RunWithConcurrency submits a task to this pool with concurrency.
-func (p *Pool) RunWithConcurrency(task func(), concurrency int) error {
+func (p *Pool) RunWithConcurrency(task func(), concurrency int) (err error) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	for i := 0; i < concurrency; i++ {
 		if p.IsClosed() {
 			return gpool.ErrPoolClosed
@@ -163,7 +165,11 @@ func (p *Pool) RunWithConcurrency(task func(), concurrency int) error {
 			}
 			return nil
 		}
+		task = func() {
+			wg.Done()
+		}
 		w.task <- task
+		wg.Add(1)
 	}
 	return nil
 }
