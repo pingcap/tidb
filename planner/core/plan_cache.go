@@ -407,7 +407,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if !isSafeRange(x.AccessConditions, ranges, false) {
+				if !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -433,7 +433,7 @@ func rebuildRange(p Plan) error {
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
-					}, unsignedIntHandle) {
+					}, unsignedIntHandle, nil) {
 						return errors.New("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
@@ -476,7 +476,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false) {
+				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
 				for i := range x.IndexValues {
@@ -502,7 +502,7 @@ func rebuildRange(p Plan) error {
 						Ranges:        ranges,
 						AccessConds:   accessConds,
 						RemainedConds: remainingConds,
-					}, unsignedIntHandle) {
+					}, unsignedIntHandle, nil) {
 						return errors.New("rebuild to get an unsafe range")
 					}
 					for i := range ranges {
@@ -613,7 +613,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			if err != nil {
 				return err
 			}
-			if !isSafeRange(ts.AccessCondition, res, false) {
+			if !isSafeRange(ts.AccessCondition, res, false, ts.Ranges) {
 				return errors.New("rebuild to get an unsafe range")
 			}
 			ts.Ranges = res.Ranges
@@ -631,8 +631,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			}
 		}
 		if pkCol != nil {
-			var accessConds, remainingConds []expression.Expression
-			ts.Ranges, accessConds, remainingConds, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
+			ranges, accessConds, remainingConds, err := ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType, 0)
 			if err != nil {
 				return err
 			}
@@ -640,9 +639,10 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 				Ranges:        ts.Ranges,
 				AccessConds:   accessConds,
 				RemainedConds: remainingConds,
-			}, true) {
+			}, true, ts.Ranges) {
 				return errors.New("rebuild to get an unsafe range")
 			}
+			ts.Ranges = ranges
 		} else {
 			if len(ts.AccessCondition) > 0 {
 				return errors.New("fail to build ranges, cannot get the primary key column")
@@ -658,7 +658,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	if err != nil {
 		return err
 	}
-	if !isSafeRange(is.AccessCondition, res, false) {
+	if !isSafeRange(is.AccessCondition, res, false, is.Ranges) {
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
@@ -671,11 +671,17 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 // For example, the first time the planner can build a range `(2, 5)` from `a>2 and a<(?)5`, but if the
 // parameter changes to `(?)1`, then it'll get an unsafe range `(empty)`.
 // To make plan-cache safer, let the planner abandon the cached plan if it gets an unsafe range here.
-func isSafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult, unsignedIntHandle bool) (safe bool) {
+func isSafeRange(accessConds []expression.Expression, rebuiltResult *ranger.DetachRangeResult,
+	unsignedIntHandle bool, originalRange ranger.Ranges) (safe bool) {
 	if len(rebuiltResult.RemainedConds) > 0 || // the ranger generates some other extra conditions
 		len(rebuiltResult.AccessConds) != len(accessConds) || // not all access conditions are used
-		len(rebuiltResult.Ranges) == 0 || // get an empty range
-		(len(accessConds) > 0 && ranger.HasFullRange(rebuiltResult.Ranges, unsignedIntHandle)) { // have a full range
+		len(rebuiltResult.Ranges) == 0 { // get an empty range
+		return false
+	}
+
+	if len(accessConds) > 0 && // if have accessConds, and
+		ranger.HasFullRange(rebuiltResult.Ranges, unsignedIntHandle) && // get an full range, and
+		originalRange != nil && !ranger.HasFullRange(originalRange, unsignedIntHandle) { // the original range is not a full range
 		return false
 	}
 
