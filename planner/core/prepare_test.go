@@ -1419,7 +1419,7 @@ func TestIssue29303(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // unsafe range
 }
 
 func TestIssue34725(t *testing.T) {
@@ -1988,7 +1988,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unsafe range
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
@@ -2087,7 +2087,7 @@ func TestIssue28246(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("9223372036854775807"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unsafe range
 }
 
 func TestIssue29805(t *testing.T) {
