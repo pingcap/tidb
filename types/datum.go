@@ -1994,6 +1994,20 @@ func (d *Datum) ToBytes() ([]byte, error) {
 	}
 }
 
+// ToHashKey gets the bytes representation of the datum considering collation.
+func (d *Datum) ToHashKey() ([]byte, error) {
+	switch d.k {
+	case KindString, KindBytes:
+		return collate.GetCollator(d.Collation()).Key(d.GetString()), nil
+	default:
+		str, err := d.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return collate.GetCollator(d.Collation()).Key(str), nil
+	}
+}
+
 // ToMysqlJSON is similar to convertToMysqlJSON, except the
 // latter parses from string, but the former uses it as primitive.
 func (d *Datum) ToMysqlJSON() (j BinaryJSON, err error) {

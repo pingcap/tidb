@@ -452,6 +452,14 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Sub == nil {
 			enable = true
 		}
+	case model.PartitionTypeKey:
+		// Note that linear key is simply ignored, and creates non-linear hash.
+		if s.Linear {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack("LINEAR KEY is not supported, using non-linear KEY instead"))
+		}
+		if s.Sub == nil && len(s.ColumnNames) != 0 {
+			enable = true
+		}
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
@@ -1075,7 +1083,7 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
-	case model.PartitionTypeHash:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeList:
 		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
@@ -3553,6 +3561,15 @@ func hexIfNonPrint(s string) string {
 	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
 }
 
+func writeColumnListToBuffer(partitionInfo *model.PartitionInfo, sqlMode mysql.SQLMode, buf *bytes.Buffer) {
+	for i, col := range partitionInfo.Columns {
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+		if i < len(partitionInfo.Columns)-1 {
+			buf.WriteString(",")
+		}
+	}
+}
+
 // AppendPartitionInfo is used in SHOW CREATE TABLE as well as generation the SQL syntax
 // for the PartitionInfo during validation of various DDL commands
 func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
@@ -3563,8 +3580,9 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	// include the /*!50100 or /*!50500 comments for TiDB.
 	// This also solves the issue with comments within comments that would happen for
 	// PLACEMENT POLICY options.
-	if partitionInfo.Type == model.PartitionTypeHash {
-		defaultPartitionDefinitions := true
+	defaultPartitionDefinitions := true
+	if partitionInfo.Type == model.PartitionTypeHash ||
+		partitionInfo.Type == model.PartitionTypeKey {
 		for i, def := range partitionInfo.Definitions {
 			if def.Name.O != fmt.Sprintf("p%d", i) {
 				defaultPartitionDefinitions = false
@@ -3577,21 +3595,28 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 
 		if defaultPartitionDefinitions {
-			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			if partitionInfo.Type == model.PartitionTypeHash {
+				fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			} else {
+				buf.WriteString("\nPARTITION BY KEY (")
+				writeColumnListToBuffer(partitionInfo, sqlMode, buf)
+				buf.WriteString(")")
+				fmt.Fprintf(buf, " PARTITIONS %d", partitionInfo.Num)
+			}
 			return
 		}
 	}
-	// this if statement takes care of lists/range columns case
+	// this if statement takes care of lists/range/key columns case
 	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// || partitionInfo.Type == model.PartitionTypeKey
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
-		for i, col := range partitionInfo.Columns {
-			buf.WriteString(stringutil.Escape(col.O, sqlMode))
-			if i < len(partitionInfo.Columns)-1 {
-				buf.WriteString(",")
-			}
+		if partitionInfo.Type == model.PartitionTypeKey {
+			fmt.Fprintf(buf, "\nPARTITION BY %s (", partitionInfo.Type.String())
+		} else {
+			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		}
+		writeColumnListToBuffer(partitionInfo, sqlMode, buf)
 		buf.WriteString(")\n(")
 	} else {
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
@@ -3610,7 +3635,7 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 			fmt.Fprintf(buf, ",\n ")
 		}
 		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
-		// PartitionTypeHash does not have any VALUES definition
+		// PartitionTypeHash and PartitionTypeKey do not have any VALUES definition
 		if partitionInfo.Type == model.PartitionTypeRange {
 			lessThans := make([]string, len(def.LessThan))
 			for idx, v := range def.LessThan {

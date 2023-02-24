@@ -1126,6 +1126,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 							partitionMethod = "RANGE COLUMNS"
 						case model.PartitionTypeList:
 							partitionMethod = "LIST COLUMNS"
+						case model.PartitionTypeKey:
+							partitionMethod = "KEY"
 						default:
 							return fmt.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
 						}
