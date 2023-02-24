@@ -2,10 +2,12 @@ package distribute_framework
 
 import (
 	"context"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +24,23 @@ type globalTaskManager struct {
 	ctx context.Context
 	se  sessionctx.Context
 	mu  sync.Mutex
+}
+
+// globalInfoSyncer stores the global infoSyncer.
+// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
+// Use atomic.Value to avoid data race in the test.
+var globalTaskManagerInstance atomic.Value
+
+func getGlobalTaskManager() (*globalTaskManager, error) {
+	v := globalTaskManagerInstance.Load()
+	if v == nil {
+		return nil, errors.New("globalInfoSyncer is not initialized")
+	}
+	return v.(*globalTaskManager), nil
+}
+
+func setGlobalTaskManager(is *globalTaskManager) {
+	globalTaskManagerInstance.Store(is)
 }
 
 func execSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
