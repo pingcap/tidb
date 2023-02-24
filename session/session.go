@@ -1938,7 +1938,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if err != nil {
 		return nil, nil, err
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+	var dbName string
+	if config.GetGlobalConfig().Status.RecordDBLabel {
+		dbName = se.GetSessionVars().CurrentDB
+	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2110,7 +2116,12 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		if err != nil {
 			return nil, nil, err
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+		var dbName string
+		if config.GetGlobalConfig().Status.RecordDBLabel {
+			dbName = se.GetSessionVars().CurrentDB
+		}
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -3417,6 +3428,20 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	for i := 0; i < cnt; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
+
+	// setup extract Handle
+	extractWorkers := 1
+	sctxs, err := createSessions(store, extractWorkers)
+	if err != nil {
+		return nil, err
+	}
+	extractWorkerSctxs := make([]sessionctx.Context, 0)
+	for _, sctx := range sctxs {
+		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
+	}
+	dom.SetupExtractHandle(extractWorkerSctxs)
+
+	// setup init stats loader
 	initStatsCtx, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -4094,7 +4119,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 
-	if ti.UseTableLookUp && s.sessionVars.StoreBatchSize > 0 {
+	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
 		telemetryStoreBatchedUsage.Inc()
 	}
 }

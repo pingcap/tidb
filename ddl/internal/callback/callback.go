@@ -51,6 +51,7 @@ type TestDDLCallback struct {
 
 	onJobRunBefore          func(*model.Job)
 	OnJobRunBeforeExported  func(*model.Job)
+	OnJobRunAfterExported   func(*model.Job)
 	onJobUpdated            func(*model.Job)
 	OnJobUpdatedExported    atomic.Pointer[func(*model.Job)]
 	onWatched               func(ctx context.Context)
@@ -101,6 +102,17 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 	}
 
 	tc.BaseCallback.OnJobRunBefore(job)
+}
+
+// OnJobRunAfter is used to run the user customized logic of `OnJobRunAfter` first.
+func (tc *TestDDLCallback) OnJobRunAfter(job *model.Job) {
+	logutil.BgLogger().Info("on job run after", zap.String("job", job.String()))
+	if tc.OnJobRunAfterExported != nil {
+		tc.OnJobRunAfterExported(job)
+		return
+	}
+
+	tc.BaseCallback.OnJobRunAfter(job)
 }
 
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.

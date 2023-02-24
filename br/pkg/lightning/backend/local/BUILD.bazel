@@ -96,7 +96,7 @@ go_test(
     ],
     embed = [":local"],
     flaky = True,
-    shard_count = 40,
+    shard_count = 45,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",

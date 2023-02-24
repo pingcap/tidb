@@ -798,6 +798,49 @@ func TestIntersectionMemQuota(t *testing.T) {
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
+func setupPartitionTableHelper(tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+}
+
+func TestIndexMergeProcessWorkerHang(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	var err error
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang", "return(true)"))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerUnionHang"))
+
+	sql = "select /*+ use_index_merge(t1, c2, c3) */ c1 from t1 where c2 < 900 and c3 < 1000;"
+	res = tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+	require.Contains(t, res[1][4], "intersection")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang", "return(true)"))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeProcessWorkerIntersectionHang"))
+}
+
 func TestIndexMergePanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -811,16 +854,7 @@ func TestIndexMergePanic(t *testing.T) {
 	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3)) partition by hash(c1) partitions 10;")
-	insertStr := "insert into t1 values(0, 0, 0)"
-	for i := 1; i < 1000; i++ {
-		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
-	}
-	tk.MustExec(insertStr)
-	tk.MustExec("analyze table t1;")
-	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	setupPartitionTableHelper(tk)
 
 	minV := 200
 	maxV := 1000
@@ -880,4 +914,26 @@ func TestIndexMergePanic(t *testing.T) {
 		}
 		require.NoError(t, failpoint.Disable(fp))
 	}
+}
+
+func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	var err error
+	sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 900 or c2 < 1000;"
+	res := tk.MustQuery("explain " + sql).Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	// If got goroutines leak in coprocessor, ci will fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialTableWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialTableWorkerCoprLeak"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
+	err = tk.QueryToErr(sql)
+	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
 }

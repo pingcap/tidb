@@ -288,6 +288,9 @@ func TestS3Storage(t *testing.T) {
 		sendCredential bool
 	}
 
+	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
+	require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+	require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 	s := createGetBucketRegionServer("us-west-2", 200, true)
 	defer s.Close()
 
@@ -411,7 +414,17 @@ func TestS3Storage(t *testing.T) {
 }
 
 func TestS3URI(t *testing.T) {
-	backend, err := ParseBackend("s3://bucket/prefix/", nil)
+	accessKey := "ab"
+	secretAccessKey := "cd"
+	sessionToken := "ef"
+	options := &BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
+		},
+	}
+	backend, err := ParseBackend("s3://bucket/prefix/", options)
 	require.NoError(t, err)
 	storage, err := New(context.Background(), backend, &ExternalStorageOptions{})
 	require.NoError(t, err)

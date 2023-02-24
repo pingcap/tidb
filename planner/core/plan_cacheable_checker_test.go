@@ -34,6 +34,7 @@ func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	mockCtx := mock.NewContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	mockCtx.GetSessionVars().EnablePlanCacheForSubquery = true
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -79,9 +80,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.DeleteStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt := &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -90,7 +92,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -134,9 +136,10 @@ func TestCacheable(t *testing.T) {
 
 	stmt = &ast.UpdateStmt{
 		TableRefs: tableRefsClause,
-		Where:     &ast.ExistsSubqueryExpr{},
+		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -187,9 +190,10 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
-		Where: &ast.ExistsSubqueryExpr{},
+		Where: &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
@@ -287,6 +291,11 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from t where a in (1, 2, 3)",
 		"select * from t where a<13 or b<15",
 		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
 	}
 
 	unsupported := []string{
@@ -302,6 +311,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"insert into t1(a, b) select a, b from t1",                                         // insert into select
 		"update t1 set a = 1 where b = 2",                                                  // update
 		"delete from t1 where b = 1",                                                       // delete
+		"select * from t1 for update",                                                      // lock
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
 
 		"select * from t where a+b=13",      // '+'
 		"select * from t where mod(a, 3)=1", // mod

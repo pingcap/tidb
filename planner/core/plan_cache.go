@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
@@ -115,10 +116,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
-	if v := ctx.Value("____GetPlanFromSessionPlanCacheErr"); v != nil { // for testing
-		return nil, nil, errors.New("____GetPlanFromSessionPlanCacheErr")
-	}
-
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -158,25 +155,23 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	paramTypes := parseParamTypes(sctx, params)
-
 	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
 	}
-	limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
-	if paramErr != nil {
-		return nil, nil, paramErr
+
+	matchOpts, err := GetMatchOpts(sctx, stmt.PreparedAst.Stmt, params)
+	if err != nil {
+		return nil, nil, err
 	}
 	if stmtCtx.UseCache { // for non-point plans
-		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt,
-			paramTypes, limitCountAndOffset); err != nil || ok {
+		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL, limitCountAndOffset)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -223,12 +218,12 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType, limitParams []uint64) (Plan,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, paramTypes, limitParams)
+	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, matchOpts)
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -267,8 +262,8 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
-	bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
+	matchOpts *utilpc.PlanCacheMatchOpts) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -287,7 +282,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(paramTypes), len(limitParams)); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount)); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -303,11 +298,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitParams)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitParams)
+		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, matchOpts)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
