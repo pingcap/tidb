@@ -373,20 +373,18 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 						job.Args = originArgs
 					}
 					return ver, err
-				} else {
-					// Current reorg finish
-					if err != nil {
-						return ver, err
-					}
-					// Update current reorg job to done and check if has next index need reorg
-					allDone = updateReorgDone(job, reorgIdxInfo)
-					if allDone {
-						// All indexes are reorged
-						break
-					} else {
-						return ver, err
-					}
 				}
+				// Current reorg finish
+				if err != nil {
+					return ver, err
+				}
+				// Update current reorg job to done and check if has next index need reorg
+				allDone = updateReorgDone(job, reorgIdxInfo)
+				if allDone {
+					// All indexes are reorged
+					break
+				}
+				return ver, err
 			}
 
 			// Set column index flag.
