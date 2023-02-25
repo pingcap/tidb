@@ -15,6 +15,8 @@ package charset
 
 import (
 	"bytes"
+	"encoding/binary"
+	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
@@ -78,6 +80,16 @@ func (*encodingGB18030) MbLen(bs string) int {
 	return 0
 }
 
+// ToUpper implements Encoding interface.
+func (*encodingGB18030) ToUpper(d string) string {
+	return strings.ToUpperSpecial(GB18030Case, d)
+}
+
+// ToLower implements Encoding interface.
+func (*encodingGB18030) ToLower(d string) string {
+	return strings.ToLowerSpecial(GB18030Case, d)
+}
+
 // customGB18030 is a simplifiedchinese.GB18030 wrapper.
 type customGB18030 struct{}
 
@@ -130,8 +142,8 @@ type customGB18030Encoder struct {
 
 // Transform special treatment for `€`,
 func (c customGB18030Encoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
-	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' in UTF8 */) {
-		dst[0], dst[1], dst[2], dst[3] = 0xa2, 0xe3, 0, 0
+	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac}) { /* '€' in UTF8 */
+		binary.BigEndian.PutUint16(dst, 0xa2e3)
 		return 2, 3, nil
 	}
 	return c.gb18030Encoder.Transform(dst, src, atEOF)
