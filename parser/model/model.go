@@ -53,10 +53,12 @@ const (
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
-	// StateCreateIndexDeleteOnly only use for Drop column with composite indices on create temp composite indices step
+	// StateCreateIndexDeleteOnly means we can only delete items for this schema element,
+	// use for drop column with composite index
 	StateCreateIndexDeleteOnly SchemaState = 0xFE
 
-	// StateCreateIndexWriteOnly only use for Drop column with composite indices on create temp composite indices step
+	// StateCreateIndexWriteOnly means we can use any write operation on this schema element,
+	// use for drop column with composite index
 	StateCreateIndexWriteOnly SchemaState = 0xFF
 )
 
