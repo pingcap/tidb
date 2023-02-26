@@ -92,6 +92,7 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
 	github.com/tikv/client-go/v2 v2.0.6-0.20230220051003-e0e6019f8ac7
 	github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
@@ -240,7 +241,6 @@ require (
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
-	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
@@ -280,4 +280,4 @@ replace (
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
 
-replace github.com/tikv/client-go/v2 => github.com/hawkingrei/client-go/v2 19b54a2c860bb311bc6e55383bf6c3b38c2dc723
+replace github.com/tikv/client-go/v2 => github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230226061604-19b54a2c860b
