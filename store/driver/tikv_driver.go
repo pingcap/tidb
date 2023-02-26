@@ -33,6 +33,9 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
+	"github.com/pingcap/tidb/util/gpool/spool"
+
+	rutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -205,7 +208,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		tikv.WithCodec(codec),
 	)
 
-	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
+	pool, err := spool.NewPool("tikv_driver", 128, rutil.TIKVDRIVER)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPool(pool))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

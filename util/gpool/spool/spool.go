@@ -241,6 +241,11 @@ func (p *Pool) ReleaseAndWait() {
 	}
 }
 
+// Close is a alias of ReleaseAndWait. It is for the implement of Pool in the tikv/client-go.
+func (p *Pool) Close() {
+	p.ReleaseAndWait()
+}
+
 func (p *Pool) run() error {
 	if p.IsClosed() {
 		return gpool.ErrPoolClosed

@@ -52,4 +52,5 @@ const (
 	UNKNOWN Component = iota
 	// DDL is for ddl component
 	DDL
+	TIKVDRIVER
 )
