@@ -53,6 +53,7 @@ const (
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
+
 	// StateCreateIndexDeleteOnly means we can only delete items for this schema element,
 	// use for drop column with composite index
 	StateCreateIndexDeleteOnly SchemaState = 0xFE
