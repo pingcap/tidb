@@ -236,7 +236,7 @@ func (p *Pool) ReleaseAndWait() {
 		if p.Running() == 0 && p.heartbeatDone.Load() {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
