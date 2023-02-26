@@ -7,11 +7,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//resourcemanager/util",
         "//sessionctx/variable",
         "//store/copr",
         "//store/driver/error",
         "//store/driver/txn",
         "//store/gcworker",
+        "//util/gpool/spool",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/deadlock",
