@@ -1173,8 +1173,8 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 	return nil
 }
 
-// CreateResourceGroup implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) CreateResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
+// AddResourceGroup implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) AddResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
 	return nil
 }
 

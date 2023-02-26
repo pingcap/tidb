@@ -19,7 +19,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
 )
@@ -135,17 +135,18 @@ func (e *TableReaderExecutor) setDummy() {
 
 // Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "TableReaderExecutor.Open")
+	defer r.End()
 	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
 		ms := v.(int)
 		time.Sleep(time.Millisecond * time.Duration(ms))
 	})
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
@@ -462,13 +463,19 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *TableReaderExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
-	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
-		for i, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+	e.virtualColumnIndex, e.virtualColumnRetFieldTypes = buildVirtualColumnInfo(e.Schema(), e.columns)
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func buildVirtualColumnInfo(schema *expression.Schema, columns []*model.ColumnInfo) (colIndexs []int, retTypes []*types.FieldType) {
+	colIndexs = buildVirtualColumnIndex(schema, columns)
+	if len(colIndexs) > 0 {
+		retTypes = make([]*types.FieldType, len(colIndexs))
+		for i, idx := range colIndexs {
+			retTypes[i] = schema.Columns[idx].RetType
 		}
 	}
+	return colIndexs, retTypes
 }
 
 type tableResultHandler struct {

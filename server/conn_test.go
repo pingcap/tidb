@@ -429,9 +429,9 @@ func TestDispatch(t *testing.T) {
 			in:  []byte("t"),
 			err: nil,
 			out: []byte{
-				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1f, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
 				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
-				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0xd, 0xfe,
+				0x0, 0x0, 0x0, 0xfb, 0x1, 0x0, 0x0, 0xd, 0xfe,
 			},
 		},
 		{
@@ -549,10 +549,9 @@ func TestDispatchClientProtocol41(t *testing.T) {
 			in:  []byte("t"),
 			err: nil,
 			out: []byte{
-				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1f, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
 				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
-				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0xd, 0xfe,
-				0x0, 0x0, 0x2, 0x0,
+				0x0, 0x0, 0x0, 0xfb, 0x5, 0x0, 0x0, 0x0d, 0xfe, 0x0, 0x0, 0x2, 0x0,
 			},
 		},
 		{
@@ -1805,4 +1804,81 @@ func TestExtensionChangeUser(t *testing.T) {
 	require.Equal(t, expectedConnInfo.ActiveRoles, logInfo.ActiveRoles)
 	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
 	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
+}
+
+func TestAuthSha(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := &TiDBContext{Session: tk.Session()}
+	cc.setCtx(ctx)
+
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthCachingSha2Password,
+		Auth:       []byte{}, // No password
+	}
+
+	authData, err := cc.authSha(context.Background(), resp)
+	require.NoError(t, err)
+
+	// If no password is specified authSha() should return an empty byte slice
+	// which differs from when a password is specified as that should trigger
+	// fastAuthFail and the rest of the auth process.
+	require.Equal(t, authData, []byte{})
+}
+
+func TestProcessInfoForExecuteCommand(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+
+	tk.MustExec("use test")
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	tk.MustExec("create table t (col1 int)")
+
+	// simple prepare and execute
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t"))
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t")
+
+	// prepare and execute with params
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	// 1 params, length of nullBitMap is 1, `0x8, 0x0` represents the type, and the following `0x10, 0x0....` is the param
+	// 10
+	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x2, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x8, 0x0,
+		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
+	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }

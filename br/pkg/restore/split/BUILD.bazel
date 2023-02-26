@@ -14,6 +14,7 @@ go_library(
         "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/httputil",
+        "//br/pkg/lightning/config",
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
@@ -41,7 +42,9 @@ go_library(
 
 go_test(
     name = "split_test",
+    timeout = "short",
     srcs = ["sum_sorted_test.go"],
+    flaky = True,
     deps = [
         ":split",
         "@com_github_stretchr_testify//require",

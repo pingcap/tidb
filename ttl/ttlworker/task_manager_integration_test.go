@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util/logutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -95,7 +97,7 @@ func TestParallelLockNewTask(t *testing.T) {
 				if err == nil {
 					successCounter.Add(1)
 				} else {
-					logutil.BgLogger().Error("lock new task with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new task with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
@@ -184,4 +186,82 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	m2.SetScanWorkers4Test([]ttlworker.Worker{scanWorker2})
 	m2.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-2"))
+
+	// another task manager shouldn't fetch this task if it has finished
+	task := m2.GetRunningTasks()[0]
+	task.SetResult(nil)
+	m2.CheckFinishedTask(sessionFactory(), now)
+	scanWorker3 := ttlworker.NewMockScanWorker(t)
+	scanWorker3.Start()
+	m3 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-3")
+	m3.SetScanWorkers4Test([]ttlworker.Worker{scanWorker3})
+	m3.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
+	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("finished task-manager-2"))
+}
+
+func TestTaskMetrics(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	// create table and scan task
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, 1)
+	tk.MustExec(sql)
+
+	// update the infoschema cache
+	isc := cache.NewInfoSchemaCache(time.Second)
+	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
+
+	// schedule in a task manager
+	scanWorker := ttlworker.NewMockScanWorker(t)
+	scanWorker.Start()
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
+	m.RescheduleTasks(sessionFactory(), now)
+	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
+
+	m.ReportMetrics()
+	out := &dto.Metric{}
+	require.NoError(t, metrics.DeletingTaskCnt.Write(out))
+	require.Equal(t, float64(1), out.GetGauge().GetValue())
+}
+
+func TestRescheduleWithError(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	// insert a wrong scan task with random table id
+	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", 613, 1)
+	tk.MustExec(sql)
+
+	isc := cache.NewInfoSchemaCache(time.Second)
+	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
+
+	// schedule in a task manager
+	scanWorker := ttlworker.NewMockScanWorker(t)
+	scanWorker.Start()
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
+	notify := make(chan struct{})
+	go func() {
+		m.RescheduleTasks(sessionFactory(), now)
+		notify <- struct{}{}
+	}()
+	timeout, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	select {
+	case <-timeout.Done():
+		require.Fail(t, "reschedule didn't finish in time")
+	case <-notify:
+	}
+	tk.MustQuery("select status from mysql.tidb_ttl_task").Check(testkit.Rows("waiting"))
 }

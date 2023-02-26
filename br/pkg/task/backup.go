@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -49,6 +50,8 @@ const (
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
 	flagUseCheckpoint    = "use-checkpoint"
+	flagKeyspaceName     = "keyspace-name"
+	flagReplicaReadLabel = "replica-read-label"
 
 	flagGCTTL = "gcttl"
 
@@ -75,14 +78,15 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64        `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64        `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64         `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
-	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool          `json:"use-checkpoint" toml:"use-checkpoint"`
+	TimeAgo          time.Duration     `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
+	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -124,6 +128,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseBackupMetaV2, false,
 		"use backup meta v2 to store meta info")
+
+	flags.String(flagKeyspaceName, "", "keyspace name for backup")
 	// This flag will change the structure of backupmeta.
 	// we must make sure the old three version of br can parse the v2 meta to keep compatibility.
 	// so this flag should set to false for three version by default.
@@ -135,6 +141,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -206,6 +214,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for backup full
@@ -233,6 +245,11 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	cfg.ReplicaReadLabel, err = parseReplicaReadLabelFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -322,6 +339,9 @@ func isFullBackup(cmdName string) bool {
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
 	cfg.Adjust()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -474,6 +494,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
 		CipherInfo:       &cfg.CipherInfo,
+		ReplicaRead:      len(cfg.ReplicaReadLabel) != 0,
 	}
 	brVersion := g.GetVersion()
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -484,6 +505,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Add keyspace prefix to BackupRequest
+	for i := range ranges {
+		start, end := ranges[i].StartKey, ranges[i].EndKey
+		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
 	}
 
 	// Metafile size should be less than 64MB.
@@ -498,6 +524,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
 		m.NewCollationsEnabled = newCollationEnable
+		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
@@ -602,7 +629,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -695,7 +722,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -719,4 +746,19 @@ func parseCompressionType(s string) (backuppb.CompressionType, error) {
 		return backuppb.CompressionType_UNKNOWN, errors.Annotatef(berrors.ErrInvalidArgument, "invalid compression type '%s'", s)
 	}
 	return ct, nil
+}
+
+func parseReplicaReadLabelFlag(flags *pflag.FlagSet) (map[string]string, error) {
+	replicaReadLabelStr, err := flags.GetString(flagReplicaReadLabel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if replicaReadLabelStr == "" {
+		return nil, nil
+	}
+	kv := strings.Split(replicaReadLabelStr, ":")
+	if len(kv) != 2 {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "invalid replica read label '%s'", replicaReadLabelStr)
+	}
+	return map[string]string{kv[0]: kv[1]}, nil
 }

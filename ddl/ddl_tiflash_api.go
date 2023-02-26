@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -398,6 +399,13 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				zap.Int64("tableID", availableTableID.ID),
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
+			if intest.InTest {
+				// In the test, the server cannot start up because the port is occupied.
+				// Although the port is random. so we need to quickly return when to
+				// fail to get tiflash sync.
+				// https://github.com/pingcap/tidb/issues/39949
+				panic(err)
+			}
 			continue
 		}
 		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
@@ -424,6 +432,14 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			return err
 		}
 	}
+
+	failpoint.Inject("OneTiFlashStoreDown", func() {
+		for storeID, store := range pollTiFlashContext.TiFlashStores {
+			store.Store.StateName = "Down"
+			pollTiFlashContext.TiFlashStores[storeID] = store
+			break
+		}
+	})
 	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
