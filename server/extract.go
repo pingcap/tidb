@@ -101,6 +101,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 func loadExtractResponse(name string) ([]byte, error) {
 	path := filepath.Join(domain.GetExtractTaskDirName(), name)
+	//nolint: gosec
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
