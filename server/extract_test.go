@@ -77,9 +77,6 @@ func TestExtractHandler(t *testing.T) {
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
 	}()
-	//body, err := io.ReadAll(resp0.Body)
-	//require.NoError(t, err)
-	//logutil.BgLogger().Info("extract response", zap.String("response", string(body)))
 	require.Equal(t, resp0.StatusCode, http.StatusOK)
 }
 
