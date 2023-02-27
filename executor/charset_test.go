@@ -172,6 +172,5 @@ func TestGB18030(t *testing.T) {
 	tk.MustExec(`insert into t2 values ("abc", "abc"), ("abc", "xyz"), ("abc", "qwe"), ("abc","234")`)
 	tk.MustExec(`insert into t2 values ("一二三", "一"), ("一二三", "二"), ("一二三", "三"), ("一二三","四")`)
 	tk.MustQuery(`select a, b, rank() over (partition by a order by b) as x from t2`).
-		Check(testkit.Rows("abc 234 1", "abc abc 2", "abc qwe 3", "abc xyz 4",
-			"一二三 二 1", "一二三 三 2", "一二三 四 3", "一二三 一 4"))
+		Check(testkit.Rows("一二三 二 1", "一二三 三 2", "一二三 四 3", "一二三 一 4", "abc 234 1", "abc abc 2", "abc qwe 3", "abc xyz 4"))
 }
