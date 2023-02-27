@@ -35,7 +35,7 @@ func (*CPUScheduler) Tune(_ util.Component, pool util.GoroutinePool) Command {
 		return Hold
 	}
 	value, unsupported := cpu.GetCPUUsage()
-	if !unsupported {
+	if unsupported {
 		return Hold
 	}
 	if value < 0.5 {
