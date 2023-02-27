@@ -1846,7 +1846,6 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
 	}
-	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	return joinPlan, nil
 }
 
@@ -5343,7 +5342,7 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, b.getSelectOffset())
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }
