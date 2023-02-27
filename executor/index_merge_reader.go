@@ -215,7 +215,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
 			},
-			handleWorkerPanic(ctx, e.finished, e.resultCh, nil, processWorkerType),
+			handleWorkerPanic(ctx, e.finished, e.resultCh, processWorkerType),
 		)
 		e.processWorkerWg.Done()
 	}()
@@ -327,7 +327,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, partialIndexWorkerType),
 		)
 	}()
 
@@ -425,7 +425,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, partialTableWorkerType),
 		)
 	}()
 	return nil
@@ -650,7 +650,7 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
-func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *lookupTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
+func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *lookupTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
@@ -659,10 +659,6 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 		}
 		if r == nil {
 			return
-		}
-
-		if extraNotifyCh != nil {
-			extraNotifyCh <- true
 		}
 
 		err4Panic := errors.Errorf("%s: %v", worker, r)
