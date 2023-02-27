@@ -235,7 +235,6 @@ func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) boo
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
-
 	sessVars := p.sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 
