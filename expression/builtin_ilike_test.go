@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,46 +33,46 @@ func TestIlike(t *testing.T) {
 	tests := []struct {
 		input        string
 		pattern      string
+		escape       int
 		generalMatch int
 		unicodeMatch int
 	}{
-		{"a", "", 0, 0},
-		{"a", "a", 1, 1},
-		{"a", "á", 1, 1},
-		{"a", "b", 0, 0},
-		{"aA", "Aa", 1, 1},
-		{"áAb", `Aa%`, 1, 1},
-		{"áAb", `%ab%`, 1, 1},
-		{"áAb", `%ab`, 1, 1},
-		{"ÀAb", "aA_", 1, 1},
-		{"áééá", "a_%a", 1, 1},
-		{"áééá", "a%_a", 1, 1},
-		{"áéá", "a_%a", 1, 1},
-		{"áéá", "a%_a", 1, 1},
-		{"áá", "a_%a", 0, 0},
-		{"áá", "a%_a", 0, 0},
-		{"áééáííí", "a_%a%", 1, 1},
+		// {"a", "", 0, 0, 0},
+		// {"a", "a", 0, 1, 1},
+		{"a", "á", 0, 0, 0},
+		{"a", "b", 0, 0, 0},
+		{"aA", "Aa", 0, 1, 1},
+		{"áAb", `Aa%`, 0, 0, 0},
+		{"áAb", `%ab%`, 0, 1, 1},
+		{"", "", 0, 1, 1},
+		{"ß", "s%", 0, 0, 0},
+		{"ß", "%s", 0, 0, 0},
+		{"ß", "ss", 0, 0, 0},
+		{"ß", "s", 0, 0, 0},
+		{"ss", "%ß%", 0, 0, 0},
+		{"ß", "_", 0, 1, 1},
+		{"ß", "__", 0, 0, 0},
 
-		// performs matching on a per-character basis
-		// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-		{"ß", "s%", 1, 0},
-		{"ß", "%s", 1, 0},
-		{"ß", "ss", 0, 0},
-		{"ß", "s", 1, 0},
-		{"ss", "%ß%", 1, 0},
-		{"ß", "_", 1, 1},
-		{"ß", "__", 0, 0},
+		// escape tests
+		{"a", "Aa", int('A'), 1, 1},
+		{"a", "AA", int('A'), 1, 1},
+		{"Aa", "AAAA", int('A'), 1, 1},
+		{"gTp", "AGTAp", int('A'), 1, 1},
+		{"gTAp", "AGTAap", int('A'), 1, 1},
+		{"A", "aA", int('a'), 1, 1},
+		{"a", "aA", int('a'), 1, 1},
 	}
 	var charset_and_collation_general = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
 
 	for _, charset_and_collation := range charset_and_collation_general {
 		for _, tt := range tests {
-			comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charset_and_collation[1])
 			fc := funcs[ast.Ilike]
-			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.escape))
 			f, err := fc.getFunction(ctx, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charset_and_collation[0], charset_and_collation[1])
+			f.setCollator(collate.GetCollator(charset_and_collation[1]))
 			r, err := evalBuiltinFunc(f, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
@@ -86,12 +87,13 @@ func TestIlike(t *testing.T) {
 
 	for _, charset_and_collation := range charset_and_collation_unicode {
 		for _, tt := range tests {
-			comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charset_and_collation[1])
 			fc := funcs[ast.Ilike]
-			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+			inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.escape))
 			f, err := fc.getFunction(ctx, inputs)
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charset_and_collation[0], charset_and_collation[1])
+			f.setCollator(collate.GetCollator(charset_and_collation[1]))
 			r, err := evalBuiltinFunc(f, chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)

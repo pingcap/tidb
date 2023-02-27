@@ -37,7 +37,7 @@ func LowerAlphaAsciiAndStoreInNewColumn(src_col *chunk.Column, lowered_col *chun
 	}
 }
 
-func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int, exclude_char rune) {
+func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int, excluded_char []int64) {
 	lowered_col.ReserveString(elem_num)
 	for i := 0; i < elem_num; i++ {
 		if src_col.IsNull(i) {
@@ -47,7 +47,7 @@ func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lo
 		}
 
 		src_str := src_col.GetString(i)
-		lowered_col.AppendString(stringutil.LowerOneStringExcludingOneChar(src_str, exclude_char))
+		lowered_col.AppendString(stringutil.LowerOneStringExcludingOneChar(src_str, rune(excluded_char[i])))
 		lowered_col.SetNull(i, false)
 	}
 }
@@ -86,21 +86,14 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	escapes := bufEscape.Int64s()
 
 	// Must not use b.pattern to avoid data race
-	pattern := b.collator().Pattern()
+	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 
-	if !(collate.IsCICollation(b.collation)) {
-		tmp_val_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
-		tmp_pattern_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
-		LowerAlphaAsciiAndStoreInNewColumn(bufVal, tmp_val_col, row_num)
-		if stringutil.IsUpperAscii(escapes[0]) {
-			LowerAlphaAsciiAndStoreInNewColumn(bufPattern, tmp_pattern_col, row_num)
-		} else {
-			LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(bufPattern, tmp_pattern_col, row_num)
-		}
-
-		bufVal = tmp_val_col
-		bufPattern = tmp_pattern_col
-	}
+	tmp_val_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	tmp_pattern_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	LowerAlphaAsciiAndStoreInNewColumn(bufVal, tmp_val_col, row_num)
+	LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(bufPattern, tmp_pattern_col, row_num, escapes)
+	bufVal = tmp_val_col
+	bufPattern = tmp_pattern_col
 
 	result.ResizeInt64(row_num, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)

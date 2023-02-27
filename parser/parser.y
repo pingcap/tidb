@@ -5836,7 +5836,6 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		logutil.BgLogger().Info("qwe: here 1")
 		escape := $4
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
@@ -5854,7 +5853,6 @@ PredicateExpr:
 	}
 |	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		logutil.BgLogger().Info("qwe: here 2")
 		escape := $4
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))

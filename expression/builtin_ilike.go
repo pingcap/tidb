@@ -86,14 +86,16 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	if !collate.IsCICollation(b.collationInfo.collation) {
-		valStr = stringutil.LowerOneString(valStr)
+	valStr = stringutil.LowerOneString(valStr)
+	if stringutil.IsUpperAscii(rune(escape)) {
+		patternStr = stringutil.LowerOneStringExcludingOneChar(patternStr, rune(escape))
+	} else {
 		patternStr = stringutil.LowerOneString(patternStr)
 	}
 
 	memorization := func() {
 		if b.pattern == nil {
-			b.pattern = b.collator().Pattern()
+			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
 			if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 				b.pattern.Compile(patternStr, byte(escape))
 				b.isMemorizedPattern = true
@@ -104,7 +106,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	b.once.Do(memorization)
 	if !b.isMemorizedPattern {
 		// Must not use b.pattern to avoid data race
-		pattern := b.collator().Pattern()
+		pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 		pattern.Compile(patternStr, byte(escape))
 		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}
