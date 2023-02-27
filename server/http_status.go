@@ -205,6 +205,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
 
 	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 

@@ -139,13 +139,13 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if !a.acted {
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-				zap.Uint64("connID", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+				zap.Uint64("conn", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 		} else {
 			a.logHook(a.ConnID)
 		}
 	}
 	a.acted = true
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(PanicMemoryExceed + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action

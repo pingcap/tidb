@@ -34,7 +34,7 @@ func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 	closeStmtSummary()
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	extractHandler := dom.GetExtractHandle()
-	_, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(time.Now(), time.Now()), false)
+	_, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(time.Now(), time.Now()))
 	require.Error(t, err)
 }
 
@@ -61,7 +61,7 @@ func TestExtractHandlePlanTask(t *testing.T) {
 	time.Sleep(time.Second)
 	end := time.Now()
 	extractHandler := dom.GetExtractHandle()
-	name, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(startTime, end), false)
+	name, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(startTime, end))
 	require.NoError(t, err)
 	require.True(t, len(name) > 0)
 }
