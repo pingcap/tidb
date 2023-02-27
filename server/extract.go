@@ -16,12 +16,12 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +105,7 @@ func loadExtractResponse(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 	content, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
@@ -113,23 +114,18 @@ func loadExtractResponse(name string) ([]byte, error) {
 }
 
 func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
-	var taskRequest extractTaskRequest
-	err := json.NewDecoder(req.Body).Decode(&taskRequest)
-	if err != nil {
-		return nil, false, err
-	}
-	extractTaskType := taskRequest.Type
+	extractTaskType := req.URL.Query().Get(pType)
 	switch strings.ToLower(extractTaskType) {
 	case extractPlanTaskType:
-		return buildExtractPlanTask(taskRequest)
+		return buildExtractPlanTask(req)
 	}
 	logutil.BgLogger().Error("unknown extract task type")
 	return nil, false, errors.New("unknown extract task type")
 }
 
-func buildExtractPlanTask(taskRequest extractTaskRequest) (*domain.ExtractTask, bool, error) {
-	beginStr := taskRequest.Begin
-	endStr := taskRequest.End
+func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) {
+	beginStr := req.URL.Query().Get(pBegin)
+	endStr := req.URL.Query().Get(pEnd)
 	begin, err := time.Parse(types.TimeFormat, beginStr)
 	if err != nil {
 		logutil.BgLogger().Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
@@ -140,17 +136,15 @@ func buildExtractPlanTask(taskRequest extractTaskRequest) (*domain.ExtractTask, 
 		logutil.BgLogger().Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
 		return nil, false, err
 	}
+	isDumpStr := req.URL.Query().Get(pIsDump)
+	isDump, err := strconv.ParseBool(isDumpStr)
+	if err != nil {
+		isDump = false
+	}
 	return &domain.ExtractTask{
 		ExtractType:     domain.ExtractPlanType,
 		IsBackgroundJob: false,
 		Begin:           begin,
 		End:             end,
-	}, taskRequest.IsDump, nil
-}
-
-type extractTaskRequest struct {
-	Type   string `json:"type"`
-	Begin  string `json:"begin"`
-	End    string `json:"end"`
-	IsDump bool   `json:"isDump"`
+	}, isDump, nil
 }

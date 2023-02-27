@@ -15,10 +15,10 @@
 package server
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -71,8 +71,8 @@ func TestExtractHandler(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/extractTaskServeHandler"))
 	}()
-	b := fmt.Sprintf(`{"type":"plan","begin":"%s","end":"%s"}`, startTime.Format(types.TimeFormat), endTime.Format(types.TimeFormat))
-	resp0, err := client.postStatus("/extract_task/dump", "application/json", bytes.NewBuffer([]byte(b)))
+	resp0, err := client.fetchStatus(fmt.Sprintf("/extract_task/dump?type=plan&begin=%s&end=%s",
+		url.QueryEscape(startTime.Format(types.TimeFormat)), url.QueryEscape(endTime.Format(types.TimeFormat))))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, resp0.Body.Close())
