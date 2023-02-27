@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/resourcemanager/gpool/spool"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -187,10 +188,14 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.workerWg.Add(1)
-	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
+	spool.Run(func() {
+		e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
+	})
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.newInnerWorker(innerCh).run(workerCtx, e.workerWg)
+		spool.Run(func() {
+			e.newInnerWorker(innerCh).run(workerCtx, e.workerWg)
+		})
 	}
 }
 

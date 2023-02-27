@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/resourcemanager/gpool/spool"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -589,7 +590,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
-	go func() {
+	spool.Run(func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
@@ -672,7 +673,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-	}()
+	})
+
 	return nil
 }
 

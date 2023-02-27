@@ -15,6 +15,7 @@
 package spool
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,18 @@ import (
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+var defaultAntsPool, _ = NewPool("global", math.MaxInt32, util.Global)
+
+// Run a task in the global pool
+func Run(task func()) {
+	defaultAntsPool.Run(task)
+}
+
+// ReleaseAndWait is to release and wait.
+func ReleaseAndWait() {
+	defaultAntsPool.ReleaseAndWait()
+}
 
 // Pool is a single goroutine pool.
 type Pool struct {

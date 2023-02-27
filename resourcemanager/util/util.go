@@ -54,4 +54,6 @@ const (
 	DDL
 	// TIKVDRIVER is for tikv driver component
 	TIKVDRIVER
+	// Global is to use all component.
+	Global
 )

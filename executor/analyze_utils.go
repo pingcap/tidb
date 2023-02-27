@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/resourcemanager/gpool/spool"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -84,16 +85,18 @@ func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResu
 // Please DO NOT use panic in the cb function.
 func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 	old := w.cnt.Inc() - 1
-	go func(cnt uint64) {
-		defer func() {
-			w.Done()
-			if cnt == 0 {
-				w.Wait()
-				close(w.notify)
-			}
-		}()
-		exec()
-	}(old)
+	spool.Run(func() {
+		func(cnt uint64) {
+			defer func() {
+				w.Done()
+				if cnt == 0 {
+					w.Wait()
+					close(w.notify)
+				}
+			}()
+			exec()
+		}(old)
+	})
 }
 
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
@@ -116,14 +119,16 @@ func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrap
 // Please DO NOT use panic in the cb function.
 func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 	old := w.cnt.Inc() - 1
-	go func(cnt uint64) {
-		defer func() {
-			w.Done()
-			if cnt == 0 {
-				w.Wait()
-				close(w.notify)
-			}
-		}()
-		exec()
-	}(old)
+	spool.Run(func() {
+		func(cnt uint64) {
+			defer func() {
+				w.Done()
+				if cnt == 0 {
+					w.Wait()
+					close(w.notify)
+				}
+			}()
+			exec()
+		}(old)
+	})
 }
