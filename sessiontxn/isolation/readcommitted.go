@@ -227,7 +227,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 		retryable = true
 
 		// Exit aggressive locking in single-statement-deadlock case, otherwise the lock won't be released after retrying.
-		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+		if err := p.cancelAggressiveLockingIfNeeded(ctx); err != nil {
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {

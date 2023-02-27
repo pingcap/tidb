@@ -555,3 +555,12 @@ func (p *basePessimisticTxnContextProvider) retryAggressiveLockingIfNeeded(ctx c
 	}
 	return nil
 }
+
+func (p *basePessimisticTxnContextProvider) cancelAggressiveLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
+		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
