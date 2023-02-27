@@ -915,8 +915,6 @@ func TestIndexMergePanic(t *testing.T) {
 		require.NoError(t, failpoint.Disable(fp))
 	}
 }
-<<<<<<< HEAD
-=======
 
 func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -939,4 +937,3 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePartialIndexWorkerCoprLeak"))
 }
->>>>>>> 0801e4210f (executor: fix IndexMerge hang when got oom cancel (#41633))
