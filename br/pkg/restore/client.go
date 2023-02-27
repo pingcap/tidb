@@ -2537,9 +2537,10 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
-	alterTableDropIndexFormat  = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`;"
-	alterTableAddIndexFormat   = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s);"
-	alterTableAddPrimaryFormat = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s)"
+	alterTableDropIndexFormat      = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`;"
+	alterTableAddIndexFormat       = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s);"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE `%s`.`%s` ADD UNIQUE KEY `%s`(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
@@ -2549,6 +2550,8 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 		var addSQL string
 		if info.IsPrimary {
 			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.SchemaName, info.TableName, info.ColumnList)
+		} else if info.IsUnique {
+			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
 		} else {
 			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
 		}

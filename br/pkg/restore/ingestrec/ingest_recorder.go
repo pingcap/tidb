@@ -28,6 +28,7 @@ type IngestIndexInfo struct {
 	IndexName  string
 	ColumnList string
 	IsPrimary  bool
+	IsUnique   bool
 }
 
 // IngestRecorder records the indexes information that use ingest mode to construct kvs.
@@ -109,6 +110,7 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 			IndexName:  indexInfo.Name.O,
 			ColumnList: columnListBuilder.String(),
 			IsPrimary:  job.Type == model.ActionAddPrimaryKey,
+			IsUnique:   indexInfo.Unique,
 		}
 	}
 	return nil
