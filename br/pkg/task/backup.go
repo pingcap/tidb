@@ -114,7 +114,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
 	flags.Uint32(flagConcurrency, 4, "The size of thread pool on BR that executes tasks, "+
-		"one task represents one table range(or one index range) according to backup schemas. if had one table with a PK field."+
+		"one task represents one table range(or one index range) according to backup schemas. if had one table with one index field."+
 		"then got two tasks to backup this table. this value should increase if you have lots of tables or indices to backup.")
 
 	flags.Bool(flagRemoveSchedulers, false,
