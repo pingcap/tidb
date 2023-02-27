@@ -1046,9 +1046,9 @@ type SessionVars struct {
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
 
-	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
+	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
-	EnableIndexJoinInnerSideMultiPattern bool
+	EnableINLJoinInnerMultiPattern bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

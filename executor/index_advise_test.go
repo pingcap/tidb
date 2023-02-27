@@ -112,7 +112,7 @@ and b.txn_accno = a.new_accno;`
 		{"    └─Selection_11"},
 		{"      └─IndexRangeScan_10"},
 	}
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
 		{"Update_8"},
@@ -123,10 +123,10 @@ and b.txn_accno = a.new_accno;`
 		{"    └─Selection_13"},
 		{"      └─TableFullScan_12"},
 	}
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = false
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
 
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustExec(sql)
 	tk.MustQuery("select yn_frz from t2").Check(testkit.Rows("1"))
 }
@@ -183,7 +183,7 @@ txn_dt date default null
 		{"    └─Selection_15"},
 		{"      └─TableFullScan_14"},
 	}
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = false
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
 		{"IndexJoin_12"},
@@ -195,10 +195,10 @@ txn_dt date default null
 		{"  └─Selection_10(Probe)"},
 		{"    └─TableRowIDScan_9"},
 	}
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery("explain "+sql).CheckAt([]int{0}, rows)
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON'")
 	tk.MustQuery(sql).Check(testkit.Rows("1 2022-12-01 123 1 2022-12-01 123 1 <nil>"))
-	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = false
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF'")
 	tk.MustQuery(sql).Check(testkit.Rows("1 2022-12-01 123 1 2022-12-01 123 1 <nil>"))
 }
