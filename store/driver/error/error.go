@@ -55,7 +55,7 @@ var (
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
 	// ErrResourceGroupNotExists is the error when resource group does not exist.
-	ErrResourceGroupNotExists = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupExists)
+	ErrResourceGroupNotExists = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupNotExists)
 	// ErrResourceGroupConfigUnavailable is the error when resource group configuration is unavailable.
 	ErrResourceGroupConfigUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupConfigUnavailable)
 	// ErrResourceGroupLimited is the error when
@@ -170,8 +170,9 @@ func ToTiDBErr(err error) error {
 		return terror.ErrResultUndetermined
 	}
 
-	if stderrs.Is(err, pderr.ErrClientGetResourceGroup) {
-		return ErrResourceGroupNotExists
+	var errGetResourceGroup *pderr.ErrClientGetResourceGroup
+	if stderrs.As(err, &errGetResourceGroup) {
+		return ErrResourceGroupNotExists.FastGenByArgs(errGetResourceGroup.ResourceGroupName)
 	}
 
 	if stderrs.Is(err, pderr.ErrClientResourceGroupConfigUnavailable) {

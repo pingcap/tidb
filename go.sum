@@ -64,8 +64,8 @@ github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbi
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/CabinfeverB/client-go/v2 v2.0.0-20230222083615-a17c544f7dee h1:ixY2V293/IW+T43S+n2HZ7vmW4HYVf3Lng1NGE0TyMs=
 github.com/CabinfeverB/client-go/v2 v2.0.0-20230222083615-a17c544f7dee/go.mod h1:vhYxSDgPA6GGhEUufeVSYGoR6T7XnS98v0r+y2x7mJ8=
-github.com/CabinfeverB/pd/client v0.0.0-20230222065352-9b140d925a55 h1:KmbAXFUyTtUKzgPXLxD6Y1CfEga7rmshkCZZDIEZrwE=
-github.com/CabinfeverB/pd/client v0.0.0-20230222065352-9b140d925a55/go.mod h1:BdvZD3hOu+XIaNfNIxbE3I+0BJYu47dSfVPiiKHnK20=
+github.com/CabinfeverB/pd/client v0.0.0-20230224083531-76c9b5af8fdc h1:cWcEmJHeQbOq8SjcUE/BMADAF0jMOz+RhE32V5tCVJw=
+github.com/CabinfeverB/pd/client v0.0.0-20230224083531-76c9b5af8fdc/go.mod h1:j94ECCo0drzB/GsMFaUjESjLXNvIbed5PWJXcd8eggo=
 github.com/CloudyKit/fastprinter v0.0.0-20170127035650-74b38d55f37a/go.mod h1:EFZQ978U7x8IRnstaskI3IysnWY5Ao3QgZUKOXlsAdw=
 github.com/CloudyKit/jet v2.1.3-0.20180809161101-62edd43e4f88+incompatible/go.mod h1:HPYO+50pSWkPoj9Q/eq0aRGByCL6ScRlUmiEX5Zgm+w=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
