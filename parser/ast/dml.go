@@ -1814,17 +1814,20 @@ const (
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
-// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data.
+// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data, see
+// https://github.com/pingcap/tidb/issues/40499
 type LoadDataStmt struct {
 	dmlNode
 
 	FileLocRef        FileLocRefTp
 	Path              string
+	Format            string // empty only when it's CSV-like
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
+	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
 
@@ -1841,6 +1844,10 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.Format != "" {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(n.Format)
+	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1850,8 +1857,15 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
 	}
-	n.FieldsInfo.Restore(ctx)
-	n.LinesInfo.Restore(ctx)
+	if n.FieldsInfo != nil {
+		n.FieldsInfo.Restore(ctx)
+	}
+	if n.LinesInfo != nil {
+		n.LinesInfo.Restore(ctx)
+	}
+	if n.NullInfo != nil {
+		n.NullInfo.Restore(ctx)
+	}
 	if n.IgnoreLines != 0 {
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WritePlainf("%d", n.IgnoreLines)
@@ -1939,32 +1953,32 @@ type FieldItem struct {
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated  string
-	Enclosed    byte
-	Escaped     byte
+	Enclosed    *byte
+	Escaped     *byte
 	OptEnclosed bool
 }
 
 // Restore for FieldsClause
 func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Terminated != "\t" || n.Escaped != '\\' {
+	if n.Terminated != "\t" || (n.Escaped == nil || *n.Escaped != '\\') {
 		ctx.WriteKeyWord(" FIELDS")
 		if n.Terminated != "\t" {
 			ctx.WriteKeyWord(" TERMINATED BY ")
 			ctx.WriteString(n.Terminated)
 		}
-		if n.Enclosed != 0 {
+		if n.Enclosed != nil {
 			if n.OptEnclosed {
 				ctx.WriteKeyWord(" OPTIONALLY")
 			}
 			ctx.WriteKeyWord(" ENCLOSED BY ")
-			ctx.WriteString(string(n.Enclosed))
+			ctx.WriteString(string(*n.Enclosed))
 		}
-		if n.Escaped != '\\' {
+		if n.Escaped == nil || *n.Escaped != '\\' {
 			ctx.WriteKeyWord(" ESCAPED BY ")
-			if n.Escaped == 0 {
+			if n.Escaped == nil {
 				ctx.WritePlain("''")
 			} else {
-				ctx.WriteString(string(n.Escaped))
+				ctx.WriteString(string(*n.Escaped))
 			}
 		}
 	}
@@ -1991,6 +2005,21 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// NullDefinedBy represent a syntax that extends MySQL's standard
+type NullDefinedBy struct {
+	NullDef     string
+	OptEnclosed bool
+}
+
+// Restore for NullDefinedBy
+func (n *NullDefinedBy) Restore(ctx *format.RestoreCtx) {
+	ctx.WriteKeyWord(" NULL DEFINED BY ")
+	ctx.WriteString(n.NullDef)
+	if n.OptEnclosed {
+		ctx.WriteKeyWord(" OPTIONALLY ENCLOSED")
+	}
 }
 
 // CallStmt represents a call procedure query node.

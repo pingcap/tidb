@@ -65,3 +65,31 @@ func TestStmtSummary(t *testing.T) {
 	ss.Clear()
 	require.Equal(t, 0, w.lru.Size())
 }
+
+func TestStmtSummaryFlush(t *testing.T) {
+	storage := &mockStmtStorage{}
+	ss := NewStmtSummary4Test(1000)
+	ss.storage = storage
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	ss.rotate(timeNow())
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	ss.rotate(timeNow())
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	ss.Close()
+
+	storage.Lock()
+	require.Equal(t, 3, len(storage.windows))
+	storage.Unlock()
+}
