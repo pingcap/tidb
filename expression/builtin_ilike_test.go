@@ -37,8 +37,9 @@ func TestIlike(t *testing.T) {
 		generalMatch int
 		unicodeMatch int
 	}{
-		// {"a", "", 0, 0, 0},
-		// {"a", "a", 0, 1, 1},
+		{"a", "", 0, 0, 0},
+		{"a", "a", 0, 1, 1},
+		{"ü", "Ü", 0, 0, 0},
 		{"a", "á", 0, 0, 0},
 		{"a", "b", 0, 0, 0},
 		{"aA", "Aa", 0, 1, 1},
@@ -108,14 +109,14 @@ var vecBuiltinIlikeCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners: []dataGenerator{
 				&selectStringGener{
-					candidates: []string{"aaa", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ"},
+					candidates: []string{"aaa", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ", "Ü", "a", "A"},
 					randGen:    newDefaultRandGen(),
 				},
 				&selectStringGener{
-					candidates: []string{"aaa", "啊啊啊啊", "üÜ"},
+					candidates: []string{"aaa", "啊啊啊啊", "üÜ", "ü", "a", "A"},
 					randGen:    newDefaultRandGen(),
 				},
-				newRangeInt64Gener(int('\\'), int('\\')+1)},
+				newRangeInt64Gener(65, 122)},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 		},
 	},
