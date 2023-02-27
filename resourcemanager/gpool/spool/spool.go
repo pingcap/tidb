@@ -31,7 +31,7 @@ var defaultAntsPool, _ = NewPool("global", math.MaxInt32, util.Global)
 
 // Run a task in the global pool
 func Run(task func()) {
-	defaultAntsPool.Run(task)
+	_ = defaultAntsPool.Run(task)
 }
 
 // ReleaseAndWait is to release and wait.
