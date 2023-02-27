@@ -19,7 +19,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -52,6 +56,7 @@ func CreateLoadDataJob(
 	importMode string,
 	user string,
 ) (int64, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const insertSQL = `INSERT INTO mysql.load_data_jobs
     	(data_source, table_schema, table_name, import_mode, create_user)
 		VALUES (%?, %?, %?, %?, %?);`
@@ -64,6 +69,7 @@ func CreateLoadDataJob(
 	if err != nil {
 		return 0, err
 	}
+	defer rs.Close()
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
 		return 0, err
@@ -80,8 +86,9 @@ func StartJob(
 	conn sqlexec.SQLExecutor,
 	jobID int64,
 ) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const updateSQL = `UPDATE mysql.load_data_jobs
-		SET start_time = CURRENT_TIMESTAMP
+		SET start_time = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP
 		WHERE job_id = %? AND start_time IS NULL;`
 	_, err := conn.ExecuteInternal(ctx, updateSQL, jobID)
 	return err
@@ -94,10 +101,11 @@ var HeartBeatInSec = 5
 // periodically as heartbeat.
 func UpdateJobProgress(
 	ctx context.Context,
-	conn sqlexec.SQLExecutor,
+	conn session.Session,
 	jobID int64,
 	progress string,
 ) (bool, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	// let TiDB handle heartbeat check for concurrent SQL
 	const updateSQL = `UPDATE mysql.load_data_jobs
 		SET progress = %?, update_time = CURRENT_TIMESTAMP
@@ -106,16 +114,11 @@ func UpdateJobProgress(
 		    	update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND)
 				OR update_time IS NULL);`
 	// we tolerate 2 times of failure/timeout when updating heartbeat
-	rs, err := conn.ExecuteInternal(ctx, updateSQL, progress, jobID, HeartBeatInSec*3)
+	_, err := conn.ExecuteInternal(ctx, updateSQL, progress, jobID, HeartBeatInSec*3)
 	if err != nil {
 		return false, err
 	}
-	c := rs.NewChunk(nil)
-	err = rs.Next(ctx, c)
-	if err != nil {
-		return false, err
-	}
-	return c.NumRows() == 1, nil
+	return conn.GetSessionVars().StmtCtx.AffectedRows() == 1, nil
 }
 
 // FinishJob finishes a load data job. A job can only be started once.
@@ -125,6 +128,7 @@ func FinishJob(
 	jobID int64,
 	result string,
 ) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const updateSQL = `UPDATE mysql.load_data_jobs
 		SET end_time = CURRENT_TIMESTAMP, result_message = %?
 		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`
@@ -139,6 +143,7 @@ func FailJob(
 	jobID int64,
 	result string,
 ) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const updateSQL = `UPDATE mysql.load_data_jobs
 		SET end_time = CURRENT_TIMESTAMP, error_message = %?
 		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`
@@ -154,6 +159,18 @@ const (
 	JobExpectedCanceled
 )
 
+func (s JobExpectedStatus) String() string {
+	switch s {
+	case JobExpectedRunning:
+		return "running"
+	case JobExpectedPaused:
+		return "paused"
+	case JobExpectedCanceled:
+		return "canceled"
+	}
+	return ""
+}
+
 // UpdateJobExpectedStatus updates the expected status of a load data job.
 func UpdateJobExpectedStatus(
 	ctx context.Context,
@@ -161,6 +178,7 @@ func UpdateJobExpectedStatus(
 	jobID int64,
 	status JobExpectedStatus,
 ) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const (
 		toRunning = `UPDATE mysql.load_data_jobs
 			SET expected_status = %?
@@ -205,6 +223,7 @@ func GetJobStatus(
 	conn sqlexec.SQLExecutor,
 	jobID int64,
 ) (JobStatus, string, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const sql = `SELECT
 		expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
@@ -225,6 +244,168 @@ func GetJobStatus(
 	if len(rows) != 1 {
 		return JobFailed, fmt.Sprintf("job %d not found", jobID), nil
 	}
-	row := rows[0]
 
+	return getJobStatus(rows[0])
+}
+
+// getJobStatus expected the first 6 columns of input row is (expected_status,
+// is_alive (derived from update_time), end_time, result_message, error_message,
+// start_time).
+func getJobStatus(row chunk.Row) (JobStatus, string, error) {
+	expectedStatus := row.GetEnum(0).String()
+	isAlive := row.GetInt64(1) == 1
+	startTimeIsNull := row.IsNull(5)
+
+	switch expectedStatus {
+	case "canceled":
+		return JobCanceled, "", nil
+	case "paused":
+		if startTimeIsNull {
+			return JobPending, "", nil
+		}
+		if isAlive {
+			return JobPaused, "", nil
+		}
+		return JobFailed, "job expected paused but the node is timeout", nil
+	case "running":
+		endTimeIsNull := row.IsNull(2)
+		if !endTimeIsNull {
+			resultMsgIsNull := row.IsNull(3)
+			if !resultMsgIsNull {
+				resultMessage := row.GetString(3)
+				return JobFinished, resultMessage, nil
+			}
+			errorMessage := row.GetString(4)
+			return JobFailed, errorMessage, nil
+		}
+		if startTimeIsNull {
+			return JobPending, "", nil
+		}
+		if isAlive {
+			return JobRunning, "", nil
+		}
+		return JobFailed, "job expected running but the node is timeout", nil
+	default:
+		return JobFailed, fmt.Sprintf("unexpected job status %s", expectedStatus), nil
+	}
+}
+
+type JobInfo struct {
+	JobID          int64
+	User           string
+	DataSource     string
+	TableSchema    string
+	TableName      string
+	ImportMode     string
+	Progress       string
+	ExpectedStatus string
+	Status         JobStatus
+	StatusMessage  string
+}
+
+// GetJobInfo gets all needed information of a load data job.
+func GetJobInfo(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+) (*JobInfo, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	const sql = `SELECT
+    	expected_status,
+		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
+		end_time,
+		result_message,
+		error_message,
+		start_time,
+
+		job_id,
+		data_source,
+		table_schema,
+		table_name,
+		import_mode,
+		progress,
+		create_user
+		FROM mysql.load_data_jobs
+		WHERE job_id = %?;`
+	rs, err := conn.ExecuteInternal(ctx, sql, HeartBeatInSec*3, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 {
+		return nil, fmt.Errorf("job %d not found", jobID)
+	}
+
+	return getJobInfo(rows[0])
+}
+
+// getJobInfo expected the columns of input row is (expected_status,
+// is_alive (derived from update_time), end_time, result_message, error_message,
+// start_time, job_id, data_source, table_schema, table_name, import_mode,
+// progress, create_user).
+func getJobInfo(row chunk.Row) (*JobInfo, error) {
+	var err error
+	jobInfo := JobInfo{
+		JobID:          row.GetInt64(6),
+		DataSource:     row.GetString(7),
+		TableSchema:    row.GetString(8),
+		TableName:      row.GetString(9),
+		ImportMode:     row.GetString(10),
+		Progress:       row.GetString(11),
+		User:           row.GetString(12),
+		ExpectedStatus: row.GetEnum(0).String(),
+	}
+	jobInfo.Status, jobInfo.StatusMessage, err = getJobStatus(row)
+	if err != nil {
+		return nil, err
+	}
+	return &jobInfo, nil
+}
+
+// GetAllJobInfo gets all jobs status of a user.
+func GetAllJobInfo(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	user string,
+) ([]*JobInfo, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	const sql = `SELECT
+    	expected_status,
+		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
+		end_time,
+		result_message,
+		error_message,
+		start_time,
+
+		job_id,
+		data_source,
+		table_schema,
+		table_name,
+		import_mode,
+		progress,
+		create_user
+		FROM mysql.load_data_jobs
+		WHERE create_user = %?;`
+	rs, err := conn.ExecuteInternal(ctx, sql, HeartBeatInSec*3, user)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]*JobInfo, 0, len(rows))
+	for _, row := range rows {
+		jobInfo, err := getJobInfo(row)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, jobInfo)
+	}
+
+	return ret, nil
 }
