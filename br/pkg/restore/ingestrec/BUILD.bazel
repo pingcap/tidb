@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ingestrec",
@@ -8,5 +8,16 @@ go_library(
     deps = [
         "//parser/model",
         "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "ingestrec_test",
+    srcs = ["ingest_recorder_test.go"],
+    deps = [
+        ":ingestrec",
+        "//parser/model",
+        "@com_github_pkg_errors//:errors",
+        "@com_github_stretchr_testify//require",
     ],
 )
