@@ -235,9 +235,6 @@ func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) boo
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
-	if err := p.retryAggressiveLockingIfNeeded(ctx); err != nil {
-		return sessiontxn.ErrorAction(err)
-	}
 
 	sessVars := p.sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
@@ -252,6 +249,11 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			zap.Uint64("lockTS", deadlock.LockTs),
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
+
+		// Exit aggressive locking in single-statement-deadlock case, otherwise the lock won't be released after retrying.
+		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		// Always update forUpdateTS by getting a new timestamp from PD.
 		// If we use the conflict commitTS as the new forUpdateTS and async commit
@@ -285,5 +287,8 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx co
 		return sessiontxn.ErrorAction(lockErr)
 	}
 
+	if err := p.retryAggressiveLockingIfNeeded(ctx); err != nil {
+		return sessiontxn.ErrorAction(err)
+	}
 	return sessiontxn.RetryReady()
 }

@@ -216,10 +216,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
-	if err := p.basePessimisticTxnContextProvider.retryAggressiveLockingIfNeeded(ctx); err != nil {
-		return sessiontxn.ErrorAction(err)
-	}
-
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -229,6 +225,11 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 		retryable = true
+
+		// Exit aggressive locking in single-statement-deadlock case, otherwise the lock won't be released after retrying.
+		if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -241,6 +242,9 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 	}
 
 	if retryable {
+		if err := p.basePessimisticTxnContextProvider.retryAggressiveLockingIfNeeded(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 		return sessiontxn.RetryReady()
 	}
 	return sessiontxn.ErrorAction(lockErr)
