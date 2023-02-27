@@ -1159,7 +1159,7 @@ func (local *local) startWorker(
 				}
 			}
 
-			err := local.writeAndIngestPairs(ctx, job)
+			err := local.executeJob(ctx, job)
 			jobOutCh <- job
 			if err != nil {
 				return err
@@ -1181,12 +1181,12 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-// writeAndIngestPairs handles a regionJob and tries to convert it to ingested stage.
+// executeJob handles a regionJob and tries to convert it to ingested stage.
 // The ingested job will record finished ranges in engine as a checkpoint.
 // If non-retryable error occurs, it will return the error.
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
-func (local *local) writeAndIngestPairs(
+func (local *local) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
