@@ -11,4 +11,7 @@ updates:
       - dependency-name: "golang.org/*"
       - dependency-name: "github.com/golangci/golangci-lint"
     open-pull-requests-limit: 2
-
+  - package-ecosystem: "gomod"
+    directory: "/parser"
+    schedule:
+      interval: "weekly"
