@@ -174,3 +174,15 @@ func (stm *subTaskManager) UpdateTask(subTaskID int64, meta []byte) error {
 
 	return nil
 }
+
+func (stm *subTaskManager) DeleteTask(subTaskID int64) error {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	_, err := execSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where where id = ?", subTaskID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
