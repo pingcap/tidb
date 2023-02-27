@@ -63,6 +63,20 @@ type GlobalTaskManager struct {
 // Use atomic.Value to avoid data race in the test.
 var globalTaskManagerInstance atomic.Value
 
+func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTaskManager {
+	return &GlobalTaskManager{
+		ctx: ctx,
+		se:  se,
+	}
+}
+
+func NewSubTaskManager(ctx context.Context, se sessionctx.Context) *SubTaskManager {
+	return &SubTaskManager{
+		ctx: ctx,
+		se:  se,
+	}
+}
+
 func GetGlobalTaskManager() (*GlobalTaskManager, error) {
 	v := globalTaskManagerInstance.Load()
 	if v == nil {
