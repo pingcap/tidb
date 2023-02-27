@@ -1,0 +1,50 @@
+package distribute_framework
+
+import (
+	"context"
+
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
+)
+
+// session wraps sessionctx.Context for transaction usage.
+type session struct {
+	sessionctx.Context
+}
+
+func newSession(s sessionctx.Context) *session {
+	return &session{s}
+}
+
+func (s *session) begin() error {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return err
+	}
+	s.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+func (s *session) commit() error {
+	s.StmtCommit(context.Background())
+	return s.CommitTxn(context.Background())
+}
+
+func (s *session) rollback() {
+	s.StmtRollback(context.Background(), false)
+	s.RollbackTxn(context.Background())
+}
+
+func runInTxn(s *session, f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return s.commit()
+}

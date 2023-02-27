@@ -326,3 +326,23 @@ func (stm *SubTaskManager) DeleteTask(subTaskID int64) error {
 
 	return nil
 }
+
+func (stm *SubTaskManager) DeleteTasks(globelTaskID proto.TaskID) error {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = ?", globelTaskID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (stm *SubTaskManager) GetInterruptedTask(globalTaskID proto.TaskID) (subtasks []*proto.Subtask, err error) {
+	return nil, nil
+}
+
+func (stm *SubTaskManager) IsFinishedTask(globalTaskID proto.TaskID) (isFinished bool, err error) {
+	return isFinished, nil
+}

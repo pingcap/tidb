@@ -14,7 +14,11 @@
 
 package proto
 
-import "time"
+import (
+	"time"
+
+	"github.com/pingcap/tidb/distribute_framework/dispatcher"
+)
 
 type TaskID uint64
 
@@ -47,11 +51,17 @@ type Task struct {
 	Type  TaskType
 	State TaskState
 	Meta  []byte
+	// TODO: redefine
+	MetaM *TaskMeta
 
 	DispatcherID string
 	StartTime    time.Time
 
 	Concurrency uint64
+}
+
+type TaskMeta struct {
+	DistPlan *dispatcher.DistPlanner
 }
 
 type SubtaskID uint64
@@ -65,6 +75,10 @@ type Subtask struct {
 	Meta        []byte
 
 	StartTime time.Time
+}
+
+func (st *Subtask) String() string {
+	return ""
 }
 
 type GlobalTaskMeta interface {
