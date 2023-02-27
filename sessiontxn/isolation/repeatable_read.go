@@ -162,10 +162,10 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
-		return p.handleAfterPessimisticLockError(err)
+		return p.handleAfterPessimisticLockError(ctx, err)
 	default:
 		return sessiontxn.NoIdea()
 	}
@@ -234,7 +234,11 @@ func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) boo
 	return false
 }
 
-func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
+	if err := p.retryAggressiveLockingIfNeeded(ctx); err != nil {
+		return sessiontxn.ErrorAction(err)
+	}
+
 	sessVars := p.sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 

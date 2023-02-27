@@ -184,15 +184,6 @@ func (m *txnManager) OnHandlePessimisticStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnHandlePessimisticStmtStart(ctx)
 }
 
-// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
-// select-for-update statement.
-func (m *txnManager) OnPessimisticLockError(ctx context.Context, lockErr error) error {
-	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
-	}
-	return m.ctxProvider.OnPessimisticLockError(ctx, lockErr)
-}
-
 // OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
 func (m *txnManager) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
@@ -203,11 +194,11 @@ func (m *txnManager) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessfu
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (m *txnManager) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	if m.ctxProvider == nil {
 		return sessiontxn.NoIdea()
 	}
-	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+	return m.ctxProvider.OnStmtErrorForNextAction(ctx, point, err)
 }
 
 // ActivateTxn decides to activate txn according to the parameter `active`

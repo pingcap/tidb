@@ -1118,11 +1118,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
-	err = txnManager.OnPessimisticLockError(ctx, lockErr)
-	if err != nil {
-		return nil, err
-	}
-	action, err := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	action, err := txnManager.OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
 	}

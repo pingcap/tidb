@@ -213,12 +213,6 @@ func (p *baseTxnContextProvider) OnHandlePessimisticStmtStart(_ context.Context)
 	return nil
 }
 
-// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
-// select-for-update statement.
-func (p *baseTxnContextProvider) OnPessimisticLockError(_ context.Context, _ error) error {
-	return nil
-}
-
 // OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
 func (p *baseTxnContextProvider) OnHandlePessimisticStmtEnd(_ context.Context, _ bool) error {
@@ -253,7 +247,7 @@ func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *baseTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		// for pessimistic lock error, return the error by default
@@ -533,20 +527,6 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	return nil
 }
 
-// OnPessimisticLockError is the hook that should be called when lock error happens during a pessimistic DML or
-// select-for-update statement.
-func (p *basePessimisticTxnContextProvider) OnPessimisticLockError(ctx context.Context, lockErr error) error {
-	if err := p.baseTxnContextProvider.OnPessimisticLockError(ctx, lockErr); err != nil {
-		return err
-	}
-	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
-		if err := p.txn.RetryAggressiveLocking(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
 func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
@@ -562,6 +542,15 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtEnd(ctx conte
 			if err := p.txn.CancelAggressiveLocking(ctx); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (p *basePessimisticTxnContextProvider) retryAggressiveLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
+		if err := p.txn.RetryAggressiveLocking(ctx); err != nil {
+			return err
 		}
 	}
 	return nil
