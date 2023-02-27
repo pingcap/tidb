@@ -2537,24 +2537,49 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
-	alterTableDropIndexFormat      = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`;"
-	alterTableAddIndexFormat       = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s);"
+	alterTableDropIndexFormat      = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`"
+	alterTableAddIndexFormat       = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE `%s`.`%s` ADD UNIQUE KEY `%s`(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder) error {
-	err := ingestRecorder.Iterate(func(_ int64, _ int64, info ingestrec.IngestIndexInfo) error {
-		var dropSQL string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexName)
-		var addSQL string
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	ingestRecorder.UpdateIndexInfo(allSchema)
+	err = ingestRecorder.Iterate(func(tableID int64, _ int64, info *ingestrec.IngestIndexInfo) error {
+		var (
+			dropSQL      string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addSQL       string = ""
+			indexTypeSQL string = ""
+			commentSQL   string = ""
+		)
+
 		if info.IsPrimary {
 			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.SchemaName, info.TableName, info.ColumnList)
-		} else if info.IsUnique {
-			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
+		} else if info.IndexInfo.Unique {
+			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O, info.ColumnList)
 		} else {
-			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexName, info.ColumnList)
+			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O, info.ColumnList)
 		}
+		// USING BTREE/HASH/RTREE
+		indexTypeStr := info.IndexInfo.Tp.String()
+		if len(indexTypeSQL) > 0 {
+			indexTypeSQL = fmt.Sprintf(" USING %s", indexTypeStr)
+		}
+
+		// COMMENT [...]
+		if len(info.IndexInfo.Comment) > 0 {
+			commentSQL = fmt.Sprintf(" COMMENT \"%s\"", info.IndexInfo.Comment)
+		}
+
+		addSQL = fmt.Sprintf("%s%s%s", addSQL, indexTypeSQL, commentSQL)
+
 		log.Debug("repair ingest sql", zap.String("drop", dropSQL))
 		if err := rc.db.se.Execute(ctx, dropSQL); err != nil {
 			return errors.Trace(err)
@@ -2565,7 +2590,7 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 		}
 		return nil
 	})
-	return err
+	return errors.Trace(err)
 }
 
 const (
@@ -2790,7 +2815,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 // TODO: currently this function does nothing, need to implement the range filter out feature
 func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
 	filter := rtree.NewRangeTree()
-	return recorder.Iterate(func(tableID int64, indexID int64, info ingestrec.IngestIndexInfo) error {
+	return recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		// range before table ID rewritten
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)

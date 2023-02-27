@@ -25,23 +25,23 @@ import (
 type IngestIndexInfo struct {
 	SchemaName string
 	TableName  string
-	IndexName  string
 	ColumnList string
 	IsPrimary  bool
-	IsUnique   bool
+	IndexInfo  *model.IndexInfo
+	Updated    bool
 }
 
 // IngestRecorder records the indexes information that use ingest mode to construct kvs.
 // Currently log backup cannot backed up these ingest kvs. So need to re-construct them.
 type IngestRecorder struct {
 	// Table ID -> Index ID -> Index info
-	items map[int64]map[int64]IngestIndexInfo
+	items map[int64]map[int64]*IngestIndexInfo
 }
 
 // Return an empty IngestRecorder
 func New() *IngestRecorder {
 	return &IngestRecorder{
-		items: make(map[int64]map[int64]IngestIndexInfo),
+		items: make(map[int64]map[int64]*IngestIndexInfo),
 	}
 }
 
@@ -51,6 +51,17 @@ func notIngestJob(job *model.Job) bool {
 }
 
 func notAddIndexJob(job *model.Job) bool {
+	/* support new index using accelerated indexing in future:
+	 * // 1. skip if the new index didn't generate new kvs
+	 * // 2. shall the ReorgTp of ModifyColumnJob be ReorgTypeLitMerge if use accelerated indexing?
+	 * if job.RowCount > 0 && notIngestJob(job) {
+	 *   // ASSERT: select new indexes, which have the highest IDs in this job's BinlogInfo
+	 *   newIndexesInfo := getIndexesWithTheHighestIDs(len(indexIDs))
+	 *   for _, newIndexInfo := range newIndexesInfo {
+	 *     tableindexes[newIndexInfo.ID] = ...
+	 *   }
+	 * }
+	 */
 	return job.Type != model.ActionAddIndex &&
 		job.Type != model.ActionAddPrimaryKey
 }
@@ -89,113 +100,58 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	if indexInfo != nil && len(indexInfo.Columns) > 0 {
 		tableindexes, exists := i.items[job.TableID]
 		if !exists {
-			tableindexes = make(map[int64]IngestIndexInfo)
+			tableindexes = make(map[int64]*IngestIndexInfo)
 			i.items[job.TableID] = tableindexes
 		}
 
-		var columnListBuilder strings.Builder
-		var isFirst bool = true
-		for _, column := range indexInfo.Columns {
-			if !isFirst {
-				columnListBuilder.WriteByte(',')
-			}
-			isFirst = false
-			columnListBuilder.WriteByte('`')
-			columnListBuilder.WriteString(column.Name.O)
-			columnListBuilder.WriteByte('`')
-		}
-		tableindexes[indexID] = IngestIndexInfo{
-			SchemaName: job.SchemaName,
-			TableName:  job.TableName,
-			IndexName:  indexInfo.Name.O,
-			ColumnList: columnListBuilder.String(),
-			IsPrimary:  job.Type == model.ActionAddPrimaryKey,
-			IsUnique:   indexInfo.Unique,
+		tableindexes[indexID] = &IngestIndexInfo{
+			IsPrimary: job.Type == model.ActionAddPrimaryKey,
+			Updated:   false,
 		}
 	}
 	return nil
 }
 
-// DelJob firstly filters the ingest index add operation job, and removes it from IngestRecorder.
-func (i *IngestRecorder) DelJob(job *model.Job) error {
-	if job == nil || notSynced(job) {
-		return nil
+func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
+	for _, dbInfo := range dbInfos {
+		for _, tblInfo := range dbInfo.Tables {
+			tableindexes, tblexists := i.items[tblInfo.ID]
+			if !tblexists {
+				continue
+			}
+			for _, indexInfo := range tblInfo.Indices {
+				index, idxexists := tableindexes[indexInfo.ID]
+				if !idxexists {
+					continue
+				}
+				var columnListBuilder strings.Builder
+				var isFirst bool = true
+				for _, column := range indexInfo.Columns {
+					if !isFirst {
+						columnListBuilder.WriteByte(',')
+					}
+					isFirst = false
+					columnListBuilder.WriteByte('`')
+					columnListBuilder.WriteString(column.Name.O)
+					columnListBuilder.WriteByte('`')
+				}
+				index.ColumnList = columnListBuilder.String()
+				index.IndexInfo = indexInfo
+				index.SchemaName = dbInfo.Name.O
+				index.TableName = tblInfo.Name.O
+				index.Updated = true
+			}
+		}
 	}
-
-	switch job.Type {
-	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
-			return errors.Trace(err)
-		}
-		for _, tableID := range tableIDs {
-			delete(i.items, tableID)
-		}
-		return nil
-	case model.ActionDropTable, model.ActionTruncateTable:
-		// ActionTruncateTable creates new indexes with empty rows,
-		// so no need to repair them.
-		delete(i.items, job.TableID)
-		return nil
-	}
-
-	tableindexes, exists := i.items[job.TableID]
-	if !exists {
-		return nil
-	}
-	var indexIDs []int64
-	switch job.Type {
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName interface{}
-		var ifExists bool
-		var indexID int64
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexID); err != nil {
-			return errors.Trace(err)
-		}
-		indexIDs = []int64{indexID}
-	case model.ActionDropIndexes: // Deprecated, we use ActionMultiSchemaChange instead
-		if err := job.DecodeArgs(&indexIDs); err != nil {
-			return errors.Trace(err)
-		}
-	case model.ActionDropColumn:
-		var colName model.CIStr
-		var ifExists bool
-		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs); err != nil {
-			return errors.Trace(err)
-		}
-	case model.ActionDropColumns:
-		var colNames []model.CIStr
-		var ifExists []bool
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs); err != nil {
-			return errors.Trace(err)
-		}
-	case model.ActionModifyColumn:
-		if err := job.DecodeArgs(&indexIDs); err != nil {
-			return errors.Trace(err)
-		}
-		/* support new index using accelerated indexing in future:
-		 * // 1. skip if the new index didn't generate new kvs
-		 * // 2. shall the ReorgTp of ModifyColumnJob be ReorgTypeLitMerge if use accelerated indexing?
-		 * if job.RowCount > 0 && notIngestJob(job) {
-		 *   // ASSERT: select new indexes, which have the highest IDs in this job's BinlogInfo
-		 *   newIndexesInfo := getIndexesWithTheHighestIDs(len(indexIDs))
-		 *   for _, newIndexInfo := range newIndexesInfo {
-		 *     tableindexes[newIndexInfo.ID] = ...
-		 *   }
-		 * }
-		 */
-	}
-
-	for _, indexID := range indexIDs {
-		delete(tableindexes, indexID)
-	}
-	return nil
 }
 
 // Iterate iterates all the ingest index.
-func (i *IngestRecorder) Iterate(f func(tableID int64, indexID int64, info IngestIndexInfo) error) error {
+func (i *IngestRecorder) Iterate(f func(tableID int64, indexID int64, info *IngestIndexInfo) error) error {
 	for tableID, is := range i.items {
 		for indexID, info := range is {
+			if !info.Updated {
+				continue
+			}
 			if err := f(tableID, indexID, info); err != nil {
 				return errors.Trace(err)
 			}

@@ -570,7 +570,6 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 			return nil
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			sr.ingestRecorder.DelJob(job)
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {

@@ -70,15 +70,15 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	}
 }
 
-type iterateFunc func(tableID, indexID int64, info ingestrec.IngestIndexInfo) error
+type iterateFunc func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error
 
-func noItem(tableID, indexID int64, info ingestrec.IngestIndexInfo) error {
+func noItem(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 	return errors.Errorf("should no items, but have one: [%d, %d, %v]", tableID, indexID, info)
 }
 
 func hasOneItem(idxID int64, columnList string) (iterateFunc, *int) {
 	count := 0
-	return func(tableID, indexID int64, info ingestrec.IngestIndexInfo) error {
+	return func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		count += 1
 		if indexID != idxID || info.ColumnList != columnList {
 			return errors.Errorf("should has one items, but have another one: [%d, %d, %v]", tableID, indexID, info)
@@ -88,6 +88,34 @@ func hasOneItem(idxID int64, columnList string) (iterateFunc, *int) {
 }
 
 func TestAddIngestRecorder(t *testing.T) {
+	allSchemas := []*model.DBInfo{
+		{
+			Name: model.NewCIStr(SchemaName),
+			Tables: []*model.TableInfo{
+				{
+					ID:   TableID,
+					Name: model.NewCIStr(TableName),
+					Indices: []*model.IndexInfo{
+						{
+							ID:    1,
+							Name:  model.NewCIStr("x"),
+							Table: model.NewCIStr(TableName),
+							Columns: []*model.IndexColumn{
+								{
+									Name: model.NewCIStr("x"),
+								},
+								{
+									Name: model.NewCIStr("y"),
+								},
+							},
+							Comment: "123",
+							Tp:      model.IndexTypeBtree,
+						},
+					},
+				},
+			},
+		},
+	}
 	recorder := ingestrec.New()
 	// no ingest job, should ignore it
 	err := recorder.AddJob(fakeJob(
@@ -101,6 +129,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
@@ -116,6 +145,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
@@ -131,6 +161,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
@@ -149,6 +180,7 @@ func TestAddIngestRecorder(t *testing.T) {
 		))
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "`x`,`y`")
+		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
 		require.Equal(t, *cnt, 1)
@@ -169,177 +201,9 @@ func TestAddIngestRecorder(t *testing.T) {
 		))
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "`x`,`y`")
+		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
 		require.Equal(t, *cnt, 1)
-	}
-}
-
-func newRecorderWithInitJob(t *testing.T) *ingestrec.IngestRecorder {
-	recorder := ingestrec.New()
-	err := recorder.AddJob(fakeJob(
-		model.ReorgTypeLitMerge,
-		model.ActionAddIndex,
-		model.JobStateSynced,
-		1000,
-		[]*model.IndexInfo{
-			getIndex(1, []string{"x", "y"}),
-		},
-		json.RawMessage(`[1, "a"]`),
-	))
-	require.NoError(t, err)
-	f, cnt := hasOneItem(1, "`x`,`y`")
-	err = recorder.Iterate(f)
-	require.NoError(t, err)
-	require.Equal(t, *cnt, 1)
-	return recorder
-}
-
-func fakeDropJob(jobTp model.ActionType, state model.JobState, rawArgs json.RawMessage) *model.Job {
-	return &model.Job{
-		SchemaName: SchemaName,
-		TableName:  TableName,
-		TableID:    TableID,
-		Type:       jobTp,
-		State:      state,
-		RowCount:   0,
-		RawArgs:    rawArgs,
-		ReorgMeta: &model.DDLReorgMeta{
-			ReorgTp: model.ReorgTypeTxn,
-		},
-	}
-}
-
-func TestDropIngestRecorder(t *testing.T) {
-	{
-		recorder := newRecorderWithInitJob(t)
-		// a failed job, should ignore it
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropSchema,
-			model.JobStateRollbackDone,
-			nil,
-		))
-		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "`x`,`y`")
-		err = recorder.Iterate(f)
-		require.NoError(t, err)
-		require.Equal(t, *cnt, 1)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop database
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropSchema,
-			model.JobStateSynced,
-			json.RawMessage(`[[80], "a"]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop table
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropTable,
-			model.JobStateSynced,
-			nil,
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// truncate table
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionTruncateTable,
-			model.JobStateSynced,
-			nil,
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop index
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropTable,
-			model.JobStateSynced,
-			json.RawMessage(`["x", false, 1]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop primary key
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropPrimaryKey,
-			model.JobStateSynced,
-			json.RawMessage(`["x", false, 1]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop indexes
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropIndexes,
-			model.JobStateSynced,
-			json.RawMessage(`[[1], false, 1]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop column
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropColumn,
-			model.JobStateSynced,
-			json.RawMessage(`["x", false, [1]]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// drop columns
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionDropColumns,
-			model.JobStateSynced,
-			json.RawMessage(`[["x"], [false], [1]]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
-	}
-
-	{
-		recorder := newRecorderWithInitJob(t)
-		// modify column
-		err := recorder.DelJob(fakeDropJob(
-			model.ActionModifyColumn,
-			model.JobStateSynced,
-			json.RawMessage(`[[1], false, 1]`),
-		))
-		require.NoError(t, err)
-		err = recorder.Iterate(noItem)
-		require.NoError(t, err)
 	}
 }
