@@ -62,7 +62,7 @@ func NewHandle(ctx context.Context, se sessionctx.Context) (Handle, error) {
 }
 
 func (h *Handle) SubmitGlobalTaskAndRun(taskMeta proto.GlobalTaskMeta) (taskID proto.TaskID, done chan struct{}, err error) {
-	id, err := h.gm.AddNewTask(taskMeta.GetType(), taskMeta.Serialize())
+	id, err := h.gm.AddNewTask(taskMeta.GetType(), 1, taskMeta.Serialize())
 	if err != nil {
 		return 0, nil, err
 	}
