@@ -1055,6 +1055,10 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
+
+	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
+	// For now it is not public to user
+	EnableIndexJoinInnerSideMultiPattern bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

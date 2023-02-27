@@ -685,33 +685,77 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	} else {
 		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
 	}
-	ds, isDataSource := innerChild.(*DataSource)
-	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
+	innerChildWrapper := p.extractIndexJoinInnerChildPattern(innerChild)
+	if innerChildWrapper == nil {
 		return nil
-	}
-	if isUnionScan {
-		// The child of union scan may be union all for partition table.
-		ds, isDataSource = us.Children()[0].(*DataSource)
-		if !isDataSource {
-			return nil
-		}
-		// If one of the union scan children is a TiFlash table, then we can't choose index join.
-		for _, child := range us.Children() {
-			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
-				return nil
-			}
-		}
 	}
 	var avgInnerRowCnt float64
 	if outerChild.statsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
 	}
-	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+	joins = p.buildIndexJoinInner2TableScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 	if joins != nil {
 		return
 	}
-	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
+	return p.buildIndexJoinInner2IndexScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
+}
+
+type indexJoinInnerChildWrapper struct {
+	ds   *DataSource
+	us   *LogicalUnionScan
+	proj *LogicalProjection
+	sel  *LogicalSelection
+}
+
+func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) *indexJoinInnerChildWrapper {
+	wrapper := &indexJoinInnerChildWrapper{}
+	switch child := innerChild.(type) {
+	case *DataSource:
+		wrapper.ds = child
+	case *LogicalUnionScan:
+		wrapper.us = child
+		ds, isDataSource := wrapper.us.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
+		wrapper.ds = ds
+		// If one of the union scan children is a TiFlash table, then we can't choose index join.
+		for _, child := range wrapper.us.Children() {
+			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+				return nil
+			}
+		}
+	case *LogicalProjection:
+		if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+			return nil
+		}
+		// For now, we only allow proj with all Column expression can be the inner side of index join
+		for _, expr := range child.Exprs {
+			if _, ok := expr.(*expression.Column); !ok {
+				return nil
+			}
+		}
+		wrapper.proj = child
+		ds, isDataSource := wrapper.proj.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
+		wrapper.ds = ds
+	case *LogicalSelection:
+		if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+			return nil
+		}
+		wrapper.sel = child
+		ds, isDataSource := wrapper.sel.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
+		wrapper.ds = ds
+	}
+	if wrapper.ds == nil || wrapper.ds.preferStoreType&preferTiFlash != 0 {
+		return nil
+	}
+	return wrapper
 }
 
 func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*expression.Column, checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinBuildHelper, []int) {
@@ -751,8 +795,10 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 // fetched from the inner side for every tuple from the outer side. This will be
 // promised to be no worse than building IndexScan as the inner child.
 func (p *LogicalJoin) buildIndexJoinInner2TableScan(
-	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
+	outerIdx int, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	ds := wrapper.ds
+	us := wrapper.us
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV {
@@ -773,13 +819,13 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		if helper == nil {
 			return nil
 		}
-		innerTask = p.constructInnerTableScanTask(ds, helper.chosenRanges.Range(), outerJoinKeys, us, false, false, avgInnerRowCnt)
+		innerTask = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, helper.chosenRanges.Range(), outerJoinKeys, us, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 		ranges = helper.chosenRanges
 	} else {
@@ -803,13 +849,13 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			return nil
 		}
 		ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
-		innerTask = p.constructInnerTableScanTask(ds, ranges, outerJoinKeys, us, false, false, avgInnerRowCnt)
+		innerTask = p.constructInnerTableScanTask(wrapper, ranges, outerJoinKeys, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, ranges, outerJoinKeys, us, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = p.constructInnerTableScanTask(wrapper, ranges, outerJoinKeys, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
 	var (
@@ -837,8 +883,10 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 }
 
 func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
-	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
-	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
+	outerIdx int, avgInnerRowCnt float64) (joins []PhysicalPlan) {
+	ds := wrapper.ds
+	us := wrapper.us
 	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() }, outerJoinKeys)
 	if helper == nil {
 		return nil
@@ -925,14 +973,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerTableScanTask(
-	ds *DataSource,
+	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
 	outerJoinKeys []*expression.Column,
-	us *LogicalUnionScan,
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
 ) task {
+	ds := wrapper.ds
 	// If `ds.tableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
@@ -997,8 +1045,49 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	ts.addPushedDownSelection(copTask, selStats)
 	t := copTask.convertToRootTask(ds.ctx)
 	reader := t.p
-	t.p = p.constructInnerUnionScan(us, reader)
+	t.p = p.constructInnerByWrapper(wrapper, reader)
 	return t
+}
+
+func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
+	if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+		if wrapper.us != nil {
+			return p.constructInnerUnionScan(wrapper.us, child)
+		}
+		return child
+	}
+	if wrapper.us != nil {
+		return p.constructInnerUnionScan(wrapper.us, child)
+	} else if wrapper.proj != nil {
+		return p.constructInnerProj(wrapper.proj, child)
+	} else if wrapper.sel != nil {
+		return p.constructInnerSel(wrapper.sel, child)
+	}
+	return child
+}
+
+func (p *LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
+	if sel == nil {
+		return child
+	}
+	physicalSel := PhysicalSelection{
+		Conditions: sel.Conditions,
+	}.Init(sel.ctx, sel.stats, sel.blockOffset, nil)
+	physicalSel.SetChildren(child)
+	return physicalSel
+}
+
+func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
+	if proj == nil {
+		return child
+	}
+	physicalProj := PhysicalProjection{
+		Exprs:                proj.Exprs,
+		CalculateNoDelay:     proj.CalculateNoDelay,
+		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
+	}.Init(proj.ctx, proj.stats, proj.blockOffset, nil)
+	physicalProj.SetChildren(child)
+	return physicalProj
 }
 
 func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
