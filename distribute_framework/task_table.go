@@ -2,13 +2,14 @@ package distribute_framework
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type globalTask struct {
@@ -17,7 +18,18 @@ type globalTask struct {
 	dispatcherId string
 	state        string
 	startTime    time.Time
-	meta         []byte
+	// TODO: using Meta instead of []byte
+	metaM *Meta
+	meta  []byte
+}
+
+const (
+	// TODO: Add other states
+	SuccState = "succ"
+)
+
+type Meta struct {
+	DistPlan *DistPlanner
 }
 
 type globalTaskManager struct {
@@ -76,7 +88,7 @@ func (stm *globalTaskManager) AddNewTask(tp string, meta []byte) (int64, error) 
 }
 
 // GetNewTask get a new task from global task table, it's used by dispatcher only.
-func (stm *globalTaskManager) GetNewTask() (task globalTask, err error) {
+func (stm *globalTaskManager) GetNewTask() (task *globalTask, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -85,7 +97,7 @@ func (stm *globalTaskManager) GetNewTask() (task globalTask, err error) {
 		return task, err
 	}
 
-	task = globalTask{
+	task = &globalTask{
 		id:           rs[0].GetInt64(0),
 		tp:           rs[0].GetString(1),
 		dispatcherId: rs[0].GetString(2),
@@ -97,7 +109,7 @@ func (stm *globalTaskManager) GetNewTask() (task globalTask, err error) {
 	return task, nil
 }
 
-func (stm *globalTaskManager) UpdateTask(task globalTask) error {
+func (stm *globalTaskManager) UpdateTask(task *globalTask) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -106,6 +118,10 @@ func (stm *globalTaskManager) UpdateTask(task globalTask) error {
 		return err
 	}
 
+	return nil
+}
+
+func (stm *globalTaskManager) RemoveTask(globelTaskID int64) error {
 	return nil
 }
 
@@ -128,6 +144,19 @@ func (stm *globalTaskManager) GetRunnableTask() (task globalTask, err error) {
 	task.startTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
 
 	return task, nil
+}
+
+type task struct {
+	id           int64
+	globalTaskID int64
+	tp           string
+	state        string
+	// TODO: Add remain fields.
+	meta []byte
+}
+
+func (t *task) String() string {
+	return ""
 }
 
 type subTaskManager struct {
@@ -173,4 +202,24 @@ func (stm *subTaskManager) UpdateTask(subTaskID int64, meta []byte) error {
 	}
 
 	return nil
+}
+
+func (stm *subTaskManager) RemoveTasks(globelTaskID int64) error {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	_, err := execSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = ?", globelTaskID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (stm *subTaskManager) GetInterruptedTask(globalTaskID int64) (tasks []*task, err error) {
+	return nil, nil
+}
+
+func (stm *subTaskManager) IsFinishedTask(globalTaskID int64) (isFinished bool, err error) {
+	return isFinished, nil
 }
