@@ -37,6 +37,7 @@ CREATE TABLE system.tidb_global_task (
 	state VARCHAR(64) NOT NULL,
 	meta LONGBLOB,
 	start_time DATETIME,
+	concurrency INT(11),
 );`
 	SubtaskTableSchema = `
 CREATE TABLE system.tidb_sub_task (
@@ -89,11 +90,11 @@ func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...int
 	return nil, nil
 }
 
-func (stm *GlobalTaskManager) AddNewTask(tp proto.TaskType, meta []byte) (proto.TaskID, error) {
+func (stm *GlobalTaskManager) AddNewTask(tp proto.TaskType, concurrency int, meta []byte) (proto.TaskID, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, meta) values (?, ?, ?)", tp, proto.TaskStatePending, meta)
+	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, concurrency, meta) values (?, ?, ?)", tp, proto.TaskStatePending, concurrency, meta)
 	if err != nil {
 		return 0, err
 	}
@@ -122,6 +123,7 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
 		Meta:         rs[0].GetBytes(5),
+		Concurrency:  uint64(rs[0].GetInt64(6)),
 	}
 	task.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
 
@@ -155,6 +157,7 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
 		Meta:         rs[0].GetBytes(5),
+		Concurrency:  uint64(rs[0].GetInt64(6)),
 	}
 	t.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
 
@@ -181,6 +184,7 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 			DispatcherID: r.GetString(2),
 			State:        proto.TaskState(r.GetString(3)),
 			Meta:         r.GetBytes(5),
+			Concurrency:  uint64(r.GetInt64(6)),
 		}
 		t.StartTime, _ = r.GetTime(4).GoTime(time.UTC)
 		task = append(task, t)
