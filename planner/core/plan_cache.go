@@ -50,17 +50,15 @@ var nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValu
 func getPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
 	if isNonPrepared {
 		return nonPreparedPlanCacheHitCounter
-	} else {
-		return preparedPlanCacheHitCounter
 	}
+	return preparedPlanCacheHitCounter
 }
 
 func getPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
 	if isNonPrepared {
 		return nonPreparedPlanCacheMissCounter
-	} else {
-		return preparedPlanCacheMissCounter
 	}
+	return preparedPlanCacheMissCounter
 }
 
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {

@@ -36,17 +36,15 @@ var nonPreparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsa
 func getPlanCacheInstanceNumCounter(isNonPrepared bool) prometheus.Gauge {
 	if isNonPrepared {
 		return nonPreparedPlanCacheInstancePlanNumCounter
-	} else {
-		return preparedPlanCacheInstancePlanNumCounter
 	}
+	return preparedPlanCacheInstancePlanNumCounter
 }
 
 func getPlanCacheInstanceMemoryUsage(isNonPrepared bool) prometheus.Gauge {
 	if isNonPrepared {
 		return nonPreparedPlanCacheInstanceMemoryUsage
-	} else {
-		return preparedPlanCacheInstanceMemoryUsage
 	}
+	return preparedPlanCacheInstanceMemoryUsage
 }
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
