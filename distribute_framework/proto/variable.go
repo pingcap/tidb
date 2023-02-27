@@ -12,26 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package example
+package proto
 
-import (
-	"context"
+import "time"
 
-	"github.com/pingcap/tidb/distribute_framework/proto"
-	"github.com/pingcap/tidb/distribute_framework/scheduler"
+var (
+	HeartbeatInterval = 5 * time.Second
 )
-
-type ExampleSubtaskExecutor struct {
-	subtask *proto.Subtask
-}
-
-func (e *ExampleSubtaskExecutor) Run(ctx context.Context) error { return nil }
-
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
-		proto.TaskTypeExample,
-		func(subtask *proto.Subtask) scheduler.SubtaskExecutor {
-			return &ExampleSubtaskExecutor{subtask: subtask}
-		},
-	)
-}

@@ -12,26 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package example
+package proto
 
-import (
-	"context"
-
-	"github.com/pingcap/tidb/distribute_framework/proto"
-	"github.com/pingcap/tidb/distribute_framework/scheduler"
-)
-
-type ExampleSubtaskExecutor struct {
-	subtask *proto.Subtask
+type Pool interface {
+	Run(func()) error
+	RunWithConcurrency(func(), uint64) error
+	ReleaseAndWait()
 }
 
-func (e *ExampleSubtaskExecutor) Run(ctx context.Context) error { return nil }
+type DefaultPool struct{}
 
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
-		proto.TaskTypeExample,
-		func(subtask *proto.Subtask) scheduler.SubtaskExecutor {
-			return &ExampleSubtaskExecutor{subtask: subtask}
-		},
-	)
+func (*DefaultPool) Run(f func()) error {
+	go f()
+	return nil
+}
+
+func (*DefaultPool) RunWithConcurrency(f func(), i uint64) error {
+	f()
+	return nil
+}
+
+func (*DefaultPool) ReleaseAndWait() {}
+
+func NewPool(concurrency int) Pool {
+	return &DefaultPool{}
 }

@@ -14,7 +14,10 @@
 
 package scheduler
 
-import "context"
+import (
+	"context"
+	"github.com/pingcap/tidb/distribute_framework/proto"
+)
 
 type SubtaskExecutor interface {
 	Run(ctx context.Context) error
@@ -22,25 +25,25 @@ type SubtaskExecutor interface {
 
 type schedulerRegisterOptions struct{}
 
-type SchedulerConstructor func(task *Task) Scheduler
+type SchedulerConstructor func(task *proto.Task) Scheduler
 
 type SchedulerRegisterOption func(opts *schedulerRegisterOptions)
 
-type SubtaskExecutorConstructor func(subtask *Subtask) SubtaskExecutor
+type SubtaskExecutorConstructor func(subtask *proto.Subtask) SubtaskExecutor
 
 type subtaskExecutorRegisterOptions struct{}
 
 type SubtaskExecutorRegisterOption func(opts *subtaskExecutorRegisterOptions)
 
 var (
-	schedulerConstructors = make(map[TaskType]SchedulerConstructor)
-	schedulerOptions      = make(map[TaskType]schedulerRegisterOptions)
+	schedulerConstructors = make(map[proto.TaskType]SchedulerConstructor)
+	schedulerOptions      = make(map[proto.TaskType]schedulerRegisterOptions)
 
-	subtaskExecutorConstructors = make(map[TaskType]SubtaskExecutorConstructor)
-	subtaskExecutorOptions      = make(map[TaskType]subtaskExecutorRegisterOptions)
+	subtaskExecutorConstructors = make(map[proto.TaskType]SubtaskExecutorConstructor)
+	subtaskExecutorOptions      = make(map[proto.TaskType]subtaskExecutorRegisterOptions)
 )
 
-func RegisterSchedulerConstructor(taskType TaskType, constructor SchedulerConstructor, opts ...SchedulerRegisterOption) {
+func RegisterSchedulerConstructor(taskType proto.TaskType, constructor SchedulerConstructor, opts ...SchedulerRegisterOption) {
 	schedulerConstructors[taskType] = constructor
 
 	var option schedulerRegisterOptions
@@ -50,7 +53,7 @@ func RegisterSchedulerConstructor(taskType TaskType, constructor SchedulerConstr
 	schedulerOptions[taskType] = option
 }
 
-func RegisterSubtaskExectorConstructor(taskType TaskType, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
+func RegisterSubtaskExectorConstructor(taskType proto.TaskType, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
 	subtaskExecutorConstructors[taskType] = constructor
 
 	var option subtaskExecutorRegisterOptions

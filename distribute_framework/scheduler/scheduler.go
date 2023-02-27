@@ -20,13 +20,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/distribute_framework/proto"
+	"github.com/pingcap/tidb/distribute_framework/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 type Scheduler interface {
 	InitSubtaskExecEnv() error
-	SplitSubtasks([]*Subtask) []*Subtask
+	SplitSubtasks([]*proto.Subtask) []*proto.Subtask
 	CleanupSubtaskExecEnv() error
 }
 
@@ -38,17 +40,17 @@ func (s *DefaultScheduler) InitSubtaskExecEnv() error { return nil }
 
 func (s *DefaultScheduler) CleanupSubtaskExecEnv() error { return nil }
 
-func (s *DefaultScheduler) SplitSubtasks(subtasks []*Subtask) []*Subtask { return subtasks }
+func (s *DefaultScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask { return subtasks }
 
 type SchedulerImpl struct {
 	Scheduler
 
 	ctx          context.Context
 	cancel       context.CancelFunc
-	id           TiDBID
-	task         *Task
-	subtaskTable SubtaskTable
-	pool         Pool
+	id           proto.TiDBID
+	task         *proto.Task
+	subtaskTable *storage.SubTaskManager
+	pool         proto.Pool
 	wg           sync.WaitGroup
 
 	mu struct {
@@ -57,7 +59,7 @@ type SchedulerImpl struct {
 	}
 }
 
-func NewScheduler(ctx context.Context, id TiDBID, task *Task, subtaskTable SubtaskTable, pool Pool) *SchedulerImpl {
+func NewScheduler(ctx context.Context, id proto.TiDBID, task *proto.Task, subtaskTable *storage.SubTaskManager, pool proto.Pool) *SchedulerImpl {
 	schedulerImpl := &SchedulerImpl{
 		task:         task,
 		id:           id,
@@ -93,12 +95,18 @@ func (s *SchedulerImpl) Run() error {
 		s.heartbeat(heartbeatCtx)
 	}()
 
-	subtasks := s.generateSubtasks()
+	subtasks, err := s.subtaskTable.GetSubtasksInStates(s.id, s.task.ID, proto.TaskStateRunning)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	subtasks = s.SplitSubtasks(subtasks)
+
 	subtaskCtx, subtaskCancel := context.WithCancel(s.ctx)
 	defer subtaskCancel()
-	subtaskCh := make(chan *Subtask, len(subtasks))
+	subtaskCh := make(chan *proto.Subtask, len(subtasks))
 	s.wg.Add(len(subtasks))
-	err := s.pool.RunWithConcurrency(func() {
+	err = s.pool.RunWithConcurrency(func() {
 		for subtask := range subtaskCh {
 			// defer in a loop is not recommended, fix it after we support wait group in pool.
 			// we should fetch all subtasks from subtaskCh even if there is an error or cancel.
@@ -106,34 +114,34 @@ func (s *SchedulerImpl) Run() error {
 
 			select {
 			case <-subtaskCtx.Done():
-				s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusCanceled)
+				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 				continue
 			default:
 			}
 			if s.getError() != nil {
-				s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusCanceled)
+				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 				continue
 			}
 
 			executor, err := s.createSubtaskExecutor(subtask)
 			if err != nil {
-				s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusFailed)
+				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 				s.onError(err)
 				continue
 			}
 
 			if err = executor.Run(subtaskCtx); err != nil {
 				if errors.Cause(err) == context.Canceled {
-					s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusCanceled)
+					s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 				} else {
-					s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusFailed)
+					s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 				}
 				s.onError(err)
 				continue
 			}
 
 			// TODO: if scheduler split subtasks, we update the status to succeed by original subtask id only when all split subtasks are successful.
-			s.subtaskTable.UpdateSubtaskStatus(subtask.ID, TaskStatusSucceed)
+			s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
 		}
 	}, s.task.Concurrency)
 	if err != nil {
@@ -157,28 +165,23 @@ func (s *SchedulerImpl) Cancel() {
 }
 
 func (s *SchedulerImpl) heartbeat(ctx context.Context) {
-	ticker := time.NewTicker(heartbeatInterval)
+	ticker := time.NewTicker(proto.HeartbeatInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.subtaskTable.UpdateHeartbeat(s.task.ID, s.id)
+			s.subtaskTable.UpdateHeartbeat(s.id, s.task.ID, time.Now())
 		}
 	}
 }
 
-func (s *SchedulerImpl) createSubtaskExecutor(subtask *Subtask) (SubtaskExecutor, error) {
+func (s *SchedulerImpl) createSubtaskExecutor(subtask *proto.Subtask) (SubtaskExecutor, error) {
 	constructor, ok := subtaskExecutorConstructors[subtask.Type]
 	if !ok {
 		return nil, errors.Errorf("constructor of subtask executor for type %s not found", subtask.Type)
 	}
 	return constructor(subtask), nil
-}
-
-func (s *SchedulerImpl) generateSubtasks() []*Subtask {
-	subtasks := s.subtaskTable.GetRunningSubtasks(s.task.ID)
-	return s.SplitSubtasks(subtasks)
 }
 
 func (s *SchedulerImpl) onError(err error) {
@@ -199,4 +202,11 @@ func (s *SchedulerImpl) getError() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.mu.err
+}
+
+func (s *SchedulerImpl) updateSubtaskState(id proto.SubtaskID, state proto.TaskState) {
+	err := s.subtaskTable.UpdateSubtaskState(id, state)
+	if err != nil {
+		s.onError(err)
+	}
 }

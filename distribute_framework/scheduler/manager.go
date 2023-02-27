@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/distribute_framework/proto"
+	"github.com/pingcap/tidb/distribute_framework/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,30 +32,30 @@ var (
 )
 
 type Manager struct {
-	globalTaskTable     GlobalTaskTable
-	subtaskTable        SubtaskTable
-	schedulerPool       Pool
-	subtaskExecutorPool Pool
+	globalTaskTable     *storage.GlobalTaskManager
+	subtaskTable        *storage.SubTaskManager
+	schedulerPool       proto.Pool
+	subtaskExecutorPool proto.Pool
 	mu                  struct {
 		sync.Mutex
-		runningTasks map[TaskID]*SchedulerImpl
+		runningTasks map[proto.TaskID]*SchedulerImpl
 	}
-	id     TiDBID
+	id     proto.TiDBID
 	wg     sync.WaitGroup
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewManager(ctx context.Context, id TiDBID, globalTaskTable GlobalTaskTable, subtaskTable SubtaskTable) *Manager {
+func NewManager(ctx context.Context, id proto.TiDBID, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) *Manager {
 	m := &Manager{
 		id:                  id,
 		globalTaskTable:     globalTaskTable,
 		subtaskTable:        subtaskTable,
-		schedulerPool:       NewPool(schedulerPoolSize),
-		subtaskExecutorPool: NewPool(subtaskExecutorPoolSize),
+		schedulerPool:       proto.NewPool(schedulerPoolSize),
+		subtaskExecutorPool: proto.NewPool(subtaskExecutorPoolSize),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.runningTasks = make(map[TaskID]*SchedulerImpl)
+	m.mu.runningTasks = make(map[proto.TaskID]*SchedulerImpl)
 	return m
 }
 
@@ -87,7 +89,11 @@ func (m *Manager) fetchAndHandleRunningTasks(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tasks := m.globalTaskTable.GetRunningTasks()
+			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateRunning)
+			if err != nil {
+				m.onError(err)
+				continue
+			}
 			m.onRunningTasks(ctx, tasks)
 		}
 	}
@@ -101,19 +107,28 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 			m.cancelAllRunningTasks()
 			return
 		case <-ticker.C:
-			tasks := m.globalTaskTable.GetCanceledTasks()
+			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateCanceled)
+			if err != nil {
+				m.onError(err)
+				continue
+			}
 			m.onCanceledTasks(ctx, tasks)
 		}
 	}
 }
 
-func (m *Manager) onRunningTasks(ctx context.Context, tasks []*Task) {
+func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
 	m.filterAlreadyRunningTasks(tasks)
 	for _, task := range tasks {
-		if !m.subtaskTable.HasRunningSubtasks(task.ID, m.id) {
+		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStateRunning)
+		if err != nil {
+			m.onError(err)
 			continue
 		}
-		err := m.schedulerPool.Run(func() {
+		if !exist {
+			continue
+		}
+		err = m.schedulerPool.Run(func() {
 			m.onRunningTask(ctx, task)
 		})
 		// pool closed
@@ -124,7 +139,7 @@ func (m *Manager) onRunningTasks(ctx context.Context, tasks []*Task) {
 	}
 }
 
-func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*Task) {
+func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range tasks {
@@ -141,10 +156,10 @@ func (m *Manager) cancelAllRunningTasks() {
 	for _, scheduler := range m.mu.runningTasks {
 		scheduler.Cancel()
 	}
-	m.mu.runningTasks = make(map[TaskID]*SchedulerImpl)
+	m.mu.runningTasks = make(map[proto.TaskID]*SchedulerImpl)
 }
 
-func (m *Manager) filterAlreadyRunningTasks(runningTasks []*Task) {
+func (m *Manager) filterAlreadyRunningTasks(runningTasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -158,28 +173,28 @@ func (m *Manager) filterAlreadyRunningTasks(runningTasks []*Task) {
 	runningTasks = runningTasks[:i]
 }
 
-func (m *Manager) onRunningTask(ctx context.Context, task *Task) {
+func (m *Manager) onRunningTask(ctx context.Context, task *proto.Task) {
 	scheduler := NewScheduler(ctx, m.id, task, m.subtaskTable, m.subtaskExecutorPool)
 	m.addRunningTask(task.ID, scheduler)
-	m.handleTask(scheduler, TaskStatusRunning)
+	m.handleTask(scheduler, proto.TaskStateRunning)
 }
 
-func (m *Manager) addRunningTask(id TaskID, scheduler *SchedulerImpl) {
+func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mu.runningTasks[id] = scheduler
 }
 
-func (m *Manager) handleTask(scheduler *SchedulerImpl, status TaskStatus) {
-	switch status {
-	case TaskStatusRunning:
-		nextStatus := TaskStatusSucceed
+func (m *Manager) handleTask(scheduler *SchedulerImpl, state proto.TaskState) {
+	switch state {
+	case proto.TaskStateRunning:
+		nextState := proto.TaskStateSucceed
 		if err := scheduler.Run(); err != nil {
-			nextStatus = TaskStatusFailed
+			nextState = proto.TaskStateFailed
 		}
-		m.handleTask(scheduler, nextStatus)
-	case TaskStatusSucceed:
-	case TaskStatusFailed:
+		m.handleTask(scheduler, nextState)
+	case proto.TaskStateSucceed:
+	case proto.TaskStateFailed:
 	default:
 		// TODO: handle other status
 	}
