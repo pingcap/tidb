@@ -726,7 +726,7 @@ func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) 
 			}
 		}
 	case *LogicalProjection:
-		if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+		if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return nil
 		}
 		// For now, we only allow proj with all Column expression can be the inner side of index join
@@ -742,7 +742,7 @@ func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) 
 		}
 		wrapper.ds = ds
 	case *LogicalSelection:
-		if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+		if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return nil
 		}
 		wrapper.sel = child
@@ -1050,7 +1050,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 }
 
 func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
-	if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
+	if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
 		if wrapper.us != nil {
 			return p.constructInnerUnionScan(wrapper.us, child)
 		}
