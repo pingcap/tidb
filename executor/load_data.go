@@ -50,7 +50,7 @@ import (
 const (
 	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
 	// mydumper-format DML file
-	LoadDataFormatSQLDump = "sqldumpfile"
+	LoadDataFormatSQLDump = "sql file"
 	// LoadDataFormatParquet represents the data source file of LOAD DATA is
 	// parquet
 	LoadDataFormatParquet = "parquet"

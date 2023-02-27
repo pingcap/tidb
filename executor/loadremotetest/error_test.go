@@ -75,7 +75,7 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 8157 (HY000): The FORMAT '123' is not supported")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-		FORMAT 'sqldumpfile' INTO TABLE t;`, gcsEndpoint))
+		FORMAT 'sql file' INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 8160 (HY000): Failed to read source files. Reason: syntax error: unexpected Integer (1) at offset 1, expecting start of row. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)")
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
