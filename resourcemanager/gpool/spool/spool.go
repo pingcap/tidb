@@ -36,7 +36,6 @@ type Pool struct {
 	workers *loopQueue
 	options *Options
 	gpool.BasePool
-
 	capacity           atomic.Int32
 	running            atomic.Int32
 	state              atomic.Int32
@@ -118,7 +117,7 @@ func (p *Pool) purgePeriodically() {
 	}
 }
 
-// Tune changes the capacity of this pool, note that it is noneffective to the infinite or pre-allocation pool.
+// Tune changes the capacity of this pool, note that it is noneffective to the infinite.
 func (p *Pool) Tune(size int) {
 	capacity := p.Cap()
 	if capacity == -1 || size <= 0 || size == capacity {
