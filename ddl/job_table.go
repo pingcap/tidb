@@ -45,9 +45,17 @@ import (
 )
 
 var (
-	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
-	addingBackfillJob      = "/tidb/ddl/add_backfill_job"
+	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
+	addingBackfillJob           = "/tidb/ddl/add_backfill_job"
+	dispatchLoopWaitingDuration = 1 * time.Second
 )
+
+func init() {
+	// In test the wait duration can be reduced to make test case run faster
+	if intest.InTest {
+		dispatchLoopWaitingDuration = 2 * time.Millisecond
+	}
+}
 
 func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
 	dc.runningJobs.Lock()
@@ -175,12 +183,7 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	var ticker *time.Ticker
-	if intest.InTest {
-		ticker = time.NewTicker(2 * time.Millisecond)
-	} else {
-		ticker = time.NewTicker(1 * time.Second)
-	}
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
@@ -188,11 +191,7 @@ func (d *ddl) startDispatchLoop() {
 		}
 		if !d.isOwner() || d.waiting.Load() {
 			d.once.Store(true)
-			if intest.InTest {
-				time.Sleep(2 * time.Millisecond)
-			} else {
-				time.Sleep(time.Second)
-			}
+			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
 		select {
