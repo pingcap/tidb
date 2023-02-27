@@ -16,7 +16,6 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
