@@ -5873,7 +5873,6 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 	// This DDL will update the table charset to default charset.
 	origCharset, origCollate, err = ResolveCharsetCollation(
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
