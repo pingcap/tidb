@@ -890,13 +890,13 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 	}
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
-	err := txnManager.OnHandlePessimisticStmtStart(ctx)
+	err := txnManager.OnPessimisticStmtStart(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		isSuccessful := retErr == nil
-		err1 := txnManager.OnHandlePessimisticStmtEnd(ctx, isSuccessful)
+		err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
 		if retErr == nil && err1 != nil {
 			retErr = err1
 		}
@@ -1018,13 +1018,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
-	err = txnManager.OnHandlePessimisticStmtStart(ctx)
+	err = txnManager.OnPessimisticStmtStart(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		isSuccessful := err == nil
-		err1 := txnManager.OnHandlePessimisticStmtEnd(ctx, isSuccessful)
+		err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
 		if err == nil && err1 != nil {
 			err = err1
 		}

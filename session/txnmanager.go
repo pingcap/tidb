@@ -175,22 +175,22 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
-// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 // a pessimistic select-for-update statements.
-func (m *txnManager) OnHandlePessimisticStmtStart(ctx context.Context) error {
+func (m *txnManager) OnPessimisticStmtStart(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnHandlePessimisticStmtStart(ctx)
+	return m.ctxProvider.OnPessimisticStmtStart(ctx)
 }
 
-// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
-func (m *txnManager) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
+func (m *txnManager) OnPessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnHandlePessimisticStmtEnd(ctx, isSuccessful)
+	return m.ctxProvider.OnPessimisticStmtEnd(ctx, isSuccessful)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

@@ -207,15 +207,15 @@ func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode
 	return nil
 }
 
-// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 // a pessimistic select-for-update statements.
-func (p *baseTxnContextProvider) OnHandlePessimisticStmtStart(_ context.Context) error {
+func (p *baseTxnContextProvider) OnPessimisticStmtStart(_ context.Context) error {
 	return nil
 }
 
-// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
-func (p *baseTxnContextProvider) OnHandlePessimisticStmtEnd(_ context.Context, _ bool) error {
+func (p *baseTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool) error {
 	return nil
 }
 
@@ -510,10 +510,10 @@ type basePessimisticTxnContextProvider struct {
 	baseTxnContextProvider
 }
 
-// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 // a pessimistic select-for-update statements.
-func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
+func (p *basePessimisticTxnContextProvider) OnPessimisticStmtStart(ctx context.Context) error {
+	if err := p.baseTxnContextProvider.OnPessimisticStmtStart(ctx); err != nil {
 		return err
 	}
 	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking &&
@@ -527,10 +527,10 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	return nil
 }
 
-// OnHandlePessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
 // select-for-update statement.
-func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
-	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtEnd(ctx, isSuccessful); err != nil {
+func (p *basePessimisticTxnContextProvider) OnPessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
+	if err := p.baseTxnContextProvider.OnPessimisticStmtEnd(ctx, isSuccessful); err != nil {
 		return err
 	}
 	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
