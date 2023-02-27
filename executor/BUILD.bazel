@@ -137,6 +137,7 @@ go_library(
         "//plugin",
         "//privilege",
         "//privilege/privileges",
+        "//resourcemanager/gpool/spool",
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/sessionstates",
