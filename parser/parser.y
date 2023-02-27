@@ -28,7 +28,6 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -1451,7 +1450,7 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeOrIlikeEscapeOpt            "like escape option"
+	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	LinesTerminated                 "Lines terminated by"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
@@ -5775,24 +5774,20 @@ LikeOrNotOp:
 	"LIKE"
 	{
 		$$ = true
-		logutil.BgLogger().Info("qwe: LIKE1")
 	}
 |	NotSym "LIKE"
 	{
 		$$ = false
-		logutil.BgLogger().Info("qwe: LIKE2")
 	}
 
 IlikeOrNotOp:
 	"ILIKE"
 	{
 		$$ = true
-		logutil.BgLogger().Info("qwe: ILIKE1")
 	}
 |	NotSym "ILIKE"
 	{
 		$$ = false
-		logutil.BgLogger().Info("qwe: ILIKE2")
 	}
 
 RegexpOrNotOp:

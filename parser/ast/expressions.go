@@ -39,7 +39,7 @@ var (
 	_ ExprNode = &IsTruthExpr{}
 	_ ExprNode = &ParenthesesExpr{}
 	_ ExprNode = &PatternInExpr{}
-	_ ExprNode = &PatternLikeExpr{}
+	_ ExprNode = &PatternLikeOrIlikeExpr{}
 	_ ExprNode = &PatternRegexpExpr{}
 	_ ExprNode = &PositionExpr{}
 	_ ExprNode = &RowExpr{}
@@ -873,7 +873,7 @@ func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// PatternLikeExpr is the expression for like operator, e.g, expr like "%123%"
+// PatternLikeOrIlikeExpr is the expression for like operator, e.g, expr like "%123%"
 type PatternLikeOrIlikeExpr struct {
 	exprNode
 	// Expr is the expression to be checked.

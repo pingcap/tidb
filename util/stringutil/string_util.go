@@ -411,7 +411,7 @@ func toLowerIfAlphaASCII(c rune) rune {
 	return c | 0x20
 }
 
-func isUpperAscii(c rune) bool {
+func IsUpperAscii(c rune) bool {
 	if c >= 'A' && c <= 'Z' {
 		return true
 	}
@@ -422,7 +422,19 @@ func LowerOneString(str string) string {
 	ret_str := []rune(str)
 	str_len := len(ret_str)
 	for i := 0; i < str_len; i++ {
-		if isUpperAscii(ret_str[i]) {
+		if IsUpperAscii(ret_str[i]) {
+			ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
+		}
+	}
+	return string(ret_str)
+}
+
+// Sometimes we want to lower strings excluding one char
+func LowerOneStringExcludingOneChar(str string, exclude_char rune) string {
+	ret_str := []rune(str)
+	str_len := len(ret_str)
+	for i := 0; i < str_len; i++ {
+		if IsUpperAscii(ret_str[i]) && ret_str[i] != exclude_char {
 			ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
 		}
 	}

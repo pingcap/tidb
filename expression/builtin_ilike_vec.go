@@ -37,6 +37,21 @@ func LowerAlphaAsciiAndStoreInNewColumn(src_col *chunk.Column, lowered_col *chun
 	}
 }
 
+func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int, exclude_char rune) {
+	lowered_col.ReserveString(elem_num)
+	for i := 0; i < elem_num; i++ {
+		if src_col.IsNull(i) {
+			lowered_col.AppendString("")
+			lowered_col.SetNull(i, true)
+			continue
+		}
+
+		src_str := src_col.GetString(i)
+		lowered_col.AppendString(stringutil.LowerOneStringExcludingOneChar(src_str, exclude_char))
+		lowered_col.SetNull(i, false)
+	}
+}
+
 func (b *builtinIlikeSig) vectorized() bool {
 	return true
 }
@@ -77,7 +92,12 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		tmp_val_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
 		tmp_pattern_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
 		LowerAlphaAsciiAndStoreInNewColumn(bufVal, tmp_val_col, row_num)
-		LowerAlphaAsciiAndStoreInNewColumn(bufPattern, tmp_pattern_col, row_num)
+		if stringutil.IsUpperAscii(escapes[0]) {
+			LowerAlphaAsciiAndStoreInNewColumn(bufPattern, tmp_pattern_col, row_num)
+		} else {
+			LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(bufPattern, tmp_pattern_col, row_num)
+		}
+
 		bufVal = tmp_val_col
 		bufPattern = tmp_pattern_col
 	}
