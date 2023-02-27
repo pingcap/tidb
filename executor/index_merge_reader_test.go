@@ -20,9 +20,9 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/failpoint"
 )
 
 func (s *testSuite1) TestSingleTableRead(c *C) {
