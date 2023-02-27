@@ -1648,7 +1648,7 @@ transaction aborted because lazy uniqueness check is enabled and an error occurr
 
 ["executor:8154"]
 error = '''
-The path of INFILE '%s' needs to specify the parameter of LOCAL first
+Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first
 '''
 
 ["executor:8155"]
