@@ -15,7 +15,6 @@ package model
 
 import (
 	"encoding/json"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -24,23 +23,12 @@ import (
 
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
-	// EndHandle is the last handle of the adding indices table.
-	// We should only backfill indices in the range [startHandle, EndHandle].
-	EndHandle int64 `json:"end_handle"`
-
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
 	IsDistReorg   bool                             `json:"is_dist_reorg"`
-}
-
-// NewDDLReorgMeta new a DDLReorgMeta.
-func NewDDLReorgMeta() *DDLReorgMeta {
-	return &DDLReorgMeta{
-		EndHandle: math.MaxInt64,
-	}
 }
 
 // ReorgType indicates which process is used for the data reorganization.
