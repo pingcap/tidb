@@ -1,4 +1,4 @@
-// Copyright 2023-present PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,31 +54,13 @@ func notAddIndexJob(job *model.Job) bool {
 		job.Type != model.ActionAddPrimaryKey
 }
 
-func notDropIndexJob(job *model.Job) bool {
-	return job.Type != model.ActionDropIndex &&
-		job.Type != model.ActionDropIndexes
-}
-
 func notSynced(job *model.Job) bool {
 	return job.State != model.JobStateSynced
 }
 
-func parseIndexID(job *model.Job) (int64, error) {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var indexID int64
-		if err := job.DecodeArgs(&indexID); err != nil {
-			return 0, errors.Trace(err)
-		}
-		return indexID, nil
-	}
-
-	return 0, nil
-}
-
 // AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
 func (i *IngestRecorder) AddJob(job *model.Job) error {
-	if notIngestJob(job) && notAddIndexJob(job) && notSynced(job) {
+	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job) {
 		return nil
 	}
 
@@ -87,11 +69,14 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 		return nil
 	}
 
-	indexID, err := parseIndexID(job)
-	if err != nil {
+	var indexID int64 = 0
+	if err := job.DecodeArgs(&indexID); err != nil {
 		return errors.Trace(err)
 	}
 
+	if job.BinlogInfo == nil || job.BinlogInfo.TableInfo == nil {
+		return nil
+	}
 	var indexInfo *model.IndexInfo = nil
 	for _, index := range job.BinlogInfo.TableInfo.Indices {
 		if indexID == index.ID {
@@ -131,7 +116,24 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 
 // DelJob firstly filters the ingest index add operation job, and removes it from IngestRecorder.
 func (i *IngestRecorder) DelJob(job *model.Job) error {
-	if notIngestJob(job) && notDropIndexJob(job) && notSynced(job) {
+	if job == nil || notSynced(job) {
+		return nil
+	}
+
+	switch job.Type {
+	case model.ActionDropSchema:
+		var tableIDs []int64
+		if err := job.DecodeArgs(&tableIDs); err != nil {
+			return errors.Trace(err)
+		}
+		for _, tableID := range tableIDs {
+			delete(i.items, tableID)
+		}
+		return nil
+	case model.ActionDropTable, model.ActionTruncateTable:
+		// ActionTruncateTable creates new indexes with empty rows,
+		// so no need to repair them.
+		delete(i.items, job.TableID)
 		return nil
 	}
 
@@ -139,13 +141,52 @@ func (i *IngestRecorder) DelJob(job *model.Job) error {
 	if !exists {
 		return nil
 	}
-
-	indexID, err := parseIndexID(job)
-	if err != nil {
-		return errors.Trace(err)
+	var indexIDs []int64
+	switch job.Type {
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+		var indexName interface{}
+		var ifExists bool
+		var indexID int64
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexID); err != nil {
+			return errors.Trace(err)
+		}
+		indexIDs = []int64{indexID}
+	case model.ActionDropIndexes: // Deprecated, we use ActionMultiSchemaChange instead
+		if err := job.DecodeArgs(&indexIDs); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ActionDropColumn:
+		var colName model.CIStr
+		var ifExists bool
+		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ActionDropColumns:
+		var colNames []model.CIStr
+		var ifExists []bool
+		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ActionModifyColumn:
+		if err := job.DecodeArgs(&indexIDs); err != nil {
+			return errors.Trace(err)
+		}
+		/* support new index using accelerated indexing in future:
+		 * // 1. skip if the new index didn't generate new kvs
+		 * // 2. shall the ReorgTp of ModifyColumnJob be ReorgTypeLitMerge if use accelerated indexing?
+		 * if job.RowCount > 0 && notIngestJob(job) {
+		 *   // ASSERT: select new indexes, which have the highest IDs in this job's BinlogInfo
+		 *   newIndexesInfo := getIndexesWithTheHighestIDs(len(indexIDs))
+		 *   for _, newIndexInfo := range newIndexesInfo {
+		 *     tableindexes[newIndexInfo.ID] = ...
+		 *   }
+		 * }
+		 */
 	}
 
-	delete(tableindexes, indexID)
+	for _, indexID := range indexIDs {
+		delete(tableindexes, indexID)
+	}
 	return nil
 }
 
