@@ -2607,6 +2607,9 @@ func (s *session) Close() {
 	if s.preparedPlanCache != nil {
 		s.preparedPlanCache.Close()
 	}
+	if s.nonPreparedPlanCache != nil {
+		s.nonPreparedPlanCache.Close()
+	}
 }
 
 // GetSessionVars implements the context.Context interface.
