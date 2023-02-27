@@ -361,6 +361,13 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
 
+				var notClosedSelectResult distsql.SelectResult
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					if notClosedSelectResult != nil {
+						terror.Call(notClosedSelectResult.Close)
+					}
+				}()
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
 					select {
@@ -384,6 +391,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
+					notClosedSelectResult = result
+					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -398,6 +407,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 						e.feedbacks[workID].Invalidate()
 					}
+					notClosedSelectResult = nil
 					if err := result.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
@@ -408,7 +418,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialIndexWorkerType),
 		)
 	}()
 
@@ -475,6 +485,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
+				var tableReaderClosed bool
+				defer func() {
+					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
+					if !tableReaderClosed {
+						terror.Call(worker.tableReader.Close)
+					}
+				}()
 				for parTblIdx, tbl := range tbls {
 					// check if this executor is closed
 					select {
@@ -490,6 +507,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						break
 					}
+					failpoint.Inject("testIndexMergePartialTableWorkerCoprLeak", nil)
+					tableReaderClosed = false
 					worker.batchSize = e.maxChunkSize
 					if worker.batchSize > worker.maxBatchSize {
 						worker.batchSize = worker.maxBatchSize
@@ -507,6 +526,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 					// release related resources
 					cancel()
+					tableReaderClosed = true
 					if err = worker.tableReader.Close(); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
@@ -516,7 +536,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialTableWorkerType),
 		)
 	}()
 	return nil
