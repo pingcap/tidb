@@ -75,12 +75,12 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 		s.onError(err)
 		return s.getError()
 	}
-	if err := scheduler.InitSubtaskExecEnv(); err != nil {
+	if err := scheduler.InitSubtaskExecEnv(s.ctx); err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 	defer func() {
-		err := scheduler.CleanupSubtaskExecEnv()
+		err := scheduler.CleanupSubtaskExecEnv(s.ctx)
 		if err != nil {
 			logutil.BgLogger().Error("cleanup subtask exec env failed", zap.Error(err))
 		}
