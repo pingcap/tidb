@@ -17,7 +17,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"math"
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -91,7 +90,7 @@ type dupDetectOpt struct {
 }
 
 func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, 0)
+	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -209,10 +208,10 @@ func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
 	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt dupDetectOpt) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
 	}
 	return &dupDetectIter{
 		ctx:        ctx,
@@ -232,7 +231,7 @@ type dupDBIter struct {
 }
 
 func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, 0)
+	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -296,10 +295,10 @@ var _ Iter = &dupDBIter{}
 func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
 	}
 	return &dupDBIter{
 		iter:       dupDB.NewIter(newOpts),

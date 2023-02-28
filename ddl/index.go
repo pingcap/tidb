@@ -1781,7 +1781,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = w.writerCtx.WriteRow(key, idxVal)
+					err = w.writerCtx.WriteRow(key, idxVal, idxRecord.handle)
 					if err != nil {
 						return errors.Trace(err)
 					}

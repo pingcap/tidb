@@ -392,7 +392,7 @@ type KvPair struct {
 	// Val is the value of the KV pair
 	Val []byte
 	// RowID is the row id of the KV pair.
-	RowID int64
+	RowID []byte
 }
 
 // TableHasAutoRowID return whether table has auto generated row id

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
@@ -433,7 +434,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 	kvPairs := kvcodec.se.takeKvPairs()
 	for i := 0; i < len(kvPairs.pairs); i++ {
-		kvPairs.pairs[i].RowID = rowID
+		kvPairs.pairs[i].RowID = kv.IntHandle(rowID).Encoded()
 	}
 	kvcodec.recordCache = record[:0]
 	return kvPairs, nil

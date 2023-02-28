@@ -22,6 +22,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestNoopKeyAdapter(t *testing.T) {
 	keyAdapter := noopKeyAdapter{}
 	key := randBytes(32)
 	require.Len(t, key, keyAdapter.EncodedLen(key))
-	encodedKey := keyAdapter.Encode(nil, key, 0)
+	encodedKey := keyAdapter.Encode(nil, key, ZeroRowID)
 	require.Equal(t, key, encodedKey)
 
 	decodedKey, err := keyAdapter.Decode(nil, encodedKey)
@@ -68,7 +69,7 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 
 	keyAdapter := dupDetectKeyAdapter{}
 	for _, input := range inputs {
-		result := keyAdapter.Encode(nil, input.key, input.rowID)
+		result := keyAdapter.Encode(nil, input.key, kv.IntHandle(input.rowID).Encoded())
 		require.Equal(t, keyAdapter.EncodedLen(input.key), len(result))
 
 		// Decode the result.
@@ -89,7 +90,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 	keyAdapter := dupDetectKeyAdapter{}
 	encodedKeys := make([][]byte, 0, len(keys))
 	for _, key := range keys {
-		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, 1))
+		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, kv.IntHandle(1).Encoded()))
 	}
 	sorted := sort.SliceIsSorted(encodedKeys, func(i, j int) bool {
 		return bytes.Compare(encodedKeys[i], encodedKeys[j]) < 0
@@ -100,8 +101,8 @@ func TestDupDetectKeyOrder(t *testing.T) {
 func TestDupDetectEncodeDupKey(t *testing.T) {
 	keyAdapter := dupDetectKeyAdapter{}
 	key := randBytes(32)
-	result1 := keyAdapter.Encode(nil, key, 10)
-	result2 := keyAdapter.Encode(nil, key, 20)
+	result1 := keyAdapter.Encode(nil, key, kv.IntHandle(10).Encoded())
+	result2 := keyAdapter.Encode(nil, key, kv.IntHandle(20).Encoded())
 	require.NotEqual(t, result1, result2)
 }
 
@@ -114,7 +115,7 @@ func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
 	for _, keyAdapter := range keyAdapters {
 		key := randBytes(32)
 		buf := make([]byte, 256)
-		buf2 := keyAdapter.Encode(buf[:4], key, 1)
+		buf2 := keyAdapter.Encode(buf[:4], key, kv.IntHandle(1).Encoded())
 		require.True(t, startWithSameMemory(buf, buf2))
 		// Verify the encoded result first.
 		key2, err := keyAdapter.Decode(nil, buf2[4:])

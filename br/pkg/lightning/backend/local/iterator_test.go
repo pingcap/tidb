@@ -26,6 +26,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +38,7 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   randBytes(32),
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 	}
@@ -47,13 +48,13 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 	}
@@ -63,19 +64,19 @@ func TestDupDetectIterator(t *testing.T) {
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: prevRowMax,
+			RowID: kv.IntHandle(prevRowMax).Encoded(),
 		})
 		prevRowMax++
 	}
@@ -184,22 +185,22 @@ func TestDupDetectIterSeek(t *testing.T) {
 		{
 			Key:   []byte{1, 2, 3, 0},
 			Val:   randBytes(128),
-			RowID: 1,
+			RowID: kv.IntHandle(1).Encoded(),
 		},
 		{
 			Key:   []byte{1, 2, 3, 1},
 			Val:   randBytes(128),
-			RowID: 2,
+			RowID: kv.IntHandle(2).Encoded(),
 		},
 		{
 			Key:   []byte{1, 2, 3, 1},
 			Val:   randBytes(128),
-			RowID: 3,
+			RowID: kv.IntHandle(3).Encoded(),
 		},
 		{
 			Key:   []byte{1, 2, 3, 2},
 			Val:   randBytes(128),
-			RowID: 4,
+			RowID: kv.IntHandle(4).Encoded(),
 		},
 	}
 
