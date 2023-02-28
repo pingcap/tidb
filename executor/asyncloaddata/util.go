@@ -58,15 +58,15 @@ func CreateLoadDataJob(
 	user string,
 ) (int64, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const insertSQL = `INSERT INTO mysql.load_data_jobs
+	_, err := conn.ExecuteInternal(ctx,
+		`INSERT INTO mysql.load_data_jobs
     	(data_source, table_schema, table_name, import_mode, create_user)
-		VALUES (%?, %?, %?, %?, %?);`
-	_, err := conn.ExecuteInternal(ctx, insertSQL, source, db, table, importMode, user)
+		VALUES (%?, %?, %?, %?, %?);`,
+		source, db, table, importMode, user)
 	if err != nil {
 		return 0, err
 	}
-	const lastInsertID = `SELECT LAST_INSERT_ID();`
-	rs, err := conn.ExecuteInternal(ctx, lastInsertID)
+	rs, err := conn.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
 	if err != nil {
 		return 0, err
 	}
@@ -89,10 +89,11 @@ func StartJob(
 	jobID int64,
 ) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const updateSQL = `UPDATE mysql.load_data_jobs
+	_, err := conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
 		SET start_time = CURRENT_TIMESTAMP, update_time = CURRENT_TIMESTAMP
-		WHERE job_id = %? AND start_time IS NULL;`
-	_, err := conn.ExecuteInternal(ctx, updateSQL, jobID)
+		WHERE job_id = %? AND start_time IS NULL;`,
+		jobID)
 	return err
 }
 
@@ -114,14 +115,15 @@ func UpdateJobProgress(
 ) (bool, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	// let TiDB handle heartbeat check for concurrent SQL
-	const updateSQL = `UPDATE mysql.load_data_jobs
+	// we tolerate 2 times of failure/timeout when updating heartbeat
+	_, err := conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
 		SET progress = %?, update_time = CURRENT_TIMESTAMP
 		WHERE job_id = %?
 			AND (
 		    	update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND)
-				OR update_time IS NULL);`
-	// we tolerate 2 times of failure/timeout when updating heartbeat
-	_, err := conn.ExecuteInternal(ctx, updateSQL, progress, jobID, OfflineThresholdInSec)
+				OR update_time IS NULL);`,
+		progress, jobID, OfflineThresholdInSec)
 	if err != nil {
 		return false, err
 	}
@@ -136,10 +138,11 @@ func FinishJob(
 	result string,
 ) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const updateSQL = `UPDATE mysql.load_data_jobs
+	_, err := conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
 		SET end_time = CURRENT_TIMESTAMP, result_message = %?
-		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`
-	_, err := conn.ExecuteInternal(ctx, updateSQL, result, jobID)
+		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`,
+		result, jobID)
 	return err
 }
 
@@ -151,10 +154,11 @@ func FailJob(
 	result string,
 ) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const updateSQL = `UPDATE mysql.load_data_jobs
+	_, err := conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
 		SET end_time = CURRENT_TIMESTAMP, error_message = %?
-		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`
-	_, err := conn.ExecuteInternal(ctx, updateSQL, result, jobID)
+		WHERE job_id = %? AND result_message IS NULL AND error_message IS NULL;`,
+		result, jobID)
 	return err
 }
 
@@ -179,26 +183,20 @@ func UpdateJobExpectedStatus(
 	status JobExpectedStatus,
 ) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const (
-		toRunning = `UPDATE mysql.load_data_jobs
-			SET expected_status = 'running'
-			WHERE job_id = %? AND expected_status = 'paused';`
-		toPaused = `UPDATE mysql.load_data_jobs
-			SET expected_status = 'paused'
-			WHERE job_id = %? AND expected_status = 'running';`
-		toCanceled = `UPDATE mysql.load_data_jobs
-			SET expected_status = 'canceled'
-			WHERE job_id = %? AND expected_status != 'canceled';`
-	)
-
 	var sql string
 	switch status {
 	case JobExpectedRunning:
-		sql = toRunning
+		sql = `UPDATE mysql.load_data_jobs
+			SET expected_status = 'running'
+			WHERE job_id = %? AND expected_status = 'paused';`
 	case JobExpectedPaused:
-		sql = toPaused
+		sql = `UPDATE mysql.load_data_jobs
+			SET expected_status = 'paused'
+			WHERE job_id = %? AND expected_status = 'running';`
 	case JobExpectedCanceled:
-		sql = toCanceled
+		sql = `UPDATE mysql.load_data_jobs
+			SET expected_status = 'canceled'
+			WHERE job_id = %? AND expected_status != 'canceled';`
 	}
 	_, err := conn.ExecuteInternal(ctx, sql, jobID)
 	return err
@@ -231,7 +229,8 @@ func GetJobStatus(
 	jobID int64,
 ) (JobStatus, string, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const sql = `SELECT
+	rs, err := conn.ExecuteInternal(ctx,
+		`SELECT
 		expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
 		end_time,
@@ -239,8 +238,8 @@ func GetJobStatus(
 		error_message,
 		start_time
 		FROM mysql.load_data_jobs
-		WHERE job_id = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, jobID)
+		WHERE job_id = %?;`,
+		OfflineThresholdInSec, jobID)
 	if err != nil {
 		return JobFailed, "", err
 	}
@@ -320,7 +319,8 @@ func GetJobInfo(
 	jobID int64,
 ) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const sql = `SELECT
+	rs, err := conn.ExecuteInternal(ctx,
+		`SELECT
     	expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
 		end_time,
@@ -336,8 +336,8 @@ func GetJobInfo(
 		progress,
 		create_user
 		FROM mysql.load_data_jobs
-		WHERE job_id = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, jobID)
+		WHERE job_id = %?;`,
+		OfflineThresholdInSec, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,8 @@ func GetAllJobInfo(
 	user string,
 ) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	const sql = `SELECT
+	rs, err := conn.ExecuteInternal(ctx,
+		`SELECT
     	expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
 		end_time,
@@ -398,8 +399,8 @@ func GetAllJobInfo(
 		progress,
 		create_user
 		FROM mysql.load_data_jobs
-		WHERE create_user = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, user)
+		WHERE create_user = %?;`,
+		OfflineThresholdInSec, user)
 	if err != nil {
 		return nil, err
 	}
