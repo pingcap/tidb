@@ -1461,6 +1461,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 		conf.DisaggregatedTiFlash = false
 	})
 
+	var err error
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1469,9 +1470,13 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
 
 	// tiflash_compute_dispatch_policy is global variable.
-	err := tk.ExecToErr("set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';")
+	tk.MustExec("set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';")
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
+	tk.MustExec("set @@session.tiflash_compute_dispatch_policy = 'round_robin';")
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("round_robin"))
+	err = tk.ExecToErr("set @@session.tiflash_compute_dispatch_policy = 'error_dispatch_policy';")
 	require.Error(t, err)
-	require.Equal(t, "[variable:1229]Variable 'tiflash_compute_dispatch_policy' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+	require.Equal(t, "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got error_dispatch_policy", err.Error())
 
 	// Invalid values.
 	err = tk.ExecToErr("set global tiflash_compute_dispatch_policy = 'error_dispatch_policy';")
