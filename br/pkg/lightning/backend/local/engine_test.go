@@ -122,4 +122,9 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, first)
 	require.Nil(t, last)
+
+	first, last, err = f.getFirstAndLastKey([]byte("e"), []byte(""))
+	require.NoError(t, err)
+	require.Equal(t, []byte("e"), first)
+	require.Equal(t, []byte("e"), last)
 }

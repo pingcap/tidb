@@ -289,7 +289,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -371,7 +371,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 		}
 	}
-	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
+	region, err := s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 	}

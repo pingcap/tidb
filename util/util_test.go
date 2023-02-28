@@ -55,7 +55,7 @@ func TestLogFormat(t *testing.T) {
 	assert.Len(t, logFields, 7)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
-	assert.Equal(t, "conn_id", logFields[1].Key)
+	assert.Equal(t, "conn", logFields[1].Key)
 	assert.Equal(t, int64(233), logFields[1].Integer)
 	assert.Equal(t, "user", logFields[2].Key)
 	assert.Equal(t, "PingCAP", logFields[2].String)
