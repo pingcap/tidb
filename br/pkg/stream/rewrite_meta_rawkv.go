@@ -566,8 +566,8 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 			if job.State == model.JobStateRollbackDone {
 				return sr.deleteRange(job)
 			}
-			sr.ingestRecorder.AddJob(job)
-			return nil
+			err := sr.ingestRecorder.AddJob(job)
+			return errors.Trace(err)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)

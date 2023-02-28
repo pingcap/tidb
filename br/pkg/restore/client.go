@@ -2552,12 +2552,12 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 	info := dom.InfoSchema()
 	allSchema := info.AllSchemas()
 	ingestRecorder.UpdateIndexInfo(allSchema)
-	err = ingestRecorder.Iterate(func(tableID int64, _ int64, info *ingestrec.IngestIndexInfo) error {
+	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			dropSQL      string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
-			addSQL       string = ""
-			indexTypeSQL string = ""
-			commentSQL   string = ""
+			addSQL       string
+			indexTypeSQL string
+			commentSQL   string
 			visibleSQL   string = " VISIBLE"
 		)
 
