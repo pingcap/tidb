@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/distribute_framework/proto"
 )
 
@@ -25,11 +26,11 @@ type SubtaskExecutor interface {
 
 type schedulerRegisterOptions struct{}
 
-type SchedulerConstructor func(task *proto.Task) Scheduler
+type SchedulerConstructor func(task *proto.Task, step proto.TaskStep) (Scheduler, error)
 
 type SchedulerRegisterOption func(opts *schedulerRegisterOptions)
 
-type SubtaskExecutorConstructor func(subtask *proto.Subtask) SubtaskExecutor
+type SubtaskExecutorConstructor func(subtask *proto.Subtask, step proto.TaskStep) (SubtaskExecutor, error)
 
 type subtaskExecutorRegisterOptions struct{}
 

@@ -17,21 +17,35 @@ package example
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
 )
 
-type ExampleSubtaskExecutor struct {
+type ExampleStepOneSubtaskExecutor struct {
 	subtask *proto.Subtask
 }
 
-func (e *ExampleSubtaskExecutor) Run(ctx context.Context) error { return nil }
+type ExampleStepTwoSubtaskExecutor struct {
+	subtask *proto.Subtask
+}
+
+func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error { return nil }
+
+func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error { return nil }
 
 func init() {
 	scheduler.RegisterSubtaskExectorConstructor(
 		proto.TaskTypeExample,
-		func(subtask *proto.Subtask) scheduler.SubtaskExecutor {
-			return &ExampleSubtaskExecutor{subtask: subtask}
+		// The order of the subtask executors is the same as the order of the subtasks.
+		func(subtask *proto.Subtask, step proto.TaskStep) (scheduler.SubtaskExecutor, error) {
+			switch step {
+			case stepOne:
+				return &ExampleStepOneSubtaskExecutor{subtask: subtask}, nil
+			case stepTwo:
+				return &ExampleStepTwoSubtaskExecutor{subtask: subtask}, nil
+			}
+			return nil, errors.Errorf("unknown step %d", step)
 		},
 	)
 }

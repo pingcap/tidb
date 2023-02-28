@@ -35,9 +35,10 @@ CREATE TABLE system.tidb_global_task (
 	type VARCHAR(256) NOT NULL,
 	dispatcher_id VARCHAR(256),
 	state VARCHAR(64) NOT NULL,
-	meta LONGBLOB,
 	start_time DATETIME,
+	meta LONGBLOB,
 	concurrency INT(11),
+	step INT(11),
 );`
 	SubtaskTableSchema = `
 CREATE TABLE system.tidb_sub_task (
@@ -46,8 +47,8 @@ CREATE TABLE system.tidb_sub_task (
 	task_id BIGINT(20) NOT NULL,
 	designate_tidb_id VARCHAR(256),
 	state VARCHAR(64) NOT NULL,
-	meta LONGBLOB,
 	start_time DATETIME,
+	meta LONGBLOB,
 	heartbeat DATETIME,
 `
 )
@@ -138,6 +139,7 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 		State:        proto.TaskState(rs[0].GetString(3)),
 		Meta:         rs[0].GetBytes(5),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
+		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}
 	task.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
 
@@ -172,6 +174,7 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 		State:        proto.TaskState(rs[0].GetString(3)),
 		Meta:         rs[0].GetBytes(5),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
+		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}
 	t.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
 
@@ -199,10 +202,34 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 			State:        proto.TaskState(r.GetString(3)),
 			Meta:         r.GetBytes(5),
 			Concurrency:  uint64(r.GetInt64(6)),
+			Step:         proto.TaskStep(rs[0].GetInt64(7)),
 		}
 		t.StartTime, _ = r.GetTime(4).GoTime(time.UTC)
 		task = append(task, t)
 	}
+	return task, nil
+}
+
+func (stm *GlobalTaskManager) GetTaskByID(taskID proto.TaskID) (task *proto.Task, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where id = ?", taskID)
+	if err != nil {
+		return task, err
+	}
+
+	task = &proto.Task{
+		ID:           proto.TaskID(rs[0].GetInt64(0)),
+		Type:         proto.TaskType(rs[0].GetString(1)),
+		DispatcherID: rs[0].GetString(2),
+		State:        proto.TaskState(rs[0].GetString(3)),
+		Meta:         rs[0].GetBytes(5),
+		Concurrency:  uint64(rs[0].GetInt64(6)),
+		Step:         proto.TaskStep(rs[0].GetInt64(7)),
+	}
+	task.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
+
 	return task, nil
 }
 

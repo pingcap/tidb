@@ -129,7 +129,7 @@ func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
 			continue
 		}
 		err = m.schedulerPool.Run(func() {
-			m.onRunningTask(ctx, task)
+			m.onRunningTask(ctx, task.ID)
 		})
 		// pool closed
 		if err != nil {
@@ -144,7 +144,7 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 	defer m.mu.Unlock()
 	for _, task := range tasks {
 		if scheduler, ok := m.mu.runningTasks[task.ID]; ok {
-			scheduler.Cancel()
+			scheduler.Stop()
 			delete(m.mu.runningTasks, task.ID)
 		}
 	}
@@ -154,7 +154,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, scheduler := range m.mu.runningTasks {
-		scheduler.Cancel()
+		scheduler.Stop()
 	}
 	m.mu.runningTasks = make(map[proto.TaskID]*SchedulerImpl)
 }
@@ -173,10 +173,33 @@ func (m *Manager) filterAlreadyRunningTasks(runningTasks []*proto.Task) {
 	runningTasks = runningTasks[:i]
 }
 
-func (m *Manager) onRunningTask(ctx context.Context, task *proto.Task) {
-	scheduler := NewScheduler(ctx, m.id, task, m.subtaskTable, m.subtaskExecutorPool)
-	m.addRunningTask(task.ID, scheduler)
-	m.handleTask(scheduler, proto.TaskStateRunning)
+func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
+	scheduler := NewScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPool)
+	scheduler.Start()
+	defer scheduler.Stop()
+	m.addRunningTask(taskID, scheduler)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(checkTime):
+		}
+		task, err := m.globalTaskTable.GetTaskByID(taskID)
+		if err != nil {
+			m.onError(err)
+			return
+		}
+		if task.State != proto.TaskStateRunning {
+			return
+		}
+		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStateRunning); err != nil {
+			m.onError(err)
+			return
+		} else if !exist {
+			continue
+		}
+		m.handleTask(scheduler, task)
+	}
 }
 
 func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
@@ -185,14 +208,15 @@ func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
 	m.mu.runningTasks[id] = scheduler
 }
 
-func (m *Manager) handleTask(scheduler *SchedulerImpl, state proto.TaskState) {
-	switch state {
+func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
+	switch task.State {
 	case proto.TaskStateRunning:
 		nextState := proto.TaskStateSucceed
-		if err := scheduler.Run(); err != nil {
+		if err := scheduler.Run(task); err != nil {
 			nextState = proto.TaskStateFailed
 		}
-		m.handleTask(scheduler, nextState)
+		task.State = nextState
+		m.handleTask(scheduler, task)
 	case proto.TaskStateSucceed:
 	case proto.TaskStateFailed:
 	default:

@@ -46,6 +46,12 @@ const (
 	TaskStateCanceled     TaskState = "canceled"
 )
 
+type TaskStep int
+
+const (
+	StepInit TaskStep = -1
+)
+
 type Task struct {
 	ID    TaskID
 	Type  TaskType
@@ -53,6 +59,7 @@ type Task struct {
 	Meta  []byte
 	// TODO: redefine
 	MetaM *TaskMeta
+	Step  TaskStep
 
 	DispatcherID string
 	StartTime    time.Time
