@@ -157,10 +157,10 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Trace(err)
 		}
 		if u.Scheme == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "scheme not found in endpoint")
+			return errors.Errorf("scheme not found in endpoint")
 		}
 		if u.Host == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "host not found in endpoint")
+			return errors.Errorf("host not found in endpoint")
 		}
 	}
 	// In some cases, we need to set ForcePathStyle to false.

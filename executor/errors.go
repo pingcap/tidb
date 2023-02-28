@@ -76,4 +76,13 @@ var (
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	errTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
+
+	ErrLoadDataFromServerDisk    = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataFromServerDisk)
+	ErrLoadParquetFromLocal      = dbterror.ClassExecutor.NewStd(mysql.ErrLoadParquetFromLocal)
+	ErrLoadDataEmptyPath         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataEmptyPath)
+	ErrLoadDataUnsupportedFormat = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedFormat)
+	ErrLoadDataInvalidURI        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidURI)
+	ErrLoadDataCantAccess        = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantAccess)
+	ErrLoadDataCantRead          = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantRead)
+	ErrLoadDataWrongFormatConfig = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataWrongFormatConfig)
 )

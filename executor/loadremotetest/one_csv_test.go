@@ -81,7 +81,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 
 	// can't read file at tidb-server
 	sql = "LOAD DATA INFILE '/etc/passwd' INTO TABLE load_csv.t;"
-	s.tk.MustContainErrMsg(sql, "don't support load data from tidb-server")
+	s.tk.MustContainErrMsg(sql, "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '/etc/passwd' needs to specify the clause of LOCAL first")
 }
 
 func (s *mockGCSSuite) TestIgnoreNLines() {
