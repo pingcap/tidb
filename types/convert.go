@@ -254,7 +254,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 	if intStr == "" {
 		intStr = "0"
 	}
-	if sc.ShouldClipToZero() && intStr[0] == '-' {
+	if intStr[0] == '-' {
 		return 0, overflow(str, tp)
 	}
 
