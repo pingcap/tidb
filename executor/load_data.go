@@ -663,6 +663,8 @@ func (e *LoadDataInfo) SetMessage() {
 
 // colsToRow encodes the data of parser output.
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []types.Datum {
+	// check length of FieldMappings and cols
+
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
