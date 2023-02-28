@@ -118,14 +118,14 @@ func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)
 	case sessiontxn.StmtErrAfterPessimisticLock:
-		return p.handleAfterPessimisticLockError(err)
+		return p.handleAfterPessimisticLockError(ctx, err)
 	default:
-		return p.basePessimisticTxnContextProvider.OnStmtErrorForNextAction(point, err)
+		return p.basePessimisticTxnContextProvider.OnStmtErrorForNextAction(ctx, point, err)
 	}
 }
 
@@ -215,7 +215,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 	return sessiontxn.RetryReady()
 }
 
-func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx context.Context, lockErr error) (sessiontxn.StmtErrorAction, error) {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -225,6 +225,11 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 		retryable = true
+
+		// Exit aggressive locking in single-statement-deadlock case, otherwise the lock won't be released after retrying.
+		if err := p.cancelAggressiveLockingIfNeeded(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -237,6 +242,9 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	}
 
 	if retryable {
+		if err := p.basePessimisticTxnContextProvider.retryAggressiveLockingIfNeeded(ctx); err != nil {
+			return sessiontxn.ErrorAction(err)
+		}
 		return sessiontxn.RetryReady()
 	}
 	return sessiontxn.ErrorAction(lockErr)

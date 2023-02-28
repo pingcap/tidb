@@ -180,7 +180,7 @@ func TestOptimisticHandleError(t *testing.T) {
 
 	for _, c := range cases {
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		action, err := provider.OnStmtErrorForNextAction(c.point, c.err)
+		action, err := provider.OnStmtErrorForNextAction(context.Background(), c.point, c.err)
 		if c.point == sessiontxn.StmtErrAfterPessimisticLock {
 			require.Error(t, err)
 			require.Same(t, c.err, err)
@@ -199,7 +199,7 @@ func TestOptimisticHandleError(t *testing.T) {
 
 			// OnStmtErrorForNextAction again
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-			action, err = provider.OnStmtErrorForNextAction(c.point, c.err)
+			action, err = provider.OnStmtErrorForNextAction(context.Background(), c.point, c.err)
 			require.NoError(t, err)
 			require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 
