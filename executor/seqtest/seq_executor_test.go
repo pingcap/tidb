@@ -624,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
@@ -1467,12 +1467,12 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {

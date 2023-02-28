@@ -43,6 +43,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cascades"],
     flaky = True,
+    shard_count = 5,
     deps = [
         "//domain",
         "//expression",

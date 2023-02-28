@@ -14,8 +14,8 @@
 package restore
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -48,7 +49,6 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 type clusterResourceCheckItem struct {
@@ -733,11 +733,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                10 * time.Second,
-				Timeout:             3 * time.Second,
-				PermitWithoutStream: false,
-			}),
+			config.DefaultGrpcKeepaliveParams,
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
@@ -783,55 +779,13 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	// check etcd KV of CDC >= v6.2
-	cdcPrefix := "/tidb/cdc/"
-	capturePath := []byte("/__cdc_meta__/capture/")
-	nameSet := make(map[string][]string, 1)
-	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, kv := range resp.Kvs {
-		// example: /tidb/cdc/<clusterID>/__cdc_meta__/capture/<captureID>
-		k := kv.Key[len(cdcPrefix):]
-		clusterID, captureID, found := bytes.Cut(k, capturePath)
-		if found {
-			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
-		}
-	}
-	if len(nameSet) == 0 {
-		// check etcd KV of CDC <= v6.1
-		cdcPrefixV61 := "/tidb/cdc/capture/"
-		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix(), clientv3.WithKeysOnly())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/capture/<captureID>
-			k := kv.Key[len(cdcPrefixV61):]
-			if len(k) == 0 {
-				continue
-			}
-			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
-		}
-	}
 
-	if len(nameSet) > 0 {
-		var captureMsgBuf strings.Builder
-		captureMsgBuf.WriteString("found CDC capture(s): ")
-		isFirst := true
-		for clusterID, captureIDs := range nameSet {
-			if !isFirst {
-				captureMsgBuf.WriteString(", ")
-			}
-			isFirst = false
-			captureMsgBuf.WriteString("clusterID: ")
-			captureMsgBuf.WriteString(clusterID)
-			captureMsgBuf.WriteString(" captureID(s): ")
-			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
-		}
-		captureMsgBuf.WriteString(",")
-		errorMsg = append(errorMsg, captureMsgBuf.String())
+	if !nameSet.Empty() {
+		errorMsg = append(errorMsg, nameSet.MessageToUser())
 	}
 
 	if len(errorMsg) > 0 {
@@ -844,6 +798,28 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	}
 
 	return theResult, nil
+}
+
+type onlyState struct {
+	State string `json:"state"`
+}
+
+func isActiveCDCChangefeed(jsonBytes []byte) bool {
+	s := onlyState{}
+	err := json.Unmarshal(jsonBytes, &s)
+	if err != nil {
+		// maybe a compatible issue, skip this key
+		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
+			zap.ByteString("value", jsonBytes),
+			zap.Error(err))
+		return false
+	}
+	switch s.State {
+	case "normal", "stopped", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 type schemaCheckItem struct {
@@ -973,9 +949,10 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	core := info.Core
 	defaultCols := make(map[string]struct{})
+	autoRandomCol := common.GetAutoRandomColumn(core)
 	for _, col := range core.Columns {
 		// we can extend column the same with columns with default values
-		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
+		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (autoRandomCol != nil && autoRandomCol.ID == col.ID) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}

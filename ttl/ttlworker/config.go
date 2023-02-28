@@ -30,6 +30,10 @@ const resizeWorkersInterval = 30 * time.Second
 const splitScanCount = 64
 const ttlJobTimeout = 6 * time.Hour
 
+const taskManagerLoopTickerInterval = time.Minute
+const ttlTaskHeartBeatTickerInterval = time.Minute
+const ttlGCInterval = time.Hour
+
 func getUpdateInfoSchemaCacheInterval() time.Duration {
 	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
@@ -49,4 +53,18 @@ func getResizeWorkersInterval() time.Duration {
 		return time.Duration(val.(int))
 	})
 	return resizeWorkersInterval
+}
+
+func getTaskManagerLoopTickerInterval() time.Duration {
+	failpoint.Inject("task-manager-loop-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return taskManagerLoopTickerInterval
+}
+
+func getTaskManagerHeartBeatExpireInterval() time.Duration {
+	failpoint.Inject("task-manager-heartbeat-expire-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return 2 * ttlTaskHeartBeatTickerInterval
 }

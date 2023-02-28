@@ -268,7 +268,10 @@ type PlanReplayerStmt struct {
 	Load    bool
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
-	Capture    bool
+	Capture bool
+	// Remove indicates `plan replayer capture remove <sql_digest> <plan_digest>
+	Remove bool
+
 	SQLDigest  string
 	PlanDigest string
 
@@ -298,6 +301,14 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(n.PlanDigest)
 		return nil
 	}
+	if n.Remove {
+		ctx.WriteKeyWord("PLAN REPLAYER CAPTURE REMOVE ")
+		ctx.WriteString(n.SQLDigest)
+		ctx.WriteKeyWord(" ")
+		ctx.WriteString(n.PlanDigest)
+		return nil
+	}
+
 	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
@@ -1584,15 +1595,12 @@ func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
 }
 
 type ResourceGroupNameOption struct {
-	Type  int
 	Value string
 }
 
 func (c *ResourceGroupNameOption) Restore(ctx *format.RestoreCtx) error {
-	if c.Type == UserResourceGroupName {
-		ctx.WriteKeyWord(" RESOURCE GROUP ")
-		ctx.WriteString(c.Value)
-	}
+	ctx.WriteKeyWord(" RESOURCE GROUP ")
+	ctx.WriteName(c.Value)
 	return nil
 }
 
@@ -3767,7 +3775,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "keep_order", "no_keep_order":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {
@@ -3816,9 +3824,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(hintData.To)
 	case "set_var":
 		hintData := n.HintData.(HintSetVar)
-		ctx.WriteString(hintData.VarName)
-		ctx.WritePlain(", ")
-		ctx.WriteString(hintData.Value)
+		ctx.WritePlain(hintData.VarName)
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

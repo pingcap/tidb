@@ -223,7 +223,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
-		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
 			return txnErr
 		}
@@ -263,6 +263,16 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
 	}
+
+	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
+	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
+	// instead.
+	sql := ""
+	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
+	if ok {
+		sql = planCacheStmt.StmtText
+	}
+	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))

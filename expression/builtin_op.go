@@ -718,7 +718,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	argTp := args[0].GetType().EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
 		argTp = types.ETInt
-	} else if argTp == types.ETJson || argTp == types.ETString {
+	} else if argTp == types.ETString {
 		argTp = types.ETReal
 	}
 
@@ -739,6 +739,10 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETInt:
 		sig = &builtinUnaryNotIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotInt)
+	case types.ETJson:
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errJSONInBooleanContext)
+		sig = &builtinUnaryNotJSONSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotJSON)
 	default:
 		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}
@@ -803,6 +807,28 @@ func (b *builtinUnaryNotIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 	if arg == 0 {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type builtinUnaryNotJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUnaryNotJSONSig) Clone() builtinFunc {
+	newSig := &builtinUnaryNotJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinUnaryNotJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+
+	if types.CompareBinaryJSON(arg, types.CreateBinaryJSON(int64(0))) == 0 {
 		return 1, false, nil
 	}
 	return 0, false, nil

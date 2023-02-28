@@ -21,6 +21,7 @@ go_library(
 
 go_test(
     name = "cgroup_test",
+    timeout = "short",
     srcs = [
         "cgroup_cpu_test.go",
         "cgroup_mock_test.go",

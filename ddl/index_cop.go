@@ -428,6 +428,8 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		SetFromInfoSchema(c.sessCtx.GetDomainInfoSchema()).
 		SetConcurrency(1).
 		Build()
+	kvReq.RequestSource.RequestSourceInternal = true
+	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
 	if err != nil {
 		return nil, err
 	}

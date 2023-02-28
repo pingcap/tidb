@@ -11,6 +11,5 @@ go_library(
     deps = [
         "//resourcemanager/util",
         "//util/cpu",
-        "@org_uber_go_atomic//:atomic",
     ],
 )

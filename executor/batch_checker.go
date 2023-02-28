@@ -190,28 +190,30 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		// Pass handle = 0 to GenIndexKey,
 		// due to we only care about distinct key.
-		key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-			colVals, kv.IntHandle(0), nil)
-		if err1 != nil {
-			return nil, err1
+		iter := v.GenIndexKVIter(ctx.GetSessionVars().StmtCtx, colVals, kv.IntHandle(0), nil)
+		for iter.Valid() {
+			key, _, distinct, err1 := iter.Next(nil)
+			if err1 != nil {
+				return nil, err1
+			}
+			// Skip the non-distinct keys.
+			if !distinct {
+				continue
+			}
+			// If index is used ingest ways, then we should check key from temp index.
+			if v.Meta().State != model.StatePublic && v.Meta().BackfillState != model.BackfillStateInapplicable {
+				_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
+			}
+			colValStr, err1 := formatDataForDupError(colVals)
+			if err1 != nil {
+				return nil, err1
+			}
+			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
+				newKey:       key,
+				dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
+				commonHandle: t.Meta().IsCommonHandle,
+			})
 		}
-		// Skip the non-distinct keys.
-		if !distinct {
-			continue
-		}
-		// If index is used ingest ways, then we should check key from temp index.
-		if v.Meta().State != model.StatePublic && v.Meta().BackfillState != model.BackfillStateInapplicable {
-			_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
-		}
-		colValStr, err1 := formatDataForDupError(colVals)
-		if err1 != nil {
-			return nil, err1
-		}
-		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKey:       key,
-			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
-			commonHandle: t.Meta().IsCommonHandle,
-		})
 	}
 	row = row[:len(row)-extraColumns]
 	result = append(result, toBeCheckedRow{

@@ -237,6 +237,79 @@ func TestTable(t *testing.T) {
 	testDropSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
 }
 
+func TestCreateView(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+
+	d := domain.DDL()
+	dbInfo, err := testSchemaInfo(store, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), domain.DDL(), dbInfo)
+
+	ctx := testkit.NewTestKit(t, store).Session()
+
+	tblInfo, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
+	job := testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Create a view
+	newTblInfo0, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo0},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVer(t, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo0})
+	tblInfo.State = model.StateNone
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Replace a view
+	newTblInfo1, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo1, true, newTblInfo0.ID},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v = getSchemaVer(t, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo1})
+	tblInfo.State = model.StateNone
+	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(t, store, job.ID, true)
+
+	// Replace a view with a non-existing table id
+	newTblInfo2, err := testTableInfo(store, "v", 3)
+	require.NoError(t, err)
+	job = &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTblInfo2, true, newTblInfo0.ID},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.Error(t, err)
+}
+
 func checkTableCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {

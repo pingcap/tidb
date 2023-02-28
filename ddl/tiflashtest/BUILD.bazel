@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "tiflashtest_test",
+    timeout = "short",
     srcs = [
         "ddl_tiflash_test.go",
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 30,
     deps = [
         "//config",
         "//ddl",

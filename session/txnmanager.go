@@ -175,12 +175,30 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// a pessimistic select-for-update statements.
+func (m *txnManager) OnPessimisticStmtStart(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnPessimisticStmtStart(ctx)
+}
+
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (m *txnManager) OnPessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnPessimisticStmtEnd(ctx, isSuccessful)
+}
+
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (m *txnManager) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	if m.ctxProvider == nil {
 		return sessiontxn.NoIdea()
 	}
-	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+	return m.ctxProvider.OnStmtErrorForNextAction(ctx, point, err)
 }
 
 // ActivateTxn decides to activate txn according to the parameter `active`
@@ -197,6 +215,22 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 		return errors.New("context provider not set")
 	}
 	return m.ctxProvider.OnStmtRetry(ctx)
+}
+
+// OnStmtCommit is the hook that should be called when a statement is executed successfully.
+func (m *txnManager) OnStmtCommit(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtCommit(ctx)
+}
+
+// OnStmtRollback is the hook that should be called when a statement fails to execute.
+func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
 }
 
 // OnLocalTemporaryTableCreated is the hook that should be called when a temporary table created.

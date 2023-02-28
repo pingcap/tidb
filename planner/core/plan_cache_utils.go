@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/slices"
@@ -66,11 +68,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
-	if v := ctx.Value("____GeneratePlanCacheStmtWithASTErr"); v != nil { // for testing
-		return nil, nil, 0, errors.New("____GeneratePlanCacheStmtWithASTErr")
-	}
-
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -122,11 +120,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		cacheable                   bool
 		reason                      string
 	)
-	if !vars.EnablePreparedPlanCache {
+	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
+		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
 		cacheable = false
 		reason = "plan cache is disabled"
 	} else {
-		cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+		if isPrepStmt {
+			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+		} else {
+			cacheable = true // it is already checked here
+		}
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
@@ -306,47 +309,19 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	return key, nil
 }
 
-// FieldSlice is the slice of the types.FieldType
-type FieldSlice []*types.FieldType
-
-// CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
-// Currently this is only used in plan cache to check whether the types of parameters are compatible.
-// If the types of parameters are compatible, we can use the cached plan.
-func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
-	if len(s) != len(tps) {
-		return false
-	}
-	for i := range tps {
-		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
-		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
-		tpEqual := (s[i].GetType() == tps[i].GetType()) ||
-			(s[i].GetType() == mysql.TypeVarchar && tps[i].GetType() == mysql.TypeVarString) ||
-			(s[i].GetType() == mysql.TypeVarString && tps[i].GetType() == mysql.TypeVarchar)
-		if !tpEqual || s[i].GetCharset() != tps[i].GetCharset() || s[i].GetCollate() != tps[i].GetCollate() ||
-			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
-			return false
-		}
-		// When the type is decimal, we should compare the Flen and Decimal.
-		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
-		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
-		if tpEqual && s[i].GetType() == mysql.TypeNewDecimal && !(s[i].GetFlen() >= tps[i].GetFlen() && s[i].GetDecimal() >= tps[i].GetDecimal()) {
-			return false
-		}
-	}
-	return true
-}
-
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	ParamTypes        FieldSlice
 	memoryUsage       int64
+
+	// matchOpts stores some fields help to choose a suitable plan
+	matchOpts *utilpc.PlanCacheMatchOpts
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return checkTypesCompatibility4PC(v.matchOpts.ParamTypes, txtVarTps)
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -375,14 +350,17 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
+	if v.matchOpts != nil {
+		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
+		for _, ft := range v.matchOpts.ParamTypes {
+			sum += ft.MemoryUsage()
+		}
+	}
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
-	}
-	for _, ft := range v.ParamTypes {
-		sum += ft.MemoryUsage()
 	}
 	v.memoryUsage = sum
 	return
@@ -390,20 +368,20 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	paramTypes []*types.FieldType) *PlanCacheValue {
+	matchOpts *utilpc.PlanCacheMatchOpts) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userParamTypes := make([]*types.FieldType, len(paramTypes))
-	for i, tp := range paramTypes {
+	userParamTypes := make([]*types.FieldType, len(matchOpts.ParamTypes))
+	for i, tp := range matchOpts.ParamTypes {
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		ParamTypes:        userParamTypes,
+		matchOpts:         matchOpts,
 	}
 }
 
@@ -452,4 +430,112 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+type limitExtractor struct {
+	cacheable         bool // For safety considerations, check if limit count less than 10000
+	offsetAndCount    []uint64
+	unCacheableReason string
+	paramTypeErr      error
+	hasSubQuery       bool
+}
+
+// Enter implements Visitor interface.
+func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
+				if typeExpected {
+					if val > 10000 {
+						checker.cacheable = false
+						checker.unCacheableReason = "limit count more than 10000"
+						return in, true
+					}
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
+				if typeExpected {
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
+	if node == nil {
+		return nil, nil
+	}
+	checker := limitExtractor{
+		cacheable:      true,
+		offsetAndCount: []uint64{},
+	}
+	node.Accept(&checker)
+	if checker.paramTypeErr != nil {
+		return nil, checker.paramTypeErr
+	}
+	if sctx != nil && !checker.cacheable {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
+	}
+	return checker.offsetAndCount, nil
+}
+
+// GetMatchOpts get options to fetch plan or generate new plan
+func GetMatchOpts(sctx sessionctx.Context, node ast.Node, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+	limitParams, err := ExtractLimitFromAst(node, sctx)
+	if err != nil {
+		return nil, err
+	}
+	paramTypes := parseParamTypes(sctx, params)
+	return &utilpc.PlanCacheMatchOpts{
+		ParamTypes:          paramTypes,
+		LimitOffsetAndCount: limitParams,
+	}, nil
+}
+
+// CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to check whether the types of parameters are compatible.
+// If the types of parameters are compatible, we can use the cached plan.
+// tpsExpected is types from cached plan
+func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool {
+	if len(tpsExpected) != len(tpsActual) {
+		return false
+	}
+	for i := range tpsActual {
+		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
+		tpEqual := (tpsExpected[i].GetType() == tpsActual[i].GetType()) ||
+			(tpsExpected[i].GetType() == mysql.TypeVarchar && tpsActual[i].GetType() == mysql.TypeVarString) ||
+			(tpsExpected[i].GetType() == mysql.TypeVarString && tpsActual[i].GetType() == mysql.TypeVarchar)
+		if !tpEqual || tpsExpected[i].GetCharset() != tpsActual[i].GetCharset() || tpsExpected[i].GetCollate() != tpsActual[i].GetCollate() ||
+			(tpsExpected[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(tpsExpected[i].GetFlag()) != mysql.HasUnsignedFlag(tpsActual[i].GetFlag())) {
+			return false
+		}
+		// When the type is decimal, we should compare the Flen and Decimal.
+		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
+		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
+		if tpEqual && tpsExpected[i].GetType() == mysql.TypeNewDecimal && !(tpsExpected[i].GetFlen() >= tpsActual[i].GetFlen() && tpsExpected[i].GetDecimal() >= tpsActual[i].GetDecimal()) {
+			return false
+		}
+	}
+	return true
 }

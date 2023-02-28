@@ -66,8 +66,10 @@ import (
 const notSpecified = -1
 
 var (
-	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
-	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
+	transactionDurationPessimisticRollbackInternal = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback, metrics.LblInternal)
+	transactionDurationPessimisticRollbackGeneral  = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback, metrics.LblGeneral)
+	transactionDurationOptimisticRollbackInternal  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblInternal)
+	transactionDurationOptimisticRollbackGeneral   = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback, metrics.LblGeneral)
 )
 
 // SimpleExec represents simple statement executor.
@@ -814,10 +816,18 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.TxnCtx.IsPessimistic {
-			transactionDurationPessimisticRollback.Observe(duration)
-		} else {
-			transactionDurationOptimisticRollback.Observe(duration)
+		isInternal := false
+		if internal := txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
+			isInternal = true
+		}
+		if isInternal && sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollbackInternal.Observe(duration)
+		} else if isInternal && !sessVars.TxnCtx.IsPessimistic {
+			transactionDurationOptimisticRollbackInternal.Observe(duration)
+		} else if !isInternal && sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollbackGeneral.Observe(duration)
+		} else if !isInternal && !sessVars.TxnCtx.IsPessimistic {
+			transactionDurationOptimisticRollbackGeneral.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
@@ -1090,13 +1100,23 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
 	}
-	resourceGroupName := "default"
+
 	if s.ResourceGroupNameOption != nil {
-		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
-			resourceGroupName = s.ResourceGroupNameOption.Value
+		if !variable.EnableResourceControl.Load() {
+			return infoschema.ErrResourceGroupSupportDisabled
 		}
+
+		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
+
+		// check if specified resource group exists
+		if resourceGroupName != "default" && resourceGroupName != "" {
+			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			if !exists {
+				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
+			}
+		}
+		userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	}
-	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
 	if PasswordLocking != "" {
@@ -1893,8 +1913,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
 		}
-		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
-			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
+		if s.ResourceGroupNameOption != nil {
+			if !variable.EnableResourceControl.Load() {
+				return infoschema.ErrResourceGroupSupportDisabled
+			}
+
+			// check if specified resource group exists
+			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
+			if resourceGroupName != "default" && s.ResourceGroupNameOption.Value != "" {
+				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+				if !exists {
+					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
+				}
+			}
+
+			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, resourceGroupName))
 		}
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
@@ -2546,7 +2579,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 	if e.IsFromRemote {
-		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
+		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
 		sm.Kill(s.ConnectionID, s.Query)
 		return nil
@@ -2560,7 +2593,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	}
 	if isTruncated {
 		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
-		logutil.BgLogger().Warn(message, zap.Uint64("connID", s.ConnectionID))
+		logutil.BgLogger().Warn(message, zap.Uint64("conn", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
 		err := errors.New(message)
@@ -2618,7 +2651,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	}
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
+		zap.Uint64("conn", connID.ID()), zap.Bool("query", query))
 	return err
 }
 

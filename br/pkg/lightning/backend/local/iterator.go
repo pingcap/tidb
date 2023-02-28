@@ -21,6 +21,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
@@ -82,6 +83,11 @@ type dupDetectIter struct {
 	writeBatch     *pebble.Batch
 	writeBatchSize int64
 	logger         log.Logger
+	option         dupDetectOpt
+}
+
+type dupDetectOpt struct {
+	reportErrOnDup bool
 }
 
 func (d *dupDetectIter) Seek(key []byte) bool {
@@ -149,6 +155,14 @@ func (d *dupDetectIter) Next() bool {
 			d.curVal = append(d.curVal[:0], d.iter.Value()...)
 			return true
 		}
+		if d.option.reportErrOnDup {
+			dupKey := make([]byte, len(d.curKey))
+			dupVal := make([]byte, len(d.iter.Value()))
+			copy(dupKey, d.curKey)
+			copy(dupVal, d.curVal)
+			d.err = common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
+			return false
+		}
 		if !recordFirst {
 			d.record(d.curRawKey, d.curKey, d.curVal)
 			recordFirst = true
@@ -192,7 +206,7 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 var _ Iter = &dupDetectIter{}
 
 func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
-	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger) *dupDetectIter {
+	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt dupDetectOpt) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
@@ -206,6 +220,7 @@ func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
 		keyAdapter: keyAdapter,
 		writeBatch: dupDB.NewBatch(),
 		logger:     logger,
+		option:     dupOpt,
 	}
 }
 
