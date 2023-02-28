@@ -147,7 +147,7 @@ func (ei *engineInfo) ImportAndClean() error {
 // WriterContext is used to keep a lightning local writer for each backfill worker.
 type WriterContext struct {
 	ctx    context.Context
-	rowSeq func() int64
+	unique bool
 	lWrite *backend.LocalEngineWriter
 }
 
@@ -192,6 +192,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 	}
 	wc := &WriterContext{
 		ctx:    ei.ctx,
+		unique: unique,
 		lWrite: lWrite,
 	}
 	return wc, nil
@@ -218,7 +219,9 @@ func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) er
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
-	kvs[0].RowID = handle.Encoded()
+	if wCtx.unique {
+		kvs[0].RowID = handle.Encoded()
+	}
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
 }
