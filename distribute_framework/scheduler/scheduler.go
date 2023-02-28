@@ -27,18 +27,18 @@ import (
 )
 
 type Scheduler interface {
-	InitSubtaskExecEnv() error
+	InitSubtaskExecEnv(context.Context) error
 	SplitSubtasks([]*proto.Subtask) []*proto.Subtask
-	CleanupSubtaskExecEnv() error
+	CleanupSubtaskExecEnv(context.Context) error
 }
 
 // DefaultScheduler is the default scheduler.
 // Remove it if we make sure all tasks need have their own schedulers.
 type DefaultScheduler struct{}
 
-func (s *DefaultScheduler) InitSubtaskExecEnv() error { return nil }
+func (s *DefaultScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
 
-func (s *DefaultScheduler) CleanupSubtaskExecEnv() error { return nil }
+func (s *DefaultScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *DefaultScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask { return subtasks }
 

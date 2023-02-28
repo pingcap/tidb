@@ -32,22 +32,30 @@ type ExampleStepTwoScheduler struct {
 
 func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
 
-func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
+func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepOneScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask {
 	return subtasks
 }
 
+func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
+
+func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
+
+func (s *ExampleStepTwoScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask {
+	return subtasks
+}
+
 func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
+	scheduler.RegisterSchedulerConstructor(
 		proto.TaskTypeExample,
-		// The order of the subtask executors is the same as the order of the subtasks.
-		func(subtask *proto.Subtask, step proto.TaskStep) (scheduler.SubtaskExecutor, error) {
+		// The order of the scheduler is the same as the order of the subtasks.
+		func(task *proto.Task, step proto.TaskStep) (scheduler.Scheduler, error) {
 			switch step {
 			case stepOne:
-				return &ExampleStepOneSubtaskExecutor{subtask: subtask}, nil
+				return &ExampleStepOneScheduler{task: task}, nil
 			case stepTwo:
-				return &ExampleStepTwoSubtaskExecutor{subtask: subtask}, nil
+				return &ExampleStepTwoScheduler{task: task}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)
 		},
