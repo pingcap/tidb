@@ -820,21 +820,11 @@ const (
 	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
 	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 
-<<<<<<< HEAD
 	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
 	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
 
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
-=======
-<<<<<<< HEAD
-	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
-	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
-=======
-	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
-	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
->>>>>>> 6c1674cb1e75eb23876efae6b43be7f3fa149c9c
->>>>>>> b9f6d1b050d7cdce5ecbb650aed96dd16b0c7dc5
 )
 
 // TiDB vars that have only global scope
