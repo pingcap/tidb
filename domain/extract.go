@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -92,6 +93,7 @@ type extractWorker struct {
 	ctx                context.Context
 	sctx               sessionctx.Context
 	isBackgroundWorker bool
+	sync.Mutex
 }
 
 // ExtractTask indicates task
@@ -146,6 +148,8 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 }
 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]stmtSummaryHistoryRecord, error) {
+	w.Lock()
+	defer w.Unlock()
 	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, TABLE_NAMES, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE SUMMARY_END_TIME > '%s' OR SUMMARY_BEGIN_TIME < '%s'",
