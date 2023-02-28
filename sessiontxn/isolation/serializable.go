@@ -15,6 +15,8 @@
 package isolation
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -24,24 +26,22 @@ import (
 
 // PessimisticSerializableTxnContextProvider provides txn context for isolation level oracle-like serializable
 type PessimisticSerializableTxnContextProvider struct {
-	basePessimisticTxnContextProvider
+	baseTxnContextProvider
 }
 
 // NewPessimisticSerializableTxnContextProvider returns a new PessimisticSerializableTxnContextProvider
 func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 	causalConsistencyOnly bool) *PessimisticSerializableTxnContextProvider {
 	provider := &PessimisticSerializableTxnContextProvider{
-		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
-			baseTxnContextProvider{
-				sctx:                  sctx,
-				causalConsistencyOnly: causalConsistencyOnly,
-				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-					txnCtx.IsPessimistic = true
-					txnCtx.Isolation = ast.Serializable
-				},
-				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-					txn.SetOption(kv.Pessimistic, true)
-				},
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.Serializable
+			},
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
@@ -52,8 +52,7 @@ func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *PessimisticSerializableTxnContextProvider) OnStmtErrorForNextAction(
-	point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *PessimisticSerializableTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		// In oracle-like serializable isolation, we do not retry encountering pessimistic lock error.
