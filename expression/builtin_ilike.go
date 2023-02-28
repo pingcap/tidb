@@ -48,7 +48,7 @@ func (c *ilikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf.tp.SetFlen(1)
 	sig := &builtinIlikeSig{bf, nil, false, sync.Once{}}
-	sig.setPbCode(tipb.ScalarFuncSig_LikeSig) // TODO change it
+	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
 	return sig, nil
 }
 
