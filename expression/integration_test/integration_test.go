@@ -7917,7 +7917,7 @@ func TestIssue40015(t *testing.T) {
 	tk.MustExec("set tidb_enable_vectorized_expression = true;")
 	tk.MustQuery("SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;").Check(testkit.Rows(
 		"2010-11-11 01:00:00",
-		"NULL",
+		"<nil>",
 		"2010-11-11 01:00:00",
 		"2010-11-11 01:00:00",
 	))
