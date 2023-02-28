@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/terror",
         "//session",
         "//util/chunk",
         "//util/sqlexec",
@@ -21,6 +22,7 @@ go_test(
     embed = [":asyncloaddata"],
     deps = [
         "//testkit",
+        "//util/sqlexec",
         "@com_github_stretchr_testify//require",
     ],
 )
