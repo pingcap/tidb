@@ -6,6 +6,7 @@ go_library(
         "ddl.go",
         "flags.go",
         "model.go",
+        "reorg.go",
     ],
     importpath = "github.com/pingcap/tidb/parser/model",
     visibility = ["//visibility:public"],

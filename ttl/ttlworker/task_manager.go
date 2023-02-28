@@ -319,7 +319,7 @@ loop:
 }
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
-	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * ttlTaskHeartBeatTickerInterval))
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
@@ -357,7 +357,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return err
 		}
-		if task.OwnerID != "" && !task.OwnerHBTime.Add(2*jobManagerLoopTickerInterval).Before(now) {
+		if task.OwnerID != "" && !task.OwnerHBTime.Add(getTaskManagerHeartBeatExpireInterval()).Before(now) {
 			return errors.WithStack(errAlreadyScheduled)
 		}
 
