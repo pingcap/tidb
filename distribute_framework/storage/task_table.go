@@ -224,7 +224,7 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID proto.TaskID) (task *proto.Task
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		Meta:         rs[0].GetBytes(5),
+		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}

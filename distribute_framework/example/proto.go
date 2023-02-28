@@ -20,3 +20,19 @@ const (
 	stepOne proto.TaskStep = iota
 	stepTwo
 )
+
+// simpleNumberGTaskMeta is a simple implementation of GlobalTaskMeta.
+type simpleNumberGTaskMeta struct {
+}
+
+func (g *simpleNumberGTaskMeta) Serialize() []byte {
+	return []byte{}
+}
+
+func (g *simpleNumberGTaskMeta) GetType() proto.TaskType {
+	return proto.TaskTypeNumber
+}
+
+func (g *simpleNumberGTaskMeta) GetConcurrency() uint64 {
+	return 4
+}

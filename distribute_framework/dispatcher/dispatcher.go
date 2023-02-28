@@ -180,10 +180,14 @@ func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
 
 func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task) (err error) {
 	// TODO: Consider retry
-	subTasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask)
+	finished, subTasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
+	}
+
+	if finished {
+		gTask.State = proto.TaskStateSucceed
 	}
 
 	err = d.gTaskMgr.UpdateTask(gTask)

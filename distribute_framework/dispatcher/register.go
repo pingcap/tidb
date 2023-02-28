@@ -25,7 +25,7 @@ type Splitter interface {
 }
 
 type TaskDispatcherHandle interface {
-	Progress(d *Dispatcher, gTask *proto.Task) (subTasks []*proto.Subtask, err error)
+	Progress(d *Dispatcher, gTask *proto.Task) (finished bool, subTasks []*proto.Subtask, err error)
 	HandleError(d *Dispatcher, gTask *proto.Task, receive string) error
 }
 
