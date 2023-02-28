@@ -329,24 +329,21 @@ func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 	tk.MustExec("select * from t where a=1") // cache this plan
 
 	tk.MustQuery("explain select * from t where a=2").Check(testkit.Rows(
-		`Selection_8 10.00 root  eq(test.t.a, 2)`,
-		`└─TableReader_7 10.00 root  data:Selection_6`,
-		`  └─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
-		`    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader_7 10.00 root  data:Selection_6`,
+		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustQuery("explain format=verbose select * from t where a=2").Check(testkit.Rows(
-		`Selection_8 10.00 169474.57 root  eq(test.t.a, 2)`,
-		`└─TableReader_7 10.00 168975.57 root  data:Selection_6`,
-		`  └─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
-		`    └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader_7 10.00 168975.57 root  data:Selection_6`,
+		`└─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
+		`  └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]interface{}{
-		{"Selection_8", "10.00", "0", "root"},
-		{"└─TableReader_7", "10.00", "0", "root"},
-		{"  └─Selection_6", "10.00", "0", "cop[tikv]"},
-		{"    └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
+		{"TableReader_7", "10.00", "0", "root"},
+		{"└─Selection_6", "10.00", "0", "cop[tikv]"},
+		{"  └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
 	})
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
