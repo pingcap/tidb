@@ -389,7 +389,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] get backfill jobs failed in this instance", zap.Error(err))
 		} else {
-			logutil.BgLogger().Debug("[ddl] get no backfill job in this instance")
+			logutil.BgLogger().Debug("[ddl] get no backfill job in this instance", zap.Int64s("exclude running job IDs", runningJobIDs))
 		}
 		d.sessPool.put(se)
 		return
@@ -735,12 +735,15 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 		}
 		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
-		getJobsSQL := fmt.Sprintf("(exec_id = '' or exec_expired < '%v') and task_key like \"%d_%%\" order by task_key limit %d",
+		getJobsSQL := fmt.Sprintf("(exec_id = '' or exec_expired < '%v') and task_key like '%d_%%' order by task_key limit %d",
 			leaseStr, jobID, batch)
+		previousSQL := ""
 		if pTblID != getJobWithoutPartition {
 			if pTblID == 0 {
+				previousSQL = fmt.Sprintf("select ddl_physical_tid from mysql.%s group by substring_index(task_key,'_',3), ddl_physical_tid having max(length(exec_id)) = 0 or max(exec_expired) < '%s' order by substring_index(task_key,'_',3), ddl_physical_tid limit 1",
+					BackgroundSubtaskTable, leaseStr)
 				rows, err := s.execute(context.Background(),
-					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by substring_index(task_key,\"_\",3), ddl_physical_tid having max(length(exec_id)) = 0 or max(exec_expired) < '%s' order by substring_index(task_key,\"_\",3), ddl_physical_tid limit 1",
+					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by substring_index(task_key,'_',3), ddl_physical_tid having max(length(exec_id)) = 0 or max(exec_expired) < '%s' order by substring_index(task_key,'_',3), ddl_physical_tid limit 1",
 						BackgroundSubtaskTable, leaseStr), "get_mark_backfill_job")
 				if err != nil {
 					return errors.Trace(err)
@@ -752,12 +755,14 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 
 				pTblID = rows[0].GetInt64(0)
 			}
-			getJobsSQL = fmt.Sprintf("(exec_id = '' or exec_expired < '%s') and task_key like \"%d_%%\" and ddl_physical_tid = %d order by task_key limit %d",
+			getJobsSQL = fmt.Sprintf("(exec_id = '' or exec_expired < '%s') and task_key like '%d_%%' and ddl_physical_tid = %d order by task_key limit %d",
 				leaseStr, jobID, pTblID, batch)
 		}
 
-		logutil.BgLogger().Warn("xxx-------------------- get jobs", zap.Int64("pid", pTblID), zap.String("sql", getJobsSQL))
 		bJobs, err = GetBackfillJobs(se, BackgroundSubtaskTable, getJobsSQL, "get_mark_backfill_job")
+		logutil.BgLogger().Warn("xxx-------------------- get jobs",
+			zap.Int64("pid", pTblID), zap.Int("cnt", len(bJobs)),
+			zap.String("pre sql", previousSQL), zap.String("sql", getJobsSQL))
 		if err != nil {
 			return err
 		}

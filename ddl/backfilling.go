@@ -1200,16 +1200,18 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
 			startKey = rangeEndKey.Next()
 		}
+		isFinished := startKey.Cmp(endKey) >= 0
 		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
-		logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
+		logutil.BgLogger().Info("[ddl] batch split backfill jobs to the backfill table",
 			zap.Int64("physicalID", pTblMeta.PhyTblID),
 			zap.Int("batchTasksCnt", len(batchTasks)),
 			zap.Int("totalRegionCnt", len(kvRanges)),
 			zap.Int("remainRegionCnt", len(remains)),
 			zap.String("startHandle", hex.EncodeToString(startKey)),
-			zap.String("endHandle", hex.EncodeToString(endKey)))
-
-		if startKey.Cmp(endKey) >= 0 {
+			zap.String("endHandle", hex.EncodeToString(endKey)),
+			zap.Bool("isFinished", isFinished),
+		)
+		if isFinished {
 			break
 		}
 

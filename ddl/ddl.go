@@ -497,6 +497,8 @@ func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType
 	defer dc.backfillCtx.Unlock()
 
 	jobCtx, existent := dc.backfillCtx.jobCtxMap[jobID]
+	logutil.BgLogger().Info("[ddl] xxx -------------------------- get bfCtx job in this instance",
+		zap.Int64("jobID", jobID), zap.Bool("is existent", existent))
 	if !existent {
 		dc.setDDLLabelForTopSQL(jobID, jobQuery)
 		dc.setDDLSourceForDiagnosis(jobID, jobType)

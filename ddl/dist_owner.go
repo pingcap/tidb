@@ -263,7 +263,7 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 		func(ctx sessionctx.Context) {
 			wg.Run(func() {
 				defer func() {
-					tidbutil.Recover(metrics.LabelDistReorg, "splitTableToBackfillJobs", nil, false)
+					tidbutil.Recover(metrics.LabelDistReorg, "splitPhysicalTableToBackfillJobs", nil, false)
 				}()
 				se := newSession(ctx)
 				dc.splitPhysicalTableToBackfillJobs(se, reorgInfo, sJobCtx)
@@ -284,14 +284,14 @@ func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reo
 	sess.GetSessionVars().SQLMode = mysql.ModeNone
 
 	var err error
-	var pTblMetaCnt int
 	var pTblMeta *BackfillJobRangeMeta
+	pTblIDs := make([]int64, 0, 10)
 	defer func() {
 		if err != nil {
 			sJobCtx.cancel()
 		}
 		logutil.BgLogger().Info("[ddl] split backfill jobs to table finish", zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.Stringer("ele", reorgInfo.currElement), zap.Int("donePTbls", pTblMetaCnt), zap.Stringer("physical_tbl", pTblMeta), zap.Error(err))
+			zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("donePTbls", pTblIDs), zap.Stringer("physical_tbl", pTblMeta), zap.Error(err))
 	}()
 
 	var ok bool
@@ -311,7 +311,7 @@ func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reo
 			if err != nil {
 				return
 			}
-			pTblMetaCnt++
+			pTblIDs = append(pTblIDs, pTblMeta.PhyTblID)
 		}
 	}
 }
@@ -446,8 +446,8 @@ func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey 
 	}
 
 	backfillJobCnt, err = GetBackfillJobCount(sess, BackgroundSubtaskTable,
-		fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
-			ddlJobID, hex.EncodeToString(currEleKey), currEleID), "check_backfill_job_count")
+		fmt.Sprintf("task_key like \"%d_%s_%d_%%\" and ddl_physical_tid = %d",
+			ddlJobID, hex.EncodeToString(currEleKey), currEleID, pTblID), "check_backfill_job_count")
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

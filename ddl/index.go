@@ -1337,8 +1337,9 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------eng:%#v, jobID:%d, indexID:%d, workerID:%d", ei, jobID, index.Meta().ID, bfCtx.id))
 		lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------eng:%#v, jobID:%d, indexID:%d, workerID:%d, lwCtx:%v",
+			ei, jobID, index.Meta().ID, bfCtx.id, lwCtx))
 		if err != nil {
 			return nil, err
 		}
@@ -1703,6 +1704,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	logutil.BgLogger().Warn("xxx-------------------- in txn",
+		zap.Bool("writerCtx is nil", w.writerCtx == nil))
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
