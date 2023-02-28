@@ -99,32 +99,53 @@ func (d *Dispatcher) FinishTask(gTask *proto.Task) error {
 	return nil
 }
 
-func (d *Dispatcher) detectionTask(gTask *proto.Task) (isFinished bool) {
+func (d *Dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider retry
 	// TODO: Consider collect some information about the tasks.
-	tasks, err := d.subTaskMgr.GetInterruptedTask(gTask.ID)
+	cnt, err := d.subTaskMgr.CheckTaskState(gTask.ID, proto.TaskStateFailed, true)
 	if err != nil {
-		logutil.BgLogger().Info("detection task failed", zap.Error(err))
-		return false
+		logutil.BgLogger().Warn("check task failed", zap.Error(err))
+		return false, ""
 	}
-	if len(tasks) == 0 {
-		isFinished, err = d.subTaskMgr.IsFinishedTask(gTask.ID)
-		if err != nil {
-			logutil.BgLogger().Info("get task cnt failed", zap.Uint64("global task ID", uint64(gTask.ID)), zap.Error(err))
-		}
-		if isFinished {
-			gTask.State = proto.TaskStateSucceed
-		}
-	} else {
-		// TODO: Consider cancelled or failed.
-		gTask.State = tasks[0].State
+	if cnt > 0 {
+		return false, "failed"
 	}
-	if err := d.FinishTask(gTask); err != nil {
-		logutil.BgLogger().Info("finish task failed", zap.Uint64("global task ID", uint64(gTask.ID)), zap.Error(err))
-		return false
+
+	// Suppose that the task pending = 0 means that all subtask finish.
+	cnt, err = d.subTaskMgr.CheckTaskState(gTask.ID, proto.TaskStatePending, false)
+	if err != nil {
+		logutil.BgLogger().Warn("check task failed", zap.Error(err))
+		return false, ""
 	}
-	return true
+	if cnt == 0 {
+		return true, ""
+	}
+
+	return false, ""
+
+	//tasks, err := d.subTaskMgr.GetInterruptedTask(gTask.ID)
+	//if err != nil {
+	//	logutil.BgLogger().Info("detection task failed", zap.Error(err))
+	//	return false, "rollback"
+	//}
+	//if len(tasks) == 0 {
+	//	isFinished, err = d.subTaskMgr.IsFinishedTask(gTask.ID)
+	//	if err != nil {
+	//		logutil.BgLogger().Info("get task cnt failed", zap.Uint64("global task ID", uint64(gTask.ID)), zap.Error(err))
+	//	}
+	//	if isFinished {
+	//		gTask.State = proto.TaskStateSucceed
+	//	}
+	//} else {
+	//	// TODO: Consider cancelled or failed.
+	//	gTask.State = tasks[0].State
+	//}
+	//if err := d.FinishTask(gTask); err != nil {
+	//	logutil.BgLogger().Info("finish task failed", zap.Uint64("global task ID", uint64(gTask.ID)), zap.Error(err))
+	//	return false
+	//}
+	//return true
 }
 
 // DetectionTaskLoop monitors the status of the subtasks.
@@ -139,47 +160,58 @@ func (d *Dispatcher) DetectionTaskLoop() {
 			gTasks := d.getRunningGlobalTasks()
 			// TODO: Do we need to handle it asynchronously.
 			for _, gTask := range gTasks {
-				isFinished := d.detectionTask(gTask)
-				if isFinished {
-					d.delRunningGlobalTasks(int64(gTask.ID))
+				stepIsFinished, errStr := d.detectionTask(gTask)
+				if errStr != "" {
+					d.HandleError(gTask, errStr)
+				} else if stepIsFinished {
+					d.loadTaskAndProgress(gTask)
 				}
 			}
 		}
 	}
 }
 
-func (d *Dispatcher) loadTaskAndRun(gTask *proto.Task) (err error) {
+func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
+	err := GetTaskDispatcherHandle(gTask.Type).HandleError(d, gTask, receiveErr)
+	if err != nil {
+		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
+	}
+}
+
+func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task) (err error) {
 	// TODO: Consider retry
-	if gTask.MetaM.DistPlan == nil {
-		distPlan, err := d.GenerateDistPlan(gTask)
-		if err != nil {
-			logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
-			return err
-		}
-		gTask.MetaM.DistPlan = distPlan
-		err = d.gTaskMgr.UpdateTask(gTask)
-		if err != nil {
-			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-			return err
-		}
+	subTasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask)
+	if err != nil {
+		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
+		return err
 	}
 
-	// TODO: Consider batch splitting
-	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
-	subTasks, err := gTask.MetaM.DistPlan.splitter.SplitTask()
+	err = d.gTaskMgr.UpdateTask(gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
 	}
+
+	// TODO: Consider batch splitting
+	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
+	//subTasks, err := gTask.MetaM.DistPlan.splitter.SplitTask()
+	//if err != nil {
+	//	logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+	//	return err
+	//}
 	for _, subTask := range subTasks {
 		// TODO: Get TiDB_Instance_ID
-		err := d.subTaskMgr.AddNewTask(subTask.TaskID, "", subTask.Meta)
+		err := d.subTaskMgr.AddNewTask(gTask.ID, "", subTask.Meta)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subTask", subTask), zap.Error(err))
 			return err
 		}
 	}
-	d.setRunningGlobalTasks(gTask)
+	if gTask.State == proto.TaskStateSucceed {
+		d.delRunningGlobalTasks(int64(gTask.ID))
+	} else {
+		d.setRunningGlobalTasks(gTask)
+	}
 	return nil
 }
 
@@ -201,7 +233,7 @@ func (d *Dispatcher) DispatchTaskLoop() {
 					continue
 				}
 				d.wg.Run(func() {
-					d.loadTaskAndRun(gTask)
+					d.loadTaskAndProgress(gTask)
 				})
 				cnt++
 			}

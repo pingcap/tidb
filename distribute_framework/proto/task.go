@@ -16,8 +16,6 @@ package proto
 
 import (
 	"time"
-
-	"github.com/pingcap/tidb/distribute_framework/dispatcher"
 )
 
 type TaskID uint64
@@ -31,6 +29,7 @@ const (
 	TaskTypeCreateIndex TaskType = "create_index"
 	TaskTypeImport      TaskType = "import"
 	TaskTypeTTL         TaskType = "ttl"
+	TaskTypeNumber      TaskType = "number"
 )
 
 type TaskState string
@@ -44,24 +43,22 @@ const (
 	TaskStateSucceed      TaskState = "succeed"
 	TaskStateRevertFailed TaskState = "revert_failed"
 	TaskStateCanceled     TaskState = "canceled"
+
+	TaskStateNumberExampleStep1 TaskState = "num1"
+	TaskStateNumberExampleStep2 TaskState = "num2"
 )
 
 type Task struct {
 	ID    TaskID
 	Type  TaskType
 	State TaskState
-	Meta  []byte
 	// TODO: redefine
-	MetaM *TaskMeta
+	MetaM GlobalTaskMeta
 
 	DispatcherID string
 	StartTime    time.Time
 
 	Concurrency uint64
-}
-
-type TaskMeta struct {
-	DistPlan *dispatcher.DistPlanner
 }
 
 type SubtaskID uint64
@@ -85,4 +82,8 @@ type GlobalTaskMeta interface {
 	Serialize() []byte
 	GetType() TaskType
 	GetConcurrency() uint64
+}
+
+func UnSerialize([]byte) GlobalTaskMeta {
+	return nil
 }

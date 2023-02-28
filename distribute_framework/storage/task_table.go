@@ -136,7 +136,7 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		Meta:         rs[0].GetBytes(5),
+		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 	}
 	task.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
@@ -170,7 +170,7 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		Meta:         rs[0].GetBytes(5),
+		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 	}
 	t.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
@@ -197,7 +197,7 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 			Type:         proto.TaskType(r.GetString(1)),
 			DispatcherID: r.GetString(2),
 			State:        proto.TaskState(r.GetString(3)),
-			Meta:         r.GetBytes(5),
+			MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
 			Concurrency:  uint64(r.GetInt64(6)),
 		}
 		t.StartTime, _ = r.GetTime(4).GoTime(time.UTC)
@@ -339,8 +339,20 @@ func (stm *SubTaskManager) DeleteTasks(globelTaskID proto.TaskID) error {
 	return nil
 }
 
-func (stm *SubTaskManager) GetInterruptedTask(globalTaskID proto.TaskID) (subtasks []*proto.Subtask, err error) {
-	return nil, nil
+func (stm *SubTaskManager) CheckTaskState(globalTaskID proto.TaskID, state proto.TaskState, eq bool) (cnt int64, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	equalStr := "="
+	if !eq {
+		equalStr = "!="
+	}
+	rs, err := ExecSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_sub_task where task_id = ? and state %s ?", globalTaskID, state, equalStr)
+	if err != nil {
+		return 0, err
+	}
+
+	return rs[0].GetInt64(0), nil
 }
 
 func (stm *SubTaskManager) IsFinishedTask(globalTaskID proto.TaskID) (isFinished bool, err error) {

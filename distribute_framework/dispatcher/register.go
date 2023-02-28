@@ -24,12 +24,26 @@ type Splitter interface {
 	SplitTask() (task []*proto.Subtask, err error)
 }
 
+type TaskDispatcherHandle interface {
+	Progress(d *Dispatcher, gTask *proto.Task) (subTasks []*proto.Subtask, err error)
+	HandleError(d *Dispatcher, gTask *proto.Task, receive string) error
+}
+
 var (
-	SplitterConstructors = make(map[proto.TaskType]Splitter)
+	SplitterConstructors             = make(map[proto.TaskType]Splitter)
+	TaskDispatcherHandleConstructors = make(map[proto.TaskType]TaskDispatcherHandle)
 )
 
 func RegisterSplitter(taskType proto.TaskType, splitter Splitter) {
 	SplitterConstructors[taskType] = splitter
+}
+
+func RegisterTaskDispatcherHandle(taskType proto.TaskType, dispatcherHandle TaskDispatcherHandle) {
+	TaskDispatcherHandleConstructors[taskType] = dispatcherHandle
+}
+
+func GetTaskDispatcherHandle(taskType proto.TaskType) TaskDispatcherHandle {
+	return TaskDispatcherHandleConstructors[taskType]
 }
 
 type AddIndexSplitter struct {

@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/distribute_framework/proto"
-	"github.com/pingcap/tidb/distribute_framework/scheduler"
 )
 
 type ExampleSubtaskExecutor struct {
@@ -26,12 +25,3 @@ type ExampleSubtaskExecutor struct {
 }
 
 func (e *ExampleSubtaskExecutor) Run(ctx context.Context) error { return nil }
-
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(
-		proto.TaskTypeExample,
-		func(subtask *proto.Subtask) scheduler.SubtaskExecutor {
-			return &ExampleSubtaskExecutor{subtask: subtask}
-		},
-	)
-}
