@@ -33,6 +33,8 @@ var _ pd.Client = new(pdClient)
 
 type pdClient struct {
 	*us.MockPD
+	pd.KeyspaceClient
+	pd.TSOClient
 
 	serviceSafePoints    map[string]uint64
 	gcSafePointMu        sync.Mutex
