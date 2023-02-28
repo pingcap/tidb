@@ -32,7 +32,7 @@ type KeyAdapter interface {
 	Decode(dst []byte, data []byte) ([]byte, error)
 
 	// EncodedLen returns the encoded key length.
-	EncodedLen(key []byte) int
+	EncodedLen(key []byte, rowID []byte) int
 }
 
 func reallocBytes(b []byte, n int) []byte {
@@ -55,7 +55,7 @@ func (noopKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	return append(dst, data...), nil
 }
 
-func (noopKeyAdapter) EncodedLen(key []byte) int {
+func (noopKeyAdapter) EncodedLen(key []byte, _ []byte) int {
 	return len(key)
 }
 
@@ -96,8 +96,8 @@ func (dupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	return append(dst, key...), nil
 }
 
-func (dupDetectKeyAdapter) EncodedLen(key []byte) int {
-	return codec.EncodedBytesLength(len(key)) + 8
+func (dupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
+	return codec.EncodedBytesLength(len(key)) + len(rowID) + 2
 }
 
 var _ KeyAdapter = dupDetectKeyAdapter{}

@@ -35,7 +35,7 @@ func randBytes(n int) []byte {
 func TestNoopKeyAdapter(t *testing.T) {
 	keyAdapter := noopKeyAdapter{}
 	key := randBytes(32)
-	require.Len(t, key, keyAdapter.EncodedLen(key))
+	require.Len(t, key, keyAdapter.EncodedLen(key, ZeroRowID))
 	encodedKey := keyAdapter.Encode(nil, key, ZeroRowID)
 	require.Equal(t, key, encodedKey)
 
@@ -69,8 +69,9 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 
 	keyAdapter := dupDetectKeyAdapter{}
 	for _, input := range inputs {
-		result := keyAdapter.Encode(nil, input.key, kv.IntHandle(input.rowID).Encoded())
-		require.Equal(t, keyAdapter.EncodedLen(input.key), len(result))
+		encodedRowID := kv.IntHandle(input.rowID).Encoded()
+		result := keyAdapter.Encode(nil, input.key, encodedRowID)
+		require.Equal(t, keyAdapter.EncodedLen(input.key, encodedRowID), len(result))
 
 		// Decode the result.
 		key, err := keyAdapter.Decode(nil, result)
