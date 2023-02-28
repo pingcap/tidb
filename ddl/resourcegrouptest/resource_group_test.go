@@ -17,6 +17,8 @@ package resourcegrouptest_test
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestResourceGroupBasic(t *testing.T) {
