@@ -1508,9 +1508,11 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 		validPolicies := tiflashcompute.GetValidDispatchPolicy()
 		for _, p := range validPolicies {
 			tk.MustExec(fmt.Sprintf("set global tiflash_compute_dispatch_policy = '%s';", p))
-			tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows(p))
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			tk1.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows(p))
 			failpoint.Enable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy", fmt.Sprintf(`return("%s")`, p))
-			err = tk.ExecToErr("select * from t;")
+			err = tk1.ExecToErr("select * from t;")
 			if useAS {
 				// Expect error, because TestAutoScaler return empty topo.
 				require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
