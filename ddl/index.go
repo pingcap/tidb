@@ -848,11 +848,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
+				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					if common.ErrFoundDuplicateKeys.Equal(err) {
-						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-					}
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
@@ -983,7 +983,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
-	if err != nil || reorgInfo.first {
+	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
@@ -999,6 +999,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
+		}
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
@@ -1088,7 +1091,13 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			// Global index key has t{tableID}_ prefix.
+			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
+			if indexInfo.Global {
+				job.Args = append(job.Args, indexInfo.ID, []int64{})
+			} else {
+				job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			}
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State))
@@ -1374,8 +1383,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%d_%s_%d_%d'",
-			bfJob.JobID, hex.EncodeToString(bfJob.EleKey), bfJob.EleID, bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
 		if err != nil {
 			return err
 		}
@@ -1985,7 +1993,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, false),
 			indexes:       indexes,
 			rowDecoder:    rowDecoder,
 			defaultVals:   make([]types.Datum, len(t.WritableCols())),

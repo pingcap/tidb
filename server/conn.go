@@ -133,20 +133,6 @@ var (
 		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
 	}
 
-	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
-	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
-	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
-	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
-	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
-	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
-	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
-	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
-	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
-	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
-	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
-	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
-	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
-
 	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
 	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
 	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
@@ -171,6 +157,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
 
@@ -214,6 +201,9 @@ type clientConn struct {
 		cancelFunc context.CancelFunc
 	}
 	extensions *extension.SessionExtensions
+
+	// Proxy Protocol Enabled
+	ppEnabled bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -621,6 +611,21 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// After read packets we should update the client's host and port to grab
+	// real client's IP and port from PROXY Protocol header if PROXY Protocol is enabled.
+	_, _, err = cc.PeerHost("", true)
+	if err != nil {
+		terror.Log(err)
+		return err
+	}
+	// If enable proxy protocol check audit plugins after update real IP
+	if cc.ppEnabled {
+		err = cc.server.checkAuditPlugin(cc)
+		if err != nil {
+			return err
+		}
+	}
+
 	if resp.Capability&mysql.ClientSSL > 0 {
 		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
 		if tlsConfig != nil {
@@ -838,7 +843,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, port, err := cc.PeerHost(hasPassword)
+
+	host, port, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return err
 	}
@@ -881,7 +887,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	host, _, err := cc.PeerHost(hasPassword)
+
+	host, _, err := cc.PeerHost(hasPassword, false)
 	if err != nil {
 		return nil, err
 	}
@@ -953,9 +960,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	return nil, nil
 }
 
-func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
+func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port string, err error) {
+	// already get peer host
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, cc.peerPort, nil
+		// Proxy protocol enabled and not update
+		if cc.ppEnabled && !update {
+			return cc.peerHost, cc.peerPort, nil
+		}
+		// Proxy protocol not enabled
+		if !cc.ppEnabled {
+			return cc.peerHost, cc.peerPort, nil
+		}
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
@@ -1143,11 +1158,17 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			var txnMode string
+			var (
+				txnMode string
+				dbName  string
+			)
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
+				if config.GetGlobalConfig().Status.RecordDBLabel {
+					dbName = ctx.GetSessionVars().CurrentDB
+				}
 			}
-			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1239,40 +1260,23 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
+	var dbName string
+	if config.GetGlobalConfig().Status.RecordDBLabel {
+		dbName = sessionVar.CurrentDB
+	}
+
 	switch sqlType {
-	case "Use":
-		queryDurationHistogramUse.Observe(cost.Seconds())
-	case "Show":
-		queryDurationHistogramShow.Observe(cost.Seconds())
-	case "Begin":
-		queryDurationHistogramBegin.Observe(cost.Seconds())
-	case "Commit":
-		queryDurationHistogramCommit.Observe(cost.Seconds())
-	case "Rollback":
-		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
-		queryDurationHistogramInsert.Observe(cost.Seconds())
 		affectedRowsCounterInsert.Add(float64(affectedRows))
 	case "Replace":
-		queryDurationHistogramReplace.Observe(cost.Seconds())
 		affectedRowsCounterReplace.Add(float64(affectedRows))
 	case "Delete":
-		queryDurationHistogramDelete.Observe(cost.Seconds())
 		affectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
-		queryDurationHistogramUpdate.Observe(cost.Seconds())
 		affectedRowsCounterUpdate.Add(float64(affectedRows))
-	case "Select":
-		queryDurationHistogramSelect.Observe(cost.Seconds())
-	case "Execute":
-		queryDurationHistogramExecute.Observe(cost.Seconds())
-	case "Set":
-		queryDurationHistogramSet.Observe(cost.Seconds())
-	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(cost.Seconds())
-	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
 	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -1626,12 +1630,46 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	err = loadDataInfo.Load(ctx, cc.readPacket)
+	// use Pipe to convert cc.readPacket to io.Reader
+	r, w := io.Pipe()
+	go func() {
+		//nolint: errcheck
+		defer w.Close()
+
+		var (
+			data []byte
+			err2 error
+		)
+		for {
+			if len(data) == 0 {
+				data, err2 = cc.readPacket()
+				if err2 != nil {
+					w.CloseWithError(err2)
+					return
+				}
+				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+				if len(data) == 0 {
+					loadDataInfo.Drained = true
+					return
+				}
+			}
+
+			n, err3 := w.Write(data)
+			if err3 != nil {
+				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
+				return
+			}
+			data = data[n:]
+		}
+	}()
+
+	err = loadDataInfo.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
 	if err != nil {
 		if !loadDataInfo.Drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !loadDataInfo.Drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
 			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
@@ -2024,7 +2062,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		return false, nil
 	}
 
-	handled, err := cc.handleQuerySpecial(ctx, status)
+	handled, err := cc.handleFileTransInConn(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
@@ -2038,7 +2076,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {

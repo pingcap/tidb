@@ -15,6 +15,7 @@
 package indexmergetest
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -857,4 +858,42 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
+}
+
+func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	var runCancel bool
+	callback.OnJobRunAfterExported = func(job *model.Job) {
+		if t.Failed() || runCancel {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			_, err := tk1.Exec("insert into t values (2, 1);")
+			assert.NoError(t, err)
+		}
+		if job.State == model.JobStateRollingback {
+			_, err := tk1.Exec("admin cancel ddl jobs " + strconv.FormatInt(job.ID, 10))
+			assert.NoError(t, err)
+			runCancel = true
+		}
+	}
+	d.SetHook(callback)
+
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrCancelledDDLJob)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1", "2 1"))
 }
