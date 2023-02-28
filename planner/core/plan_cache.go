@@ -42,10 +42,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var preparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-var nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepare")
-var preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepare")
-var nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepare")
+var preparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("prepared")
+var nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepared")
+var preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepared")
+var nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared")
 
 func getPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
 	if isNonPrepared {
@@ -226,7 +226,7 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		// only prepare plan cache can get plan from here
+		// only for prepared plan cache
 		getPlanCacheHitCounter(false).Inc()
 	}
 	sessVars.FoundInPlanCache = true
