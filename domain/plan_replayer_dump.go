@@ -25,6 +25,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -185,10 +186,7 @@ var (
  |   |-sql1.sql
  |   |-sql2.sql
  |	 |-....
- |_explain
-     |-explain1.txt
-     |-explain2.txt
-     |-....
+ |-explain.txt
 */
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	task *PlanReplayerDumpTask) (err error) {
@@ -285,10 +283,18 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	// For capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command, we directly dump stats in storage
 	if task.IsCapture {
-		if !task.IsContinuesCapture && variable.EnableHistoricalStatsForCapture.Load() {
-			// Dump stats
-			if err = dumpStats(zw, pairs, do); err != nil {
-				return err
+		if !task.IsContinuesCapture {
+			if variable.EnableHistoricalStatsForCapture.Load() {
+				// Dump stats
+				if err = dumpStats(zw, pairs, do); err != nil {
+					return err
+				}
+			} else {
+				failpoint.Inject("shouldDumpStats", func(val failpoint.Value) {
+					if val.(bool) {
+						panic("shouldDumpStats")
+					}
+				})
 			}
 		}
 	} else {
@@ -333,7 +339,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return dumpEncodedPlan(sctx, zw, task.EncodedPlan)
 	}
 	// Dump explain
-	return dumpExplain(sctx, zw, task, &records)
+	return dumpPlanReplayerExplain(sctx, zw, task, &records)
 }
 
 func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
@@ -437,7 +443,7 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 		return err
 	}
 	for table := range tables {
-		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
+		_, err := fmt.Fprintf(zf, "%s.%s;", table.DBName, table.TableName)
 		if err != nil {
 			return err
 		}
@@ -641,12 +647,15 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
-	for i, stmtExec := range task.ExecStmts {
-		sql := stmtExec.Text()
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) error {
+	fw, err := zw.Create("explain.txt")
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	for i, sql := range sqls {
 		var recordSets []sqlexec.RecordSet
 		var err error
-		if task.Analyze {
+		if isAnalyze {
 			// Explain analyze
 			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
@@ -659,13 +668,9 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpT
 				return err
 			}
 		}
-		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], false)
+		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return err
-		}
-		fw, err := zw.Create(fmt.Sprintf("explain/sql%v.txt", i))
-		if err != nil {
-			return errors.AddStack(err)
 		}
 		for _, row := range sRows {
 			fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
@@ -675,12 +680,24 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpT
 				return err
 			}
 		}
+		if i < len(sqls)-1 {
+			fmt.Fprintf(fw, "<--------->\n")
+		}
+	}
+	return nil
+}
+
+func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+	sqls := make([]string, 0)
+	for _, execStmt := range task.ExecStmts {
+		sql := execStmt.Text()
+		sqls = append(sqls, sql)
 		*records = append(*records, PlanReplayerStatusRecord{
 			OriginSQL: sql,
 			Token:     task.FileName,
 		})
 	}
-	return nil
+	return dumpExplain(ctx, zw, task.Analyze, sqls, false)
 }
 
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,

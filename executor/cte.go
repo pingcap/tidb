@@ -112,7 +112,11 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -222,7 +226,6 @@ func (e *CTEExec) Close() (err error) {
 			return err
 		}
 	}
-
 	return e.baseExecutor.Close()
 }
 

@@ -657,6 +657,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	RecordDBLabel   bool   `toml:"record-db-label" json:"record-db-label"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -765,6 +766,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -939,6 +943,7 @@ var defaultConf = Config{
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
 		RecordQPSbyDB:         false,
+		RecordDBLabel:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
@@ -979,6 +984,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,

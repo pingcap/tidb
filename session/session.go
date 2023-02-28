@@ -798,31 +798,36 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	// if it's a record key or an index key, decode it
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
-		tableID := tablecodec.DecodeTableID(key)
-		if table, ok := infoSchema.TableByID(tableID); ok {
-			if tablecodec.IsRecordKey(key) {
-				decodeFunc = consistency.DecodeRowMvccData(table.Meta())
-			} else {
-				tableInfo := table.Meta()
-				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
-				if e != nil {
-					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
-					return err
-				}
-				var indexInfo *model.IndexInfo
-				for _, idx := range tableInfo.Indices {
-					if idx.ID == indexID {
-						indexInfo = idx
-						break
-					}
-				}
-				if indexInfo == nil {
-					return err
-				}
-				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
-			}
+		tableOrPartitionID := tablecodec.DecodeTableID(key)
+		tbl, ok := infoSchema.TableByID(tableOrPartitionID)
+		if !ok {
+			tbl, _, _ = infoSchema.FindTableByPartitionID(tableOrPartitionID)
+		}
+		if tbl == nil {
+			logutil.Logger(ctx).Warn("cannot find table by id", zap.Int64("tableID", tableOrPartitionID), zap.String("key", hex.EncodeToString(key)))
+			return newErr
+		}
+
+		if tablecodec.IsRecordKey(key) {
+			decodeFunc = consistency.DecodeRowMvccData(tbl.Meta())
 		} else {
-			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+			tableInfo := tbl.Meta()
+			_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+			if e != nil {
+				logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
+				return newErr
+			}
+			var indexInfo *model.IndexInfo
+			for _, idx := range tableInfo.Indices {
+				if idx.ID == indexID {
+					indexInfo = idx
+					break
+				}
+			}
+			if indexInfo == nil {
+				return newErr
+			}
+			decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
 		}
 	}
 	if store, ok := s.store.(helper.Storage); ok {
@@ -1938,7 +1943,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if err != nil {
 		return nil, nil, err
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+	var dbName string
+	if config.GetGlobalConfig().Status.RecordDBLabel {
+		dbName = se.GetSessionVars().CurrentDB
+	}
+
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2110,7 +2121,12 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		if err != nil {
 			return nil, nil, err
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+
+		var dbName string
+		if config.GetGlobalConfig().Status.RecordDBLabel {
+			dbName = se.GetSessionVars().CurrentDB
+		}
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -3417,6 +3433,20 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	for i := 0; i < cnt; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
+
+	// setup extract Handle
+	extractWorkers := 1
+	sctxs, err := createSessions(store, extractWorkers)
+	if err != nil {
+		return nil, err
+	}
+	extractWorkerSctxs := make([]sessionctx.Context, 0)
+	for _, sctx := range sctxs {
+		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
+	}
+	dom.SetupExtractHandle(extractWorkerSctxs)
+
+	// setup init stats loader
 	initStatsCtx, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -4094,7 +4124,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 
-	if ti.UseTableLookUp && s.sessionVars.StoreBatchSize > 0 {
+	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
 		telemetryStoreBatchedUsage.Inc()
 	}
 }

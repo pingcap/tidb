@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -70,9 +69,9 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	return nil
 }
 
-// PaginateScanRegion scan regions with a limit pagination and
-// return all regions at once.
-// It reduces max gRPC message size.
+// PaginateScanRegion scan regions with a limit pagination and return all regions
+// at once. The returned regions are continuous and cover the key range. If not,
+// or meet errors, it will retry internally.
 func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
@@ -185,15 +184,8 @@ type scanRegionBackoffer struct {
 }
 
 func newScanRegionBackoffer() utils.Backoffer {
-	attempt := ScanRegionAttemptTimes
-	// only use for test.
-	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
-		if val.(bool) {
-			attempt = 3
-		}
-	})
 	return &scanRegionBackoffer{
-		attempt: attempt,
+		attempt: ScanRegionAttemptTimes,
 	}
 }
 

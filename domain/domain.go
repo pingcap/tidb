@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -131,6 +132,7 @@ type Domain struct {
 	indexUsageSyncLease   time.Duration
 	dumpFileGcChecker     *dumpFileGcChecker
 	planReplayerHandle    *planReplayerHandle
+	extractTaskHandle     *ExtractHandle
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
@@ -938,6 +940,7 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
+	gctuner.WaitMemoryLimitTunerExitInTest()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -1748,6 +1751,11 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
+// SetupExtractHandle setups extract handler
+func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
+	do.extractTaskHandle = NewExtractHandler(sctxs)
+}
+
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
@@ -1809,6 +1817,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 // GetPlanReplayerHandle returns plan replayer handle
 func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 	return do.planReplayerHandle
+}
+
+// GetExtractHandle returns extract handle
+func (do *Domain) GetExtractHandle() *ExtractHandle {
+	return do.extractTaskHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.

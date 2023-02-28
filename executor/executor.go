@@ -1519,6 +1519,7 @@ func init() {
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := sctx.GetSessionVars()
+			s.StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -1609,7 +1610,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
