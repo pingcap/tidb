@@ -8881,7 +8881,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
       },
       {
@@ -8900,7 +8900,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -8937,7 +8937,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
       },
       {
@@ -8954,7 +8954,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -8996,7 +8996,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
       },
       {
@@ -9015,7 +9015,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -9052,7 +9052,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
       },
       {
@@ -9069,7 +9069,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
@@ -9438,7 +9438,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
       },
       {
@@ -9456,7 +9456,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
           "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
