@@ -1086,10 +1086,9 @@
           "6"
         ],
         "Plan": [
-          "Selection_8 8000.00 root  gt(plus(test.t.a, 0), 1)",
-          "└─IndexReader_7 8000.00 root  index:Selection_6",
-          "  └─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
-          "    └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
+          "IndexReader_7 8000.00 root  index:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
+          "  └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1098,10 +1097,9 @@
           "6"
         ],
         "Plan": [
-          "Selection_8 8000.00 root  gt(plus(test.t.a, 0), 5)",
-          "└─IndexReader_7 8000.00 root  index:Selection_6",
-          "  └─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
-          "    └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
+          "IndexReader_7 8000.00 root  index:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
+          "  └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
@@ -1119,10 +1117,9 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_8 3333.33 root  gt(test.t.b, 1)",
-          "└─TableReader_7 3333.33 root  data:Selection_6",
-          "  └─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 1)",
-          "    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1131,10 +1128,9 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_8 3333.33 root  gt(test.t.b, 5)",
-          "└─TableReader_7 3333.33 root  data:Selection_6",
-          "  └─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 5)",
-          "    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
@@ -1152,12 +1148,11 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_10 2666.67 root  gt(plus(test.t.a, 0), 1), gt(test.t.b, 1)",
-          "└─IndexLookUp_9 2666.67 root  ",
-          "  ├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
-          "  │ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
-          "  └─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 1)",
-          "    └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexLookUp_9 2666.67 root  ",
+          "├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
+          "│ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 1)",
+          "  └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1166,12 +1161,11 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_10 2666.67 root  gt(plus(test.t.a, 0), 5), gt(test.t.b, 5)",
-          "└─IndexLookUp_9 2666.67 root  ",
-          "  ├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
-          "  │ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
-          "  └─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 5)",
-          "    └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexLookUp_9 2666.67 root  ",
+          "├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
+          "│ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
