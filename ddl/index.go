@@ -740,15 +740,6 @@ func canUseIngest(w *worker) bool {
 			zap.Int64("job ID", activeJobIDs[0]))
 		return false
 	}
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return false
-	}
-	defer w.sessPool.put(ctx)
-	failpoint.Inject("EnablePiTR", func() {
-		logutil.BgLogger().Info("lightning: mock enable PiTR")
-		failpoint.Return(true)
-	})
 
 	return true
 }

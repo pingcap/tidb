@@ -15,10 +15,12 @@
 package ingestrec
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/types"
 )
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.
@@ -112,6 +114,7 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	return nil
 }
 
+// UpdateIndexInfo use the newest schemas to update the ingest index's information
 func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 	for _, dbInfo := range dbInfos {
 		for _, tblInfo := range dbInfo.Tables {
@@ -131,9 +134,23 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 						columnListBuilder.WriteByte(',')
 					}
 					isFirst = false
-					columnListBuilder.WriteByte('`')
-					columnListBuilder.WriteString(column.Name.O)
-					columnListBuilder.WriteByte('`')
+
+					// expression / column
+					col := tblInfo.Columns[column.Offset]
+					if col.Hidden {
+						// (expression)
+						columnListBuilder.WriteByte('(')
+						columnListBuilder.WriteString(col.GeneratedExprString)
+						columnListBuilder.WriteByte(')')
+					} else {
+						// `columnName`
+						columnListBuilder.WriteByte('`')
+						columnListBuilder.WriteString(column.Name.O)
+						columnListBuilder.WriteByte('`')
+						if column.Length != types.UnspecifiedLength {
+							columnListBuilder.WriteString(fmt.Sprintf("(%d)", column.Length))
+						}
+					}
 				}
 				index.ColumnList = columnListBuilder.String()
 				index.IndexInfo = indexInfo

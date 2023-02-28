@@ -2558,6 +2558,7 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 			addSQL       string = ""
 			indexTypeSQL string = ""
 			commentSQL   string = ""
+			visibleSQL   string = " VISIBLE"
 		)
 
 		if info.IsPrimary {
@@ -2569,23 +2570,27 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
-		if len(indexTypeSQL) > 0 {
+		if len(indexTypeStr) > 0 {
 			indexTypeSQL = fmt.Sprintf(" USING %s", indexTypeStr)
 		}
 
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
-			commentSQL = fmt.Sprintf(" COMMENT \"%s\"", info.IndexInfo.Comment)
+			commentSQL = " COMMENT %?"
 		}
 
-		addSQL = fmt.Sprintf("%s%s%s", addSQL, indexTypeSQL, commentSQL)
+		if info.IndexInfo.Invisible {
+			visibleSQL = " INVISIBLE"
+		}
+
+		addSQL = fmt.Sprintf("%s%s%s%s", addSQL, indexTypeSQL, commentSQL, visibleSQL)
 
 		log.Debug("repair ingest sql", zap.String("drop", dropSQL))
 		if err := rc.db.se.Execute(ctx, dropSQL); err != nil {
 			return errors.Trace(err)
 		}
-		log.Debug("repair ingest sql", zap.String("drop", addSQL))
-		if err := rc.db.se.Execute(ctx, addSQL); err != nil {
+		log.Debug("repair ingest sql", zap.String("add", addSQL))
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL, info.IndexInfo.Comment); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
