@@ -88,6 +88,17 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+var (
+	mdlCheckLookDuration = 50 * time.Millisecond
+)
+
+func init() {
+	if intest.InTest {
+		// In test we can set duration lower to make test faster.
+		mdlCheckLookDuration = 2 * time.Millisecond
+	}
+}
+
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{
@@ -712,12 +723,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 }
 
 func (do *Domain) mdlCheckLoop() {
-	var ticker <-chan time.Time
-	if intest.InTest {
-		ticker = time.Tick(time.Millisecond * 2)
-	} else {
-		ticker = time.Tick(time.Millisecond * 50)
-	}
+	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
 	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
