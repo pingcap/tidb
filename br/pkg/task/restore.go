@@ -357,6 +357,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 
+		tsString, err := flags.GetString(FlagStreamRestoreTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
+			return errors.Trace(err)
+		}
+
 		// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
 		// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
 		// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.

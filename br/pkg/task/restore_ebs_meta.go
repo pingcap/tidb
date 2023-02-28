@@ -54,6 +54,8 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
+	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for idc vol snapshot restore.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 
 	_ = command.Flags().MarkHidden(flagFullBackupType)
 	_ = command.Flags().MarkHidden(flagPrepare)
@@ -64,6 +66,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeIOPS)
 	_ = command.Flags().MarkHidden(flagVolumeThroughput)
 	_ = command.Flags().MarkHidden(flagProgressFile)
+	_ = command.Flags().MarkHidden(FlagStreamRestoreTS)
 }
 
 // RunRestoreEBSMeta phase 1 of EBS based restore

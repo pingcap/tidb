@@ -55,6 +55,15 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
+	// adaptation of idc volume snapshot restore
+	if cfg.FullBackupType == task.FullBackupTypeIDC {
+		if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+			log.Error("failed to restore data", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)

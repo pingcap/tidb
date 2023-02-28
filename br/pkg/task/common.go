@@ -105,11 +105,14 @@ type FullBackupType string
 const (
 	FullBackupTypeKV  FullBackupType = "kv" // default type
 	FullBackupTypeEBS FullBackupType = "aws-ebs"
+	// support 3rd-party volume snapshot restore
+	// function is in experimental, to provide a interface for disk/volume level restore
+	FullBackupTypeIDC FullBackupType = "idc"
 )
 
 // Valid whether the type is valid
 func (t FullBackupType) Valid() bool {
-	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS || t == FullBackupTypeIDC
 }
 
 // TLSConfig is the common configuration for TLS connection.
