@@ -89,6 +89,10 @@ const (
 	pSnapshot           = "snapshot"
 	pFileName           = "filename"
 	pDumpPartitionStats = "dumpPartitionStats"
+	pBegin              = "begin"
+	pEnd                = "end"
+	pIsBackground       = "isBackground"
+	pType               = "type"
 )
 
 // For query string
@@ -2242,6 +2246,7 @@ func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		log.Error("failed to get session domain", zap.Error(err))
 		writeError(w, err)
+		return
 	}
 
 	cli := dom.TTLJobManager().GetCommandCli()
@@ -2249,6 +2254,7 @@ func (h ttlJobTriggerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		log.Error("failed to trigger new TTL job", zap.Error(err))
 		writeError(w, err)
+		return
 	}
 	writeData(w, resp)
 	logutil.Logger(ctx).Info("trigger TTL job manually successfully", zap.String("dbName", dbName), zap.String("tableName", tableName), zap.Any("response", resp))

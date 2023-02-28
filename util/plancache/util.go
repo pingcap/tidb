@@ -12,31 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package util
 
 import (
-	"context"
-	"time"
-
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/types"
 )
 
-var _ Executor = &PlanChangeCaptureExec{}
-
-// PlanChangeCaptureExec indicates PlanChangeCaptureExec
-type PlanChangeCaptureExec struct {
-	baseExecutor
-
-	Begin time.Time
-	End   time.Time
-	err   error
-}
-
-// Next Implements Executor
-func (e *PlanChangeCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
-	if e.err != nil {
-		return e.err
-	}
-	return nil
+// PlanCacheMatchOpts store some property used to fetch plan from plan cache
+// The structure set here is to avoid import cycle
+type PlanCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	ParamTypes []*types.FieldType
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	LimitOffsetAndCount []uint64
 }

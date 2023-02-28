@@ -650,7 +650,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().False(result.Passed)
 	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
-		"found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test],\n"+
+		"found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test], \n"+
 		"local backend is not compatible with them. Please switch to tidb backend then try again.",
 		result.Message)
 
@@ -671,7 +671,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().False(result.Passed)
 	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
-		"found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test],\n"+
+		"found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test], \n"+
 		"local backend is not compatible with them. Please switch to tidb backend then try again.",
 		result.Message)
 
