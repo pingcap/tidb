@@ -301,7 +301,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:char_name	keep order:false
 trace plan target = 'estimation' select * from char_name where imdb_index > 'V';
 CE_trace
-null
+[{"table_name":"char_name","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4314864},{"table_name":"char_name","type":"Column Stats-Range","expr":"((imdb_index > 'V' and true))","row_count":0},{"table_name":"char_name","type":"Index Stats-Range","expr":"((imdb_index > 'V' and true))","row_count":0},{"table_name":"char_name","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.char_name.imdb_index, 'V')","row_count":0}]
 
 explain select * from movie_companies where company_type_id > 2;
 id	estRows	task	access object	operator info
@@ -310,7 +310,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:movie_companies	keep order:false
 trace plan target = 'estimation' select * from movie_companies where company_type_id > 2;
 CE_trace
-null
+[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":0},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":0},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":0}]
 
 explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 id	estRows	task	access object	operator info
@@ -319,7 +319,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:char_name	keep order:false
 trace plan target = 'estimation' select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 CE_trace
-null
+[{"table_name":"char_name","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4314864},{"table_name":"char_name","type":"Column Stats-Range","expr":"((imdb_index > 'I' and imdb_index < 'II'))","row_count":0},{"table_name":"char_name","type":"Index Stats-Range","expr":"((imdb_index > 'I' and imdb_index < 'II'))","row_count":0},{"table_name":"char_name","type":"Table Stats-Expression-CNF","expr":"`and`(`gt`(imdbload.char_name.imdb_index, 'I'), `lt`(imdbload.char_name.imdb_index, 'II'))","row_count":0}]
 
 explain select * from char_name where imdb_index > 'I';
 id	estRows	task	access object	operator info
@@ -328,7 +328,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:char_name	keep order:false
 trace plan target = 'estimation' select * from char_name where imdb_index > 'I';
 CE_trace
-null
+[{"table_name":"char_name","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4314864},{"table_name":"char_name","type":"Column Stats-Range","expr":"((imdb_index > 'I' and true))","row_count":0},{"table_name":"char_name","type":"Index Stats-Range","expr":"((imdb_index > 'I' and true))","row_count":0},{"table_name":"char_name","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.char_name.imdb_index, 'I')","row_count":0}]
 
 explain select * from cast_info where nr_order < -2068070866;
 id	estRows	task	access object	operator info
@@ -347,7 +347,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:aka_title	keep order:false
 trace plan target = 'estimation' select * from aka_title where kind_id > 7;
 CE_trace
-null
+[{"table_name":"aka_title","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":528337},{"table_name":"aka_title","type":"Column Stats-Range","expr":"((kind_id > 7 and true))","row_count":0},{"table_name":"aka_title","type":"Index Stats-Range","expr":"((kind_id > 7 and true))","row_count":0},{"table_name":"aka_title","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.aka_title.kind_id, 7)","row_count":0}]
 
 explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 id	estRows	task	access object	operator info
