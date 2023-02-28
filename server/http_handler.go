@@ -91,8 +91,8 @@ const (
 	pDumpPartitionStats = "dumpPartitionStats"
 	pBegin              = "begin"
 	pEnd                = "end"
-	pIsBackground       = "isBackground"
 	pType               = "type"
+	pIsDump             = "isDump"
 )
 
 // For query string
