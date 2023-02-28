@@ -615,7 +615,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		reorgTp := pickBackfillType(w, job)
+		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -705,7 +705,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
+func pickBackfillType(job *model.Job) model.ReorgType {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
@@ -714,7 +714,7 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 	if IsEnableFastReorg() {
 		var useIngest bool
 		if ingest.LitInitialized {
-			useIngest = canUseIngest(w)
+			useIngest = canUseIngest()
 			if useIngest {
 				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 				return model.ReorgTypeLitMerge
@@ -732,7 +732,7 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 }
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
-func canUseIngest(w *worker) bool {
+func canUseIngest() bool {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	activeJobIDs := ingest.LitBackCtxMgr.Keys()
 	if len(activeJobIDs) > 0 {
@@ -800,7 +800,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(w, job)
+	bfProcess := pickBackfillType(job)
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
@@ -885,7 +885,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 
 func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(w, job)
+	bfProcess := pickBackfillType(job)
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
