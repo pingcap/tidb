@@ -238,7 +238,8 @@ func TestRevokeOnNonExistTable(t *testing.T) {
 
 // Check https://github.com/pingcap/tidb/issues/41773.
 func TestIssue41773(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists xx (id int)")
