@@ -16,12 +16,10 @@ package resourcegrouptest_test
 
 import (
 	"context"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/ddl/resourcegroup"
-	"testing"
-
 	"fmt"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -29,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestResourceGroupBasic(t *testing.T) {
