@@ -321,7 +321,7 @@ func GetJobInfo(
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	rs, err := conn.ExecuteInternal(ctx,
 		`SELECT
-    	expected_status,
+		expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
 		end_time,
 		result_message,
@@ -384,7 +384,7 @@ func GetAllJobInfo(
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	rs, err := conn.ExecuteInternal(ctx,
 		`SELECT
-    	expected_status,
+		expected_status,
 		update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND) AS is_alive,
 		end_time,
 		result_message,
