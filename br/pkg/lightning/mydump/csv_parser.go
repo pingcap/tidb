@@ -137,7 +137,7 @@ func NewCSVParser(
 
 	if len(cfg.StartingBy) > 0 {
 		if strings.Contains(cfg.StartingBy, terminator) {
-			return nil, errors.Errorf("STARTING BY '%s' cannot contain TERMINATED BY '%s'", cfg.StartingBy, terminator)
+			return nil, errors.Errorf("STARTING BY '%s' cannot contain LINES TERMINATED BY '%s'", cfg.StartingBy, terminator)
 		}
 	}
 

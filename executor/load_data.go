@@ -87,7 +87,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		// TODO: support lines terminated is "".
 		if len(e.loadDataWorker.LinesInfo.Terminated) == 0 {
-			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("don't support load data terminated is nil")
+			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 		}
 	}
 
@@ -95,13 +95,13 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.FileLocServerOrRemote:
 		u, err := storage.ParseRawURL(e.loadDataWorker.Path)
 		if err != nil {
-			return ErrLoadDataURI.GenWithStackByArgs(err.Error())
+			return ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 		}
 		var filename string
 		u.Path, filename = filepath.Split(u.Path)
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
-			return ErrLoadDataURI.GenWithStackByArgs(getMsgFromBRError(err))
+			return ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
 		}
 		if b.GetLocal() != nil {
 			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
@@ -113,27 +113,11 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		val := sctx.Value(LoadDataVarKey)
 		if val != nil {
 			sctx.SetValue(LoadDataVarKey, nil)
-			return ErrLoadDataURI.GenWithStackByArgs("previous load data option wasn't closed normally")
+			return errors.New("previous load data option wasn't closed normally")
 		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
 	}
 	return nil
-}
-
-// TODO: add GetMsg() to errors package to replace this function.
-func getMsgFromBRError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if berr, ok := err.(*errors.Error); ok {
-		return berr.GetMsg()
-	}
-	raw := err.Error()
-	berrMsg := errors.Cause(err).Error()
-	if len(raw) <= len(berrMsg)+len(": ") {
-		return raw
-	}
-	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
 func (e *LoadDataExec) loadFromRemote(
@@ -477,6 +461,7 @@ func (e *LoadDataWorker) processStream(
 		case <-checkKilled.C:
 			if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
+				close(e.commitTaskQueue)
 				return ErrQueryInterrupted
 			}
 			goto TrySendTask
@@ -556,11 +541,11 @@ func (e *LoadDataWorker) commitOneTask(ctx context.Context, task commitTask) err
 	return err
 }
 
-// CheckAndInsertOneBatch is used to commit one transaction batch full filled data
+// CheckAndInsertOneBatch is used to commit one transaction batch fulfilled data
 func (e *LoadDataWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
 	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
-		// so we need record the basic executor runtime stats by ourself.
+		// so we need record the basic executor runtime stats by ourselves.
 		start := time.Now()
 		defer func() {
 			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)

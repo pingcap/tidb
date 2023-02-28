@@ -82,7 +82,7 @@ func (s *mockGCSSuite) TestErrorMessage() {
 		INTO TABLE t LINES STARTING BY '\n';`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
 		`ERROR 8162 (HY000): STARTING BY '
-' cannot contain TERMINATED BY '
+' cannot contain LINES TERMINATED BY '
 '`)
 
 	// TODO: fix these tests
