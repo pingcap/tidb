@@ -16,11 +16,14 @@ package example
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
 )
+
+var globalNumberCounter atomic.Int64
 
 type ExampleStepOneScheduler struct {
 	task *proto.Task
@@ -30,7 +33,10 @@ type ExampleStepTwoScheduler struct {
 	task *proto.Task
 }
 
-func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
+func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error {
+	globalNumberCounter.Store(0)
+	return nil
+}
 
 func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
@@ -52,9 +58,9 @@ func init() {
 		// The order of the scheduler is the same as the order of the subtasks.
 		func(task *proto.Task, step proto.TaskStep) (scheduler.Scheduler, error) {
 			switch step {
-			case stepOne:
+			case proto.StepOne:
 				return &ExampleStepOneScheduler{task: task}, nil
-			case stepTwo:
+			case proto.StepTwo:
 				return &ExampleStepTwoScheduler{task: task}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)

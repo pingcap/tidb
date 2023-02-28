@@ -137,7 +137,7 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
+		Meta:         proto.UnSerializeGlobalTaskMeta(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}
@@ -172,7 +172,7 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
+		Meta:         proto.UnSerializeGlobalTaskMeta(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}
@@ -200,7 +200,7 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 			Type:         proto.TaskType(r.GetString(1)),
 			DispatcherID: r.GetString(2),
 			State:        proto.TaskState(r.GetString(3)),
-			MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
+			Meta:         proto.UnSerializeGlobalTaskMeta(rs[0].GetBytes(5)),
 			Concurrency:  uint64(r.GetInt64(6)),
 			Step:         proto.TaskStep(rs[0].GetInt64(7)),
 		}
@@ -224,7 +224,7 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID proto.TaskID) (task *proto.Task
 		Type:         proto.TaskType(rs[0].GetString(1)),
 		DispatcherID: rs[0].GetString(2),
 		State:        proto.TaskState(rs[0].GetString(3)),
-		MetaM:        proto.UnSerialize(rs[0].GetBytes(5)),
+		Meta:         proto.UnSerializeGlobalTaskMeta(rs[0].GetBytes(5)),
 		Concurrency:  uint64(rs[0].GetInt64(6)),
 		Step:         proto.TaskStep(rs[0].GetInt64(7)),
 	}
@@ -266,7 +266,7 @@ func (stm *SubTaskManager) GetSubaskByTiDBID(TiDBID proto.TiDBID) (*proto.Subtas
 		TaskID:      proto.TaskID(rs[0].GetInt64(2)),
 		SchedulerID: proto.TiDBID(rs[0].GetString(3)),
 		State:       proto.TaskState(rs[0].GetString(4)),
-		Meta:        rs[0].GetBytes(6),
+		Meta:        proto.UnSerializeSubTaskMeta(rs[0].GetBytes(6)),
 	}
 	t.StartTime, _ = rs[0].GetTime(5).GoTime(time.UTC)
 
@@ -303,7 +303,7 @@ func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 			TaskID:      proto.TaskID(r.GetInt64(2)),
 			SchedulerID: proto.TiDBID(r.GetString(3)),
 			State:       proto.TaskState(r.GetString(4)),
-			Meta:        r.GetBytes(6),
+			Meta:        proto.UnSerializeSubTaskMeta(r.GetBytes(6)),
 		}
 		t.StartTime, _ = r.GetTime(5).GoTime(time.UTC)
 		subtasks = append(subtasks, t)

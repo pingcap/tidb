@@ -13,12 +13,26 @@ type NumberExampleHandle struct {
 func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Task) (finished bool, subTasks []*proto.Subtask, err error) {
 	switch gTask.Step {
 	case proto.StepInit:
-		gTask.Step = stepOne
-		subTasks = append(subTasks, &proto.Subtask{})
-	case stepOne:
-		gTask.Step = stepTwo
-		subTasks = append(subTasks, &proto.Subtask{})
-	case stepTwo:
+		gTask.Step = proto.StepOne
+		gTask.Concurrency = 4
+		for i := 0; i < 10; i++ {
+			subTasksM := proto.SimpleNumberSTaskMeta{Numbers: make([]int, 0, 10)}
+			for j := 0; j < 10; j++ {
+				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
+			}
+			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM})
+		}
+	case proto.StepOne:
+		gTask.Step = proto.StepTwo
+		gTask.Concurrency = 6
+		for i := 0; i < 10; i++ {
+			subTasksM := proto.SimpleNumberSTaskMeta{Numbers: make([]int, 0, 10)}
+			for j := 0; j < 10; j++ {
+				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
+			}
+			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM})
+		}
+	case proto.StepTwo:
 		return true, nil, nil
 	default:
 		return false, nil, errors.New("unknown step")

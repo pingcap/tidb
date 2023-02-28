@@ -15,6 +15,7 @@
 package proto
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -52,6 +53,8 @@ type TaskStep int
 
 const (
 	StepInit TaskStep = -1
+	StepOne  TaskStep = iota
+	StepTwo
 )
 
 type Task struct {
@@ -59,8 +62,8 @@ type Task struct {
 	Type  TaskType
 	State TaskState
 	// TODO: redefine
-	MetaM GlobalTaskMeta
-	Step  TaskStep
+	Meta GlobalTaskMeta
+	Step TaskStep
 
 	DispatcherID string
 	StartTime    time.Time
@@ -76,7 +79,7 @@ type Subtask struct {
 	TaskID      TaskID
 	State       TaskState
 	SchedulerID TiDBID
-	Meta        []byte
+	Meta        SubTaskMeta
 
 	StartTime time.Time
 }
@@ -91,6 +94,55 @@ type GlobalTaskMeta interface {
 	GetConcurrency() uint64
 }
 
-func UnSerialize([]byte) GlobalTaskMeta {
+type SubTaskMeta interface {
+	Serialize() []byte
+}
+
+func UnSerializeGlobalTaskMeta(b []byte) GlobalTaskMeta {
+	if b[0] == 0x1 {
+		return &SimpleNumberGTaskMeta{}
+	}
 	return nil
+}
+
+func UnSerializeSubTaskMeta(b []byte) SubTaskMeta {
+	if b[0] == 0x1 {
+		m := &SimpleNumberSTaskMeta{}
+		err := json.Unmarshal(b[1:], &m.Numbers)
+		if err != nil {
+			// TODO: handle error
+		}
+		return m
+	}
+	return nil
+}
+
+// SimpleNumberGTaskMeta is a simple implementation of GlobalTaskMeta.
+type SimpleNumberGTaskMeta struct {
+}
+
+func (g *SimpleNumberGTaskMeta) Serialize() []byte {
+	return []byte{0x1}
+}
+
+func (g *SimpleNumberGTaskMeta) GetType() TaskType {
+	return TaskTypeNumber
+}
+
+func (g *SimpleNumberGTaskMeta) GetConcurrency() uint64 {
+	return 4
+}
+
+type SimpleNumberSTaskMeta struct {
+	Numbers []int `json:"numbers"`
+}
+
+func (g *SimpleNumberSTaskMeta) Serialize() []byte {
+	head := []byte{0x1}
+	jsonMeta, err := json.Marshal(g.Numbers)
+	if err != nil {
+		// TODO handle error
+		return head
+	}
+	return append(head, jsonMeta...)
 }

@@ -40,9 +40,9 @@ func init() {
 		// The order of the subtask executors is the same as the order of the subtasks.
 		func(subtask *proto.Subtask, step proto.TaskStep) (scheduler.SubtaskExecutor, error) {
 			switch step {
-			case stepOne:
+			case proto.StepOne:
 				return &ExampleStepOneSubtaskExecutor{subtask: subtask}, nil
-			case stepTwo:
+			case proto.StepTwo:
 				return &ExampleStepTwoSubtaskExecutor{subtask: subtask}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)

@@ -198,14 +198,14 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task) (err error) {
 
 	// TODO: Consider batch splitting
 	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
-	//subTasks, err := gTask.MetaM.DistPlan.splitter.SplitTask()
+	//subTasks, err := gTask.Meta.DistPlan.splitter.SplitTask()
 	//if err != nil {
 	//	logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 	//	return err
 	//}
 	for _, subTask := range subTasks {
 		// TODO: Get TiDB_Instance_ID
-		err := d.subTaskMgr.AddNewTask(gTask.ID, "", subTask.Meta)
+		err := d.subTaskMgr.AddNewTask(gTask.ID, "", subTask.Meta.Serialize())
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subTask", subTask), zap.Error(err))
 			return err
