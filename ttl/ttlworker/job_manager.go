@@ -125,7 +125,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
-	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
+	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 
 	return
 }

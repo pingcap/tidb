@@ -64,6 +64,11 @@ func (m *taskManager) GetRunningTasks() []*runningScanTask {
 	return m.runningTasks
 }
 
+// MeetTTLRunningTasks is an exported version of meetTTLRunningTask
+func (m *taskManager) MeetTTLRunningTasks(count int) bool {
+	return m.meetTTLRunningTask(count)
+}
+
 // ReportTaskFinished is an exported version of reportTaskFinished
 func (t *runningScanTask) SetResult(err error) {
 	t.result = &ttlScanTaskExecResult{
@@ -80,7 +85,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker1.Start()
 	scanWorker2 := NewMockScanWorker(t)
 
-	m := newTaskManager(context.Background(), nil, nil, "test-id")
+	m := newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
@@ -99,7 +104,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = NewMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = newTaskManager(context.Background(), nil, nil, "test-id")
+	m = newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
@@ -115,7 +120,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = NewMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = newTaskManager(context.Background(), nil, nil, "test-id")
+	m = newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
