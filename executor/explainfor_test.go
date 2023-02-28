@@ -539,9 +539,8 @@ func TestIssue28259(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	tk.MustExec("set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -575,11 +574,9 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))", res.Rows()[1][4])
-	require.Regexp(t, ".*IndexReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -619,12 +616,11 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[4][0])
-	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[5][0])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
+	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[4][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -662,12 +658,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))", res.Rows()[1][4])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -677,12 +671,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))", res.Rows()[1][4])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
 
 	res = tk.MustQuery("explain format = 'brief' select a from t " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
@@ -708,11 +700,10 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 4)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*TableReader.*", res.Rows()[1][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
-	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[3][0])
+	require.Len(t, res.Rows(), 3)
+	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
+	require.Regexp(t, ".*TableRangeScan.*", res.Rows()[2][0])
 }
 
 func TestIssue28696(t *testing.T) {
