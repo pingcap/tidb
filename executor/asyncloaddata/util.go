@@ -69,6 +69,7 @@ func CreateLoadDataJob(
 	if err != nil {
 		return 0, err
 	}
+	//nolint: errcheck
 	defer rs.Close()
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
@@ -94,8 +95,13 @@ func StartJob(
 	return err
 }
 
-// HeartBeatInSec is the interval of heartbeat.
-var HeartBeatInSec = 5
+var (
+	// HeartBeatInSec is the interval of heartbeat.
+	HeartBeatInSec = 5
+	// OfflineThresholdInSec means after failing to update heartbeat for 3 times,
+	// we treat the worker of the job as offline.
+	OfflineThresholdInSec = HeartBeatInSec * 3
+)
 
 // UpdateJobProgress updates the progress of a load data job. It should be called
 // periodically as heartbeat.
@@ -114,7 +120,7 @@ func UpdateJobProgress(
 		    	update_time >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %? SECOND)
 				OR update_time IS NULL);`
 	// we tolerate 2 times of failure/timeout when updating heartbeat
-	_, err := conn.ExecuteInternal(ctx, updateSQL, progress, jobID, HeartBeatInSec*3)
+	_, err := conn.ExecuteInternal(ctx, updateSQL, progress, jobID, OfflineThresholdInSec)
 	if err != nil {
 		return false, err
 	}
@@ -159,18 +165,6 @@ const (
 	JobExpectedCanceled
 )
 
-func (s JobExpectedStatus) String() string {
-	switch s {
-	case JobExpectedRunning:
-		return "running"
-	case JobExpectedPaused:
-		return "paused"
-	case JobExpectedCanceled:
-		return "canceled"
-	}
-	return ""
-}
-
 // UpdateJobExpectedStatus updates the expected status of a load data job.
 func UpdateJobExpectedStatus(
 	ctx context.Context,
@@ -181,13 +175,13 @@ func UpdateJobExpectedStatus(
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	const (
 		toRunning = `UPDATE mysql.load_data_jobs
-			SET expected_status = %?
+			SET expected_status = 'running'
 			WHERE job_id = %? AND expected_status = 'paused';`
 		toPaused = `UPDATE mysql.load_data_jobs
-			SET expected_status = %?
+			SET expected_status = 'paused'
 			WHERE job_id = %? AND expected_status = 'running';`
 		toCanceled = `UPDATE mysql.load_data_jobs
-			SET expected_status = %?
+			SET expected_status = 'canceled'
 			WHERE job_id = %? AND expected_status != 'canceled';`
 	)
 
@@ -216,7 +210,7 @@ const (
 )
 
 // GetJobStatus gets the status of a load data job. The returned error means
-// something wrong when querying the database. Other bussiness logic errors are
+// something wrong when querying the database. Other business logic errors are
 // returned as JobFailed with message.
 func GetJobStatus(
 	ctx context.Context,
@@ -233,7 +227,7 @@ func GetJobStatus(
 		start_time
 		FROM mysql.load_data_jobs
 		WHERE job_id = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, HeartBeatInSec*3, jobID)
+	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, jobID)
 	if err != nil {
 		return JobFailed, "", err
 	}
@@ -291,16 +285,15 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 }
 
 type JobInfo struct {
-	JobID          int64
-	User           string
-	DataSource     string
-	TableSchema    string
-	TableName      string
-	ImportMode     string
-	Progress       string
-	ExpectedStatus string
-	Status         JobStatus
-	StatusMessage  string
+	JobID         int64
+	User          string
+	DataSource    string
+	TableSchema   string
+	TableName     string
+	ImportMode    string
+	Progress      string
+	Status        JobStatus
+	StatusMessage string
 }
 
 // GetJobInfo gets all needed information of a load data job.
@@ -327,10 +320,11 @@ func GetJobInfo(
 		create_user
 		FROM mysql.load_data_jobs
 		WHERE job_id = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, HeartBeatInSec*3, jobID)
+	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, jobID)
 	if err != nil {
 		return nil, err
 	}
+	//nolint: errcheck
 	defer rs.Close()
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
@@ -350,14 +344,13 @@ func GetJobInfo(
 func getJobInfo(row chunk.Row) (*JobInfo, error) {
 	var err error
 	jobInfo := JobInfo{
-		JobID:          row.GetInt64(6),
-		DataSource:     row.GetString(7),
-		TableSchema:    row.GetString(8),
-		TableName:      row.GetString(9),
-		ImportMode:     row.GetString(10),
-		Progress:       row.GetString(11),
-		User:           row.GetString(12),
-		ExpectedStatus: row.GetEnum(0).String(),
+		JobID:       row.GetInt64(6),
+		DataSource:  row.GetString(7),
+		TableSchema: row.GetString(8),
+		TableName:   row.GetString(9),
+		ImportMode:  row.GetString(10),
+		Progress:    row.GetString(11),
+		User:        row.GetString(12),
 	}
 	jobInfo.Status, jobInfo.StatusMessage, err = getJobStatus(row)
 	if err != nil {
@@ -390,7 +383,7 @@ func GetAllJobInfo(
 		create_user
 		FROM mysql.load_data_jobs
 		WHERE create_user = %?;`
-	rs, err := conn.ExecuteInternal(ctx, sql, HeartBeatInSec*3, user)
+	rs, err := conn.ExecuteInternal(ctx, sql, OfflineThresholdInSec, user)
 	if err != nil {
 		return nil, err
 	}

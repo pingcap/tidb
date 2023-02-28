@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "asyncloaddata",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/executor/asyncloaddata",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//session",
+        "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//util",
+    ],
+)
+
+go_test(
+    name = "asyncloaddata_test",
+    srcs = ["util_test.go"],
+    embed = [":asyncloaddata"],
+    deps = [
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
