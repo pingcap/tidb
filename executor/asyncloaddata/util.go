@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -157,11 +158,16 @@ func FailJob(
 	return err
 }
 
+// JobExpectedStatus is the expected status of a load data job. User can set the
+// expected status of a job and worker will respect it.
 type JobExpectedStatus int
 
 const (
+	// JobExpectedRunning means the job is expected to be running.
 	JobExpectedRunning JobExpectedStatus = iota
+	// JobExpectedPaused means the job is expected to be paused.
 	JobExpectedPaused
+	// JobExpectedCanceled means the job is expected to be canceled.
 	JobExpectedCanceled
 )
 
@@ -198,14 +204,21 @@ func UpdateJobExpectedStatus(
 	return err
 }
 
+// JobStatus represents the status of a load data job.
 type JobStatus int
 
 const (
+	// JobFailed means the job is failed and can't be resumed.
 	JobFailed JobStatus = iota
+	// JobCanceled means the job is canceled by user and can't be resumed.
 	JobCanceled
+	// JobPaused means the job is paused by user and can be resumed.
 	JobPaused
+	// JobFinished means the job is finished.
 	JobFinished
+	// JobPending means the job is pending to be started.
 	JobPending
+	// JobRunning means the job is running.
 	JobRunning
 )
 
@@ -231,6 +244,7 @@ func GetJobStatus(
 	if err != nil {
 		return JobFailed, "", err
 	}
+	defer terror.Call(rs.Close)
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
 		return JobFailed, "", err
@@ -246,32 +260,34 @@ func GetJobStatus(
 // is_alive (derived from update_time), end_time, result_message, error_message,
 // start_time).
 func getJobStatus(row chunk.Row) (JobStatus, string, error) {
-	expectedStatus := row.GetEnum(0).String()
+	// ending status has the highest priority
+	endTimeIsNull := row.IsNull(2)
+	if !endTimeIsNull {
+		resultMsgIsNull := row.IsNull(3)
+		if !resultMsgIsNull {
+			resultMessage := row.GetString(3)
+			return JobFinished, resultMessage, nil
+		}
+		errorMessage := row.GetString(4)
+		return JobFailed, errorMessage, nil
+	}
+
 	isAlive := row.GetInt64(1) == 1
 	startTimeIsNull := row.IsNull(5)
+	expectedStatus := row.GetEnum(0).String()
 
 	switch expectedStatus {
 	case "canceled":
-		return JobCanceled, "", nil
-	case "paused":
-		if startTimeIsNull {
-			return JobPending, "", nil
+		if startTimeIsNull || isAlive {
+			return JobCanceled, "", nil
 		}
-		if isAlive {
+		return JobFailed, "job expected canceled but the node is timeout", nil
+	case "paused":
+		if startTimeIsNull || isAlive {
 			return JobPaused, "", nil
 		}
 		return JobFailed, "job expected paused but the node is timeout", nil
 	case "running":
-		endTimeIsNull := row.IsNull(2)
-		if !endTimeIsNull {
-			resultMsgIsNull := row.IsNull(3)
-			if !resultMsgIsNull {
-				resultMessage := row.GetString(3)
-				return JobFinished, resultMessage, nil
-			}
-			errorMessage := row.GetString(4)
-			return JobFailed, errorMessage, nil
-		}
 		if startTimeIsNull {
 			return JobPending, "", nil
 		}
@@ -284,6 +300,7 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 	}
 }
 
+// JobInfo is the information of a load data job.
 type JobInfo struct {
 	JobID         int64
 	User          string
@@ -324,8 +341,7 @@ func GetJobInfo(
 	if err != nil {
 		return nil, err
 	}
-	//nolint: errcheck
-	defer rs.Close()
+	defer terror.Call(rs.Close)
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
 		return nil, err
@@ -387,6 +403,7 @@ func GetAllJobInfo(
 	if err != nil {
 		return nil, err
 	}
+	defer terror.Call(rs.Close)
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
 		return nil, err
