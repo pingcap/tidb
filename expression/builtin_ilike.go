@@ -88,7 +88,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	valStr = stringutil.LowerOneString(valStr)
 	if stringutil.IsUpperAscii(rune(escape)) {
-		patternStr = stringutil.LowerOneStringExcludingOneChar(patternStr, rune(escape))
+		patternStr = stringutil.LowerOneStringExcludingSpecificChar(patternStr, rune(escape))
 	} else {
 		patternStr = stringutil.LowerOneString(patternStr)
 	}

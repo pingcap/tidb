@@ -47,7 +47,7 @@ func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lo
 		}
 
 		src_str := src_col.GetString(i)
-		lowered_col.AppendString(stringutil.LowerOneStringExcludingOneChar(src_str, rune(excluded_char[i])))
+		lowered_col.AppendString(stringutil.LowerOneStringExcludingSpecificChar(src_str, rune(excluded_char[i])))
 		lowered_col.SetNull(i, false)
 	}
 }

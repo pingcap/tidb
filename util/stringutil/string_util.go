@@ -429,8 +429,8 @@ func LowerOneString(str string) string {
 	return string(ret_str)
 }
 
-// Sometimes we want to lower strings excluding one char
-func LowerOneStringExcludingOneChar(str string, excluded_char rune) string {
+// Sometimes we want to lower strings excluding a specific char
+func LowerOneStringExcludingSpecificChar(str string, excluded_char rune) string {
 	escaped := false
 	ret_str := []rune(str)
 	str_len := len(ret_str)
