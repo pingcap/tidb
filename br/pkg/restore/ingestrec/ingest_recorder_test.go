@@ -309,5 +309,70 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, SchemaName, info.SchemaName)
 	require.Equal(t, "`x`,(`x` * 2),`z`(4)", info.ColumnList)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
+}
 
+func TestRewriteTableID(t *testing.T) {
+	allSchemas := []*model.DBInfo{
+		{
+			Name: model.NewCIStr(SchemaName),
+			Tables: []*model.TableInfo{
+				{
+					ID:   TableID,
+					Name: model.NewCIStr(TableName),
+					Columns: []*model.ColumnInfo{
+						{
+							Name:   model.NewCIStr("x"),
+							Hidden: false,
+						},
+						{
+							Name:   model.NewCIStr("y"),
+							Hidden: false,
+						},
+					},
+					Indices: []*model.IndexInfo{
+						{
+							ID:    1,
+							Name:  model.NewCIStr("x"),
+							Table: model.NewCIStr(TableName),
+							Columns: []*model.IndexColumn{
+								{
+									Name:   model.NewCIStr("x"),
+									Offset: 0,
+									Length: -1,
+								},
+								{
+									Name:   model.NewCIStr("y"),
+									Offset: 1,
+									Length: -1,
+								},
+							},
+							Comment: "123",
+							Tp:      model.IndexTypeBtree,
+						},
+					},
+				},
+			},
+		},
+	}
+	recorder := ingestrec.New()
+	err := recorder.AddJob(fakeJob(
+		model.ReorgTypeLitMerge,
+		model.ActionAddIndex,
+		model.JobStateSynced,
+		1000,
+		[]*model.IndexInfo{
+			getIndex(1, []string{"x", "y"}),
+		},
+		json.RawMessage(`[1, "a"]`),
+	))
+	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
+	recorder.RewriteTableID(func(tableID int64) (int64, error) {
+		return tableID + 1, nil
+	})
+	err = recorder.Iterate(func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		require.Equal(t, TableID+1, tableID)
+		return nil
+	})
+	require.NoError(t, err)
 }

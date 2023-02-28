@@ -114,7 +114,21 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	return nil
 }
 
-// UpdateIndexInfo use the newest schemas to update the ingest index's information
+// RerwiteIndexInfo rewrites the table id of the items in the IngestRecorder
+func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, error)) error {
+	newItems := make(map[int64]map[int64]*IngestIndexInfo)
+	for tableID, item := range i.items {
+		newTableID, err := rewriteFunc(tableID)
+		if err != nil {
+			return errors.Annotatef(err, "failed to rewrite table id: %d", tableID)
+		}
+		newItems[newTableID] = item
+	}
+	i.items = newItems
+	return nil
+}
+
+// UpdateIndexInfo uses the newest schemas to update the ingest index's information
 func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 	for _, dbInfo := range dbInfos {
 		for _, tblInfo := range dbInfo.Tables {

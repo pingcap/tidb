@@ -2817,11 +2817,26 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	})
 }
 
-// TODO: currently this function does nothing, need to implement the range filter out feature
+// RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
+// TODO: need to implement the range filter out feature
 func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
 	filter := rtree.NewRangeTree()
-	return recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
-		// range before table ID rewritten
+	err := recorder.RewriteTableID(func(tableID int64) (int64, error) {
+		rewriteRule, exists := rewriteRules[tableID]
+		if !exists {
+			return 0, errors.Errorf("rewriteRule not found, tableID: %d", tableID)
+		}
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			return 0, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+		}
+		return newTableID, nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		// range after table ID rewritten
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 		rg := rtree.Range{
@@ -2831,6 +2846,7 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 		filter.InsertRange(rg)
 		return nil
 	})
+	return errors.Trace(err)
 }
 
 // MockClient create a fake client used to test.
