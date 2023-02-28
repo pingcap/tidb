@@ -5175,6 +5175,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
 	}
+	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
 	return ap
 }
 
@@ -5216,7 +5217,8 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, b.getSelectOffset())
+	// The query block of the MaxOneRow operator should be the same as that of its child.
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }
@@ -5252,42 +5254,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
-	if b.TableHints() != nil {
-		hintInfo := b.TableHints()
-		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
-		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
-		if hintInfo.ifPreferMergeJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferMergeJoin
-		}
-		if hintInfo.ifPreferHashJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferHashJoin
-		}
-		if hintInfo.ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLJInner
-		}
-		if hintInfo.ifPreferINLHJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLHJInner
-		}
-		if hintInfo.ifPreferINLMJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLMJInner
-		}
-		if hintInfo.ifPreferHJBuild(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJBuild
-		}
-		if hintInfo.ifPreferHJBuild(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJBuild
-		}
-		if hintInfo.ifPreferHJProbe(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJProbe
-		}
-		if hintInfo.ifPreferHJProbe(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJProbe
-		}
-		// If there're multiple join hints, they're conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
-			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
-		}
-	}
+	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
 		joinPlan.preferJoinType |= preferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite
