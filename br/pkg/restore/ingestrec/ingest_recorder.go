@@ -88,29 +88,19 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	if job.BinlogInfo == nil || job.BinlogInfo.TableInfo == nil {
-		return nil
-	}
-	var indexInfo *model.IndexInfo = nil
-	for _, index := range job.BinlogInfo.TableInfo.Indices {
-		if indexID == index.ID {
-			indexInfo = index
-			break
-		}
+	tableindexes, exists := i.items[job.TableID]
+	if !exists {
+		tableindexes = make(map[int64]*IngestIndexInfo)
+		i.items[job.TableID] = tableindexes
 	}
 
-	if indexInfo != nil && len(indexInfo.Columns) > 0 {
-		tableindexes, exists := i.items[job.TableID]
-		if !exists {
-			tableindexes = make(map[int64]*IngestIndexInfo)
-			i.items[job.TableID] = tableindexes
-		}
-
-		tableindexes[indexID] = &IngestIndexInfo{
-			IsPrimary: job.Type == model.ActionAddPrimaryKey,
-			Updated:   false,
-		}
+	// the current information of table/index might be modified by other ddl jobs,
+	// therefore update the index information at last
+	tableindexes[indexID] = &IngestIndexInfo{
+		IsPrimary: job.Type == model.ActionAddPrimaryKey,
+		Updated:   false,
 	}
+
 	return nil
 }
 
