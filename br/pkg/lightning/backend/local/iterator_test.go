@@ -228,3 +228,17 @@ func TestDupDetectIterSeek(t *testing.T) {
 	require.NoError(t, db.Close())
 	require.NoError(t, dupDB.Close())
 }
+
+func TestKeyAdapterEncoding(t *testing.T) {
+	keyAdapter := dupDetectKeyAdapter{}
+	srcKey := []byte{1, 2, 3}
+	v := keyAdapter.Encode(nil, srcKey, kv.IntHandle(1).Encoded())
+	resKey, err := keyAdapter.Decode(nil, v)
+	require.NoError(t, err)
+	require.EqualValues(t, srcKey, resKey)
+
+	v = keyAdapter.Encode(nil, srcKey, []byte("mock_common_handle"))
+	resKey, err = keyAdapter.Decode(nil, v)
+	require.NoError(t, err)
+	require.EqualValues(t, srcKey, resKey)
+}
