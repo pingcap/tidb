@@ -461,6 +461,48 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 		))
 }
 
+func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, key(a))`)
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"2 select * from `t` where `a` = ? 0 1 1 select * from t where a=1 [arguments: 1]"))
+
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`select * from t where a=3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// exec_count 2->4, plan_cache_hits 1->3
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"4 select * from `t` where `a` = ? 0 1 3 select * from t where a=1 [arguments: 1]"))
+
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a=3`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// exec_count 4->6, plan_cache_hits 3->3
+	tk.MustQuery("select exec_count, digest_text, prepared, plan_in_cache, plan_cache_hits, query_sample_text " +
+		"from information_schema.statements_summary where digest_text='select * from `t` where `a` = ?'").Check(testkit.Rows(
+		"6 select * from `t` where `a` = ? 0 0 3 select * from t where a=1 [arguments: 1]"))
+}
+
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()

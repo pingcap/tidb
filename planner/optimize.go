@@ -78,8 +78,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
 		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		stmtCtx.InRestrictedSQL || // is internal SQL
-		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace { // in trace
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		stmtCtx.InRestrictedSQL { // is internal SQL
 		return nil, nil, false, nil
 	}
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
