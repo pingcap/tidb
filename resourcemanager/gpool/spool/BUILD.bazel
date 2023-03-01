@@ -15,6 +15,7 @@ go_library(
         "//resourcemanager/util",
         "//util/gpool",
         "//util/logutil",
+        "//util/mathutil",
         "@com_github_prometheus_client_golang//prometheus",
         "@org_uber_go_zap//:zap",
     ],

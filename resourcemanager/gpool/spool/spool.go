@@ -73,7 +73,7 @@ func (p *Pool) Run(fn func()) error {
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
-	_, run := p.check(1, true)
+	_, run := p.check(1)
 	if !run {
 		return gpool.ErrPoolOverload
 	}
@@ -114,7 +114,7 @@ func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
-	conc, run := p.check(int32(concurrency), false)
+	conc, run := p.check(int32(concurrency))
 	if !run {
 		return gpool.ErrPoolOverload
 	}
@@ -149,16 +149,9 @@ func (p *Pool) checkInternal(concurrency int32) (conc int32, run bool) {
 	}
 	// if concurrency is 1 , we must return a goroutine
 	// if concurrency is more than 1, we must return at least one goroutine.
-	switch {
-	case concurrency == 1 && n >= 1:
-		p.running.Add(concurrency)
-		return concurrency, true
-	default:
-		result := mathutil.Min(n, concurrency)
-		p.running.Add(result)
-		return result, true
-	}
-	return 0, false
+	result := mathutil.Min(n, concurrency)
+	p.running.Add(result)
+	return result, true
 }
 
 // ReleaseAndWait releases the pool and waits for all tasks to be completed.
