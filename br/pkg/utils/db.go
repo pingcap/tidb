@@ -203,13 +203,13 @@ func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
 // LogBackupTaskCountInc increases the count of log backup task.
 func LogBackupTaskCountInc() {
 	logBackupTaskCount.Inc()
-	log.Debug("inc log backup task", zap.Int32("count", logBackupTaskCount.Load()))
+	log.Info("inc log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // LogBackupTaskCountDec decreases the count of log backup task.
 func LogBackupTaskCountDec() {
 	logBackupTaskCount.Dec()
-	log.Debug("dec log backup task", zap.Int32("count", logBackupTaskCount.Load()))
+	log.Info("dec log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // CheckLogBackupTaskExist checks that whether log-backup is existed.
