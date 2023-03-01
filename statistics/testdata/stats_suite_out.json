@@ -3,7 +3,8 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "Point_Get_5 1.00 root table:t, clustered index:PRIMARY(a, b) "
+        "Selection_6 0.80 root  1",
+        "└─Point_Get_5 1.00 root table:t, clustered index:PRIMARY(a, b) "
       ]
     ]
   },
