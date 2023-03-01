@@ -33,9 +33,12 @@ func newTestApp(t *testing.T) *anApp {
 	}
 }
 
+func (a *anApp) OnStart(ctx context.Context) {
+}
+
 // OnStart would be called once become the owner.
 // The context passed in would be canceled once it is no more the owner.
-func (a *anApp) OnStart(ctx context.Context) {
+func (a *anApp) OnBecomeOwner(ctx context.Context) {
 	a.Lock()
 	defer a.Unlock()
 	if a.begun {
