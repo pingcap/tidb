@@ -160,7 +160,8 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 
 // dpGraph is the core part of this algorithm.
 // It implements the traditional join reorder algorithm: DP by subset using the following formula:
-//   bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
+//
+//	bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
 func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []LogicalPlan,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge, tracer *joinReorderTrace) (LogicalPlan, error) {
 	nodeCnt := uint(len(visitID2NodeID))

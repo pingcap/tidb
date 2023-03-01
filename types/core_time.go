@@ -277,8 +277,10 @@ func getFixDays(year, month, day int, ot gotime.Time) int {
 
 // compareTime compare two Time.
 // return:
-//  0: if a == b
-//  1: if a > b
+//
+//	0: if a == b
+//	1: if a > b
+//
 // -1: if a < b
 func compareTime(a, b CoreTime) int {
 	ta := datetimeToUint64(a)

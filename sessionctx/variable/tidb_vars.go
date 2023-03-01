@@ -647,6 +647,9 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 )
 
 // TiDB vars that have only global scope

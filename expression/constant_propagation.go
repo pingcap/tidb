@@ -114,14 +114,16 @@ func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant
 
 // tryToReplaceCond aims to replace all occurrences of column 'src' and try to replace it with 'tgt' in 'cond'
 // It returns
-//  bool: if a replacement happened
-//  bool: if 'cond' contains non-deterministic expression
-//  Expression: the replaced expression, or original 'cond' if the replacement didn't happen
+//
+//	bool: if a replacement happened
+//	bool: if 'cond' contains non-deterministic expression
+//	Expression: the replaced expression, or original 'cond' if the replacement didn't happen
 //
 // For example:
-//  for 'a, b, a < 3', it returns 'true, false, b < 3'
-//  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
-//  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
+//
+//	for 'a, b, a < 3', it returns 'true, false, b < 3'
+//	for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
+//	for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
 func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
 	if src.RetType.GetType() != tgt.RetType.GetType() {
 		return false, false, cond
