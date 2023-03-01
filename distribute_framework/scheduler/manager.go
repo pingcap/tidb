@@ -211,14 +211,9 @@ func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
 func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
 	switch task.State {
 	case proto.TaskStateRunning:
-		nextState := proto.TaskStateSucceed
 		if err := scheduler.Run(task); err != nil {
-			nextState = proto.TaskStateFailed
+			logutil.BgLogger().Error("run task failed", zap.Error(err))
 		}
-		task.State = nextState
-		m.handleTask(scheduler, task)
-	case proto.TaskStateSucceed:
-	case proto.TaskStateFailed:
 	default:
 		// TODO: handle other status
 	}
