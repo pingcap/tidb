@@ -53,7 +53,7 @@ var (
 func init() {
 	// In test the wait duration can be reduced to make test case run faster
 	if intest.InTest {
-		dispatchLoopWaitingDuration = 2 * time.Millisecond
+		dispatchLoopWaitingDuration = 50 * time.Millisecond
 	}
 }
 
