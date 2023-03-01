@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -36,19 +35,28 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
+	// mydumper-format DML file
+	LoadDataFormatSQLDump = "sql file"
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is
+	// parquet
+	LoadDataFormatParquet = "parquet"
 )
 
 var (
-	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 	// InTest is a flag that bypass gcs authentication in unit tests.
 	InTest bool
@@ -58,50 +66,56 @@ var (
 type LoadDataExec struct {
 	baseExecutor
 
-	FileLocRef   ast.FileLocRefTp
-	OnDuplicate  ast.OnDuplicateKeyHandlingType
-	loadDataInfo *LoadDataInfo
+	FileLocRef     ast.FileLocRefTp
+	OnDuplicate    ast.OnDuplicateKeyHandlingType
+	loadDataWorker *LoadDataWorker
 }
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	// TODO: support lines terminated is "".
-	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return errors.New("Load Data: don't support load data terminated is nil")
+
+	if e.loadDataWorker.Path == "" {
+		return ErrLoadDataEmptyPath
 	}
-	if e.loadDataInfo.Path == "" {
-		return errors.New("Load Data: infile path is empty")
-	}
-	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
-		return errors.New("can only load data into base tables")
+
+	// CSV-like
+	if e.loadDataWorker.format == "" {
+		if e.loadDataWorker.NullInfo != nil && e.loadDataWorker.NullInfo.OptEnclosed &&
+			(e.loadDataWorker.FieldsInfo == nil || e.loadDataWorker.FieldsInfo.Enclosed == nil) {
+			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+		}
+		// TODO: support lines terminated is "".
+		if len(e.loadDataWorker.LinesInfo.Terminated) == 0 {
+			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+		}
 	}
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		u, err := storage.ParseRawURL(e.loadDataInfo.Path)
+		u, err := storage.ParseRawURL(e.loadDataWorker.Path)
 		if err != nil {
-			return err
+			return ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 		}
 		var filename string
 		u.Path, filename = filepath.Split(u.Path)
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
-			return err
+			return ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
 		}
 		if b.GetLocal() != nil {
-			return errors.Errorf("Load Data: don't support load data from tidb-server's disk")
+			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
 		}
 		return e.loadFromRemote(ctx, b, filename)
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
-		sctx := e.loadDataInfo.ctx
+		sctx := e.loadDataWorker.ctx
 		val := sctx.Value(LoadDataVarKey)
 		if val != nil {
 			sctx.SetValue(LoadDataVarKey, nil)
-			return errors.New("Load Data: previous load data option wasn't closed normally")
+			return errors.New("previous load data option wasn't closed normally")
 		}
-		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
 	}
 	return nil
 }
@@ -117,32 +131,36 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return err
+		return ErrLoadDataCantAccess
 	}
 	fileReader, err := s.Open(ctx, filename)
 	if err != nil {
-		return err
+		return ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
 	}
 	defer fileReader.Close()
 
-	return e.loadDataInfo.Load(ctx, fileReader)
+	e.loadDataWorker.loadRemoteInfo = loadRemoteInfo{
+		store: s,
+		path:  filename,
+	}
+	return e.loadDataWorker.Load(ctx, fileReader)
 }
 
 // Close implements the Executor Close interface.
 func (e *LoadDataExec) Close() error {
-	if e.runtimeStats != nil && e.loadDataInfo != nil && e.loadDataInfo.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.loadDataInfo.stats)
+	if e.runtimeStats != nil && e.loadDataWorker != nil && e.loadDataWorker.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.loadDataWorker.stats)
 	}
 	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
-	if e.loadDataInfo.insertColumns != nil {
-		e.loadDataInfo.initEvalBuffer()
+	if e.loadDataWorker.insertColumns != nil {
+		e.loadDataWorker.initEvalBuffer()
 	}
 	// Init for runtime stats.
-	e.loadDataInfo.collectRuntimeStatsEnabled()
+	e.loadDataWorker.collectRuntimeStatsEnabled()
 	return nil
 }
 
@@ -152,151 +170,135 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// LoadDataInfo saves the information of loading data operation.
-// TODO: rename it and remove unnecessary public methods.
-type LoadDataInfo struct {
-	*InsertValues
-
-	row         []types.Datum
-	Path        string
-	Table       table.Table
-	FieldsInfo  *ast.FieldsClause
-	LinesInfo   *ast.LinesClause
-	IgnoreLines uint64
-	Ctx         sessionctx.Context
-	rows        [][]types.Datum
-	Drained     bool
-
-	ColumnAssignments  []*ast.Assignment
-	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
-	FieldMappings      []*FieldMapping
-
-	commitTaskQueue chan commitTask
-	StopCh          chan struct{}
-	QuitCh          chan struct{}
-	OnDuplicate     ast.OnDuplicateKeyHandlingType
+type loadRemoteInfo struct {
+	store storage.ExternalStorage
+	path  string
 }
 
-// FieldMapping inticates the relationship between input field and table column or user variable
+// LoadDataWorker does a LOAD DATA job.
+type LoadDataWorker struct {
+	*InsertValues
+
+	Path string
+	Ctx  sessionctx.Context
+	// expose some fields for test
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	NullInfo    *ast.NullDefinedBy
+	IgnoreLines uint64
+
+	format             string
+	columnAssignments  []*ast.Assignment
+	columnsAndUserVars []*ast.ColumnNameOrUserVar
+	fieldMappings      []*FieldMapping
+	onDuplicate        ast.OnDuplicateKeyHandlingType
+
+	table           table.Table
+	row             []types.Datum
+	rows            [][]types.Datum
+	commitTaskQueue chan commitTask
+	loadRemoteInfo  loadRemoteInfo
+}
+
+// NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
+func NewLoadDataWorker(
+	sctx sessionctx.Context,
+	plan *plannercore.LoadData,
+	tbl table.Table,
+) (*LoadDataWorker, error) {
+	insertVal := &InsertValues{
+		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
+		Table:          tbl,
+		Columns:        plan.Columns,
+		GenExprs:       plan.GenCols.Exprs,
+		isLoadData:     true,
+		txnInUse:       sync.Mutex{},
+		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
+	}
+	loadDataWorker := &LoadDataWorker{
+		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
+		commitTaskQueue:    make(chan commitTask, taskQueueSize),
+		InsertValues:       insertVal,
+		Path:               plan.Path,
+		format:             plan.Format,
+		table:              tbl,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+		NullInfo:           plan.NullInfo,
+		IgnoreLines:        plan.IgnoreLines,
+		columnAssignments:  plan.ColumnAssignments,
+		columnsAndUserVars: plan.ColumnsAndUserVars,
+		onDuplicate:        plan.OnDuplicate,
+		Ctx:                sctx,
+	}
+	columnNames := loadDataWorker.initFieldMappings()
+	err := loadDataWorker.initLoadColumns(columnNames)
+	if err != nil {
+		return nil, err
+	}
+	loadDataWorker.ResetBatch()
+	return loadDataWorker, nil
+}
+
+// FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
 }
 
-// Load reads from readerFn and do load data job.
-func (e *LoadDataInfo) Load(ctx context.Context, reader io.ReadSeekCloser) error {
-	e.initQueues()
-	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
-	e.startStopWatcher()
-	// let stop watcher goroutine quit
-	defer e.forceQuit()
-	err := sessiontxn.NewTxn(ctx, e.Ctx)
-	if err != nil {
-		return err
-	}
-	// processStream process input data, enqueue commit task
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	go processStream(ctx, reader, e, wg)
-	err = e.commitWork(ctx)
-	wg.Wait()
-	return err
-}
+// initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
+// the slice's order is the same as the order of the input fields.
+// Returns a slice of same ordered column names without user defined variable names.
+func (e *LoadDataWorker) initFieldMappings() []string {
+	columns := make([]string, 0, len(e.columnsAndUserVars)+len(e.columnAssignments))
+	tableCols := e.table.Cols()
 
-// processStream process input stream from network
-func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
-	var (
-		csvParser *mydump.CSVParser
-		err       error
-	)
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.Logger(ctx).Error("process routine panicked",
-				zap.Reflect("r", r),
-				zap.Stack("stack"))
+	if len(e.columnsAndUserVars) == 0 {
+		for _, v := range tableCols {
+			fieldMapping := &FieldMapping{
+				Column: v,
+			}
+			e.fieldMappings = append(e.fieldMappings, fieldMapping)
+			columns = append(columns, v.Name.O)
 		}
-		if err != nil || r != nil {
-			loadDataInfo.forceQuit()
+
+		return columns
+	}
+
+	var column *table.Column
+
+	for _, v := range e.columnsAndUserVars {
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
 		} else {
-			loadDataInfo.CloseTaskQueue()
+			column = nil
 		}
-		wg.Done()
-	}()
 
-	// TODO: use parser interface
-	csvParser, err = mydump.NewCSVParser(
-		ctx,
-		loadDataInfo.GenerateCSVConfig(),
-		reader,
-		int64(config.ReadBlockSize),
-		nil,
-		false,
-		// TODO: support charset conversion
-		nil)
-	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
-
-	for {
-		// prepare batch and enqueue task
-		err = loadDataInfo.ReadRows(ctx, csvParser)
-		if err != nil {
-			logutil.Logger(ctx).Error("load data process stream error in ReadRows", zap.Error(err))
-			return
+		fieldMapping := &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
 		}
-		if loadDataInfo.curBatchCnt == 0 {
-			return
-		}
-		if err = loadDataInfo.enqOneTask(ctx); err != nil {
-			logutil.Logger(ctx).Error("load data process stream error in enqOneTask", zap.Error(err))
-			return
-		}
-	}
-}
-
-// reorderColumns reorder the e.insertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
-func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
-	cols := e.insertColumns
-
-	if len(cols) != len(columnNames) {
-		return ErrColumnsNotMatched
+		e.fieldMappings = append(e.fieldMappings, fieldMapping)
 	}
 
-	reorderedColumns := make([]*table.Column, len(cols))
-
-	if columnNames == nil {
-		return nil
-	}
-
-	mapping := make(map[string]int)
-	for idx, colName := range columnNames {
-		mapping[strings.ToLower(colName)] = idx
-	}
-
-	for _, col := range cols {
-		idx := mapping[col.Name.L]
-		reorderedColumns[idx] = col
-	}
-
-	e.insertColumns = reorderedColumns
-
-	return nil
+	return columns
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
-func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
+func (e *LoadDataWorker) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
-	tableCols := e.Table.Cols()
+	tableCols := e.table.Cols()
 
 	if len(columnNames) != len(tableCols) {
-		for _, v := range e.ColumnAssignments {
+		for _, v := range e.columnAssignments {
 			columnNames = append(columnNames, v.Column.Name.O)
 		}
 	}
 
-	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
+	cols, missingColName = table.FindCols(tableCols, columnNames, e.table.Meta().PKIsHandle)
 	if missingColName != "" {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
@@ -330,104 +332,189 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 	return nil
 }
 
-// initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
-// the slice's order is the same as the order of the input fields.
-// Returns a slice of same ordered column names without user defined variable names.
-func (e *LoadDataInfo) initFieldMappings() []string {
-	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.Table.Cols()
+// reorderColumns reorder the e.insertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
+func (e *LoadDataWorker) reorderColumns(columnNames []string) error {
+	cols := e.insertColumns
 
-	if len(e.ColumnsAndUserVars) == 0 {
-		for _, v := range tableCols {
-			fieldMapping := &FieldMapping{
-				Column: v,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-			columns = append(columns, v.Name.O)
-		}
-
-		return columns
+	if len(cols) != len(columnNames) {
+		return ErrColumnsNotMatched
 	}
 
-	var column *table.Column
+	reorderedColumns := make([]*table.Column, len(cols))
 
-	for _, v := range e.ColumnsAndUserVars {
-		if v.ColumnName != nil {
-			column = table.FindCol(tableCols, v.ColumnName.Name.O)
-			columns = append(columns, v.ColumnName.Name.O)
-		} else {
-			column = nil
-		}
-
-		fieldMapping := &FieldMapping{
-			Column:  column,
-			UserVar: v.UserVar,
-		}
-		e.FieldMappings = append(e.FieldMappings, fieldMapping)
+	if columnNames == nil {
+		return nil
 	}
 
-	return columns
-}
-
-// GetRows getter for rows
-func (e *LoadDataInfo) GetRows() [][]types.Datum {
-	return e.rows
-}
-
-// GetCurBatchCnt getter for curBatchCnt
-func (e *LoadDataInfo) GetCurBatchCnt() uint64 {
-	return e.curBatchCnt
-}
-
-// CloseTaskQueue preparing routine to inform commit routine no more data
-func (e *LoadDataInfo) CloseTaskQueue() {
-	close(e.commitTaskQueue)
-}
-
-// initQueues initialize task queue and error report queue
-func (e *LoadDataInfo) initQueues() {
-	e.commitTaskQueue = make(chan commitTask, taskQueueSize)
-	e.StopCh = make(chan struct{}, 2)
-	e.QuitCh = make(chan struct{})
-}
-
-// startStopWatcher monitor StopCh to force quit
-func (e *LoadDataInfo) startStopWatcher() {
-	go func() {
-		<-e.StopCh
-		close(e.QuitCh)
-	}()
-}
-
-// forceQuit let commit quit directly
-func (e *LoadDataInfo) forceQuit() {
-	e.StopCh <- struct{}{}
-}
-
-// makeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
-func (e *LoadDataInfo) makeCommitTask() commitTask {
-	return commitTask{e.curBatchCnt, e.rows}
-}
-
-// enqOneTask feed one batch commit task to commit work
-func (e *LoadDataInfo) enqOneTask(ctx context.Context) error {
-	var err error
-	if e.curBatchCnt > 0 {
-		select {
-		case e.commitTaskQueue <- e.makeCommitTask():
-		case <-e.QuitCh:
-			err = errors.New("enqOneTask forced to quit")
-			logutil.Logger(ctx).Error("enqOneTask forced to quit, possible commitWork error")
-			return err
-		}
-		// reset rows buffer, will reallocate buffer but NOT reuse
-		e.SetMaxRowsInBatch(e.maxRowsInBatch)
+	mapping := make(map[string]int)
+	for idx, colName := range columnNames {
+		mapping[strings.ToLower(colName)] = idx
 	}
+
+	for _, col := range cols {
+		idx := mapping[col.Name.L]
+		reorderedColumns[idx] = col
+	}
+
+	e.insertColumns = reorderedColumns
+
+	return nil
+}
+
+// Load reads from readerFn and do load data job.
+func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
+	var (
+		parser mydump.Parser
+		err    error
+	)
+
+	switch strings.ToLower(e.format) {
+	case "":
+		// CSV-like
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			e.GenerateCSVConfig(),
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+			false,
+			// TODO: support charset conversion
+			nil)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			e.Ctx.GetSessionVars().SQLMode,
+			reader,
+			int64(config.ReadBlockSize),
+			nil,
+		)
+	case LoadDataFormatParquet:
+		if e.loadRemoteInfo.store == nil {
+			return ErrLoadParquetFromLocal
+		}
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			e.loadRemoteInfo.store,
+			reader,
+			e.loadRemoteInfo.path,
+		)
+	default:
+		return ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
+	}
+	if err != nil {
+		return ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
+	}
+	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+
+	err = sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+
+	// processStream process input data, enqueue commit task
+	group.Go(func() error {
+		return e.processStream(groupCtx, parser)
+	})
+	group.Go(func() error {
+		return e.commitWork(groupCtx)
+	})
+
+	err = group.Wait()
+	e.SetMessage()
 	return err
 }
 
-// CommitOneTask insert Data from LoadDataInfo.rows, then make commit and refresh txn
-func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task commitTask) error {
+// processStream process input stream from network
+func (e *LoadDataWorker) processStream(
+	ctx context.Context,
+	parser mydump.Parser,
+) (err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.Errorf("%v", r)
+		}
+	}()
+
+	checkKilled := time.NewTicker(30 * time.Second)
+	defer checkKilled.Stop()
+
+	for {
+		// prepare batch and enqueue task
+		if err = e.ReadRows(ctx, parser); err != nil {
+			return
+		}
+		if e.curBatchCnt == 0 {
+			close(e.commitTaskQueue)
+			return
+		}
+
+	TrySendTask:
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-checkKilled.C:
+			if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
+				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
+				close(e.commitTaskQueue)
+				return ErrQueryInterrupted
+			}
+			goto TrySendTask
+		case e.commitTaskQueue <- commitTask{e.curBatchCnt, e.rows}:
+		}
+		// reset rows buffer, will reallocate buffer but NOT reuse
+		e.ResetBatch()
+	}
+}
+
+// ResetBatch reset the inner batch.
+func (e *LoadDataWorker) ResetBatch() {
+	e.rows = make([][]types.Datum, 0, e.maxRowsInBatch)
+	e.curBatchCnt = 0
+}
+
+// commitWork commit batch sequentially
+func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("commitWork panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.Errorf("%v", r)
+		}
+	}()
+
+	var tasks uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case task, ok := <-e.commitTaskQueue:
+			if !ok {
+				return nil
+			}
+			start := time.Now()
+			if err = e.commitOneTask(ctx, task); err != nil {
+				return err
+			}
+			tasks++
+			logutil.Logger(ctx).Info("commit one task success",
+				zap.Duration("commit time usage", time.Since(start)),
+				zap.Uint64("keys processed", task.cnt),
+				zap.Uint64("tasks processed", tasks),
+				zap.Int("tasks in queue", len(e.commitTaskQueue)))
+		}
+	}
+}
+
+// commitOneTask insert Data from LoadDataWorker.rows, then make commit and refresh txn
+func (e *LoadDataWorker) commitOneTask(ctx context.Context, task commitTask) error {
 	var err error
 	defer func() {
 		if err != nil {
@@ -454,161 +541,44 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task commitTask) error
 	return err
 }
 
-// commitWork commit batch sequentially
-func (e *LoadDataInfo) commitWork(ctx context.Context) error {
+// CheckAndInsertOneBatch is used to commit one transaction batch fulfilled data
+func (e *LoadDataWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
+		// Since this method will not call by executor Next,
+		// so we need record the basic executor runtime stats by ourselves.
+		start := time.Now()
+		defer func() {
+			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)
+		}()
+	}
 	var err error
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.Logger(ctx).Error("commitWork panicked",
-				zap.Reflect("r", r),
-				zap.Stack("stack"))
-		}
-		if err != nil || r != nil {
-			e.forceQuit()
-		}
-		if err != nil {
-			e.ctx.StmtRollback(ctx, false)
-		}
-	}()
-	var tasks uint64
-	var end = false
-	for !end {
-		select {
-		case <-e.QuitCh:
-			err = errors.New("commit forced to quit")
-			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			return err
-		case commitTask, ok := <-e.commitTaskQueue:
-			if ok {
-				start := time.Now()
-				err = e.CommitOneTask(ctx, commitTask)
-				if err != nil {
-					break
-				}
-				tasks++
-				logutil.Logger(ctx).Info("commit one task success",
-					zap.Duration("commit time usage", time.Since(start)),
-					zap.Uint64("keys processed", commitTask.cnt),
-					zap.Uint64("tasks processed", tasks),
-					zap.Int("tasks in queue", len(e.commitTaskQueue)))
-			} else {
-				end = true
-			}
-		}
-		if err != nil {
-			logutil.Logger(ctx).Error("load data commit work error", zap.Error(err))
-			break
-		}
-		if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
-			logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-			err = ErrQueryInterrupted
-			break
-		}
+	if cnt == 0 {
+		return err
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
+
+	replace := false
+	if e.onDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		replace = true
+	}
+
+	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
+	if err != nil {
+		return err
 	}
 	return err
 }
 
-// SetMaxRowsInBatch sets the max number of rows to insert in a batch.
-func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
-	e.maxRowsInBatch = limit
-	e.rows = make([][]types.Datum, 0, limit)
-	e.curBatchCnt = 0
-}
-
-// getValidData returns curData that starts from starting symbol.
-// If the data doesn't have starting symbol, return curData[len(curData)-startingLen+1:] and false.
-func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
-	idx := strings.Index(string(hack.String(curData)), e.LinesInfo.Starting)
-	if idx == -1 {
-		return curData[len(curData)-len(e.LinesInfo.Starting)+1:], false
+func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+	if row == nil {
+		return nil
 	}
-
-	return curData[idx:], true
-}
-
-// indexOfTerminator return index of terminator, if not, return -1.
-// normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
-	fieldTerm := []byte(e.FieldsInfo.Terminated)
-	fieldTermLen := len(fieldTerm)
-	lineTerm := []byte(e.LinesInfo.Terminated)
-	lineTermLen := len(lineTerm)
-	type termType int
-	const (
-		notTerm termType = iota
-		fieldTermType
-		lineTermType
-	)
-	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
-	cmpTerm := func(restLen int, bs []byte) (typ termType) {
-		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-			typ = fieldTermType
-			return
-		}
-		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-			typ = lineTermType
-			return
-		}
-		return
+	err := e.addRecord(ctx, row)
+	if err != nil {
+		e.handleWarning(err)
+		return err
 	}
-	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
-		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
-		cmpTerm = func(restLen int, bs []byte) (typ termType) {
-			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
-				typ = lineTermType
-				return
-			}
-			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
-				typ = fieldTermType
-				return
-			}
-			return
-		}
-	}
-	atFieldStart := true
-	inQuoter := false
-loop:
-	for i := 0; i < len(bs); i++ {
-		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			inQuoter = !inQuoter
-			atFieldStart = false
-			continue
-		}
-		restLen := len(bs) - i - 1
-		if inQuoter && e.FieldsInfo.Enclosed != byte(0) && bs[i] == e.FieldsInfo.Enclosed {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen, bs[i+1:]) {
-			case lineTermType:
-				return i + 1
-			case fieldTermType:
-				i += fieldTermLen
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		if !inQuoter {
-			// look ahead to see if it is end of line or field.
-			switch cmpTerm(restLen+1, bs[i:]) {
-			case lineTermType:
-				return i
-			case fieldTermType:
-				i += fieldTermLen - 1
-				inQuoter = false
-				atFieldStart = true
-				continue loop
-			default:
-			}
-		}
-		// if it is escaped char, skip next char.
-		if bs[i] == e.FieldsInfo.Escaped {
-			i++
-		}
-		atFieldStart = false
-	}
-	return -1
+	return nil
 }
 
 // ReadRows reads rows from parser. When parser's reader meet EOF, it will return
@@ -616,9 +586,17 @@ loop:
 // will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) error {
+func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) error {
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
 	for e.IgnoreLines > 0 {
-		_, _, err := parser.ReadUntilTerminator()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				return nil
@@ -633,7 +611,10 @@ func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) e
 			if errors.Cause(err) == io.EOF {
 				return nil
 			}
-			return err
+			return ErrLoadDataCantRead.GenWithStackByArgs(
+				err.Error(),
+				"Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)",
+			)
 		}
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
@@ -648,51 +629,14 @@ func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) e
 	}
 }
 
-// CheckAndInsertOneBatch is used to commit one transaction batch full filled data
-func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
-	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
-		// Since this method will not call by executor Next,
-		// so we need record the basic executor runtime stats by ourself.
-		start := time.Now()
-		defer func() {
-			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)
-		}()
-	}
-	var err error
-	if cnt == 0 {
-		return err
-	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
-
-	replace := false
-	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		replace = true
-	}
-
-	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
-	if err != nil {
-		return err
-	}
-	return err
-}
-
-// SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
-// LOAD statement is handled.
-func (e *LoadDataInfo) SetMessage() {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
-	numRecords := stmtCtx.RecordRows()
-	numDeletes := stmtCtx.DeletedRows()
-	numSkipped := numRecords - stmtCtx.CopiedRows()
-	numWarnings := stmtCtx.WarningCount()
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
-}
-
 // colsToRow encodes the data of parser output.
-func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []types.Datum {
+func (e *LoadDataWorker) colsToRow(ctx context.Context, cols []types.Datum) []types.Datum {
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
+		// User variable names are not case-sensitive
+		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
+		name = strings.ToLower(name)
 		if col == nil || col.IsNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
@@ -700,16 +644,16 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []type
 		}
 	}
 
-	for i := 0; i < len(e.FieldMappings); i++ {
+	for i := 0; i < len(e.fieldMappings); i++ {
 		if i >= len(cols) {
-			if e.FieldMappings[i].Column == nil {
-				setVar(e.FieldMappings[i].UserVar.Name, nil)
+			if e.fieldMappings[i].Column == nil {
+				setVar(e.fieldMappings[i].UserVar.Name, nil)
 				continue
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(e.FieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.GetType())))
+			if types.IsTypeTime(e.fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(e.fieldMappings[i].Column.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.fieldMappings[i].Column.GetType())))
 				continue
 			}
 
@@ -717,8 +661,8 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []type
 			continue
 		}
 
-		if e.FieldMappings[i].Column == nil {
-			setVar(e.FieldMappings[i].UserVar.Name, &cols[i])
+		if e.fieldMappings[i].Column == nil {
+			setVar(e.fieldMappings[i].UserVar.Name, &cols[i])
 			continue
 		}
 
@@ -729,9 +673,9 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []type
 
 		row = append(row, cols[i])
 	}
-	for i := 0; i < len(e.ColumnAssignments); i++ {
+	for i := 0; i < len(e.columnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(e.Ctx, e.ColumnAssignments[i].Expr)
+		d, err := expression.EvalAstExpr(e.Ctx, e.columnAssignments[i].Expr)
 		if err != nil {
 			e.handleWarning(err)
 			return nil
@@ -749,42 +693,69 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []type
 	return newRow
 }
 
-func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {
-	if row == nil {
-		return nil
-	}
-	err := e.addRecord(ctx, row)
-	if err != nil {
-		e.handleWarning(err)
-		return err
-	}
-	return nil
+// SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
+// LOAD statement is handled.
+func (e *LoadDataWorker) SetMessage() {
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	numRecords := stmtCtx.RecordRows()
+	numDeletes := stmtCtx.DeletedRows()
+	numSkipped := numRecords - stmtCtx.CopiedRows()
+	numWarnings := stmtCtx.WarningCount()
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 
-// GenerateCSVConfig generates a CSV config for parser from LoadDataInfo.
-func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
-	var nullDef []string
-	if e.FieldsInfo.Enclosed != 0 {
+// GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
+func (e *LoadDataWorker) GenerateCSVConfig() *config.CSVConfig {
+	var (
+		nullDef          []string
+		quotedNullIsText = true
+	)
+
+	if e.NullInfo != nil {
+		nullDef = append(nullDef, e.NullInfo.NullDef)
+		quotedNullIsText = !e.NullInfo.OptEnclosed
+	} else if e.FieldsInfo.Enclosed != nil {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.FieldsInfo.Escaped != 0 {
-		nullDef = append(nullDef, string([]byte{e.FieldsInfo.Escaped, 'N'}))
+	if e.FieldsInfo.Escaped != nil {
+		nullDef = append(nullDef, string([]byte{*e.FieldsInfo.Escaped, 'N'}))
 	}
+
+	enclosed := ""
+	if e.FieldsInfo.Enclosed != nil {
+		enclosed = string([]byte{*e.FieldsInfo.Enclosed})
+	}
+	escaped := ""
+	if e.FieldsInfo.Escaped != nil {
+		escaped = string([]byte{*e.FieldsInfo.Escaped})
+	}
+
 	return &config.CSVConfig{
 		Separator: e.FieldsInfo.Terminated,
 		// ignore optionally enclosed
-		Delimiter:      string([]byte{e.FieldsInfo.Enclosed}),
-		Terminator:     e.LinesInfo.Terminated,
-		NotNull:        false,
-		Null:           nullDef,
-		Header:         false,
-		TrimLastSep:    false,
-		EscapedBy:      string([]byte{e.FieldsInfo.Escaped}),
-		StartingBy:     e.LinesInfo.Starting,
-		AllowEmptyLine: true,
-		// TODO: set it through NULL DEFINED BY OPTIONALLY ENCLOSED
-		QuotedNullIsText: true,
+		Delimiter:        enclosed,
+		Terminator:       e.LinesInfo.Terminated,
+		NotNull:          false,
+		Null:             nullDef,
+		Header:           false,
+		TrimLastSep:      false,
+		EscapedBy:        escaped,
+		StartingBy:       e.LinesInfo.Starting,
+		AllowEmptyLine:   true,
+		QuotedNullIsText: quotedNullIsText,
+		UnescapedQuote:   true,
 	}
+}
+
+// GetRows getter for rows
+func (e *LoadDataWorker) GetRows() [][]types.Datum {
+	return e.rows
+}
+
+// GetCurBatchCnt getter for curBatchCnt
+func (e *LoadDataWorker) GetCurBatchCnt() uint64 {
+	return e.curBatchCnt
 }
 
 var _ io.ReadSeekCloser = (*SimpleSeekerOnReadCloser)(nil)

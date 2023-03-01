@@ -1037,10 +1037,10 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		// can't insert into views (in TiDB) or sequences. issue #20880
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table v1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1288 (HY000): The target table v1 of the LOAD is not updatable", err.Error())
 		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table s1", path))
 		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): can only load data into base tables", err.Error())
+		require.Equal(t, "Error 1288 (HY000): The target table s1 of the LOAD is not updatable", err.Error())
 
 		rs, err1 := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table test", path))
 		require.NoError(t, err1)
@@ -2155,13 +2155,15 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		dbt.MustExec("prepare stmt2 from 'select * from test'")
 		dbt.MustExec("execute stmt2")
 		dbt.MustExec("replace into test(a) values(6);")
+		// test for CTE
+		dbt.MustExec("WITH RECURSIVE cte (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM cte WHERE n < 5) SELECT * FROM cte;")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
 		require.Equal(t, originStmtCnt["CreateTable"]+1, currentStmtCnt["CreateTable"])
 		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
 		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
 		require.Equal(t, originStmtCnt["Update"]+2, currentStmtCnt["Update"])
-		require.Equal(t, originStmtCnt["Select"]+3, currentStmtCnt["Select"])
+		require.Equal(t, originStmtCnt["Select"]+4, currentStmtCnt["Select"])
 		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
 		require.Equal(t, originStmtCnt["Execute"]+0, currentStmtCnt["Execute"])
 		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])

@@ -591,49 +591,89 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+		p.leftPreferJoinType |= preferMergeJoin
 	}
-	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+		p.rightPreferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
+		p.leftPreferJoinType |= preferBCJoin
 	}
-	if hintInfo.ifPreferShuffleJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
+		p.preferJoinType |= preferBCJoin
+		p.rightPreferJoinType |= preferBCJoin
+	}
+	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
+		p.leftPreferJoinType |= preferShuffleJoin
 	}
-	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
+		p.preferJoinType |= preferShuffleJoin
+		p.rightPreferJoinType |= preferShuffleJoin
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
+		p.leftPreferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferHashJoin(rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+		p.rightPreferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
+		p.leftPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLJInner
+		p.rightPreferJoinType |= preferINLJ
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLHJInner
+		p.leftPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLHJInner
+		p.rightPreferJoinType |= preferINLHJ
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLMJInner
+		p.leftPreferJoinType |= preferINLMJ
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
+		p.rightPreferJoinType |= preferINLMJ
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
+		p.leftPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJBuild
+		p.rightPreferJoinType |= preferHJBuild
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJProbe
+		p.leftPreferJoinType |= preferHJProbe
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJProbe
+		p.rightPreferJoinType |= preferHJProbe
 	}
-	if containDifferentJoinTypes(p.preferJoinType) {
+	hasConflict := false
+	if !p.ctx.GetSessionVars().EnableAdvancedJoinHint || p.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
+		if containDifferentJoinTypes(p.preferJoinType) {
+			hasConflict = true
+		}
+	} else if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
+		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
+			hasConflict = true
+		}
+	}
+	if hasConflict {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -647,6 +687,75 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if p.preferJoinType != 0 || p.preferJoinOrder {
 		p.hintInfo = hintInfo
 	}
+}
+
+// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
+// This information is used for selecting the physical operator.
+func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+	leftHintInfo := p.leftPreferJoinType
+	rightHintInfo := p.rightPreferJoinType
+	if leftHintInfo == 0 && rightHintInfo == 0 {
+		return
+	}
+	if leftHintInfo != 0 && rightHintInfo != 0 && leftHintInfo != rightHintInfo {
+		// The hint information on the left and right child nodes is different. It causes the conflict.
+		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	} else {
+		if leftHintInfo != 0 {
+			p.preferJoinType = leftHintInfo
+		} else {
+			p.preferJoinType = rightHintInfo
+		}
+		preferJoinType := uint(0)
+		// Some implementations of physical operators are dependent on the direction,
+		// and adjustments need to be made based on the direction.
+		switch p.preferJoinType {
+		case preferINLJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferRightAsINLJInner
+			}
+		case preferINLHJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLHJInner
+			}
+		case preferINLMJ:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsINLMJInner
+			}
+		case preferHJBuild:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJBuild
+			}
+		case preferHJProbe:
+			if leftHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+			if rightHintInfo != 0 {
+				preferJoinType |= preferLeftAsHJProbe
+			}
+		default:
+			preferJoinType = p.preferJoinType
+		}
+		p.preferJoinType = preferJoinType
+	}
+	// Clear information from left and right child nodes to prevent multiple calls to this function.
+	p.leftPreferJoinType = 0
+	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
@@ -4415,53 +4524,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion())
-	if err != nil {
-		return nil, err
-	}
-
-	if tableInfo.IsView() {
-		if tn.TableSample != nil {
-			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
-		}
-
-		// Get the hints belong to the current view.
-		currentQBNameMap4View := make(map[string][]ast.HintTable)
-		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
-		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
-			if len(viewQBNameHintTable) == 0 {
-				continue
-			}
-			viewSelectOffset := b.getSelectOffset()
-
-			var viewHintSelectOffset int
-			if viewQBNameHintTable[0].QBName.L == "" {
-				// If we do not explicit set the qbName, we will set the empty qb name to @sel_1.
-				viewHintSelectOffset = 1
-			} else {
-				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
-			}
-
-			// Check whether the current view can match the view name in the hint.
-			if viewQBNameHintTable[0].TableName.L == tblName.L && viewHintSelectOffset == viewSelectOffset {
-				// If the view hint can match the current view, we pop the first view table in the query block hint's table list.
-				// It means the hint belong the current view, the first view name in hint is matched.
-				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
-				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
-				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
-				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
-			}
-		}
-		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
-	}
-
-	if tableInfo.IsSequence() {
-		if tn.TableSample != nil {
-			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in sequences")
-		}
-		// When the source is a Sequence, we convert it to a TableDual, as what most databases do.
-		return b.buildTableDual(), nil
-	}
 
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
@@ -4513,6 +4575,54 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
+	}
+
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&flagPartitionProcessor > 0)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableInfo.IsView() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
+		}
+
+		// Get the hints belong to the current view.
+		currentQBNameMap4View := make(map[string][]ast.HintTable)
+		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
+		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
+			if len(viewQBNameHintTable) == 0 {
+				continue
+			}
+			viewSelectOffset := b.getSelectOffset()
+
+			var viewHintSelectOffset int
+			if viewQBNameHintTable[0].QBName.L == "" {
+				// If we do not explicit set the qbName, we will set the empty qb name to @sel_1.
+				viewHintSelectOffset = 1
+			} else {
+				viewHintSelectOffset = b.hintProcessor.GetHintOffset(viewQBNameHintTable[0].QBName, viewSelectOffset)
+			}
+
+			// Check whether the current view can match the view name in the hint.
+			if viewQBNameHintTable[0].TableName.L == tblName.L && viewHintSelectOffset == viewSelectOffset {
+				// If the view hint can match the current view, we pop the first view table in the query block hint's table list.
+				// It means the hint belong the current view, the first view name in hint is matched.
+				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
+				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
+				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
+				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
+			}
+		}
+		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
+	}
+
+	if tableInfo.IsSequence() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in sequences")
+		}
+		// When the source is a Sequence, we convert it to a TableDual, as what most databases do.
+		return b.buildTableDual(), nil
 	}
 
 	// remain tikv access path to generate point get acceess path if existed
@@ -5190,6 +5300,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
 	}
+	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
 	return ap
 }
 
@@ -5231,7 +5342,8 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, b.getSelectOffset())
+	// The query block of the MaxOneRow operator should be the same as that of its child.
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }
@@ -5267,42 +5379,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
-	if b.TableHints() != nil {
-		hintInfo := b.TableHints()
-		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
-		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
-		if hintInfo.ifPreferMergeJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferMergeJoin
-		}
-		if hintInfo.ifPreferHashJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferHashJoin
-		}
-		if hintInfo.ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLJInner
-		}
-		if hintInfo.ifPreferINLHJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLHJInner
-		}
-		if hintInfo.ifPreferINLMJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLMJInner
-		}
-		if hintInfo.ifPreferHJBuild(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJBuild
-		}
-		if hintInfo.ifPreferHJBuild(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJBuild
-		}
-		if hintInfo.ifPreferHJProbe(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJProbe
-		}
-		if hintInfo.ifPreferHJProbe(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJProbe
-		}
-		// If there're multiple join hints, they're conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
-			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
-		}
-	}
+	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
 		joinPlan.preferJoinType |= preferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite

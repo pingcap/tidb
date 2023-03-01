@@ -1953,32 +1953,32 @@ type FieldItem struct {
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated  string
-	Enclosed    byte
-	Escaped     byte
+	Enclosed    *byte
+	Escaped     *byte
 	OptEnclosed bool
 }
 
 // Restore for FieldsClause
 func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Terminated != "\t" || n.Escaped != '\\' {
+	if n.Terminated != "\t" || (n.Escaped == nil || *n.Escaped != '\\') {
 		ctx.WriteKeyWord(" FIELDS")
 		if n.Terminated != "\t" {
 			ctx.WriteKeyWord(" TERMINATED BY ")
 			ctx.WriteString(n.Terminated)
 		}
-		if n.Enclosed != 0 {
+		if n.Enclosed != nil {
 			if n.OptEnclosed {
 				ctx.WriteKeyWord(" OPTIONALLY")
 			}
 			ctx.WriteKeyWord(" ENCLOSED BY ")
-			ctx.WriteString(string(n.Enclosed))
+			ctx.WriteString(string(*n.Enclosed))
 		}
-		if n.Escaped != '\\' {
+		if n.Escaped == nil || *n.Escaped != '\\' {
 			ctx.WriteKeyWord(" ESCAPED BY ")
-			if n.Escaped == 0 {
+			if n.Escaped == nil {
 				ctx.WritePlain("''")
 			} else {
-				ctx.WriteString(string(n.Escaped))
+				ctx.WriteString(string(*n.Escaped))
 			}
 		}
 	}

@@ -105,10 +105,18 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+
+	case *ast.VariableExpr:
 		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
+		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
+		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
@@ -188,20 +196,21 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // NonPreparedPlanCacheable checks whether the input ast is cacheable for non-prepared plan cache with empty session context, which is mainly for testing.
 func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	return NonPreparedPlanCacheableWithCtx(nil, node, is)
+	ok, _ := NonPreparedPlanCacheableWithCtx(nil, node, is)
+	return ok
 }
 
 // NonPreparedPlanCacheableWithCtx checks whether the input ast is cacheable for non-prepared plan cache.
 // Only support: select {field} from {single-table} where {cond} and {cond} ...
 // {cond}: {col} {op} {val}
 // {op}: >, <, =
-func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
+func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
 	selectStmt, isSelect := node.(*ast.SelectStmt)
 	if !isSelect { // only support select statement now
-		return false
+		return false, "not a select statement"
 	}
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
-		return false
+		return false, "not a select statement"
 	}
 	if len(selectStmt.TableHints) > 0 || // hints
 		selectStmt.Distinct || selectStmt.GroupBy != nil || selectStmt.Having != nil || // agg
@@ -209,22 +218,22 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		selectStmt.OrderBy != nil || // order
 		selectStmt.Limit != nil || // limit
 		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil { // lock info
-		return false
+		return false, "queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
 	}
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
-		return false
+		return false, "queries that have sub-queries are not supported"
 	}
 	tableRefs := from.TableRefs
 	if tableRefs.Right != nil {
 		// We don't support the join for the non-prepared plan cache now.
-		return false
+		return false, "queries that access multiple tables are not supported"
 	}
 	switch x := tableRefs.Left.(type) {
 	case *ast.TableSource:
 		_, isTableName := x.Source.(*ast.TableName)
 		if !isTableName {
-			return false
+			return false, "queries that have sub-queries are not supported"
 		}
 	}
 
@@ -234,7 +243,7 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		schema:    is,
 	}
 	node.Accept(&checker)
-	return checker.cacheable
+	return checker.cacheable, checker.reason
 }
 
 // nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
@@ -242,35 +251,45 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 type nonPreparedPlanCacheableChecker struct {
 	sctx      sessionctx.Context
 	cacheable bool
+	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
 }
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join,
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
+			checker.reason = "query has some unsupported binary operation"
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {
 				checker.cacheable = false
+				checker.reason = "queries that access partitioning table are not supported"
 			}
 			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false
+				checker.reason = "queries that have generated columns are not supported"
 			}
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
+				checker.reason = "queries that access temporary tables are not supported"
+			}
+			if isView(checker.schema, node) {
+				checker.cacheable = false
+				checker.reason = "queries that access views are not supported"
 			}
 		}
 		return in, !checker.cacheable
 	}
 	checker.cacheable = false // unexpected cases
+	checker.reason = "query has some unsupported Node"
 	return in, !checker.cacheable
 }
 
@@ -291,6 +310,10 @@ func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 		}
 	}
 	return false
+}
+
+func isView(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+	return schema.TableIsView(tn.Schema, tn.Name)
 }
 
 func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
@@ -358,6 +381,8 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		if x.AccessMVIndex {
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
+	case *PhysicalApply:
+		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
 	}
 
 	for _, c := range p.Children() {

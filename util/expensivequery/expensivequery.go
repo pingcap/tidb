@@ -98,7 +98,7 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	// detailed message for it.
 	v := eqh.sm.Load()
 	if v == nil {
-		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
+		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn", connID))
 		return
 	}
 	sm := v.(util.SessionManager)
