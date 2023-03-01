@@ -2030,7 +2030,7 @@ func TestIssue34358(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, ld)
 	checkCases([]testCase{
-		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
 }
 
