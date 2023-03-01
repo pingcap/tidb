@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -27,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func init() {
@@ -52,6 +56,22 @@ type txnManager struct {
 
 	// We always reuse the same OptimisticTxnContextProvider in one session to reduce memory allocation cost for every new txn.
 	reservedOptimisticProviders [2]isolation.OptimisticTxnContextProvider
+
+	// used for slow transaction logs
+	eventDurations  []event
+	lastInstant     time.Time
+	activateInstant time.Time
+}
+
+type event struct {
+	event    string
+	duration time.Duration
+}
+
+func (s event) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("event", s.event)
+	enc.AddDuration("since last event", s.duration)
+	return nil
 }
 
 func newTxnManager(sctx sessionctx.Context) *txnManager {
@@ -159,6 +179,18 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
 	m.stmtNode = nil
+
+	// this does not count in the COMMIT statement
+	m.eventDurations = append(m.eventDurations, event{event: "txn end", duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.UnixMicro(0)
+	duration := time.Since(m.activateInstant)
+	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
+	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
+		logutil.BgLogger().Info(
+			"slow transaction", zap.Duration("duration", duration),
+			zap.Objects("events", m.eventDurations),
+		)
+	}
 }
 
 func (m *txnManager) GetCurrentStmt() ast.StmtNode {
@@ -172,7 +204,16 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+
+	m.eventDurations = append(m.eventDurations, event{event: node.OriginalText(), duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
+}
+
+// OnStmtEnd implements the TxnManager interface
+func (m *txnManager) OnStmtEnd() {
+	m.eventDurations = append(m.eventDurations, event{event: "stmt end", duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
 }
 
 // OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
@@ -206,6 +247,11 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
+
+	m.eventDurations = make([]event, 0, 10)
+	m.eventDurations = append(m.eventDurations, event{event: "txn activate", duration: time.Duration(0)})
+	m.lastInstant = time.Now()
+	m.activateInstant = m.lastInstant
 	return m.ctxProvider.ActivateTxn()
 }
 
@@ -222,6 +268,8 @@ func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+	m.eventDurations = append(m.eventDurations, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtCommit(ctx)
 }
 
@@ -230,6 +278,8 @@ func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry b
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
+	m.eventDurations = append(m.eventDurations, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
 }
 

@@ -96,6 +96,7 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBRecordPlanInSlowLog))
 	assert.True(IsInvisibleSysVar(variable.TiDBSlowQueryFile))
 	assert.True(IsInvisibleSysVar(variable.TiDBSlowLogThreshold))
+	assert.True(IsInvisibleSysVar(variable.TiDBSlowTxnLogThreshold))
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableCollectExecutionInfo))
 	assert.True(IsInvisibleSysVar(variable.TiDBMemoryUsageAlarmRatio))
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableTelemetry))

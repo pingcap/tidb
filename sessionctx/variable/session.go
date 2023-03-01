@@ -1373,6 +1373,9 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
