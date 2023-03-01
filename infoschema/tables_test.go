@@ -893,6 +893,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -989,6 +990,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
