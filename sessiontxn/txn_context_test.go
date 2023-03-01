@@ -738,11 +738,13 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
+		tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
 		tk2 := testkit.NewSteppedTestKit(t, store)
 		defer tk2.MustExec("rollback")
 
 		tk2.MustExec("use test")
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
 		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
 		autocommit := testfork.PickEnum(t, 0, 1)
 		tk2.MustExec(fmt.Sprintf("set autocommit=%d", autocommit))
