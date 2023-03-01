@@ -2395,7 +2395,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(int(TTLRunningTasks.Load())), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCoprocessorRequestTimeout, Value: tikv.ReadTimeoutMedium.String(), MinValue: int64(tikv.ReadTimeoutMedium), MaxValue: uint64(1 * time.Hour), Type: TypeDuration,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCoprocessorRequestTimeout, Value: tikv.ReadTimeoutMedium.String(), MinValue: int64(1 * time.Second), MaxValue: uint64(1 * time.Hour), Type: TypeDuration,
 		SetSession: func(s *SessionVars, val string) error {
 			d, err := time.ParseDuration(val)
 			if err != nil {
