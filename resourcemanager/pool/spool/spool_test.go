@@ -73,17 +73,14 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 			<-c
 		})
 	}
-	if n := p.Running(); n != 2 {
-		t.Errorf("expect 2 workers running, but got %d", n)
-	}
+	require.Equal(t, int32(2), p.Running())
 	// test pool tune scale up one
 	p.Tune(3)
 	_ = p.Run(func() {
 		<-c
 	})
-	if n := p.Running(); n != 3 {
-		t.Errorf("expect 3 workers running, but got %d", n)
-	}
+	require.Equal(t, int32(3), p.Running())
+
 	// test pool tune scale up multiple
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
@@ -97,9 +94,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	}
 	p.Tune(8)
 	wg.Wait()
-	if n := p.Running(); n != 8 {
-		t.Errorf("expect 8 workers running, but got %d", n)
-	}
+	require.Equal(t, int32(8), p.Running())
 	// test pool tune scale down
 	p.Tune(2)
 	for i := 0; i < 6; i++ {
@@ -117,6 +112,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		cnt.Add(1)
 	}
 	fnChan := make(chan func(), 10)
+	wg.Wait()
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), p.Running())
@@ -191,4 +187,31 @@ func TestRunWithNotEnough2(t *testing.T) {
 	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, int32(0), p.Running())
 	require.Equal(t, int32(100), cnt.Load())
+}
+
+func TestWithTaskManager(t *testing.T) {
+	p, err := NewPool("TestWithTaskManager", int32(1), util.UNKNOWN, WithBlocking(false))
+	require.NoError(t, err)
+	defer p.ReleaseAndWait()
+	fnChan := make(chan func(), 10)
+	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(1), p.Running())
+
+	// increase the concurrency
+	p.Tune(2)
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(2), p.Running())
+	p.Tune(3)
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(3), p.Running())
+
+	// decrease the concurrency
+	p.Tune(2)
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(2), p.Running())
+	p.Tune(1)
+	time.Sleep(100 * time.Microsecond)
+	require.Equal(t, int32(1), p.Running())
+	close(fnChan)
 }

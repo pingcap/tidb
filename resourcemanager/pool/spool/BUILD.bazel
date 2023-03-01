@@ -12,7 +12,7 @@ go_library(
         "//metrics",
         "//resourcemanager",
         "//resourcemanager/pool",
-        "//resourcemanager/pooltask",
+        "//resourcemanager/poolmanager",
         "//resourcemanager/util",
         "//util/logutil",
         "//util/mathutil",

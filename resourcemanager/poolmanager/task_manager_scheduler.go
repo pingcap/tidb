@@ -12,22 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package spool
+package poolmanager
 
-import (
-	"testing"
+// Overclock is to increase the concurrency of pool.
+func (t *TaskManager) Overclock() (tid uint64, task *Meta) {
+	return t.getBoostTask()
+}
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
-)
-
-func TestMain(m *testing.M) {
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	testsetup.SetupForCommonTest()
-	goleak.VerifyTestMain(m, opts...)
+// Downclock is to decrease the concurrency of pool.
+func (t *TaskManager) Downclock() {
+	t.pauseTask()
 }
