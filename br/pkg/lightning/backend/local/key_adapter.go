@@ -66,7 +66,6 @@ type dupDetectKeyAdapter struct{}
 func (dupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
 	dst = codec.EncodeBytes(dst, key)
 	dst = reallocBytes(dst, len(rowID)+2)
-	dst = append(dst, key...)
 	dst = append(dst, rowID...)
 	rowIDLen := uint16(len(rowID))
 	dst = append(dst, byte(rowIDLen>>8), byte(rowIDLen))
