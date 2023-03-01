@@ -938,46 +938,23 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		Table:        tbl,
-		Columns:      v.Columns,
-		GenExprs:     v.GenCols.Exprs,
-		isLoadData:   true,
-		txnInUse:     sync.Mutex{},
+	if !tbl.Meta().IsBaseTable() {
+		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
 	}
-	loadDataInfo := &LoadDataInfo{
-		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
-		InsertValues:       insertVal,
-		Path:               v.Path,
-		Format:             v.Format,
-		Table:              tbl,
-		FieldsInfo:         v.FieldsInfo,
-		LinesInfo:          v.LinesInfo,
-		NullInfo:           v.NullInfo,
-		IgnoreLines:        v.IgnoreLines,
-		ColumnAssignments:  v.ColumnAssignments,
-		ColumnsAndUserVars: v.ColumnsAndUserVars,
-		OnDuplicate:        v.OnDuplicate,
-		Ctx:                b.ctx,
-	}
-	columnNames := loadDataInfo.initFieldMappings()
-	err := loadDataInfo.initLoadColumns(columnNames)
+
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	loadDataExec := &LoadDataExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		FileLocRef:   v.FileLocRef,
-		OnDuplicate:  v.OnDuplicate,
-		loadDataInfo: loadDataInfo,
-	}
-	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
-	loadDataExec.loadDataInfo.initQueues()
-	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
-	return loadDataExec
+	return &LoadDataExec{
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ID()),
+		FileLocRef:     v.FileLocRef,
+		OnDuplicate:    v.OnDuplicate,
+		loadDataWorker: worker,
+	}
 }
 
 func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
