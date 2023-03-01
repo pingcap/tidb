@@ -136,6 +136,69 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
 }
 
+func TestNonPreparedPlanCacheNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`select * from t where a=null`) // query with null value cannot hit
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheInListChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a in (1, 2, 3)`)
+	tk.MustExec(`select * from t where a in (2, 3, 4)`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`select * from t where a in (2, 3, 4, 5)`) // cannot hit the previous plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a in (1, 2, 3, 4)`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	var x []string
+	for i := 0; i < 51; i++ {
+		x = append(x, fmt.Sprintf("%v", i))
+	}
+	list49 := strings.Join(x[:49], ", ")
+	list50 := strings.Join(x[:50], ", ")
+	list51 := strings.Join(x[:51], ", ")
+
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// query has more than 50 consts cannot hit
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -981,6 +1044,8 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		{"select * from t t1 where t1.a in (select a from t t2 where t2.b < ?)", []int{1}, "1", false},                     // in
 		{"select * from t t1 where t1.a > (select max(a) from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}, "0", false}, // scala
 		{"select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)", []int{1}, "0", true},                         // uncorrelated
+		{"select * from t t1 where exists (select b from t t2 where t1.a = t2.a and t2.b<? limit 1)", []int{1}, "1", false},
+		{"select * from t t1 where exists (select b from t t2 where t1.a = t2.a and t2.b<? limit ?)", []int{1, 1}, "1", false},
 	}
 
 	// switch on
@@ -1019,5 +1084,70 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+}
+
+func TestPlanCacheSubquerySPMEffective(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	testCases := []struct {
+		sql    string
+		params []int
+	}{
+		{"select * from t t1 where exists (select /*/ 1 from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}}, // exist
+		{"select * from t t1 where exists (select /*/ b from t t2 where t1.a = t2.a and t2.b < ? limit ?)", []int{1, 1}},
+		{"select * from t t1 where t1.a in (select /*/ a from t t2 where t2.a > ? and t1.a = t2.a)", []int{1}},
+		{"select * from t t1 where t1.a < (select /*/ sum(t2.a) from t t2 where t2.b = t1.b and t2.a > ?)", []int{1}},
+	}
+
+	// hint
+	for _, testCase := range testCases {
+		sql := strings.Replace(testCase.sql, "/*/", "/*+ NO_DECORRELATE() */", 1)
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", sql))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	tk.MustExec("deallocate prepare stmt")
+
+	// binding before prepare
+	for _, testCase := range testCases {
+		sql := strings.Replace(testCase.sql, "/*/", "", 1)
+		bindSQL := strings.Replace(testCase.sql, "/*/", "/*+ NO_DECORRELATE() */", 1)
+		tk.MustExec("create binding for " + sql + " using " + bindSQL)
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", sql))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+
+	// binding after prepare
+	for _, testCase := range testCases {
+		sql := strings.Replace(testCase.sql, "/*/", "", 1)
+		bindSQL := strings.Replace(testCase.sql, "/*/", "/*+ NO_DECORRELATE() */", 1)
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", sql))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("create binding for " + sql + " using " + bindSQL)
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
 }
