@@ -53,6 +53,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -1421,7 +1422,12 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 	bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
 	//nolint:forcetypeassert
 	phyTbl := tbl.(table.PhysicalTable)
-	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.JobID, bfJob.Meta,
+	var copReqPool *copReqSenderPool
+	if bfJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
+		copReqPool = initCopReqSenderPool(d.ctx, d.store, phyTbl, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
+		copReqPool.adjustSize(workerCnt)
+	}
+	backfillWorkerCtx, err := newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.JobID, bfJob.Meta,
 		func(bfCtx *backfillCtx) (backfiller, error) {
 			decodeColMap, err := makeupDecodeColMap(bfCtx.sessCtx, schemaName, phyTbl)
 			if err != nil {
@@ -1429,8 +1435,14 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 				return nil, errors.Trace(err)
 			}
 			bf, err1 := newAddIndexWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
+			bf.copReqSenderPool = copReqPool
 			return bf, err1
 		})
+	if err != nil {
+		return nil, err
+	}
+	backfillWorkerCtx.copReqSenderPool = copReqPool
+	return backfillWorkerCtx, nil
 }
 
 // mockNotOwnerErrOnce uses to make sure `notOwnerErr` only mock error once.
@@ -1704,9 +1716,14 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+
+	sessVars := w.sessCtx.GetSessionVars()
+	sessVars.StmtCtx.ResetForRetry()
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	var txnStr string
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		logutil.BgLogger().Warn("xxx-------------------- in txn", zap.Uint64("txn", txn.StartTS()),
-			zap.Bool("needMergeTmpIdx", needMergeTmpIdx), zap.Bool("writerCtx is nil", w.writerCtx == nil))
+		txnStr = fmt.Sprintf("txn ts:%d, copPool is nil:%v, needMergeTmpIdx:%v, writerCtx is nil:%v,", txn.StartTS(), w.copReqSenderPool == nil, needMergeTmpIdx, w.writerCtx == nil)
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -1789,7 +1806,14 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 		return nil
 	})
-	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
+
+	if commitDetail != nil {
+		sessVars.StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	logSlowOperations(time.Since(oprStartTime), "xxx---------------in txn, AddIndexBackfillDataInTxn "+txnStr+execDetail.String(), 5)
+	// logSlowOperations(time.Since(oprStartTime), "xxx---------------in txn, AddIndexBackfillDataInTxn "+txnStr+execDetail.String(), 500)
+	// logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
 	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecution != nil {

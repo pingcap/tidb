@@ -844,10 +844,9 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessio
 	}
 }
 
-func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
-	reorgInfo := b.reorgInfo
-	sessCtx := newContext(reorgInfo.d.store)
-	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
+func newSessCtx(store kv.Storage, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) (sessionctx.Context, error) {
+	sessCtx := newContext(store)
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return sessCtx, nil
@@ -905,7 +904,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	}
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := b.newSessCtx()
+		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location)
 		if err != nil {
 			return err
 		}
@@ -967,23 +966,29 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
-	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
+	b.copReqSenderPool = initCopReqSenderPool(b.ctx, b.reorgInfo.d.store, b.tbl,
+		b.reorgInfo.currElement.ID, b.reorgInfo.ReorgMeta.SQLMode, b.reorgInfo.ReorgMeta.Location)
+}
+
+func initCopReqSenderPool(ctx context.Context, store kv.Storage,
+	tbl table.PhysicalTable, eleID int64, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) *copReqSenderPool {
+	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eleID)
 	if indexInfo == nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
-			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return
+			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eleID))
+		return nil
 	}
-	sessCtx, err := b.newSessCtx()
+	sessCtx, err := newSessCtx(store, sqlMode, tzLocation)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
+		return nil
 	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	copCtx, err := newCopContext(tbl.Meta(), indexInfo, sessCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
+		return nil
 	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
+	return newCopReqSenderPool(ctx, copCtx, sessCtx.GetStore())
 }
 
 func canSkipError(jobID int64, workerCnt int, err error) bool {

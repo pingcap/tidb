@@ -37,10 +37,11 @@ import (
 const getJobWithoutPartition = -1
 
 type backfillWorkerContext struct {
-	currID          int
-	mu              sync.Mutex
-	sessCtxs        []sessionctx.Context
-	backfillWorkers []*backfillWorker
+	currID           int
+	mu               sync.Mutex
+	sessCtxs         []sessionctx.Context
+	backfillWorkers  []*backfillWorker
+	copReqSenderPool *copReqSenderPool
 }
 
 type newBackfillerFunc func(bfCtx *backfillCtx) (bf backfiller, err error)
@@ -126,6 +127,9 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	workerCnt = len(workerCtx.backfillWorkers)
 	bwMgr := newBackfilWorkerManager(workerCtx)
 	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
+		if workerCtx.copReqSenderPool != nil {
+			workerCtx.copReqSenderPool.sendTask(task)
+		}
 		return bfWorker.runTask(task)
 	})
 
@@ -155,6 +159,9 @@ func (bwCtx *backfillWorkerContext) close(d *ddl) {
 	}
 	for _, w := range bwCtx.backfillWorkers {
 		d.backfillCtxPool.put(w)
+	}
+	if bwCtx.copReqSenderPool != nil {
+		bwCtx.copReqSenderPool.close()
 	}
 }
 
