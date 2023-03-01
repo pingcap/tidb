@@ -715,6 +715,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 func TestIndexEstimationCrossValidate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a,b))")
