@@ -313,6 +313,7 @@ func TestDecodeBinaryPlan(t *testing.T) {
 		partition p2 values less than (300),
 		partition p3 values less than maxvalue
 	)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("insert into tp value(1,1), (10,10), (123,234), (213, 234);")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a));")
 	tk.MustExec("insert into t value(1,1,1), (10,10,10), (123,234,345), (-213, -234, -234);")
