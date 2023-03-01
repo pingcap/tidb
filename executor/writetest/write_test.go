@@ -1950,7 +1950,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeHour := curTime.Hour()
 	timeMinute := curTime.Minute()
 	tests := []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -1960,7 +1960,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeMinute = curTime.Minute()
 	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
