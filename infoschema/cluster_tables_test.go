@@ -696,6 +696,7 @@ select * from t1;
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	// The server default is CANCEL, but the testsuite defaults to LOG
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
 	defer tk.MustExec("set global tidb_mem_oom_action='LOG'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
