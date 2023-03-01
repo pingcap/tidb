@@ -941,6 +941,9 @@ const (
 	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
 	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
 	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
 )
 
 // TiDB intentional limits
@@ -1194,6 +1197,7 @@ const (
 	DefTiDBTTLDeleteBatchMaxSize                           = 10240
 	DefTiDBTTLDeleteBatchMinSize                           = 1
 	DefTiDBTTLDeleteRateLimit                              = 0
+	DefTiDBTTLRunningTasks                                 = -1
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
 	DefTiDBStoreBatchSize                                  = 4
@@ -1285,6 +1289,7 @@ var (
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
 )
 
 var (
