@@ -87,7 +87,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
-	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) join t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
+	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
 	// So we don't need to split the left child part. The right child part is the same.
 	if join.JoinType != RightOuterJoin && !leftHasHint {
 		lhsJoinGroupResult := extractJoinGroup(join.children[0])
