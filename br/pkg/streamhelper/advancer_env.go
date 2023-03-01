@@ -16,6 +16,11 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const (
+	logBackupServiceID    = "log-backup-coordinator"
+	logBackupSafePointTTL = 24 * time.Hour
+)
+
 // Env is the interface required by the advancer.
 type Env interface {
 	// The region scanner provides the region information.
@@ -30,6 +35,13 @@ type Env interface {
 // to adapt the requirement of `RegionScan`.
 type PDRegionScanner struct {
 	pd.Client
+}
+
+// Updates the service GC safe point for the cluster.
+// Returns the minimal service GC safe point across all services.
+// If the arguments is `0`, this would remove the service safe point.
+func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
