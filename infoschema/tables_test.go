@@ -1121,6 +1121,7 @@ func TestCapturePrivilege(t *testing.T) {
 	// Clear all statements.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 
 	// Create a new user to test statements summary table privilege
 	tk.MustExec("drop user if exists 'test_user'@'localhost'")
@@ -1145,6 +1146,7 @@ func TestCapturePrivilege(t *testing.T) {
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
 	require.Len(t, rows, 0)
+	tk1.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	tk1.MustExec("select * from t1 where b=1")
 	tk1.MustExec("select * from t1 where b=1")
 	tk1.MustExec("admin capture bindings")
