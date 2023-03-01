@@ -60,7 +60,7 @@ type txnManager struct {
 	// used for slow transaction logs
 	eventDurations  []event
 	lastInstant     time.Time
-	activateInstant time.Time
+	enterTxnInstant time.Time
 }
 
 type event struct {
@@ -70,7 +70,7 @@ type event struct {
 
 func (s event) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddString("event", s.event)
-	enc.AddDuration("since last event", s.duration)
+	enc.AddDuration("gap", s.duration)
 	return nil
 }
 
@@ -173,6 +173,11 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
+
+	m.eventDurations = make([]event, 0, 10)
+	m.eventDurations = append(m.eventDurations, event{event: "enter txn", duration: time.Duration(0)})
+	m.lastInstant = time.Now()
+	m.enterTxnInstant = m.lastInstant
 	return nil
 }
 
@@ -180,10 +185,10 @@ func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
 	m.stmtNode = nil
 
-	// this does not count in the COMMIT statement
+	// this does not count the COMMIT statement
 	m.eventDurations = append(m.eventDurations, event{event: "txn end", duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.UnixMicro(0)
-	duration := time.Since(m.activateInstant)
+
+	duration := time.Since(m.enterTxnInstant)
 	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
 	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
 		logutil.BgLogger().Info(
@@ -191,6 +196,8 @@ func (m *txnManager) OnTxnEnd() {
 			zap.Objects("events", m.eventDurations),
 		)
 	}
+
+	m.lastInstant = time.Now()
 }
 
 func (m *txnManager) GetCurrentStmt() ast.StmtNode {
@@ -248,10 +255,8 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
 
-	m.eventDurations = make([]event, 0, 10)
-	m.eventDurations = append(m.eventDurations, event{event: "txn activate", duration: time.Duration(0)})
+	m.eventDurations = append(m.eventDurations, event{event: "txn activate", duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
-	m.activateInstant = m.lastInstant
 	return m.ctxProvider.ActivateTxn()
 }
 
