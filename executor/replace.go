@@ -163,10 +163,10 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 // removeIndexRow removes the row which has a duplicated key.
 // the return values:
-//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
-//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
-//              and the row was removed.
-//     3. error: the error.
+//  1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//  2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//     and the row was removed.
+//  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
 		val, err := txn.Get(ctx, uk.newKey)
