@@ -1704,9 +1704,9 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
-	logutil.BgLogger().Warn("xxx-------------------- in txn",
-		zap.Bool("writerCtx is nil", w.writerCtx == nil))
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+		logutil.BgLogger().Warn("xxx-------------------- in txn", zap.Uint64("txn", txn.StartTS()),
+			zap.Bool("needMergeTmpIdx", needMergeTmpIdx), zap.Bool("writerCtx is nil", w.writerCtx == nil))
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
