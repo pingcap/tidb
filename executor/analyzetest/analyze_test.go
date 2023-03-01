@@ -3188,13 +3188,13 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	}()
 	_, err := tk0.Exec(sql)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 	runtime.GC()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	_, err = tk0.Exec(sql)
+	require.NoError(t, err)
 }
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
