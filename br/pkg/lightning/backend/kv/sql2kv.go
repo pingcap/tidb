@@ -433,7 +433,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 	kvPairs := kvcodec.se.takeKvPairs()
 	for i := 0; i < len(kvPairs.pairs); i++ {
-		var encoded [9]byte
+		var encoded [9]byte // The max length of encoded int64 is 9.
 		kvPairs.pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
 	}
 	kvcodec.recordCache = record[:0]
