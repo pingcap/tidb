@@ -1215,7 +1215,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
-	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyRRStr
 	DefTiDBEnablePlanCacheForSubquery                      = true
 )
 
