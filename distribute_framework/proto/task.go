@@ -30,7 +30,6 @@ const (
 	TaskTypeCreateIndex TaskType = "create_index"
 	TaskTypeImport      TaskType = "import"
 	TaskTypeTTL         TaskType = "ttl"
-	TaskTypeNumber      TaskType = "number"
 )
 
 type TaskState string
@@ -126,7 +125,7 @@ func (g *SimpleNumberGTaskMeta) Serialize() []byte {
 }
 
 func (g *SimpleNumberGTaskMeta) GetType() TaskType {
-	return TaskTypeNumber
+	return TaskTypeExample
 }
 
 func (g *SimpleNumberGTaskMeta) GetConcurrency() uint64 {

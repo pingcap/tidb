@@ -2,15 +2,25 @@ package example
 
 import (
 	"errors"
-
 	"github.com/pingcap/tidb/distribute_framework/dispatcher"
 	"github.com/pingcap/tidb/distribute_framework/proto"
+	"github.com/pingcap/tidb/util/logutil"
+	"math/rand"
 )
 
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Task) (finished bool, subTasks []*proto.Subtask, err error) {
+var mockTiDBIDList = []proto.TiDBID{"id1", "id2", "id3"}
+
+func assignRandomTiDB() proto.TiDBID {
+	return mockTiDBIDList[rand.Intn(3)]
+}
+
+func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error) {
+	if fromPending {
+		gTask.Step = proto.StepInit
+	}
 	switch gTask.Step {
 	case proto.StepInit:
 		gTask.Step = proto.StepOne
@@ -20,8 +30,9 @@ func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Tas
 			for j := 0; j < 10; j++ {
 				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
 			}
-			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM})
+			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM, SchedulerID: assignRandomTiDB()})
 		}
+		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
 		gTask.Step = proto.StepTwo
 		gTask.Concurrency = 6
@@ -30,9 +41,11 @@ func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Tas
 			for j := 0; j < 10; j++ {
 				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
 			}
-			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM})
+			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM, SchedulerID: assignRandomTiDB()})
 		}
+		logutil.BgLogger().Info("progress step one")
 	case proto.StepTwo:
+		logutil.BgLogger().Info("progress step two")
 		return true, nil, nil
 	default:
 		return false, nil, errors.New("unknown step")

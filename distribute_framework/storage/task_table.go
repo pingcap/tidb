@@ -16,6 +16,8 @@ package storage
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/util"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,43 +30,17 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-const (
-	TasksTableSchema = `
-CREATE TABLE system.tidb_global_task (
-	id BIGINT(20) NOT NULL AUTO_INCREMENT,
-	type VARCHAR(256) NOT NULL,
-	dispatcher_id VARCHAR(256),
-	state VARCHAR(64) NOT NULL,
-	start_time DATETIME,
-	meta LONGBLOB,
-	concurrency INT(11),
-	step INT(11),
-);`
-	SubtaskTableSchema = `
-CREATE TABLE system.tidb_sub_task (
-	id BIGINT(20) NOT NULL AUTO_INCREMENT,
-	type VARCHAR(256) NOT NULL,
-	task_id BIGINT(20) NOT NULL,
-	designate_tidb_id VARCHAR(256),
-	state VARCHAR(64) NOT NULL,
-	start_time DATETIME,
-	meta LONGBLOB,
-	heartbeat DATETIME,
-`
-)
-
 type GlobalTaskManager struct {
 	ctx context.Context
 	se  sessionctx.Context
 	mu  sync.Mutex
 }
 
-// globalInfoSyncer stores the global infoSyncer.
-// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
-// Use atomic.Value to avoid data race in the test.
 var globalTaskManagerInstance atomic.Value
+var subTaskManagerInstance atomic.Value
 
 func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTaskManager {
+	ctx = util.WithInternalSourceType(ctx, "distribute_framework")
 	return &GlobalTaskManager{
 		ctx: ctx,
 		se:  se,
@@ -81,7 +57,7 @@ func NewSubTaskManager(ctx context.Context, se sessionctx.Context) *SubTaskManag
 func GetGlobalTaskManager() (*GlobalTaskManager, error) {
 	v := globalTaskManagerInstance.Load()
 	if v == nil {
-		return nil, errors.New("globalInfoSyncer is not initialized")
+		return nil, errors.New("global task manager is not initialized")
 	}
 	return v.(*GlobalTaskManager), nil
 }
@@ -90,17 +66,34 @@ func SetGlobalTaskManager(is *GlobalTaskManager) {
 	globalTaskManagerInstance.Store(is)
 }
 
-func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
-	if rs != nil {
-		//nolint: errcheck
-		defer rs.Close()
+func GetSubTaskManager() (*SubTaskManager, error) {
+	v := subTaskManagerInstance.Load()
+	if v == nil {
+		return nil, errors.New("subTask manager is not initialized")
 	}
+	return v.(*SubTaskManager), nil
+}
+
+func SetSubTaskManager(is *SubTaskManager) {
+	subTaskManagerInstance.Store(is)
+}
+
+func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+	//logutil.BgLogger().Info("exec sql", zap.String("sql", sql), zap.Reflect("args", args))
+	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
 	if rs != nil {
-		return sqlexec.DrainRecordSet(ctx, rs, 1)
+		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+		if err != nil {
+			return nil, err
+		}
+		err = rs.Close()
+		if err != nil {
+			return nil, err
+		}
+		return rows, err
 	}
 	return nil, nil
 }
@@ -109,7 +102,7 @@ func (stm *GlobalTaskManager) AddNewTask(tp proto.TaskType, concurrency int, met
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, concurrency, meta) values (?, ?, ?)", tp, proto.TaskStatePending, concurrency, meta)
+	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, concurrency, meta) values (%?, %?, %?, %?)", string(tp), string(proto.TaskStatePending), concurrency, meta)
 	if err != nil {
 		return 0, err
 	}
@@ -127,9 +120,13 @@ func (stm *GlobalTaskManager) GetNewTask() (task *proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state = ? limit 1", proto.TaskStatePending)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state = %? limit 1", string(proto.TaskStatePending))
 	if err != nil {
 		return task, err
+	}
+
+	if len(rs) == 0 {
+		return nil, nil
 	}
 
 	task = &proto.Task{
@@ -150,7 +147,7 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = ?, dispatcher_id = ?, start_time = ? where id = ?", task.State, task.DispatcherID, task.StartTime, task.ID)
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, start_time = %?, step = %? where id = %?", string(task.State), task.DispatcherID, task.StartTime.String(), int64(task.Step), uint64(task.ID))
 	if err != nil {
 		return err
 	}
@@ -162,7 +159,7 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state = ? limit 1", proto.TaskStatePending)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state = %? limit 1", string(proto.TaskStatePending))
 	if err != nil {
 		return task, err
 	}
@@ -189,7 +186,7 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 		return task, nil
 	}
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state in ("+strings.Repeat("?,", len(states)-1)+"?)", states...)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}
@@ -214,7 +211,7 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID proto.TaskID) (task *proto.Task
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where id = ?", taskID)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where id = %?", uint64(taskID))
 	if err != nil {
 		return task, err
 	}
@@ -243,7 +240,7 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBI
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta) values (?, ?, ?)", globalTaskID, designatedTiDBID, meta)
+	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state) values (%?, %?, %?, %?)", uint64(globalTaskID), string(designatedTiDBID), meta, string(proto.TaskStatePending))
 	if err != nil {
 		return err
 	}
@@ -255,7 +252,7 @@ func (stm *SubTaskManager) GetSubaskByTiDBID(TiDBID proto.TiDBID) (*proto.Subtas
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = ? limit 1", TiDBID)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = %? limit 1", string(TiDBID))
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +274,9 @@ func (stm *SubTaskManager) UpdateTask(subTaskID proto.SubtaskID, meta []byte) er
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set meta = ? where id = ?", meta, subTaskID)
+	logutil.BgLogger().Info("update subtask meta")
+
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set meta = %? where id = %?", meta, uint64(subTaskID))
 	if err != nil {
 		return err
 	}
@@ -291,7 +290,7 @@ func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 
 	args := []interface{}{TiDBID, taskID}
 	args = append(args, states...)
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = ? and task_id = ? and state in ("+strings.Repeat("?,", len(states)-1)+"?)", args...)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return subtasks, err
 	}
@@ -316,9 +315,9 @@ func (stm *SubTaskManager) HasSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	args := []interface{}{TiDBID, taskID}
+	args := []interface{}{string(TiDBID), uint64(taskID)}
 	args = append(args, states...)
-	rs, err := ExecSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_sub_task where designate_tidb_id = ? and task_id = ? and state in ("+strings.Repeat("?,", len(states)-1)+"?) limit 1", args...)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
 		return false, err
 	}
@@ -330,7 +329,7 @@ func (stm *SubTaskManager) UpdateSubtaskState(id proto.SubtaskID, state proto.Ta
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set state = ? where id = ?", state, id)
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set state = %? where id = %?", string(state), uint64(id))
 	return err
 }
 
@@ -338,7 +337,7 @@ func (stm *SubTaskManager) UpdateHeartbeat(TiDB proto.TiDBID, taskID proto.TaskI
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set heartbeat = ? where designate_tidb_id = ? and task_id = ?", heartbeat, TiDB, taskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set heartbeat = %? where designate_tidb_id = %? and task_id = %?", heartbeat.String(), string(TiDB), uint64(taskID))
 	return err
 }
 
@@ -346,7 +345,7 @@ func (stm *SubTaskManager) DeleteTask(subTaskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where where id = ?", subTaskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where where id = %?", subTaskID)
 	if err != nil {
 		return err
 	}
@@ -358,7 +357,7 @@ func (stm *SubTaskManager) DeleteTasks(globelTaskID proto.TaskID) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = ?", globelTaskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = %?", uint64(globelTaskID))
 	if err != nil {
 		return err
 	}
@@ -370,11 +369,11 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID proto.TaskID, state proto
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	equalStr := "="
+	query := "select count(*) from mysql.tidb_sub_task where task_id = %? and state = %?"
 	if !eq {
-		equalStr = "!="
+		query = "select count(*) from mysql.tidb_sub_task where task_id = %? and state != %?"
 	}
-	rs, err := ExecSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_sub_task where task_id = ? and state %s ?", globalTaskID, state, equalStr)
+	rs, err := ExecSQL(stm.ctx, stm.se, query, uint64(globalTaskID), string(state))
 	if err != nil {
 		return 0, err
 	}

@@ -17,6 +17,7 @@ package example
 import (
 	"context"
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
+	"github.com/pingcap/tidb/util/logutil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
@@ -30,9 +31,15 @@ type ExampleStepTwoSubtaskExecutor struct {
 	subtask *proto.Subtask
 }
 
-func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error { return nil }
+func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
+	logutil.BgLogger().Info("sub task executor run step one")
+	return nil
+}
 
-func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error { return nil }
+func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
+	logutil.BgLogger().Info("sub task executor run step one")
+	return nil
+}
 
 func init() {
 	scheduler.RegisterSubtaskExectorConstructor(

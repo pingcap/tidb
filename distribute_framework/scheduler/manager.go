@@ -87,9 +87,10 @@ func (m *Manager) fetchAndHandleRunningTasks(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			logutil.BgLogger().Info("fetchAndHandleRunningTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateRunning)
+			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateRunning))
 			if err != nil {
 				m.onError(err)
 				continue
@@ -105,9 +106,10 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.cancelAllRunningTasks()
+			logutil.BgLogger().Info("fetchAndHandleCanceledTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateCanceled)
+			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateCanceled))
 			if err != nil {
 				m.onError(err)
 				continue
@@ -120,7 +122,8 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
 	m.filterAlreadyRunningTasks(tasks)
 	for _, task := range tasks {
-		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStateRunning)
+		logutil.BgLogger().Info("onRunningTasks", zap.Any("id", task.ID))
+		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending))
 		if err != nil {
 			m.onError(err)
 			continue
@@ -128,6 +131,7 @@ func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
+		logutil.BgLogger().Info("detect new subtask", zap.Any("id", task.ID))
 		err = m.schedulerPool.Run(func() {
 			m.onRunningTask(ctx, task.ID)
 		})
@@ -192,7 +196,7 @@ func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
 		if task.State != proto.TaskStateRunning {
 			return
 		}
-		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStateRunning); err != nil {
+		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStateRunning)); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

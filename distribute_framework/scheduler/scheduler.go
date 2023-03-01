@@ -70,6 +70,7 @@ func NewScheduler(ctx context.Context, id proto.TiDBID, taskID proto.TaskID, sub
 }
 
 func (s *SchedulerImpl) Run(task *proto.Task) error {
+	logutil.BgLogger().Info("scheduler run a step", zap.Any("id", s.id), zap.Any("step", task.Step))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
 		s.onError(err)

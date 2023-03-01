@@ -1769,7 +1769,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	} else {
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
-	if len(stmts) != 1 {
+	if len(stmts) != 1 && err == nil {
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {

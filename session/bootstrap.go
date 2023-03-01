@@ -551,25 +551,26 @@ const (
 	);`
 
 	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
-    	id bigint(64) PRIMARY_KEY,
-    	type varchar(64) NOT NULL,
-    	dispatcher_id varchar(64) NOT NULL,
-    	state varchar(64) NOT NULL,
-    	start_time Timestamp,
-    	meta longblob,
-    );`
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time DATETIME,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11)
+	);`
 
 	CreateSubTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_sub_task (
-    	id bigint(64) PRIMARY_KEY,
-    	global_task_id bigint(64),
-    	type NOT NULL,
-		scheduler_id varchar(64),
-    	exec_expired Timestamp,
-    	designate_tidb_id varchar(64),
-    	state varchar(64) NOT NULL,
-    	start_time Timestamp,
-    	meta longblob,
-    );`
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL DEFAULT '',
+		task_id BIGINT(20) NOT NULL,
+		designate_tidb_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time DATETIME,
+		meta LONGBLOB,
+		heartbeat DATETIME
+	);`
 )
 
 // bootstrap initiates system DB for a store.
