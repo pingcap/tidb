@@ -550,6 +550,7 @@ func TestIssue26379(t *testing.T) {
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=10")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), c int, d int, key k(a))")
@@ -1058,6 +1059,7 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, a int, key(a))")
 	sql := "select /*+ ignore_index(t, a) */ * from t where t.a = 1"
