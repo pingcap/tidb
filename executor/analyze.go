@@ -162,7 +162,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		concurrency = len(tasks)
 	}
 	for i := 0; i < concurrency; i++ {
-
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {

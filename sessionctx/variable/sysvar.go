@@ -2385,9 +2385,8 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCoprocessorTimeout, Value: tikv.ReadTimeoutMedium.String(), MinValue: int64(tikv.ReadTimeoutMedium), MaxValue: uint64(1 * time.Hour), Type: TypeDuration,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCoprocessorRequestTimeout, Value: tikv.ReadTimeoutMedium.String(), MinValue: int64(tikv.ReadTimeoutMedium), MaxValue: uint64(1 * time.Hour), Type: TypeDuration,
 		SetSession: func(s *SessionVars, val string) error {
-			fmt.Printf("Set cop timeout %v\n", val)
 			d, err := time.ParseDuration(val)
 			if err != nil {
 				return err
@@ -2396,7 +2395,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			fmt.Printf("Set global cop timeout %v\n", val)
 			d, err := time.ParseDuration(val)
 			if err != nil {
 				return err
