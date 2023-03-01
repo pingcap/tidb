@@ -136,6 +136,69 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
 }
 
+func TestNonPreparedPlanCacheNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a=1`)
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`select * from t where a=null`) // query with null value cannot hit
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`select * from t where a=2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheInListChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a in (1, 2, 3)`)
+	tk.MustExec(`select * from t where a in (2, 3, 4)`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`select * from t where a in (2, 3, 4, 5)`) // cannot hit the previous plan
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where a in (1, 2, 3, 4)`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	var x []string
+	for i := 0; i < 51; i++ {
+		x = append(x, fmt.Sprintf("%v", i))
+	}
+	list49 := strings.Join(x[:49], ", ")
+	list50 := strings.Join(x[:50], ", ")
+	list51 := strings.Join(x[:51], ", ")
+
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list49))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list50))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// query has more than 50 consts cannot hit
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustExec(fmt.Sprintf(`select * from t where a in (%v)`, list51))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

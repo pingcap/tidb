@@ -75,9 +75,11 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		sctx.GetSessionVars().StmtCtx.InRestrictedSQL { // is internal SQL
+		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		stmtCtx.InRestrictedSQL { // is internal SQL
 		return nil, nil, false, nil
 	}
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
