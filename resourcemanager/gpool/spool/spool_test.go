@@ -147,3 +147,44 @@ func TestRunOverload(t *testing.T) {
 	require.EqualError(t, p.Run(demoFunc), gpool.ErrPoolOverload.Error(),
 		"blocking submit when pool reach max blocking submit should return ErrPoolOverload")
 }
+
+func TestRunWithNotEnough(t *testing.T) {
+	var stop atomic.Bool
+	longRunningFunc := func() {
+		for {
+			if stop.Load() {
+				break
+			}
+			runtime.Gosched()
+		}
+	}
+	poolSize := 10
+	p, err := NewPool("TestRunWithNotEnough", int32(poolSize), util.UNKNOWN, WithNonblocking(true))
+	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
+	defer p.ReleaseAndWait()
+	defer stop.Store(true)
+	require.NoError(t, p.RunWithConcurrency(longRunningFunc, poolSize+100), "submit when pool is not full shouldn't return error")
+	require.Equal(t, 10, p.Running())
+	require.Error(t, p.RunWithConcurrency(longRunningFunc, 1))
+	require.Error(t, p.Run(longRunningFunc))
+}
+
+func TestRunWithNotEnough2(t *testing.T) {
+	var stop atomic.Bool
+	longRunningFunc := func() {
+		for {
+			if stop.Load() {
+				break
+			}
+			runtime.Gosched()
+		}
+	}
+	p, err := NewPool("TestRunWithNotEnough2", int32(1), util.UNKNOWN, WithNonblocking(true))
+	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
+	defer p.ReleaseAndWait()
+	defer stop.Store(true)
+	require.NoError(t, p.RunWithConcurrency(longRunningFunc, 2), "submit when pool is not full shouldn't return error")
+	require.Equal(t, 1, p.Running())
+	require.Error(t, p.RunWithConcurrency(longRunningFunc, 1))
+	require.Error(t, p.Run(longRunningFunc))
+}
