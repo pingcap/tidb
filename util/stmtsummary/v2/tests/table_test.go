@@ -38,6 +38,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store)
 
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
@@ -53,6 +54,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 	// Create a new session to test.
 	tk = newTestKitWithRoot(t, store)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -108,6 +110,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	require.NoError(t, failpoint.Enable(failpointName, "return(100)"))
 	defer func() { require.NoError(t, failpoint.Disable(failpointName)) }()
 	tk.MustQuery("select * from t where a=2")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	// sum_cop_task_num is always 0 if tidb_enable_collect_execution_info disabled
 	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
@@ -267,6 +270,7 @@ func TestCapturePrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store)
 
+	tk.MustQuery(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 	defer tk.MustExec("drop table if exists t")
@@ -298,6 +302,7 @@ func TestCapturePrivilege(t *testing.T) {
 		AuthHostname: "localhost",
 	}, nil, nil)
 
+	tk1.MustQuery(`set tidb_enable_non_prepared_plan_cache=0`)
 	rows = tk1.MustQuery("show global bindings").Rows()
 	// Ordinary users can not see others' records
 	require.Len(t, rows, 0)
