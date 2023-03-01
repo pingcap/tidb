@@ -99,7 +99,8 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
-	onGetClient func(uint64) error
+	onGetClient        func(uint64) error
+	serviceGCSafePoint uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -248,6 +249,23 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	}
 	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
+}
+
+// Updates the service GC safe point for the cluster.
+// Returns the latest service GC safe point.
+// If the arguments is `0`, this would remove the service safe point.
+func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if at == 0 {
+		f.serviceGCSafePoint = at
+		return at, nil
+	}
+	if f.serviceGCSafePoint > at {
+		return f.serviceGCSafePoint, nil
+	}
+	f.serviceGCSafePoint = at
+	return at, nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -575,6 +593,7 @@ type testEnv struct {
 	checkpoint uint64
 	testCtx    *testing.T
 	ranges     []kv.KeyRange
+	taskCh     chan<- streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -596,6 +615,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		Ranges: rngs,
 	}
 	ch <- tsk
+	t.taskCh = ch
 	return nil
 }
 
@@ -625,6 +645,7 @@ func (t *testEnv) getCheckpoint() uint64 {
 	return t.checkpoint
 }
 
+<<<<<<< HEAD
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	for _, r := range t.regions {
 		if len(r.locks) != 0 {
@@ -724,5 +745,11 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 			Peers:    []*metapb.Peer{leader},
 		},
 		Leader: leader,
+=======
+func (t *testEnv) unregisterTask() {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventDel,
+		Name: "whole",
+>>>>>>> 4db3d4739b3 (log-backup: allow coordinator to upload GC safepoint (#40102))
 	}
 }
