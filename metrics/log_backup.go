@@ -27,7 +27,7 @@ var (
 	GetCheckpointBatchSize            *prometheus.HistogramVec
 	RegionCheckpointRequest           *prometheus.CounterVec
 	RegionCheckpointFailure           *prometheus.CounterVec
-	RegionCheckpointSubscriptionEvent *prometheus.CounterVec
+	RegionCheckpointSubscriptionEvent *prometheus.HistogramVec
 )
 
 // InitLogBackupMetrics initializes log backup metrics.
@@ -76,8 +76,8 @@ func InitLogBackupMetrics() {
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
-  
-	RegionCheckpointSubscriptionEvent = NewCounterVec(prometheus.CounterOpts{
+
+	RegionCheckpointSubscriptionEvent = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_checkpoint_event",
