@@ -76,12 +76,17 @@ func noItem(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 	return errors.Errorf("should no items, but have one: [%d, %d, %v]", tableID, indexID, info)
 }
 
-func hasOneItem(idxID int64, columnList string) (iterateFunc, *int) {
+func hasOneItem(idxID int64, columnList string, columnArgs []interface{}) (iterateFunc, *int) {
 	count := 0
 	return func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		count += 1
 		if indexID != idxID || info.ColumnList != columnList {
 			return errors.Errorf("should has one items, but have another one: [%d, %d, %v]", tableID, indexID, info)
+		}
+		for i, arg := range info.ColumnArgs {
+			if columnArgs[i] != arg {
+				return errors.Errorf("should has one items, but have another one: [%d, %d, %v]", tableID, indexID, info)
+			}
 		}
 		return nil
 	}, &count
@@ -193,7 +198,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			json.RawMessage(`[1, "a"]`),
 		))
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "`x`,`y`")
+		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
 		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -214,7 +219,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			json.RawMessage(`[1, "a"]`),
 		))
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "`x`,`y`")
+		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
 		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -307,7 +312,8 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
 	require.Equal(t, SchemaName, info.SchemaName)
-	require.Equal(t, "`x`,(`x` * 2),`z`(4)", info.ColumnList)
+	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
+	require.Equal(t, []interface{}{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
 }
 
