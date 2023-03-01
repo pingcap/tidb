@@ -71,7 +71,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20230216153817-c6df78cc9dea
+	github.com/pingcap/kvproto v0.0.0-20230228041042-1e9aca94bab6
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -92,8 +92,8 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.6-0.20230227032358-40a82457ebaa
-	github.com/tikv/pd/client v0.0.0-20230213110402-e6086c444b72
+	github.com/tikv/client-go/v2 v2.0.6-0.20230228091502-e2da5527026f
+	github.com/tikv/pd/client v0.0.0-20230301094509-c82b237672a0
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -277,8 +277,6 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/CabinfeverB/client-go/v2 v2.0.0-20230222083615-a17c544f7dee
-	github.com/tikv/pd/client => github.com/CabinfeverB/pd/client v0.0.0-20230224083531-76c9b5af8fdc
-	//github.com/tikv/pd/client => /Users/jiangyongbo/github/pd/client
+	github.com/tikv/client-go/v2 => github.com/CabinfeverB/client-go/v2 v2.0.0-20230301105120-1d7895c319b2
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
