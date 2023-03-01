@@ -1174,6 +1174,12 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	if !a.Ctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("bulding executor",
+			zap.String("the top one's output cols", a.Plan.Schema().String()),
+			zap.String("the output names", fmt.Sprintf("%v", a.OutputNames)),
+		)
+	}
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

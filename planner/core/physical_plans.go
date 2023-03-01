@@ -2645,3 +2645,7 @@ func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil
 }
+
+func (p *PhysicalSequence) Schema() *expression.Schema {
+	return p.Children()[len(p.Children())-1].Schema()
+}

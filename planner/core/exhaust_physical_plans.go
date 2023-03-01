@@ -3293,6 +3293,7 @@ func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		}
 		childReqs = append(childReqs, propChoice)
 		seq := PhysicalSequence{}.Init(p.ctx, p.stats, p.blockOffset, childReqs...)
+		seq.SetSchema(p.children[len(p.children)-1].Schema())
 		seqs = append(seqs, seq)
 	}
 	return seqs, true, nil

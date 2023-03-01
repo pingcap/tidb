@@ -4261,7 +4261,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) Logical
 		if !ctes[i].nonRecursive {
 			return p
 		}
-		if ctes[i].isInline {
+		if ctes[i].isInline || ctes[i].cteClass == nil {
 			ctes = append(ctes[:i], ctes[i+1:]...)
 		}
 	}
@@ -4283,6 +4283,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) Logical
 		ctes: ctes,
 	}.Init(b.ctx, b.getSelectOffset())
 	seq.SetChildren(append(lctes, p)...)
+	seq.SetOutputNames(p.OutputNames().Shallow())
 	return seq
 }
 
