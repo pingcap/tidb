@@ -236,11 +236,11 @@ type SubTaskManager struct {
 	mu  sync.Mutex
 }
 
-func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBID proto.TiDBID, meta []byte) error {
+func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBID proto.TiDBID, meta []byte, tp proto.TaskType) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state) values (%?, %?, %?, %?)", uint64(globalTaskID), string(designatedTiDBID), meta, string(proto.TaskStatePending))
+	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state, type) values (%?, %?, %?, %?, %?)", uint64(globalTaskID), string(designatedTiDBID), meta, string(proto.TaskStatePending), string(tp))
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	args := []interface{}{TiDBID, taskID}
+	args := []interface{}{string(TiDBID), uint64(taskID)}
 	args = append(args, states...)
 	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {

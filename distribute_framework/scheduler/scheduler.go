@@ -70,7 +70,7 @@ func NewScheduler(ctx context.Context, id proto.TiDBID, taskID proto.TaskID, sub
 }
 
 func (s *SchedulerImpl) Run(task *proto.Task) error {
-	logutil.BgLogger().Info("scheduler run a step", zap.Any("id", s.id), zap.Any("step", task.Step))
+	logutil.BgLogger().Info("scheduler run a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
 		s.onError(err)
@@ -87,7 +87,7 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 		}
 	}()
 
-	subtasks, err := s.subtaskTable.GetSubtasksInStates(s.id, task.ID, proto.TaskStateRunning)
+	subtasks, err := s.subtaskTable.GetSubtasksInStates(s.id, task.ID, string(proto.TaskStatePending))
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -104,6 +104,7 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 			// we should fetch all subtasks from subtaskCh even if there is an error or cancel.
 			defer s.subtaskWg.Done()
 
+			logutil.BgLogger().Info("scheduler run a subtask", zap.Any("id", s.id), zap.Any("subtask", subtask))
 			select {
 			case <-subtaskCtx.Done():
 				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)

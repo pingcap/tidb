@@ -142,7 +142,6 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 	if gTask.State == proto.TaskStateSucceed {
 		d.delRunningGlobalTasks(int64(gTask.ID))
 		_ = d.subTaskMgr.DeleteTasks(gTask.ID)
-		return nil
 	} else if gTask.State == proto.TaskStatePending {
 		gTask.StartTime = time.Now()
 		d.setRunningGlobalTasks(gTask)
@@ -156,13 +155,17 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 		return err
 	}
 
+	if finished {
+		return nil
+	}
+
 	// TODO: Consider batch splitting
 	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
 	// TODO: batch insert
 	// Write the subTask meta into the storage.
 	for _, subTask := range subTasks {
 		// TODO: Get TiDB_Instance_ID
-		err := d.subTaskMgr.AddNewTask(gTask.ID, subTask.SchedulerID, subTask.Meta.Serialize())
+		err := d.subTaskMgr.AddNewTask(gTask.ID, subTask.SchedulerID, subTask.Meta.Serialize(), gTask.Type)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subTask", subTask), zap.Error(err))
 			return err

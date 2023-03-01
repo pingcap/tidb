@@ -196,7 +196,7 @@ func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
 		if task.State != proto.TaskStateRunning {
 			return
 		}
-		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStateRunning)); err != nil {
+		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending)); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {
@@ -213,6 +213,7 @@ func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
 }
 
 func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
+	logutil.BgLogger().Info("handle task", zap.Any("id", task.ID), zap.Any("state", task.State))
 	switch task.State {
 	case proto.TaskStateRunning:
 		if err := scheduler.Run(task); err != nil {

@@ -27,8 +27,10 @@ func (*DefaultPool) Run(f func()) error {
 	return nil
 }
 
-func (*DefaultPool) RunWithConcurrency(f func(), i uint64) error {
-	f()
+func (*DefaultPool) RunWithConcurrency(f func(), n uint64) error {
+	for i := uint64(0); i < n; i++ {
+		go f()
+	}
 	return nil
 }
 
