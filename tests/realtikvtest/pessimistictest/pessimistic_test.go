@@ -1169,6 +1169,10 @@ func TestPessimisticReadCommitted(t *testing.T) {
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
 
+	// Avoid https://github.com/pingcap/tidb/issues/41792
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+	tk1.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+
 	// test SI
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(i int key);")

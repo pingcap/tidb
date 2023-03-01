@@ -825,6 +825,12 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 			return
 		}
 
+		// If `tidb_pessimistic_txn_aggressive_locking` is enabled, the double conflict case is
+		// avoided. Disable it to run this test.
+		if doubleConflictAfterTransfer {
+			tk2.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+		}
+
 		tk2.SetBreakPoints(
 			sessiontxn.BreakPointBeforeExecutorFirstRun,
 			sessiontxn.BreakPointOnStmtRetryAfterLockError,
