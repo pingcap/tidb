@@ -321,3 +321,61 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 	}
 	return false
 }
+<<<<<<< HEAD
+=======
+
+// isPlanCacheable returns whether this plan is cacheable and the reason if not.
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+	var pp PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		pp = x.SelectPlan
+	case *Update:
+		pp = x.SelectPlan
+	case *Delete:
+		pp = x.SelectPlan
+	case PhysicalPlan:
+		pp = x
+	default:
+		return false, fmt.Sprintf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String())
+	}
+	if pp == nil { // simple DML statements
+		return true, ""
+	}
+	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum)
+}
+
+// isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+	switch x := p.(type) {
+	case *PhysicalTableDual:
+		if paramNum > 0 {
+			return false, "skip plan-cache: get a TableDual plan"
+		}
+	case *PhysicalTableReader:
+		if x.StoreType == kv.TiFlash {
+			return false, "skip plan-cache: TiFlash plan is un-cacheable"
+		}
+	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
+		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalMemTable:
+		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
+	case *PhysicalIndexMergeReader:
+		if x.AccessMVIndex {
+			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+		}
+	case *PhysicalApply:
+		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
+	}
+
+	for _, c := range p.Children() {
+		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum); !cacheable {
+			return cacheable, reason
+		}
+	}
+	return true, ""
+}
+>>>>>>> bd423ea76e (planner: skip plan cache if plans have `MemTableScan` operator (#41830))
