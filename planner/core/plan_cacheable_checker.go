@@ -392,6 +392,8 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalMemTable:
+		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex {
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
