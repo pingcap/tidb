@@ -55,7 +55,7 @@ func TestSingle(t *testing.T) {
 	client := cluster.RandClient()
 	ctx := context.Background()
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(client),
@@ -115,7 +115,7 @@ func TestCluster(t *testing.T) {
 
 	cli := cluster.Client(0)
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
 	d := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli),
@@ -131,7 +131,7 @@ func TestCluster(t *testing.T) {
 
 	cli1 := cluster.Client(1)
 	ic2 := infoschema.NewCache(2)
-	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
 	d1 := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli1),
@@ -156,7 +156,7 @@ func TestCluster(t *testing.T) {
 	// d3 (not owner) stop
 	cli3 := cluster.Client(3)
 	ic3 := infoschema.NewCache(2)
-	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
+	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
 	d3 := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli3),

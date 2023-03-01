@@ -43,6 +43,7 @@ var (
 // Meta structure:
 //	NextGlobalID -> int64
 //	SchemaVersion -> int64
+//  SchemaTimestampKey -> int64
 //	DBs -> {
 //		DB:1 -> db meta data []byte
 //		DB:2 -> db meta data []byte
@@ -56,27 +57,28 @@ var (
 //
 
 var (
-	mMetaPrefix          = []byte("m")
-	mNextGlobalIDKey     = []byte("NextGlobalID")
-	mSchemaVersionKey    = []byte("SchemaVersionKey")
-	mDBs                 = []byte("DBs")
-	mDBPrefix            = "DB"
-	mTablePrefix         = "Table"
-	mSequencePrefix      = "SID"
-	mSeqCyclePrefix      = "SequenceCycle"
-	mTableIDPrefix       = "TID"
-	mIncIDPrefix         = "IID"
-	mRandomIDPrefix      = "TARID"
-	mBootstrapKey        = []byte("BootstrapKey")
-	mSchemaDiffPrefix    = "Diff"
-	mPolicies            = []byte("Policies")
-	mPolicyPrefix        = "Policy"
-	mResourceGroups      = []byte("ResourceGroups")
-	mResourceGroupPrefix = "RG"
-	mPolicyGlobalID      = []byte("PolicyGlobalID")
-	mPolicyMagicByte     = CurrentMagicByteVer
-	mDDLTableVersion     = []byte("DDLTableVersion")
-	mMetaDataLock        = []byte("metadataLock")
+	mMetaPrefix            = []byte("m")
+	mNextGlobalIDKey       = []byte("NextGlobalID")
+	mSchemaVersionKey      = []byte("SchemaVersionKey")
+	mDBs                   = []byte("DBs")
+	mDBPrefix              = "DB"
+	mTablePrefix           = "Table"
+	mSequencePrefix        = "SID"
+	mSeqCyclePrefix        = "SequenceCycle"
+	mTableIDPrefix         = "TID"
+	mIncIDPrefix           = "IID"
+	mRandomIDPrefix        = "TARID"
+	mBootstrapKey          = []byte("BootstrapKey")
+	mSchemaDiffPrefix      = "Diff"
+	mPolicies              = []byte("Policies")
+	mPolicyPrefix          = "Policy"
+	mResourceGroups        = []byte("ResourceGroups")
+	mResourceGroupPrefix   = "RG"
+	mPolicyGlobalID        = []byte("PolicyGlobalID")
+	mPolicyMagicByte       = CurrentMagicByteVer
+	mDDLTableVersion       = []byte("DDLTableVersion")
+	mMetaDataLock          = []byte("metadataLock")
+	mSchemaTimestampPrefix = "SchemaTimestamp"
 )
 
 const (
@@ -425,6 +427,18 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 		v--
 	}
 	return v, err
+}
+
+// Returns the timestamp of a schema version
+func (m *Meta) GetTimestampForSchemaVersion(version int64) (int64, error) {
+	key := m.schemaTimestampKey(version)
+	return m.txn.GetInt64(key)
+}
+
+// Set the timestamp for a specific schema version
+func (m *Meta) SetTimestampForSchemaVersion(ts, version int64) error {
+	key := m.schemaTimestampKey(version)
+	return m.txn.Set(key, []byte(strconv.FormatInt(ts, 10)))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -1326,6 +1340,10 @@ func DecodeElement(b []byte) (*Element, error) {
 
 func (*Meta) schemaDiffKey(schemaVersion int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+}
+
+func (*Meta) schemaTimestampKey(version int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mSchemaTimestampPrefix, version))
 }
 
 // GetSchemaDiff gets the modification information on a given schema version.

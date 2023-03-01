@@ -93,7 +93,7 @@ func NewMockDomain() *Domain {
 	do := &Domain{
 		infoCache: infoschema.NewCache(1),
 	}
-	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1, 0)
 	return do
 }
 
@@ -187,6 +187,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
+	schemaTs, err := m.GetTimestampForSchemaVersion(neededSchemaVersion)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		// ignore schema timestamp here if fails
+		schemaTs = 0
+	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		return is, true, 0, nil, nil
@@ -208,7 +214,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
-			do.infoCache.Insert(is, startTS)
+			do.infoCache.Insert(is, startTS, uint64(schemaTs))
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -247,7 +253,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build()
-	do.infoCache.Insert(is, startTS)
+	do.infoCache.Insert(is, startTS, uint64(schemaTs))
 	return is, false, currentSchemaVersion, nil, nil
 }
 

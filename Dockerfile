@@ -30,9 +30,11 @@ COPY . /tidb
 ARG GOPROXY
 RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
 
-FROM rockylinux:9-minimal
+FROM rockylinux:9
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
+
+RUN yum update -y && yum install -y wget
 
 WORKDIR /
 EXPOSE 4000

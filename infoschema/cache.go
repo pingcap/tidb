@@ -15,11 +15,13 @@
 package infoschema
 
 import (
-	"fmt"
+	"errors"
 	"sort"
 	"sync"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -39,6 +41,8 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
+	// record SnapshotTS of the latest schema Insert, use this in case the schema timestamp is not set
+	maxUpdatedSnapshotTS uint64
 }
 
 type schemaAndTimestamp struct {
@@ -72,22 +76,31 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	return nil
 }
 
-// GetSchemaByTimestamp returns the schema used at the specific timestamp
-func (h *InfoCache) GetSchemaByTimestamp(ts uint64) (InfoSchema, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.getSchemaByTimestampNoLock(ts)
-}
-
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
+	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts), zap.Uint64("max updated ts", h.maxUpdatedSnapshotTS))
+
+	// first check like the old way in case the schema timestamp is not set in tikv
+	// we are sure that the latest schema should work here based on what tidb has known so far
+	if ts >= h.maxUpdatedSnapshotTS {
+		if len(h.cache) > 0 {
+			hitTSCounter.Inc()
+			return h.cache[0].infoschema, nil
+		}
+	}
+
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return uint64(h.cache[i].timestamp) <= ts
 	})
-	if i < len(h.cache) {
-		return h.cache[i].infoschema, nil
+	// if the request timestamp is earlier then the oldest schema, then it is a cache miss
+	if i < len(h.cache) && (i != 0 || uint64(h.cache[i].timestamp) == ts) {
+		// timestamp is zero for old schema update that doesn't set timestamp, so we cannot use the cache here
+		if h.cache[i].timestamp != 0 {
+			return h.cache[i].infoschema, nil
+		}
 	}
 
-	return nil, fmt.Errorf("no schema cached for timestamp %d", ts)
+	logutil.BgLogger().Debug("SCHEMA CACHE no schema", zap.Uint64("timestamp", ts))
+	return nil, errors.New("no cached schema")
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
@@ -136,6 +149,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	defer h.mu.RUnlock()
 
 	getTSCounter.Inc()
+
 	if schema, err := h.getSchemaByTimestampNoLock(snapshotTS); err == nil {
 		hitTSCounter.Inc()
 		return schema
@@ -146,7 +160,8 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
-func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
+// snapshotTS is the timestap of the schema update, schemaTS is the timestamp of the schema taking effect
+func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -157,11 +172,13 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
+	// keep maxUpdatedSnapshotTS for backward compatibility
+	if h.maxUpdatedSnapshotTS < snapshotTS {
+		h.maxUpdatedSnapshotTS = snapshotTS
+	}
+
 	// cached entry
 	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
-		if h.cache[i].timestamp > int64(snapshotTS) {
-			h.cache[i].timestamp = int64(snapshotTS)
-		}
 		return true
 	}
 
@@ -171,18 +188,32 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = schemaAndTimestamp{
 			infoschema: is,
-			timestamp:  int64(snapshotTS),
+			timestamp:  int64(schemaTS),
 		}
-		return true
 	} else if i < len(h.cache) {
 		// drop older schema
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = schemaAndTimestamp{
 			infoschema: is,
-			timestamp:  int64(snapshotTS),
+			timestamp:  int64(schemaTS),
 		}
-		return true
+	} else {
+		// older than all cached schemas, refuse to cache it
+		return false
 	}
-	// older than all cached schemas, refuse to cache it
-	return false
+
+	// it might be possible that a newer schema version has a older transaction start timestamp,
+	// in this case, we will assign the newer version shcema timestamp to the older version of schema to avoid the out of order
+	// this should be fine and consistent in practice, because it means the two ddl happens concurrently
+	// also, this could handle the transition, where the newer version of schema doesn't have timestamp set but an older one has,
+	// in this case, the older schema timestamp will be reset to 0 as if it doesn't have timestamp set
+	// this is O(n) to cache size, but should be fine in practice
+	for ; i < len(h.cache); i++ {
+		if h.cache[i].timestamp > int64(schemaTS) {
+			h.cache[i].timestamp = int64(schemaTS)
+		}
+	}
+
+	return true
+
 }
