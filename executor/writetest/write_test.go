@@ -1874,7 +1874,7 @@ type testCase struct {
 
 func checkCases(
 	tests []testCase,
-	ld *executor.LoadDataInfo,
+	ld *executor.LoadDataWorker,
 	t *testing.T,
 	tk *testkit.TestKit,
 	ctx sessionctx.Context,
@@ -1903,7 +1903,7 @@ func checkCases(
 		require.NoError(t, err1)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		require.NoError(t, err1)
-		ld.SetMaxRowsInBatch(20000)
+		ld.ResetBatch()
 		ld.SetMessage()
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
 		ctx.StmtCommit(context.Background())
@@ -1924,7 +1924,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	tk.MustExec(createSQL)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -1974,7 +1974,7 @@ func TestIssue18681(t *testing.T) {
 	tk.MustExec(createSQL)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -1983,7 +1983,7 @@ func TestIssue18681(t *testing.T) {
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	ld.SetMaxRowsInBatch(20000)
+	ld.ResetBatch()
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
@@ -2026,7 +2026,7 @@ func TestIssue34358(t *testing.T) {
 	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
 
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	require.NotNil(t, ld)
 	checkCases([]testCase{
@@ -2048,7 +2048,7 @@ func TestLoadData(t *testing.T) {
 	require.Error(t, err)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2070,7 +2070,7 @@ func TestLoadData(t *testing.T) {
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)
-	ld.SetMaxRowsInBatch(20000)
+	ld.ResetBatch()
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
@@ -2229,7 +2229,7 @@ func TestLoadDataEscape(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2260,7 +2260,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2286,7 +2286,7 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2311,7 +2311,7 @@ func TestLoadDataNULL(t *testing.T) {
 	tk.MustExec(`load data local infile '/tmp/nonexistence.csv' into table load_data_test
 FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2338,7 +2338,7 @@ func TestLoadDataReplace(t *testing.T) {
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
 	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2359,7 +2359,7 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2380,7 +2380,7 @@ func TestLoadDataWithUppercaseUserVars(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (@V1)" +
 		" set a = @V1, b = @V1*100")
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.True(t, ok)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
@@ -2402,7 +2402,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 		"partition p2 values less than (11))")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
-	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
 	parser, err := mydump.NewCSVParser(
@@ -2419,7 +2419,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)
-	ld.SetMaxRowsInBatch(20000)
+	ld.ResetBatch()
 	ld.SetMessage()
 	ctx.StmtCommit(context.Background())
 	txn, err := ctx.Txn(true)
