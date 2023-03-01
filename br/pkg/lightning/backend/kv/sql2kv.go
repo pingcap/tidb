@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -435,7 +434,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	kvPairs := kvcodec.se.takeKvPairs()
 	for i := 0; i < len(kvPairs.pairs); i++ {
 		var encoded [8]byte
-		kvPairs.pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
+		kvPairs.pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
 	}
 	kvcodec.recordCache = record[:0]
 	return kvPairs, nil
