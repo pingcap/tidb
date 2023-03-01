@@ -322,6 +322,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 		}
 	}
 
+	// add "" db label
+	if len(dbLabelSet) == 0 {
+		dbLabelSet[""] = struct{}{}
+	}
+
 	return dbLabelSet
 }
 
