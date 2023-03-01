@@ -113,6 +113,10 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
+	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
+		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
+		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
+
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
@@ -196,6 +200,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", gcTTL))
 	}
 	cfg.GCTTL = gcTTL
+	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	compressionCfg, err := parseCompressionFlags(flags)
 	if err != nil {

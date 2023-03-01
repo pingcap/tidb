@@ -1571,23 +1571,29 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
+func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
 	}
-	if loadDataInfo == nil {
+	if loadDataWorker == nil {
 		return errors.New("load data info is empty")
 	}
 
-	err := cc.writeReq(ctx, loadDataInfo.Path)
+	err := cc.writeReq(ctx, loadDataWorker.Path)
 	if err != nil {
 		return err
 	}
 
-	// use Pipe to convert cc.readPacket to io.Reader
-	r, w := io.Pipe()
+	var (
+		// use Pipe to convert cc.readPacket to io.Reader
+		r, w    = io.Pipe()
+		drained bool
+		wg      sync.WaitGroup
+	)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		//nolint: errcheck
 		defer w.Close()
 
@@ -1604,7 +1610,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 				}
 				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 				if len(data) == 0 {
-					loadDataInfo.Drained = true
+					drained = true
 					return
 				}
 			}
@@ -1618,16 +1624,19 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}()
 
-	err = loadDataInfo.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
+	err = loadDataWorker.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
+	_ = r.Close()
+	wg.Wait()
+
 	if err != nil {
-		if !loadDataInfo.Drained {
+		if !drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-		for !loadDataInfo.Drained {
+		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.Ctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
 				return executor.ErrQueryInterrupted
 			}
@@ -1637,13 +1646,12 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 				break
 			}
 			if len(curData) == 0 {
-				loadDataInfo.Drained = true
+				drained = true
 				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
 				break
 			}
 		}
 	}
-	loadDataInfo.SetMessage()
 	return err
 }
 
@@ -1841,7 +1849,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
 			if txnErr != nil {
 				err = txnErr
 				break
@@ -2038,7 +2046,7 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 		//nolint:forcetypeassert
-		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataWorker)); err != nil {
 			return handled, err
 		}
 	}

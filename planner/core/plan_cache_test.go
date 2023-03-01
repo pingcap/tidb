@@ -83,6 +83,39 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestPlanCacheUnsafeRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int unsigned, key(a))`)
+	tk.MustExec(`prepare st from 'select a from t use index(a) where a<?'`)
+	tk.MustExec(`set @a=10`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a=-10`) // invalid range for an unsigned column
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a=10`) // plan cache can work again
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`create table t1 (a enum('1', '2'), key(a))`)
+	tk.MustExec(`prepare st from 'select a from t1 use index(a) where a=?'`)
+	tk.MustExec(`set @a='1'`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a='x'`) // invalid value for this column
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @a='1'`) // plan cache can work again
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestIssue40296(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -152,6 +185,43 @@ func TestNonPreparedPlanCacheSwitch(t *testing.T) {
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 	tk.MustExec(`select * from t where a=1`) // the session-level switch can take effect in real time
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestNonPreparedPlanCacheSwitch2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for nonPrep := 0; nonPrep <= 1; nonPrep++ {
+		for prep := 0; prep <= 1; prep++ {
+			tk.MustExec("create table t(a int)")
+			tk.MustExec(fmt.Sprintf(`set tidb_enable_non_prepared_plan_cache=%v`, nonPrep))
+			tk.MustExec(fmt.Sprintf(`set tidb_enable_prepared_plan_cache=%v`, prep))
+
+			tk.MustExec(`select * from t where a<1`)
+			tk.MustExec(`select * from t where a<2`)
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(fmt.Sprintf("%v", nonPrep)))
+
+			tk.MustExec(`prepare st from 'select * from t where a<?'`)
+			tk.MustExec(`set @a=1`)
+			tk.MustExec(`execute st using @a`)
+			tk.MustExec(`set @a=2`)
+			tk.MustExec(`execute st using @a`)
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(fmt.Sprintf("%v", prep)))
+
+			tk.MustExec("drop table t")
+		}
+	}
+}
+
+func TestNonPreparedPlanCacheUnknownSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt(a char(2) primary key, b char(2))`)
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	err := tk.ExecToErr(`select tt.* from tt tmp where a='aa'`)
+	require.Equal(t, err.Error(), "[planner:1051]Unknown table 'tt'")
 }
 
 func TestNonPreparedPlanCacheReason(t *testing.T) {
@@ -259,65 +329,23 @@ func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 	tk.MustExec("select * from t where a=1") // cache this plan
 
 	tk.MustQuery("explain select * from t where a=2").Check(testkit.Rows(
-		`Selection_8 10.00 root  eq(test.t.a, 2)`,
-		`└─TableReader_7 10.00 root  data:Selection_6`,
-		`  └─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
-		`    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader_7 10.00 root  data:Selection_6`,
+		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustQuery("explain format=verbose select * from t where a=2").Check(testkit.Rows(
-		`Selection_8 10.00 169474.57 root  eq(test.t.a, 2)`,
-		`└─TableReader_7 10.00 168975.57 root  data:Selection_6`,
-		`  └─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
-		`    └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+		`TableReader_7 10.00 168975.57 root  data:Selection_6`,
+		`└─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
+		`  └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]interface{}{
-		{"Selection_8", "10.00", "0", "root"},
-		{"└─TableReader_7", "10.00", "0", "root"},
-		{"  └─Selection_6", "10.00", "0", "cop[tikv]"},
-		{"    └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
+		{"TableReader_7", "10.00", "0", "root"},
+		{"└─Selection_6", "10.00", "0", "cop[tikv]"},
+		{"  └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
 	})
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-}
-
-func TestNonPreparedPlanCacheFallback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int)`)
-	for i := 0; i < 5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
-	}
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	// inject a fault to GeneratePlanCacheStmtWithAST
-	ctx := context.WithValue(context.Background(), "____GeneratePlanCacheStmtWithASTErr", struct{}{})
-	tk.MustQueryWithContext(ctx, "select * from t where a in (1, 2)").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot generate PlanCacheStmt
-	tk.MustQueryWithContext(ctx, "select * from t where a in (1, 3)").Sort().Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot generate PlanCacheStmt
-	tk.MustQuery("select * from t where a in (1, 2)").Sort().Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select * from t where a in (1, 3)").Sort().Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // no error
-
-	// inject a fault to GetPlanFromSessionPlanCache
-	tk.MustQuery("select * from t where a=1").Check(testkit.Rows("1")) // cache this plan
-	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2")) // plan from cache
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	ctx = context.WithValue(context.Background(), "____GetPlanFromSessionPlanCacheErr", struct{}{})
-	tk.MustQueryWithContext(ctx, "select * from t where a=3").Check(testkit.Rows("3"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // fallback to the normal opt-path
-	tk.MustQueryWithContext(ctx, "select * from t where a=4").Check(testkit.Rows("4"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // fallback to the normal opt-path
-	tk.MustQueryWithContext(context.Background(), "select * from t where a=0").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // use the cached plan if no error
-
-	// inject a fault to RestoreASTWithParams
-	ctx = context.WithValue(context.Background(), "____GetPlanFromSessionPlanCacheErr", struct{}{})
-	ctx = context.WithValue(ctx, "____RestoreASTWithParamsErr", struct{}{})
-	_, err := tk.ExecWithContext(ctx, "select * from t where a=1")
-	require.NotNil(t, err)
 }
 
 func TestNonPreparedPlanCacheFastPointGet(t *testing.T) {

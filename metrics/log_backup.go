@@ -76,11 +76,12 @@ func InitLogBackupMetrics() {
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
-
+  
 	RegionCheckpointSubscriptionEvent = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_checkpoint_event",
-		Help:      "The region flush event count.",
+		Help:      "The region flush event size.",
+		Buckets:   prometheus.ExponentialBuckets(8, 2.0, 12),
 	}, []string{"store"})
 }

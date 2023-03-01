@@ -132,7 +132,7 @@ type Domain struct {
 	indexUsageSyncLease   time.Duration
 	dumpFileGcChecker     *dumpFileGcChecker
 	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *extractHandle
+	extractTaskHandle     *ExtractHandle
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
@@ -1820,7 +1820,7 @@ func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 }
 
 // GetExtractHandle returns extract handle
-func (do *Domain) GetExtractHandle() *extractHandle {
+func (do *Domain) GetExtractHandle() *ExtractHandle {
 	return do.extractTaskHandle
 }
 

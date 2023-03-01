@@ -36,7 +36,7 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-parquet/p?endpoint=%s'
-		FORMAT 'SQLDumpFile' INTO TABLE load_csv.t;`, gcsEndpoint)
+		FORMAT 'SQL file' INTO TABLE load_csv.t;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 a",
