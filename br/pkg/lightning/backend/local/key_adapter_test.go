@@ -22,7 +22,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,7 +69,7 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 
 	keyAdapter := dupDetectKeyAdapter{}
 	for _, input := range inputs {
-		encodedRowID := kv.IntHandle(input.rowID).Encoded()
+		encodedRowID := common.EncodeIntRowID(input.rowID)
 		result := keyAdapter.Encode(nil, input.key, encodedRowID)
 		require.Equal(t, keyAdapter.EncodedLen(input.key, encodedRowID), len(result))
 
@@ -91,7 +91,7 @@ func TestDupDetectKeyOrder(t *testing.T) {
 	keyAdapter := dupDetectKeyAdapter{}
 	encodedKeys := make([][]byte, 0, len(keys))
 	for _, key := range keys {
-		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, kv.IntHandle(1).Encoded()))
+		encodedKeys = append(encodedKeys, keyAdapter.Encode(nil, key, common.EncodeIntRowID(1)))
 	}
 	sorted := sort.SliceIsSorted(encodedKeys, func(i, j int) bool {
 		return bytes.Compare(encodedKeys[i], encodedKeys[j]) < 0
@@ -102,8 +102,8 @@ func TestDupDetectKeyOrder(t *testing.T) {
 func TestDupDetectEncodeDupKey(t *testing.T) {
 	keyAdapter := dupDetectKeyAdapter{}
 	key := randBytes(32)
-	result1 := keyAdapter.Encode(nil, key, kv.IntHandle(10).Encoded())
-	result2 := keyAdapter.Encode(nil, key, kv.IntHandle(20).Encoded())
+	result1 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(10))
+	result2 := keyAdapter.Encode(nil, key, common.EncodeIntRowID(20))
 	require.NotEqual(t, result1, result2)
 }
 
@@ -116,7 +116,7 @@ func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
 	for _, keyAdapter := range keyAdapters {
 		key := randBytes(32)
 		buf := make([]byte, 256)
-		buf2 := keyAdapter.Encode(buf[:4], key, kv.IntHandle(1).Encoded())
+		buf2 := keyAdapter.Encode(buf[:4], key, common.EncodeIntRowID(1))
 		require.True(t, startWithSameMemory(buf, buf2))
 		// Verify the encoded result first.
 		key2, err := keyAdapter.Decode(nil, buf2[4:])

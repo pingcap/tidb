@@ -435,7 +435,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	kvPairs := kvcodec.se.takeKvPairs()
 	for i := 0; i < len(kvPairs.pairs); i++ {
 		var encoded [8]byte
-		kvPairs.pairs[i].RowID = codec.EncodeInt(encoded[:0], rowID)
+		kvPairs.pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
 	kvcodec.recordCache = record[:0]
 	return kvPairs, nil

@@ -18,7 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -103,6 +103,6 @@ func (dupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 var _ KeyAdapter = dupDetectKeyAdapter{}
 
 var (
-	MinRowID  = tidbkv.IntHandle(math.MinInt64).Encoded()
-	ZeroRowID = tidbkv.IntHandle(0).Encoded()
+	MinRowID  = common.EncodeIntRowID(math.MinInt64)
+	ZeroRowID = common.EncodeIntRowID(0)
 )
