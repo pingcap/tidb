@@ -1461,6 +1461,21 @@ error = '''
 Subquery returns more than 1 row
 '''
 
+["executor:1261"]
+error = '''
+Row %d doesn't contain data for all columns
+'''
+
+["executor:1262"]
+error = '''
+Row %d was truncated; it contained more data than there were input columns
+'''
+
+["executor:1263"]
+error = '''
+Column set to default value; NULL supplied to NOT NULL column '%s' at row %d
+'''
+
 ["executor:1295"]
 error = '''
 This command is not supported in the prepared statement protocol yet

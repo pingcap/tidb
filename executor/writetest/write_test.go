@@ -2321,8 +2321,7 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
 \N,"\N"
 "\\N"`),
 			[]string{"<nil>|NULL", "<nil>|<nil>", "\\N|<nil>"},
-			// TODO: Warnings should be 1, "Row 3 doesn't contain data for all columns"
-			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0",
+			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 1",
 		},
 	}
 	deleteSQL := "delete from load_data_test"
