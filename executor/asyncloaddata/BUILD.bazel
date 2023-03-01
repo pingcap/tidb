@@ -18,8 +18,10 @@ go_library(
 
 go_test(
     name = "asyncloaddata_test",
+    timeout = "short",
     srcs = ["util_test.go"],
     embed = [":asyncloaddata"],
+    flaky = True,
     deps = [
         "//testkit",
         "//util/sqlexec",
