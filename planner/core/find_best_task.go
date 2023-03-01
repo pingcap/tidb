@@ -2665,14 +2665,13 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 		logutil.BgLogger().Warn("build physical for cte", zap.String("logical plan", ToString(p.children[0])))
 		return p.baseLogicalPlan.findBestTask(prop, counter, pop)
 	}
-	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP))
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
-	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP))
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
+	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP), zap.String("cte name", pcte.ExplainID().String()))
 	if prop.IsFlashProp() && prop.CTECanMPP {
 		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, 1, nil

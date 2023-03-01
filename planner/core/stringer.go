@@ -22,6 +22,51 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
+func ToStringNewForMPP(p PhysicalPlan) string {
+	builder := &strings.Builder{}
+	childLen := len(p.Children())
+	if childLen == 1 {
+		if _, ok := p.(*PhysicalExchangeReceiver); !ok {
+			fmt.Fprintf(builder, ToStringNewForMPP(p.Children()[0]))
+			fmt.Fprintf(builder, "->")
+		}
+	} else if childLen > 1 {
+		fmt.Fprintf(builder, "(")
+		for i := 0; i < childLen; i++ {
+			fmt.Fprintf(builder, ToStringNewForMPP(p.Children()[i]))
+			if i != childLen-1 {
+				fmt.Fprintf(builder, ",")
+			}
+		}
+		fmt.Fprintf(builder, ")->")
+	}
+	fmt.Fprintf(builder, p.TP())
+	switch x := p.(type) {
+	case *PhysicalExchangeSender:
+		fmt.Fprintf(builder, "_%d", x.id)
+		fmt.Fprintf(builder, "(")
+		for _, task := range x.TargetTasks {
+			fmt.Fprintf(builder, "%d, ", task.ID)
+		}
+		for _, tasks := range x.TargetCTEReaderTasks {
+			fmt.Fprintf(builder, "(")
+			for _, task := range tasks {
+				fmt.Fprintf(builder, "%d, ", task.ID)
+			}
+			fmt.Fprintf(builder, ")")
+		}
+		fmt.Fprintf(builder, ")")
+	case *PhysicalExchangeReceiver:
+		fmt.Fprintf(builder, "_%d", x.id)
+		fmt.Fprintf(builder, "(")
+		for _, task := range x.Tasks {
+			fmt.Fprintf(builder, "%d, ", task.ID)
+		}
+		fmt.Fprintf(builder, ")")
+	}
+	return builder.String()
+}
+
 // ToString explains a Plan, returns description string.
 func ToString(p Plan) string {
 	strs, _ := toString(p, []string{}, []int{})
@@ -358,6 +403,17 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
+		for _, tasks := range x.TargetCTEReaderTasks {
+			str += "("
+			for _, task := range tasks {
+				str += fmt.Sprintf("%d, ", task.ID)
+			}
+			str += ")"
+		}
+		str += ")"
+	case *PhysicalCTE:
+		str = "CTEReader("
+		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"
 	default:
 		str = fmt.Sprintf("%T", in)

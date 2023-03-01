@@ -1567,9 +1567,10 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
-	TargetTasks  []*kv.MPPTask
-	ExchangeType tipb.ExchangeType
-	HashCols     []*property.MPPPartitionColumn
+	TargetTasks          []*kv.MPPTask
+	TargetCTEReaderTasks [][]*kv.MPPTask
+	ExchangeType         tipb.ExchangeType
+	HashCols             []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
 	CompressionMode kv.ExchangeCompressionMode
@@ -2457,6 +2458,30 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
+func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalCTE)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if p.SeedPlan != nil {
+		cloned.SeedPlan, err = p.SeedPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if p.RecurPlan != nil {
+		cloned.RecurPlan, err = p.RecurPlan.Clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	cloned.cteAsName, cloned.cteName = p.cteAsName, p.cteName
+	cloned.CTE = p.CTE
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalCTE
 func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -2560,6 +2585,14 @@ func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
 	return
 }
 
+func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
+	cloned, err := (*PhysicalCTE)(p).Clone()
+	if err != nil {
+		return nil, err
+	}
+	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
+}
+
 func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
@@ -2576,8 +2609,6 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 
 type PhysicalSequence struct {
 	physicalSchemaProducer
-
-	ctes []*PhysicalCTE
 }
 
 func (p *PhysicalSequence) MemoryUsage() (sum int64) {
@@ -2587,9 +2618,6 @@ func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 
 	sum = p.physicalSchemaProducer.MemoryUsage()
 
-	for _, cte := range p.ctes {
-		sum += cte.MemoryUsage()
-	}
 	return
 }
 
@@ -2606,4 +2634,14 @@ func (p *PhysicalSequence) ExplainInfo() string {
 	var res string
 	res = "Sequence Node"
 	return res
+}
+
+func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSequence)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
 }
