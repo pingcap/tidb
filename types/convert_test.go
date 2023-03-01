@@ -1289,4 +1289,12 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		}
 		require.Equal(t, ca.result, result, "input=%v", ca.input)
 	}
+
+	result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, "-99.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
+
+	result, err = convertDecimalStrToUint(&stmtctx.StatementContext{}, "-100.0", math.MaxUint8, 0)
+	require.Error(t, err)
+	require.Equal(t, uint64(0), result)
 }
