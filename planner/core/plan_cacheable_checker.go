@@ -270,7 +270,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *driver.ValueExpr:
 		if node.IsNull() {
-			// for a condition like `not-null-col = null`, the planner can optimize it to `False` and generate a
+			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
 			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
 			// optimization and a table-full-scan will be generated.
 			checker.cacheable = false
