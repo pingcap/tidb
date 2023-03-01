@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/resourcemanager/gpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -187,4 +188,32 @@ func TestRunWithNotEnough2(t *testing.T) {
 	require.Equal(t, 1, p.Running())
 	require.Error(t, p.RunWithConcurrency(longRunningFunc, 1))
 	require.Error(t, p.Run(longRunningFunc))
+}
+
+func TestExitTask(t *testing.T) {
+	exit := make(chan struct{})
+	longRunningFunc := func() {
+		<-exit
+	}
+	p, err := NewPool("TestExitTask", int32(10), util.UNKNOWN, WithNonblocking(false))
+	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
+	defer p.ReleaseAndWait()
+	p.RunWithConcurrency(longRunningFunc, 10)
+	for i := 0; i < 10; i++ {
+		exit <- struct{}{}
+		time.Sleep(10 * time.Millisecond)
+		require.Equal(t, 10-i-1, p.Running())
+	}
+	p.RunWithConcurrency(longRunningFunc, 10)
+	var wg tidbutil.WaitGroupWrapper
+	wg.Run(func() {
+		p.Run(longRunningFunc)
+
+	})
+	for i := 0; i < 10; i++ {
+		exit <- struct{}{}
+	}
+	time.Sleep(10 * time.Millisecond)
+	require.Equal(t, 1, p.Running())
+	exit <- struct{}{}
 }
