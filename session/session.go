@@ -2153,8 +2153,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
 			if !variable.ErrUnknownSystemVar.Equal(err) {
+				sql := stmtNode.Text()
+				if s.sessionVars.EnableRedactLog {
+					sql = parser.Normalize(sql)
+				}
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", stmtNode.Text()))
+					zap.String("SQL", sql))
 			}
 		}
 		return nil, err
