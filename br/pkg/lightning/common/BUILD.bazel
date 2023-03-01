@@ -26,6 +26,7 @@ go_library(
         "//store/driver/error",
         "//table/tables",
         "//util",
+        "//util/codec",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

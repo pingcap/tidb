@@ -699,8 +699,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})
