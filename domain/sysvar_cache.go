@@ -96,6 +96,9 @@ func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, 
 	}
 	for _, row := range rows {
 		name := row.GetString(0)
+		if name == variable.TiDBCoprocessorTimeout {
+			fmt.Println("aaa")
+		}
 		val := row.GetString(1)
 		tableContents[name] = val
 	}
@@ -126,6 +129,9 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	}
 
 	for _, sv := range variable.GetSysVars() {
+		if sv.Name == variable.TiDBCoprocessorTimeout {
+			fmt.Println("ddd")
+		}
 		sVal := sv.Value
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]

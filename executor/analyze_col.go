@@ -124,10 +124,12 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+		SetCopRequestTimeout(e.ctx.GetSessionVars().CopRequestTimeout).
 		Build()
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Analyze cop timeout %v\n", e.ctx.GetSessionVars().CopRequestTimeout)
 	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {

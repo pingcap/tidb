@@ -821,6 +821,9 @@ const (
 
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBCoprocessorTimeout specifies timeout for coprocessor request
+	TiDBCoprocessorTimeout = "tidb_coprocessor_timeout111"
 )
 
 // TiDB vars that have only global scope

@@ -575,6 +575,8 @@ type Request struct {
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit
 	LimitSize uint64
+	// CopRequestTimeout specifies after how much time that a single cop request will be canceled
+	CopRequestTimeout time.Duration
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

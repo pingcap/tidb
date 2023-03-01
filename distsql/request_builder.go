@@ -16,9 +16,11 @@ package distsql
 
 import (
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
 	"math"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -72,6 +74,9 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	}
 	if builder.Request.KeyRanges == nil {
 		builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(nil)
+	}
+	if builder.Request.CopRequestTimeout == 0 {
+		builder.Request.CopRequestTimeout = tikv.ReadTimeoutMedium
 	}
 	return &builder.Request, builder.err
 }
@@ -308,6 +313,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
+	builder.Request.CopRequestTimeout = sv.CopRequestTimeout
 	return builder
 }
 
@@ -415,6 +421,11 @@ func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 // SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
 func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
 	builder.ClosestReplicaReadAdjuster = chkFn
+	return builder
+}
+
+func (builder *RequestBuilder) SetCopRequestTimeout(timeout time.Duration) *RequestBuilder {
+	builder.CopRequestTimeout = timeout
 	return builder
 }
 

@@ -197,6 +197,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		replicaReadSeed:  c.replicaReadSeed,
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
+		timeout:          req.CopRequestTimeout,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -673,6 +674,8 @@ type copIterator struct {
 	buildTaskElapsed        time.Duration
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
+
+	timeout time.Duration
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -695,6 +698,8 @@ type copIteratorWorker struct {
 
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
+
+	timeout time.Duration
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -829,6 +834,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			pagingTaskIdx:              &it.pagingTaskIdx,
 			storeBatchedNum:            &it.storeBatchedNum,
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
+			timeout:                    it.timeout,
 		}
 		go worker.run(ctx)
 	}
@@ -1162,7 +1168,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
+	fmt.Printf("CopReuqestTimeout %v\n", worker.timeout)
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, worker.timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if err != nil {
 		if task.storeType == kv.TiDB {

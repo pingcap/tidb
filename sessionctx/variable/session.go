@@ -1373,6 +1373,9 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// CopRequestTimeout specifies the timeout for each coprocessor request
+	CopRequestTimeout time.Duration
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
