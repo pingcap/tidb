@@ -1025,6 +1025,21 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
 }
 
+func TestPlanCacheMemoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+
+	tk.MustExec(`prepare st from 'select count(*) from information_schema.COLUMNS where table_name=?'`)
+	tk.MustExec(`set @a='t1'`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("1")) // 1 column
+	tk.MustExec(`set @a='t2'`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2"))           // 2 columns
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // plan accessing memory tables cannot hit the cache
+}
+
 func TestPlanCacheWithSubquery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
