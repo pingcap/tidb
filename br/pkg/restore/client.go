@@ -2537,10 +2537,10 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
-	alterTableDropIndexFormat      = "ALTER TABLE `%s`.`%s` DROP INDEX `%s`"
-	alterTableAddIndexFormat       = "ALTER TABLE `%s`.`%s` ADD INDEX `%s`(%s)"
-	alterTableAddUniqueIndexFormat = "ALTER TABLE `%s`.`%s` ADD UNIQUE KEY `%s`(%s)"
-	alterTableAddPrimaryFormat     = "ALTER TABLE `%s`.`%s` ADD PRIMARY KEY (%s) NONCLUSTERED"
+	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
+	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
@@ -2554,43 +2554,45 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 	ingestRecorder.UpdateIndexInfo(allSchema)
 	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			dropSQL      string = fmt.Sprintf(alterTableDropIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
-			addSQL       string
-			indexTypeSQL string
-			commentSQL   string
-			visibleSQL   string = " VISIBLE"
+			addSQL  string
+			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
 		)
 
 		if info.IsPrimary {
-			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.SchemaName, info.TableName, info.ColumnList)
+			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList)
+			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
-			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O, info.ColumnList)
+			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList)
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
-			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.SchemaName, info.TableName, info.IndexInfo.Name.O, info.ColumnList)
+			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList)
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
 		if len(indexTypeStr) > 0 {
-			indexTypeSQL = fmt.Sprintf(" USING %s", indexTypeStr)
+			addSQL = addSQL + fmt.Sprintf(" USING %s", indexTypeStr)
 		}
 
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
-			commentSQL = " COMMENT %?"
+			addSQL = addSQL + " COMMENT %?"
+			addArgs = append(addArgs, info.IndexInfo.Comment)
 		}
 
 		if info.IndexInfo.Invisible {
-			visibleSQL = " INVISIBLE"
+			addSQL = addSQL + " INVISIBLE"
+		} else {
+			addSQL = addSQL + " VISIBLE"
 		}
 
-		addSQL = fmt.Sprintf("%s%s%s%s", addSQL, indexTypeSQL, commentSQL, visibleSQL)
-
-		log.Debug("repair ingest sql", zap.String("drop", dropSQL))
-		if err := rc.db.se.Execute(ctx, dropSQL); err != nil {
+		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
 			return errors.Trace(err)
 		}
-		log.Debug("repair ingest sql", zap.String("add", addSQL))
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL, info.IndexInfo.Comment); err != nil {
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL, addArgs...); err != nil {
 			return errors.Trace(err)
 		}
 		return nil

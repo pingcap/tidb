@@ -28,6 +28,7 @@ type IngestIndexInfo struct {
 	SchemaName string
 	TableName  string
 	ColumnList string
+	ColumnArgs []interface{}
 	IsPrimary  bool
 	IndexInfo  *model.IndexInfo
 	Updated    bool
@@ -132,6 +133,7 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 					continue
 				}
 				var columnListBuilder strings.Builder
+				var columnListArgs []interface{} = make([]interface{}, 0, len(indexInfo.Columns))
 				var isFirst bool = true
 				for _, column := range indexInfo.Columns {
 					if !isFirst {
@@ -143,20 +145,21 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 					col := tblInfo.Columns[column.Offset]
 					if col.Hidden {
 						// (expression)
+						// the generated expression string can be directly add into sql
 						columnListBuilder.WriteByte('(')
 						columnListBuilder.WriteString(col.GeneratedExprString)
 						columnListBuilder.WriteByte(')')
 					} else {
-						// `columnName`
-						columnListBuilder.WriteByte('`')
-						columnListBuilder.WriteString(column.Name.O)
-						columnListBuilder.WriteByte('`')
+						// columnName
+						columnListBuilder.WriteString("%n")
+						columnListArgs = append(columnListArgs, column.Name.O)
 						if column.Length != types.UnspecifiedLength {
 							columnListBuilder.WriteString(fmt.Sprintf("(%d)", column.Length))
 						}
 					}
 				}
 				index.ColumnList = columnListBuilder.String()
+				index.ColumnArgs = columnListArgs
 				index.IndexInfo = indexInfo
 				index.SchemaName = dbInfo.Name.O
 				index.TableName = tblInfo.Name.O
