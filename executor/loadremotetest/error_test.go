@@ -85,27 +85,9 @@ func (s *mockGCSSuite) TestErrorMessage() {
 		`ERROR 8162 (HY000): STARTING BY '
 ' cannot contain LINES TERMINATED BY '
 '`)
-
-	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
-
-	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-	//	INTO TABLE t;`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'")
-
-	//s.server.CreateObject(fakestorage.Object{
-	//	ObjectAttrs: fakestorage.ObjectAttrs{
-	//		BucketName: "test-tsv",
-	//		Name:       "t2.tsv",
-	//	},
-	//	Content: []byte("null\t2\n" +
-	//		"3\t4\n"),
-	//})
-	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-	//	INTO TABLE t NULL DEFINED BY 'null';`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): xxx")
 }
 
-func (s *mockGCSSuite) TestWrongColumnNum() {
+func (s *mockGCSSuite) TestColumnNumMismatch() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 
 	s.server.CreateObject(fakestorage.Object{
@@ -127,20 +109,135 @@ func (s *mockGCSSuite) TestWrongColumnNum() {
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
-		"Warning", "1262", "Row 1 was truncated; it contained more data than there were input columns"))
-	msg := s.tk.Session().GetSessionVars().StmtCtx.GetMessage()
-	require.Equal(s.T(), "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1", msg)
+		"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+		"Warning 1262 Row 2 was truncated; it contained more data than there were input columns"))
 
-	// TODO: fix these tests
-	//s.tk.MustExec("CREATE TABLE t2 (c1 INT, c2 INT, c3 INT);")
+	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+		INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+		REPLACE INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+		IGNORE INTO TABLE t;`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1262 Row 1 was truncated; it contained more data than there were input columns",
+		"Warning 1262 Row 2 was truncated; it contained more data than there were input columns"))
+
+	// table has more columns than data
+
+	s.tk.MustExec("CREATE TABLE t2 (c1 INT, c2 INT, c3 INT);")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+		INTO TABLE t2;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1261 (01000): Row 1 doesn't contain data for all columns")
+
+	// fill default value for missing columns
+
+	s.tk.MustExec(`CREATE TABLE t3 (
+    	c1 INT NOT NULL,
+    	c2 INT NOT NULL,
+    	c3 INT NOT NULL DEFAULT 1);`)
+	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
+		INTO TABLE t3 (c1, c2);`, gcsEndpoint))
+	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
+		"1 2 1",
+		"1 4 1"))
+}
+
+func (s *mockGCSSuite) TestEvalError() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "t3.tsv",
+		},
+		Content: []byte("1\t2\n" +
+			"1\t4\n"),
+	})
+
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+
+	s.tk.MustExec("CREATE TABLE t (c INT);")
+	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
+		INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
+
+	// REPLACE does not help
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
+		REPLACE INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
+
+	// IGNORE helps
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
+		IGNORE INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'",
+		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'"))
+}
+
+func (s *mockGCSSuite) TestDataError() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "null.tsv",
+		},
+		Content: []byte("1\t\\N\n" +
+			"1\t4\n"),
+	})
+
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("USE load_csv;")
+
+	s.tk.MustExec("CREATE TABLE t (c INT NOT NULL, c2 INT NOT NULL);")
+	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/null.tsv?endpoint=%s'
+		INTO TABLE t;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err,
+		"ERROR 1263 (22004): Column set to default value; NULL supplied to NOT NULL column 'c2' at row 1")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/null.tsv?endpoint=%s'
+		IGNORE INTO TABLE t;`, gcsEndpoint))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1", s.tk.Session().LastMessage())
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'c2' at row 1"))
+
+	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
+
+	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+	//	INTO TABLE t;`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'")
+
+	//s.server.CreateObject(fakestorage.Object{
+	//	ObjectAttrs: fakestorage.ObjectAttrs{
+	//		BucketName: "test-tsv",
+	//		Name:       "t2.tsv",
+	//	},
+	//	Content: []byte("null\t2\n" +
+	//		"3\t4\n"),
+	//})
 	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-	//	INTO TABLE t2;`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err,
-	//	"ERROR 1261 (01000): Row 1 doesn't contain data for all columns")
-	//s.tk.MustExec("CREATE TABLE t3 (c1 INT);")
-	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-	//	INTO TABLE t3;`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err,
-	//	"ERROR 1262 (01000): Row 1 was truncated; it contained more data than there were input columns")
+	//	INTO TABLE t NULL DEFINED BY 'null';`, gcsEndpoint))
+	//checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): xxx")
 }
