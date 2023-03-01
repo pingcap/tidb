@@ -1004,8 +1004,9 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 		params []int
 	}{
 		{"select * from t t1 where exists (select /*/ 1 from t t2 where t2.b < t1.b and t2.b < ?)", []int{1}}, // exist
-		{"select * from t t1 where exists (select /*/ b from t t2 where t1.a = t2.a and t2.b<? limit 1)", []int{1}},
-		{"select * from t t1 where exists (select /*/ b from t t2 where t1.a = t2.a and t2.b<? limit ?)", []int{1, 1}},
+		{"select * from t t1 where exists (select /*/ b from t t2 where t1.a = t2.a and t2.b < ? limit ?)", []int{1, 1}},
+		{"select * from t t1 where t1.a in (select /*/ a from t t2 where t2.a > ? and t1.a = t2.a)", []int{1}},
+		{"select * from t t1 where t1.a < (select /*/ sum(t2.a) from t t2 where t2.b = t1.b and t2.a > ?)", []int{1}},
 	}
 
 	// hint
