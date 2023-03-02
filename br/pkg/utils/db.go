@@ -6,12 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -20,8 +20,7 @@ var (
 	_ DBExecutor = &sql.DB{}
 	_ DBExecutor = &sql.Conn{}
 
-	LogBackupTaskMutex sync.Mutex
-	logBackupTaskCount int
+	logBackupTaskCount = atomic.NewInt32(0)
 )
 
 // QueryExecutor is a interface for exec query
@@ -96,24 +95,22 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 
 // CheckLogBackupTaskExist increases the count of log backup task.
 func LogBackupTaskCountInc() {
-	LogBackupTaskMutex.Lock()
-	logBackupTaskCount++
-	LogBackupTaskMutex.Unlock()
+	logBackupTaskCount.Inc()
+	log.Info("inc log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // CheckLogBackupTaskExist decreases the count of log backup task.
 func LogBackupTaskCountDec() {
-	LogBackupTaskMutex.Lock()
-	logBackupTaskCount--
-	LogBackupTaskMutex.Unlock()
+	logBackupTaskCount.Dec()
+	log.Info("dec log backup task", zap.Int32("count", logBackupTaskCount.Load()))
 }
 
 // CheckLogBackupTaskExist checks that whether log-backup is existed.
 func CheckLogBackupTaskExist() bool {
-	return logBackupTaskCount > 0
+	return logBackupTaskCount.Load() > 0
 }
 
 // IsLogBackupInUse checks the log backup task existed.
 func IsLogBackupInUse(ctx sessionctx.Context) bool {
-	return CheckLogBackupEnabled(ctx) && CheckLogBackupTaskExist()
+	return CheckLogBackupTaskExist()
 }

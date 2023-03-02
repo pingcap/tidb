@@ -26,10 +26,18 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	return c.tick(ctx)
 }
 
-// OnStart implements daemon.Interface.
+// OnStart implements daemon.Interface, which will be called when log backup service starts.
 func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
-	metrics.AdvancerOwner.Set(1.0)
 	c.StartTaskListener(ctx)
+<<<<<<< HEAD
+=======
+}
+
+// OnBecomeOwner implements daemon.Interface. If the tidb-server become owner, this function will be called.
+func (c *CheckpointAdvancer) OnBecomeOwner(ctx context.Context) {
+	metrics.AdvancerOwner.Set(1.0)
+	c.spawnSubscriptionHandler(ctx)
+>>>>>>> efe553385b (log-backup: fix the issue that gc-worker owner cannot check log-backup task existed. (#41824))
 	go func() {
 		<-ctx.Done()
 		c.onStop()
