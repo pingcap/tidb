@@ -44,7 +44,6 @@ func TestSpool(t *testing.T) {
 	var wg sync.WaitGroup
 	p, err := NewPool("test", 1, util.UNKNOWN, WithBlocking(true))
 	require.NoError(t, err)
-	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 
 	for i := 0; i < 1000; i++ {
@@ -118,10 +117,21 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	if n := p.Running(); n != 8 {
 		t.Errorf("expect 8 workers running, but got %d", n)
 	}
-	for i := 0; i < 8; i++ {
+	// test pool tune scale down
+	p.Tune(2)
+	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
+	err := p.Run(func() {})
+	require.Error(t, err)
+	err = p.RunWithConcurrency(func() {}, 10)
+	require.Error(t, err)
+	time.Sleep(10 * time.Millisecond)
+	require.Equal(t, 2, p.Running())
 	wg.Wait()
+	for i := 0; i < 2; i++ {
+		c <- struct{}{}
+	}
 	p.ReleaseAndWait()
 }
 
