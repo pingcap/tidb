@@ -175,10 +175,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 
-	m.events = make([]event, 0, 10)
-	m.events = append(m.events, event{event: "enter txn", duration: time.Duration(0)})
-	m.lastInstant = time.Now()
-	m.enterTxnInstant = m.lastInstant
+	m.recordEvent("enter txn")
 	return nil
 }
 
@@ -214,20 +211,21 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 		return errors.New("context provider not set")
 	}
 
-	sql := node.OriginalText()
-	if m.sctx.GetSessionVars().EnableRedactLog {
-		sql = parser.Normalize(sql)
+	var sql string
+	if node != nil {
+		sql = node.OriginalText()
+		if m.sctx.GetSessionVars().EnableRedactLog {
+			sql = parser.Normalize(sql)
+		}
 	}
-
-	m.events = append(m.events, event{event: sql, duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.Now()
+	m.resetEvents()
+	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
 // OnStmtEnd implements the TxnManager interface
 func (m *txnManager) OnStmtEnd() {
-	m.events = append(m.events, event{event: "stmt end", duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.Now()
+	m.recordEvent("stmt end")
 }
 
 // OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
@@ -261,7 +259,6 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
-
 	return m.ctxProvider.ActivateTxn()
 }
 
@@ -278,9 +275,25 @@ func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	m.events = append(m.events, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.Now()
+	m.recordEvent("stmt commit")
 	return m.ctxProvider.OnStmtCommit(ctx)
+}
+
+func (m *txnManager) recordEvent(eventName string) {
+	if m.events == nil {
+		m.resetEvents()
+	}
+	m.events = append(m.events, event{event: eventName, duration: time.Since(m.lastInstant)})
+	m.lastInstant = time.Now()
+}
+
+func (m *txnManager) resetEvents() {
+	if m.events == nil {
+		m.events = make([]event, 0, 10)
+	} else {
+		m.events = m.events[:0]
+	}
+	m.enterTxnInstant = m.lastInstant
 }
 
 // OnStmtRollback is the hook that should be called when a statement fails to execute.
@@ -288,8 +301,7 @@ func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry b
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	m.events = append(m.events, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.Now()
+	m.recordEvent("stmt rollback")
 	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
 }
 
