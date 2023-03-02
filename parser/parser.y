@@ -14082,9 +14082,9 @@ LoadDataOption:
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
 	}
-|	identifier "=" Literal
+|	identifier "=" SignedLiteral
 	{
-		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ValueExpr)}
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
 
 /*********************************************************************

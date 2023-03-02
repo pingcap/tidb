@@ -425,8 +425,8 @@ func TestLoadDataRestore(t *testing.T) {
 			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
 		},
 		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size='10mb'",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=_UTF8MB4'10mb'",
 		},
 		{
 			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size='10mb'",

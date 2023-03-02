@@ -564,6 +564,7 @@ type LoadData struct {
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Options            []*ast.LoadDataOpt
 
 	GenCols InsertGeneratedColumns
 }

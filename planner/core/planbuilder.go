@@ -4195,6 +4195,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            ld.Options,
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error

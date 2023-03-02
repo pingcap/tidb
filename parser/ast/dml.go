@@ -1954,7 +1954,7 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 
 type LoadDataOpt struct {
 	Name  string
-	Value ValueExpr
+	Value ExprNode
 }
 
 func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
