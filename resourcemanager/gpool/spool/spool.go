@@ -108,9 +108,6 @@ func (p *Pool) run(fn func()) {
 
 // RunWithConcurrency runs a function in the pool with concurrency.
 func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
-	if concurrency == 1 {
-		return p.Run(fn)
-	}
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
