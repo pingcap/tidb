@@ -2703,6 +2703,10 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogKeyspaceName is slow log field name.
+	SlowLogKeyspaceName = "Keyspace_name"
+	// SlowLogKeyspaceID is slow log field name.
+	SlowLogKeyspaceID = "Keyspace_ID"
 	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
 	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
@@ -2833,6 +2837,8 @@ type JSONSQLWarnForSlowLog struct {
 // slow query log.
 type SlowQueryLogItems struct {
 	TxnTS             uint64
+	KeyspaceName      string
+	KeyspaceID        uint32
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -2875,6 +2881,8 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
+// # Keyspace_name: keyspace_a
+// # Keyspace_ID: 1
 // # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
@@ -2896,6 +2904,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
+	if logItems.KeyspaceName != "" {
+		writeSlowLogItem(&buf, SlowLogKeyspaceName, logItems.KeyspaceName)
+		writeSlowLogItem(&buf, SlowLogKeyspaceID, fmt.Sprintf("%d", logItems.KeyspaceID))
+	}
+
 	if s.User != nil {
 		hostAddress := s.User.Hostname
 		if s.ConnectionInfo != nil {

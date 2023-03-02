@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -1631,8 +1632,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      keyspaceName,
+		KeyspaceID:        keyspaceID,
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
