@@ -67,6 +67,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	var input []string
 	var output []struct {
