@@ -16,12 +16,13 @@ package storage
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/util"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/util"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
@@ -236,7 +237,7 @@ type SubTaskManager struct {
 	mu  sync.Mutex
 }
 
-func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBID proto.TiDBID, meta []byte, tp proto.TaskType) error {
+func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBID proto.InstanceID, meta []byte, tp proto.TaskType) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -248,11 +249,11 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBI
 	return nil
 }
 
-func (stm *SubTaskManager) GetSubaskByTiDBID(TiDBID proto.TiDBID) (*proto.Subtask, error) {
+func (stm *SubTaskManager) GetSubaskByTiDBID(InstanceID proto.InstanceID) (*proto.Subtask, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := ExecSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = %? limit 1", string(TiDBID))
+	rs, err := ExecSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = %? limit 1", string(InstanceID))
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +262,7 @@ func (stm *SubTaskManager) GetSubaskByTiDBID(TiDBID proto.TiDBID) (*proto.Subtas
 		ID:          proto.SubtaskID(rs[0].GetInt64(0)),
 		Type:        proto.TaskType(rs[0].GetString(1)),
 		TaskID:      proto.TaskID(rs[0].GetInt64(2)),
-		SchedulerID: proto.TiDBID(rs[0].GetString(3)),
+		SchedulerID: proto.InstanceID(rs[0].GetString(3)),
 		State:       proto.TaskState(rs[0].GetString(4)),
 		Meta:        proto.UnSerializeSubTaskMeta(rs[0].GetBytes(6)),
 	}
@@ -284,11 +285,11 @@ func (stm *SubTaskManager) UpdateTask(subTaskID proto.SubtaskID, meta []byte) er
 	return nil
 }
 
-func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto.TaskID, states ...interface{}) (subtasks []*proto.Subtask, err error) {
+func (stm *SubTaskManager) GetSubtasksInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (subtasks []*proto.Subtask, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	args := []interface{}{string(TiDBID), uint64(taskID)}
+	args := []interface{}{string(InstanceID), uint64(taskID)}
 	args = append(args, states...)
 	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -300,7 +301,7 @@ func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 			ID:          proto.SubtaskID(r.GetInt64(0)),
 			Type:        proto.TaskType(r.GetString(1)),
 			TaskID:      proto.TaskID(r.GetInt64(2)),
-			SchedulerID: proto.TiDBID(r.GetString(3)),
+			SchedulerID: proto.InstanceID(r.GetString(3)),
 			State:       proto.TaskState(r.GetString(4)),
 			Meta:        proto.UnSerializeSubTaskMeta(r.GetBytes(6)),
 		}
@@ -311,11 +312,11 @@ func (stm *SubTaskManager) GetSubtasksInStates(TiDBID proto.TiDBID, taskID proto
 	return subtasks, nil
 }
 
-func (stm *SubTaskManager) HasSubtasksInStates(TiDBID proto.TiDBID, taskID proto.TaskID, states ...interface{}) (bool, error) {
+func (stm *SubTaskManager) HasSubtasksInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (bool, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	args := []interface{}{string(TiDBID), uint64(taskID)}
+	args := []interface{}{string(InstanceID), uint64(taskID)}
 	args = append(args, states...)
 	rs, err := ExecSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
@@ -333,7 +334,7 @@ func (stm *SubTaskManager) UpdateSubtaskState(id proto.SubtaskID, state proto.Ta
 	return err
 }
 
-func (stm *SubTaskManager) UpdateHeartbeat(TiDB proto.TiDBID, taskID proto.TaskID, heartbeat time.Time) error {
+func (stm *SubTaskManager) UpdateHeartbeat(TiDB proto.InstanceID, taskID proto.TaskID, heartbeat time.Time) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 

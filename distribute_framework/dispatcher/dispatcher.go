@@ -34,7 +34,16 @@ const (
 	checkTaskRunningInterval  = 300 * time.Millisecond
 )
 
-type Dispatcher struct {
+type Dispatch interface {
+	// Start enables dispatching and monitoring mechanisms.
+	Start()
+	// Stop stops the dispatcher.
+	Stop()
+	// GetEligibleInstance gets an eligible instance.
+	GetEligibleInstance() proto.InstanceID
+}
+
+type dispatcher struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	gTaskMgr   *storage.GlobalTaskManager
@@ -47,27 +56,26 @@ type Dispatcher struct {
 	}
 }
 
-func (d *Dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
+func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
 	d.runningGlobalTasks.RLock()
 	defer d.runningGlobalTasks.RUnlock()
 	return d.runningGlobalTasks.tasks
 }
 
-func (d *Dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
+func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
 	d.runningGlobalTasks.tasks[int64(gTask.ID)] = gTask
 }
 
-func (d *Dispatcher) delRunningGlobalTasks(globalTaskID int64) {
+func (d *dispatcher) delRunningGlobalTasks(globalTaskID int64) {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
 	delete(d.runningGlobalTasks.tasks, globalTaskID)
 }
 
-func (d *Dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
+func (d *dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
 	// TODO: Consider putting the following operations into a transaction.
-	// TODO: Consider retry
 	// TODO: Consider collect some information about the tasks.
 	cnt, err := d.subTaskMgr.CheckTaskState(gTask.ID, proto.TaskStateFailed, true)
 	if err != nil {
@@ -92,7 +100,7 @@ func (d *Dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskE
 }
 
 // DetectionTaskLoop monitors the status of the subtasks.
-func (d *Dispatcher) DetectionTaskLoop() {
+func (d *dispatcher) DetectionTaskLoop() {
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
@@ -106,7 +114,7 @@ func (d *Dispatcher) DetectionTaskLoop() {
 			for _, gTask := range gTasks {
 				stepIsFinished, errStr := d.detectionTask(gTask)
 				if errStr != "" {
-					d.HandleError(gTask, errStr)
+					d.handleError(gTask, errStr)
 				} else if stepIsFinished {
 					logutil.BgLogger().Info("a step of task finished", zap.Int64("taskID", int64(gTask.ID)))
 					d.loadTaskAndProgress(gTask, false)
@@ -116,14 +124,14 @@ func (d *Dispatcher) DetectionTaskLoop() {
 	}
 }
 
-func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
+func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) {
 	err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 	}
 }
 
-func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
+func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
 	// Generate the needed global task meta and subTask meta.
 	finished, subtasks, err := GetGTaskFlowHandle(gTask.Type).Progress(d, gTask, fromPending)
 	if err != nil {
@@ -179,7 +187,7 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 }
 
 // DispatchTaskLoop dispatches the global tasks.
-func (d *Dispatcher) DispatchTaskLoop() {
+func (d *dispatcher) DispatchTaskLoop() {
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
 	for {
@@ -210,9 +218,10 @@ func (d *Dispatcher) DispatchTaskLoop() {
 	}
 }
 
-func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) (*Dispatcher, error) {
+// NewDispatcher creates a dispatcher struct.
+func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) (*dispatcher, error) {
 	// TODO: Consider session using.
-	dispatcher := &Dispatcher{
+	dispatcher := &dispatcher{
 		gTaskMgr:   globalTaskTable,
 		subTaskMgr: subtaskTable,
 	}
@@ -222,7 +231,8 @@ func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManag
 	return dispatcher, nil
 }
 
-func (d *Dispatcher) Start() {
+// Start implements Dispatch.Start interface.
+func (d *dispatcher) Start() {
 	d.wg.Run(func() {
 		d.DispatchTaskLoop()
 	})
@@ -231,7 +241,13 @@ func (d *Dispatcher) Start() {
 	})
 }
 
-func (d *Dispatcher) Stop() {
+// Stop implements Dispatch.Stop interface.
+func (d *dispatcher) Stop() {
 	d.cancel()
 	d.wg.Wait()
+}
+
+// GetEligibleInstance implements Dispatch.GetEligibleInstance interface.
+func (d *dispatcher) GetEligibleInstance() proto.InstanceID {
+	return ""
 }

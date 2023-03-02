@@ -45,7 +45,7 @@ func (s *DefaultScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Sub
 type SchedulerImpl struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
-	id           proto.TiDBID
+	id           proto.InstanceID
 	taskID       proto.TaskID
 	subtaskTable *storage.SubTaskManager
 	pool         proto.Pool
@@ -58,7 +58,7 @@ type SchedulerImpl struct {
 	}
 }
 
-func NewScheduler(ctx context.Context, id proto.TiDBID, taskID proto.TaskID, subtaskTable *storage.SubTaskManager, pool proto.Pool) *SchedulerImpl {
+func NewScheduler(ctx context.Context, id proto.InstanceID, taskID proto.TaskID, subtaskTable *storage.SubTaskManager, pool proto.Pool) *SchedulerImpl {
 	schedulerImpl := &SchedulerImpl{
 		id:           id,
 		taskID:       taskID,

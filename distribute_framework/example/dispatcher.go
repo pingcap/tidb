@@ -12,13 +12,13 @@ import (
 type NumberExampleHandle struct {
 }
 
-var mockTiDBIDList = []proto.TiDBID{"id1", "id2", "id3"}
+var mockTiDBIDList = []proto.InstanceID{"id1", "id2", "id3"}
 
-func assignRandomTiDB() proto.TiDBID {
+func assignRandomTiDB() proto.InstanceID {
 	return mockTiDBIDList[rand.Intn(3)]
 }
 
-func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error) {
+func (n NumberExampleHandle) Progress(d dispatcher.Dispatch, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error) {
 	if fromPending {
 		gTask.Step = proto.StepInit
 	}
@@ -54,7 +54,7 @@ func (n NumberExampleHandle) Progress(d *dispatcher.Dispatcher, gTask *proto.Tas
 	return false, subTasks, nil
 }
 
-func (n NumberExampleHandle) HandleError(d *dispatcher.Dispatcher, gTask *proto.Task, receive string) error {
+func (n NumberExampleHandle) HandleError(d dispatcher.Dispatch, gTask *proto.Task, receive string) error {
 	// Don't handle not.
 	return nil
 }

@@ -23,7 +23,7 @@ type TaskID uint64
 
 type TaskType string
 
-type TiDBID string
+type InstanceID string
 
 const (
 	TaskTypeExample     TaskType = "example"
@@ -77,7 +77,7 @@ type Subtask struct {
 	Type        TaskType
 	TaskID      TaskID
 	State       TaskState
-	SchedulerID TiDBID
+	SchedulerID InstanceID
 	Meta        SubTaskMeta
 
 	StartTime time.Time

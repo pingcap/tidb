@@ -20,8 +20,8 @@ import (
 
 // GTaskFlowHandle is used to control the process operations for each global task.
 type GTaskFlowHandle interface {
-	Progress(d *Dispatcher, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error)
-	HandleError(d *Dispatcher, gTask *proto.Task, receive string) error
+	Progress(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error)
+	HandleError(d Dispatch, gTask *proto.Task, receive string) error
 }
 
 var taskDispatcherHandleMap = make(map[proto.TaskType]GTaskFlowHandle)

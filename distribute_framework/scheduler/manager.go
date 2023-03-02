@@ -40,13 +40,13 @@ type Manager struct {
 		sync.Mutex
 		runningTasks map[proto.TaskID]*SchedulerImpl
 	}
-	id     proto.TiDBID
+	id     proto.InstanceID
 	wg     sync.WaitGroup
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewManager(ctx context.Context, id proto.TiDBID, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) *Manager {
+func NewManager(ctx context.Context, id proto.InstanceID, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) *Manager {
 	m := &Manager{
 		id:                  id,
 		globalTaskTable:     globalTaskTable,
