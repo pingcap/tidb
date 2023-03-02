@@ -26,6 +26,7 @@ func TestSimplifyExpressionByFlag(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a bigint unsigned not null, b bigint unsigned)")
 
