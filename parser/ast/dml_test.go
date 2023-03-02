@@ -410,6 +410,35 @@ func TestWindowSpecRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "select rank() over %s from t window w as (order by a)", extractNodeFunc)
 }
 
+func TestLoadDataRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size='10mb',detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=_UTF8MB4'10mb', detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*LoadDataStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestFulltextSearchModifier(t *testing.T) {
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())

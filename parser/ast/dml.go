@@ -1830,6 +1830,7 @@ type LoadDataStmt struct {
 	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
+	Options           []*LoadDataOpt
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 }
@@ -1896,6 +1897,19 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore LoadDataStmt.Options")
+			}
+		}
+	}
 	return nil
 }
 
@@ -1936,6 +1950,23 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		n.ColumnsAndUserVars[i] = node.(*ColumnNameOrUserVar)
 	}
 	return v.Leave(n)
+}
+
+type LoadDataOpt struct {
+	Name  string
+	Value ValueExpr
+}
+
+func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + "=")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore LoadDataOpt")
+		}
+	}
+	return nil
 }
 
 const (
