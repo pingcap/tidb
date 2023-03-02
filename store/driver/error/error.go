@@ -58,8 +58,8 @@ var (
 	ErrResourceGroupNotExists = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupNotExists)
 	// ErrResourceGroupConfigUnavailable is the error when resource group configuration is unavailable.
 	ErrResourceGroupConfigUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupConfigUnavailable)
-	// ErrResourceGroupLimited is the error when
-	ErrResourceGroupLimited = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupThrottled)
+	// ErrResourceGroupThrottled is the error when resource group is exceeded quota limitation
+	ErrResourceGroupThrottled = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupThrottled)
 	// ErrUnknown is the unknow error.
 	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
@@ -180,7 +180,7 @@ func ToTiDBErr(err error) error {
 	}
 
 	if stderrs.Is(err, pderr.ErrClientResourceGroupThrottled) {
-		return ErrResourceGroupLimited
+		return ErrResourceGroupThrottled
 	}
 
 	return errors.Trace(err)
