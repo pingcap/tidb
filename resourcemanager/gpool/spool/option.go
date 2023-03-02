@@ -27,19 +27,17 @@ func loadOptions(options ...Option) *Options {
 
 // Options contains all options which will be applied when instantiating an pool.
 type Options struct {
-	Nonblocking bool
+	Blocking bool
 }
 
 // DefaultOption is the default option.
 func DefaultOption() *Options {
-	return &Options{
-		Nonblocking: true,
-	}
+	return &Options{}
 }
 
 // WithNonblocking indicates that pool will return nil when there is no available workers.
 func WithNonblocking(nonblocking bool) Option {
 	return func(opts *Options) {
-		opts.Nonblocking = nonblocking
+		opts.Blocking = nonblocking
 	}
 }

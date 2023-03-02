@@ -135,7 +135,7 @@ func (p *Pool) check(concurrency int32) (conc int32, run bool) {
 		if run {
 			return value, run
 		}
-		if p.options.Nonblocking {
+		if !p.options.Blocking {
 			return 0, false
 		}
 		time.Sleep(5 * time.Millisecond)

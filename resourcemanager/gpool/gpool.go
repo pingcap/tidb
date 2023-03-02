@@ -27,7 +27,7 @@ var (
 	ErrPoolClosed = errors.New("this pool has been closed")
 
 	// ErrPoolOverload will be returned when the pool is full and no workers available.
-	ErrPoolOverload = errors.New("too many goroutines blocked on submit or Nonblocking is set")
+	ErrPoolOverload = errors.New("the number of concurrency has reached the upper limit and Block is set")
 )
 
 // BasePool is base class of pool
