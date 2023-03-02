@@ -40,21 +40,6 @@ func f(n int) {
 	f(n - 1)
 }
 
-func TestSpool(t *testing.T) {
-	var wg sync.WaitGroup
-	p, err := NewPool("test", 1, util.UNKNOWN, WithBlocking(true))
-	require.NoError(t, err)
-	defer p.ReleaseAndWait()
-
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		_ = p.Run(func() {
-			wg.Done()
-		})
-	}
-	wg.Wait()
-}
-
 func TestReleaseWhenRunningPool(t *testing.T) {
 	var wg sync.WaitGroup
 	p, err := NewPool("TestReleaseWhenRunningPool", 1, util.UNKNOWN)
@@ -225,4 +210,11 @@ func TestExitTask(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	require.Equal(t, 1, p.Running())
 	exit <- struct{}{}
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		_ = p.Run(func() {
+			wg.Done()
+		})
+	}
+	wg.Wait()
 }
