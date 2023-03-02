@@ -30,6 +30,7 @@ type Scheduler interface {
 	InitSubtaskExecEnv(context.Context) error
 	SplitSubtask(*proto.Subtask) []*proto.Subtask
 	CleanupSubtaskExecEnv(context.Context) error
+	Rollback(context.Context) error
 }
 
 // DefaultScheduler is the default scheduler.
@@ -155,13 +156,46 @@ func (s *SchedulerImpl) runSubtask(subtaskCtx context.Context, subtask *proto.Su
 			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 		} else {
 			s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
+			s.onError(err)
 		}
-		s.onError(err)
 		return
 	}
 
 	// TODO: if scheduler split subtasks, we update the status to succeed by original subtask id only when all split subtasks are successful.
 	s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
+}
+
+func (s *SchedulerImpl) Rollback(task *proto.Task) error {
+	logutil.BgLogger().Info("scheduler rollback a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
+	scheduler, err := s.createScheduler(task)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, string(proto.TaskStateRevertPending))
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	if subtask == nil {
+		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
+		return nil
+	}
+
+	rollbackCtx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	err = scheduler.Rollback(rollbackCtx)
+	if err != nil {
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+		} else {
+			s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
+			s.onError(err)
+		}
+	} else {
+		s.updateSubtaskState(subtask.ID, proto.TaskStateReverted)
+	}
+	return s.getError()
 }
 
 func (s *SchedulerImpl) Stop() {

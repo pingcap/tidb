@@ -38,7 +38,7 @@ type Manager struct {
 	subtaskExecutorPool proto.Pool
 	mu                  struct {
 		sync.Mutex
-		runningTasks map[proto.TaskID]*SchedulerImpl
+		runnableTasks map[proto.TaskID]*SchedulerImpl
 	}
 	id     proto.InstanceID
 	wg     sync.WaitGroup
@@ -55,7 +55,7 @@ func NewManager(ctx context.Context, id proto.InstanceID, globalTaskTable *stora
 		subtaskExecutorPool: proto.NewPool(subtaskExecutorPoolSize),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.runningTasks = make(map[proto.TaskID]*SchedulerImpl)
+	m.mu.runnableTasks = make(map[proto.TaskID]*SchedulerImpl)
 	return m
 }
 
@@ -63,7 +63,7 @@ func (m *Manager) Start() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.fetchAndHandleRunningTasks(m.ctx)
+		m.fetchAndHandleRunnableTasks(m.ctx)
 	}()
 
 	m.wg.Add(1)
@@ -82,20 +82,20 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-func (m *Manager) fetchAndHandleRunningTasks(ctx context.Context) {
+func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
 		case <-ctx.Done():
-			logutil.BgLogger().Info("fetchAndHandleRunningTasks done")
+			logutil.BgLogger().Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateRunning))
+			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateRunning), string(proto.TaskStateReverting))
 			if err != nil {
 				m.onError(err)
 				continue
 			}
-			m.onRunningTasks(ctx, tasks)
+			m.onRunnableTasks(ctx, tasks)
 		}
 	}
 }
@@ -109,7 +109,7 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 			logutil.BgLogger().Info("fetchAndHandleCanceledTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateCanceled))
+			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateCanceling))
 			if err != nil {
 				m.onError(err)
 				continue
@@ -119,11 +119,11 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 	}
 }
 
-func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
-	m.filterAlreadyRunningTasks(tasks)
+func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+	m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		logutil.BgLogger().Info("onRunningTasks", zap.Any("id", task.ID))
-		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending))
+		logutil.BgLogger().Info("onRunnableTasks", zap.Any("id", task.ID))
+		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending), string(proto.TaskStateRevertPending))
 		if err != nil {
 			m.onError(err)
 			continue
@@ -133,7 +133,7 @@ func (m *Manager) onRunningTasks(ctx context.Context, tasks []*proto.Task) {
 		}
 		logutil.BgLogger().Info("detect new subtask", zap.Any("id", task.ID))
 		err = m.schedulerPool.Run(func() {
-			m.onRunningTask(ctx, task.ID)
+			m.onRunnableTask(ctx, task.ID)
 		})
 		// pool closed
 		if err != nil {
@@ -147,9 +147,9 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range tasks {
-		if scheduler, ok := m.mu.runningTasks[task.ID]; ok {
+		if scheduler, ok := m.mu.runnableTasks[task.ID]; ok {
 			scheduler.Stop()
-			delete(m.mu.runningTasks, task.ID)
+			delete(m.mu.runnableTasks, task.ID)
 		}
 	}
 }
@@ -157,31 +157,31 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 func (m *Manager) cancelAllRunningTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, scheduler := range m.mu.runningTasks {
+	for _, scheduler := range m.mu.runnableTasks {
 		scheduler.Stop()
 	}
-	m.mu.runningTasks = make(map[proto.TaskID]*SchedulerImpl)
+	m.mu.runnableTasks = make(map[proto.TaskID]*SchedulerImpl)
 }
 
-func (m *Manager) filterAlreadyRunningTasks(runningTasks []*proto.Task) {
+func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var i int
-	for _, task := range runningTasks {
-		if _, ok := m.mu.runningTasks[task.ID]; !ok {
-			runningTasks[i] = task
+	for _, task := range tasks {
+		if _, ok := m.mu.runnableTasks[task.ID]; !ok {
+			tasks[i] = task
 			i++
 		}
 	}
-	runningTasks = runningTasks[:i]
+	tasks = tasks[:i]
 }
 
-func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
+func (m *Manager) onRunnableTask(ctx context.Context, taskID proto.TaskID) {
 	scheduler := NewScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPool)
 	scheduler.Start()
 	defer scheduler.Stop()
-	m.addRunningTask(taskID, scheduler)
+	m.addRunnableTask(taskID, scheduler)
 	for {
 		select {
 		case <-ctx.Done():
@@ -193,10 +193,10 @@ func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
 			m.onError(err)
 			return
 		}
-		if task.State != proto.TaskStateRunning {
+		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			return
 		}
-		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending)); err != nil {
+		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending), string(proto.TaskStateRevertPending)); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {
@@ -206,10 +206,10 @@ func (m *Manager) onRunningTask(ctx context.Context, taskID proto.TaskID) {
 	}
 }
 
-func (m *Manager) addRunningTask(id proto.TaskID, scheduler *SchedulerImpl) {
+func (m *Manager) addRunnableTask(id proto.TaskID, scheduler *SchedulerImpl) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.runningTasks[id] = scheduler
+	m.mu.runnableTasks[id] = scheduler
 }
 
 func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
@@ -218,6 +218,10 @@ func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
 	case proto.TaskStateRunning:
 		if err := scheduler.Run(task); err != nil {
 			logutil.BgLogger().Error("run task failed", zap.Error(err))
+		}
+	case proto.TaskStateReverting:
+		if err := scheduler.Rollback(task); err != nil {
+			logutil.BgLogger().Error("revert task failed", zap.Error(err))
 		}
 	default:
 		// TODO: handle other status

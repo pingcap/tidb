@@ -34,18 +34,30 @@ const (
 
 type TaskState string
 
+// task state machine
+//  1. succeed:			pending -> running -> succeed
+//  2. failed:			pending -> running -> canceling -> reverting -> failed/revert_failed
+//  3. canceled:		pending -> running -> canceling -> reverting -> canceled/revert_failed
+//  3. pause/resume:	pending -> running -> pausing -> paused -> resuming -> running
+//
+// subtask state machine
+//  1. succeed/failed:	pending -> running -> succeed/failed
+//  2. canceled:		pending -> running -> canceled
+//  3. rollback:		revert_pending -> reverting -> reverted/revert_failed/canceled
+//  4. pause/resume:	pending -> running -> paused -> running
 const (
-	TaskStatePending      TaskState = "pending"
-	TaskStateRunning      TaskState = "running"
-	TaskStateReverting    TaskState = "reverting"
-	TaskStatePaused       TaskState = "paused"
-	TaskStateFailed       TaskState = "failed"
-	TaskStateSucceed      TaskState = "succeed"
-	TaskStateRevertFailed TaskState = "revert_failed"
-	TaskStateCanceled     TaskState = "canceled"
-
-	TaskStateNumberExampleStep1 TaskState = "num1"
-	TaskStateNumberExampleStep2 TaskState = "num2"
+	TaskStatePending       TaskState = "pending"
+	TaskStateRunning       TaskState = "running"
+	TaskStateSucceed       TaskState = "succeed"
+	TaskStateCanceling     TaskState = "canceling"
+	TaskStateReverting     TaskState = "reverting"
+	TaskStateFailed        TaskState = "failed"
+	TaskStateRevertFailed  TaskState = "revert_failed"
+	TaskStateCanceled      TaskState = "canceled"
+	TaskStatePausing       TaskState = "pausing"
+	TaskStatePaused        TaskState = "paused"
+	TaskStateRevertPending TaskState = "revert_pending"
+	TaskStateReverted      TaskState = "reverted"
 )
 
 type TaskStep int

@@ -44,12 +44,20 @@ func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []*proto.
 	return []*proto.Subtask{subtask}
 }
 
+func (s *ExampleStepOneScheduler) Rollback(ctx context.Context) error {
+	return nil
+}
+
 func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []*proto.Subtask {
 	return []*proto.Subtask{subtask}
+}
+
+func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
+	return nil
 }
 
 func init() {
