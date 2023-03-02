@@ -360,6 +360,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	// if use noop as external storage, turn off the checkpoint mode
 	if u.GetNoop() != nil {
+		log.Info("since noop external storage is used, turn off checkpoint mode")
 		cfg.UseCheckpoint = false
 	}
 	skipStats := cfg.IgnoreStats
