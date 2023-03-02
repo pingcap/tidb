@@ -78,6 +78,12 @@ func TestExtractHandler(t *testing.T) {
 		require.NoError(t, resp0.Body.Close())
 	}()
 	require.Equal(t, resp0.StatusCode, http.StatusOK)
+	resp0, err = client.fetchStatus("/extract_task/dump?type=plan")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+	require.Equal(t, resp0.StatusCode, http.StatusOK)
 }
 
 func prepareData4ExtractPlanTask(t *testing.T, client *testServerClient) {

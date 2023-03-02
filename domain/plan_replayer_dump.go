@@ -92,6 +92,22 @@ type tableNameExtractor struct {
 	err      error
 }
 
+func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
+	r := make(map[tableNamePair]struct{})
+	for tablePair := range tne.names {
+		if tablePair.IsView {
+			r[tablePair] = struct{}{}
+			continue
+		}
+		// remove cte in table names
+		_, ok := tne.cteNames[tablePair.TableName]
+		if !ok {
+			r[tablePair] = struct{}{}
+		}
+	}
+	return r
+}
+
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.TableName); ok {
 		return in, true
@@ -109,14 +125,12 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			tne.err = err
 			return in, true
 		}
-		if t.TableInfo != nil {
+		if tne.is.TableExists(t.Schema, t.Name) {
 			tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
 			if tp.DBName == "" {
 				tp.DBName = tne.curDB.L
 			}
-			if _, ok := tne.names[tp]; !ok {
-				tne.names[tp] = struct{}{}
-			}
+			tne.names[tp] = struct{}{}
 		}
 	} else if s, ok := in.(*ast.SelectStmt); ok {
 		if s.With != nil && len(s.With.CTEs) > 0 {
@@ -716,19 +730,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
-	r := make(map[tableNamePair]struct{})
-	for tablePair := range tableExtractor.names {
-		if tablePair.IsView {
-			r[tablePair] = struct{}{}
-			continue
-		}
-		// remove cte in table names
-		_, ok := tableExtractor.cteNames[tablePair.TableName]
-		if !ok {
-			r[tablePair] = struct{}{}
-		}
-	}
-	return r, nil
+	return tableExtractor.getTablesAndViews(), nil
 }
 
 func getStatsForTable(do *Domain, pair tableNamePair) (*handle.JSONTable, error) {
