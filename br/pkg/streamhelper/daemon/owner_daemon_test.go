@@ -16,7 +16,8 @@ import (
 
 type anApp struct {
 	sync.Mutex
-	begun bool
+	serviceStart bool
+	begun        bool
 
 	tickingMessenger     chan struct{}
 	tickingMessengerOnce *sync.Once
@@ -33,9 +34,14 @@ func newTestApp(t *testing.T) *anApp {
 	}
 }
 
-// OnStart would be called once become the owner.
-// The context passed in would be canceled once it is no more the owner.
+// OnStart implements daemon.Interface.
 func (a *anApp) OnStart(ctx context.Context) {
+	a.serviceStart = true
+}
+
+// OOnBecomeOwner would be called once become the owner.
+// The context passed in would be canceled once it is no more the owner.
+func (a *anApp) OnBecomeOwner(ctx context.Context) {
 	a.Lock()
 	defer a.Unlock()
 	if a.begun {
@@ -87,6 +93,10 @@ func (a *anApp) Running() bool {
 	return a.begun
 }
 
+func (a *anApp) AssertService(req *require.Assertions, serviceStart bool) {
+	req.True(a.serviceStart == serviceStart)
+}
+
 func (a *anApp) AssertTick(timeout time.Duration) {
 	a.Lock()
 	messenger := a.tickingMessenger
@@ -129,8 +139,10 @@ func TestDaemon(t *testing.T) {
 	ow := owner.NewMockManager(ctx, "owner_daemon_test")
 	d := daemon.New(app, ow, 100*time.Millisecond)
 
+	app.AssertService(req, false)
 	f, err := d.Begin(ctx)
 	req.NoError(err)
+	app.AssertService(req, true)
 	go f()
 	app.AssertStart(1 * time.Second)
 	app.AssertTick(1 * time.Second)
