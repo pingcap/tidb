@@ -4276,7 +4276,7 @@
         "SQL": "select * from t where t.a < 3 and t.a < 3",
         "Plan": [
           "TableReader 3323.33 root  data:Selection",
-          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3), lt(test.t.a, 3)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
