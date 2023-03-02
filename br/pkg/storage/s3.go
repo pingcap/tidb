@@ -189,6 +189,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.ForcePathStyle = options.ForcePathStyle
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
+	s3.Provider = options.Provider
 	return nil
 }
 
@@ -203,7 +204,7 @@ func defineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3SseKmsKeyIDOption, "", "KMS CMK key id to use with S3 server-side encryption."+
 		"Leave empty to use S3 owned key.")
 	flags.String(s3ACLOption, "", "(experimental) Set the S3 canned ACLs, e.g. authenticated-read")
-	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
+	flags.String(s3ProviderOption, "aws", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
 }
@@ -358,22 +359,30 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	confCred := ses.Config.Credentials
-	setCredOpt := func(req *request.Request) {
-		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-		// we need reassign credential to be compatible with minio authentication.
-		if confCred != nil {
-			req.Config.Credentials = confCred
+
+	var region string
+	if qs.Provider == "aws" {
+		confCred := ses.Config.Credentials
+		setCredOpt := func(req *request.Request) {
+			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+			// we need reassign credential to be compatible with minio authentication.
+			if confCred != nil {
+				req.Config.Credentials = confCred
+			}
+			// s3manager.GetBucketRegionWithClient use path style addressing default.
+			// we need set S3ForcePathStyle by our config if we set endpoint.
+			if qs.Endpoint != "" {
+				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+			}
 		}
-		// s3manager.GetBucketRegionWithClient use path style addressing default.
-		// we need set S3ForcePathStyle by our config if we set endpoint.
-		if qs.Endpoint != "" {
-			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+		region, err = s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
-	}
-	region, err := s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	} else {
+		// for other s3 compatible provider like ovh storage didn't return the region correctlly
+		// so we cannot automatically get the bucket region. just fallback to manually region setting.
+		region = qs.Region
 	}
 
 	if qs.Region != region {
