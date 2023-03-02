@@ -390,6 +390,7 @@ func TestRefine(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	var input []string
 	var output []struct {
