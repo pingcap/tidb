@@ -144,6 +144,9 @@ type StmtRecord struct {
 	// Pessimistic execution retry information.
 	ExecRetryCount uint          `json:"exec_retry_count"`
 	ExecRetryTime  time.Duration `json:"exec_retry_time"`
+
+	KeyspaceName string `json:"keyspace_name"`
+	KeyspaceID   uint32 `json:"keyspace_id"`
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -209,6 +212,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Prepared:         info.Prepared,
 		FirstSeen:        info.StartTime,
 		LastSeen:         info.StartTime,
+		KeyspaceName:     info.KeyspaceName,
+		KeyspaceID:       info.KeyspaceID,
 	}
 }
 
