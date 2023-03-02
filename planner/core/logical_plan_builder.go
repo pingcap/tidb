@@ -7044,8 +7044,9 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	hjRightBuildMask := preferRightAsHJBuild ^ preferLeftAsHJProbe
 	hjLeftBuildMask := preferLeftAsHJBuild ^ preferRightAsHJProbe
 
+	mppMask := preferShuffleJoin ^ preferBCJoin
 	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
-	onesCount := bits.OnesCount(preferJoinType & ^mask)
+	onesCount := bits.OnesCount(preferJoinType & ^mask & ^mppMask)
 	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
 		return true
 	}
@@ -7067,6 +7068,20 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 		cnt++
 	}
 	return cnt > 1
+}
+
+func hasMPPJoinHints(preferJoinType uint) bool {
+	return (preferJoinType&preferBCJoin > 0) || (preferJoinType&preferShuffleJoin > 0)
+}
+
+func checkMPPHintAvailable(preferJoinType uint) bool {
+	mppMask := preferShuffleJoin ^ preferBCJoin
+	joinMethodHintSupportedByTiflash := preferHashJoin ^ preferLeftAsHJBuild ^ preferRightAsHJBuild ^ preferLeftAsHJProbe ^ preferRightAsHJProbe
+	onesCount := bits.OnesCount(preferJoinType & ^joinMethodHintSupportedByTiflash & ^mppMask)
+	if onesCount >= 1 {
+		return false
+	}
+	return true
 }
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {

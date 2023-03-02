@@ -135,15 +135,15 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -158,9 +158,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
@@ -169,15 +167,15 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -188,13 +186,11 @@
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
@@ -203,15 +199,15 @@
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -226,9 +222,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -243,9 +237,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -260,9 +252,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -277,9 +267,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -294,9 +282,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Join hints are conflict, you can only specify one type of join"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), hash_agg() */ a, sum(b) from t group by a, c",
