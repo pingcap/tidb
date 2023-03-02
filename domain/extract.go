@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -41,7 +42,7 @@ import (
 
 const (
 	// ExtractMetaFile indicates meta file for extract
-	ExtractMetaFile = "meta.txt"
+	ExtractMetaFile = "extract_meta.txt"
 )
 
 const (
@@ -296,7 +297,11 @@ func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (str
 // dumpExtractPlanPackage will dump the information about sqls collected in stmt_summary_history
 // The files will be organized into the following format:
 /*
+ |-extract_meta.txt
  |-meta.txt
+ |-config.toml
+ |-variables.toml
+ |-bindings.sql
  |-schema
  |	 |-schema_meta.txt
  |	 |-db1.table1.schema.txt
@@ -337,6 +342,14 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name stri
 		}
 	}()
 
+	// Dump config
+	if err = dumpConfig(zw); err != nil {
+		return "", err
+	}
+	// Dump meta
+	if err = dumpMeta(zw); err != nil {
+		return "", err
+	}
 	// dump extract plan task meta
 	if err = dumpExtractMeta(ExtractPlanType, zw); err != nil {
 		return "", err
@@ -349,11 +362,19 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name stri
 	if err = dumpTiFlashReplica(w.sctx, zw, p.tables); err != nil {
 		return "", err
 	}
+	// Dump variables
+	if err = dumpVariables(w.sctx, w.sctx.GetSessionVars(), zw); err != nil {
+		return "", err
+	}
+	// Dump global bindings
+	if err = dumpGlobalBindings(w.sctx, zw); err != nil {
+		return "", err
+	}
 	// Dump stats
 	if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
 		return "", err
 	}
-	// Dump sqls
+	// Dump sqls and plan
 	if err = dumpSQLRecords(p.records, zw); err != nil {
 		return "", err
 	}
@@ -363,12 +384,12 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name stri
 func dumpSQLRecords(records map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, zw *zip.Writer) error {
 	for key, record := range records {
 		if record.skip {
-			err := dumpSQLRecord(record, fmt.Sprintf("skippedSQLs/%v.sql", key.digest), zw)
+			err := dumpSQLRecord(record, fmt.Sprintf("skippedSQLs/%v.json", key.digest), zw)
 			if err != nil {
 				return err
 			}
 		} else {
-			err := dumpSQLRecord(record, fmt.Sprintf("SQLs/%v.sql", key.digest), zw)
+			err := dumpSQLRecord(record, fmt.Sprintf("SQLs/%v.json", key.digest), zw)
 			if err != nil {
 				return err
 			}
@@ -377,20 +398,32 @@ func dumpSQLRecords(records map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord,
 	return nil
 }
 
+type singleSQLRecord struct {
+	Schema     string `json:"schema"`
+	Plan       string `json:"plan"`
+	SQL        string `json:"sql"`
+	Digest     string `json:"digest"`
+	BinaryPlan string `json:"binaryPlan"`
+}
+
+// dumpSQLRecord dumps sql records into one file for each record, the format is in json.
 func dumpSQLRecord(record *stmtSummaryHistoryRecord, path string, zw *zip.Writer) error {
 	zf, err := zw.Create(path)
 	if err != nil {
 		return err
 	}
-	_, err = zf.Write([]byte(record.sql))
+	singleSQLRecord := &singleSQLRecord{
+		Schema:     record.schemaName,
+		Plan:       record.plan,
+		SQL:        record.sql,
+		Digest:     record.digest,
+		BinaryPlan: record.binaryPlan,
+	}
+	content, err := json.Marshal(singleSQLRecord)
 	if err != nil {
 		return err
 	}
-	_, err = zf.Write([]byte("\n<--------->\n"))
-	if err != nil {
-		return err
-	}
-	_, err = zf.Write([]byte(record.plan))
+	_, err = zf.Write(content)
 	if err != nil {
 		return err
 	}
