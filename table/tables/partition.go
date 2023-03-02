@@ -786,6 +786,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
 	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
+	lp.defaultPartitionIdx = -1
 	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
 	for colIdx := range pi.Columns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
@@ -811,6 +812,16 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context,
 		if err != nil {
 			return err
 		}
+		if colPrune.defaultPartID > 0 {
+			if lp.defaultPartitionIdx > 0 {
+				return table.ErrUnknownPartition
+			}
+			for i := range defs {
+				if defs[i].ID == colPrune.defaultPartID {
+					lp.defaultPartitionIdx = i
+				}
+			}
+		}
 		colPrunes = append(colPrunes, colPrune)
 	}
 	lp.ColPrunes = colPrunes
@@ -827,6 +838,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 	lp.defaultPartitionIdx = -1
 	for partitionIdx, def := range defs {
 		for _, vs := range def.InValues {
+			// TODO: use a proper constant
 			if strings.EqualFold(vs[0], "DEFAULT") {
 				lp.defaultPartitionIdx = partitionIdx
 				continue
@@ -890,6 +902,9 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	}
 	location := helper.GetLocation()
 	if location.IsEmpty() {
+		if lp.defaultPartitionIdx >= 0 {
+			return lp.defaultPartitionIdx, nil
+		}
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
@@ -985,6 +1000,7 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 	}
 	location, ok := lp.valueMap[string(key)]
 	if !ok {
+		// TODO: Handle DEFAULT (and NULL?)
 		return nil, nil
 	}
 	return location, nil
@@ -1035,6 +1051,7 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 		locations = append(locations, item.location)
 		return true
 	})
+	// TODO: Handle DEFAULT (and NULL?)
 	return locations, nil
 }
 
