@@ -51,7 +51,7 @@ func IsKeyspaceNameEmpty(keyspaceName string) bool {
 	return keyspaceName == ""
 }
 
-// WithKeyspace is used to wrap zapcore.Core.
+// WrapZapcoreWithKeyspace is used to wrap zapcore.Core.
 func WrapZapcoreWithKeyspace() zap.Option {
 	return zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		keyspaceName := GetKeyspaceNameBySettings()
