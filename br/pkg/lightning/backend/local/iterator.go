@@ -16,11 +16,7 @@ package local
 
 import (
 	"bytes"
-<<<<<<< HEAD
-	"context"
 	"math"
-=======
->>>>>>> caa1a7c4c0 (lightning: remove ctx from dupDetectIter (#41867))
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
