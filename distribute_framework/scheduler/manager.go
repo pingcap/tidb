@@ -90,7 +90,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 			logutil.BgLogger().Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateRunning), string(proto.TaskStateReverting))
+			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
 				m.onError(err)
 				continue
@@ -109,7 +109,7 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 			logutil.BgLogger().Info("fetchAndHandleCanceledTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(string(proto.TaskStateCanceling))
+			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateCanceling)
 			if err != nil {
 				m.onError(err)
 				continue
@@ -123,7 +123,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
 		logutil.BgLogger().Info("onRunnableTasks", zap.Any("id", task.ID))
-		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending), string(proto.TaskStateRevertPending))
+		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			m.onError(err)
 			continue
@@ -196,7 +196,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			return
 		}
-		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, string(proto.TaskStatePending), string(proto.TaskStateRevertPending)); err != nil {
+		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

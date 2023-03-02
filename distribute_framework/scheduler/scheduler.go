@@ -90,22 +90,16 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 
 	subtaskCtx, subtaskCancel := context.WithCancel(s.ctx)
 	defer subtaskCancel()
-	subtaskCh := make(chan *proto.Subtask, task.Concurrency)
-	err = s.pool.RunWithConcurrency(func() {
-		for subtask := range subtaskCh {
-			// defer in a loop is not recommended, fix it after we support wait group in pool.
-			// we should fetch all subtasks from subtaskCh even if there is an error or cancel.
-			defer s.subtaskWg.Done()
-			s.runSubtask(subtaskCtx, subtask, task.Step)
-		}
-	}, task.Concurrency)
+	subtaskCh := make(chan func(), task.Concurrency)
+
+	err = s.pool.RunWithConcurrency(subtaskCh, task.Concurrency)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 
 	for {
-		subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, string(proto.TaskStatePending))
+		subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStatePending)
 		if err != nil {
 			s.onError(err)
 			break
@@ -122,7 +116,10 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 		subtasks := scheduler.SplitSubtask(subtask)
 		for _, subtask := range subtasks {
 			s.subtaskWg.Add(1)
-			subtaskCh <- subtask
+			subtaskCh <- func() {
+				s.runSubtask(subtaskCtx, subtask, task.Step)
+				s.subtaskWg.Done()
+			}
 		}
 	}
 

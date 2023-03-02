@@ -16,7 +16,7 @@ package proto
 
 type Pool interface {
 	Run(func()) error
-	RunWithConcurrency(func(), uint64) error
+	RunWithConcurrency(chan func(), uint64) error
 	ReleaseAndWait()
 }
 
@@ -27,10 +27,18 @@ func (*DefaultPool) Run(f func()) error {
 	return nil
 }
 
-func (*DefaultPool) RunWithConcurrency(f func(), n uint64) error {
-	for i := uint64(0); i < n; i++ {
-		go f()
-	}
+func (*DefaultPool) RunWithConcurrency(fch chan func(), n uint64) error {
+	go func() {
+		for {
+			select {
+			case f, ok := <-fch:
+				if !ok {
+					return
+				}
+				go f()
+			}
+		}
+	}()
 	return nil
 }
 
