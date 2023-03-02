@@ -34,6 +34,7 @@ go_test(
         "//resourcemanager/gpool",
         "//resourcemanager/util",
         "//testkit/testsetup",
+        "//util",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
