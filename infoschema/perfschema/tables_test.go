@@ -95,6 +95,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use performance_schema")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	result := tk.MustQuery("select function, percent_abs, percent_rel from tikv_profile_cpu where depth < 3")
 
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
