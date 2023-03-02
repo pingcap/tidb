@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	isolation_metrics "github.com/pingcap/tidb/sessiontxn/isolation/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -202,7 +203,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 		return sessiontxn.NoIdea()
 	}
 
-	rcReadCheckTSWriteConfilictCounter.Inc()
+	isolation_metrics.RcReadCheckTSWriteConfilictCounter.Inc()
 
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
 		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
@@ -234,7 +235,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			zap.String("err", lockErr.Error()))
 		retryable = true
 		if p.checkTSInWriteStmt {
-			rcWriteCheckTSWriteConfilictCounter.Inc()
+			isolation_metrics.RcWriteCheckTSWriteConfilictCounter.Inc()
 		}
 	}
 

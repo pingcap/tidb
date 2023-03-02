@@ -19,10 +19,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// copr metrics vars
 var (
-	coprCacheCounterEvict prometheus.Counter
-	coprCacheCounterHit   prometheus.Counter
-	coprCacheCounterMiss  prometheus.Counter
+	CoprCacheCounterEvict prometheus.Counter
+	CoprCacheCounterHit   prometheus.Counter
+	CoprCacheCounterMiss  prometheus.Counter
 )
 
 func init() {
@@ -31,7 +32,7 @@ func init() {
 
 // InitMetricsVars init copr metrics vars.
 func InitMetricsVars() {
-	coprCacheCounterEvict = metrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
-	coprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
-	coprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
+	CoprCacheCounterEvict = metrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
+	CoprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
+	CoprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
 }

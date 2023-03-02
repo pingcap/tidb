@@ -72,6 +72,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	server_metrics "github.com/pingcap/tidb/server/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1087,7 +1088,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					}
 				}
 			}
-			disconnectByClientWithError.Inc()
+			server_metrics.DisconnectByClientWithError.Inc()
 			return
 		}
 
@@ -1103,11 +1104,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
-				disconnectNormal.Inc()
+				server_metrics.DisconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
-				disconnectErrorUndetermined.Inc()
+				server_metrics.DisconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -1188,10 +1189,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	var counter prometheus.Counter
-	if err != nil && int(cmd) < len(queryTotalCountErr) {
-		counter = queryTotalCountErr[cmd]
-	} else if err == nil && int(cmd) < len(queryTotalCountOk) {
-		counter = queryTotalCountOk[cmd]
+	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
+		counter = server_metrics.QueryTotalCountErr[cmd]
+	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+		counter = server_metrics.QueryTotalCountOk[cmd]
 	}
 	if counter != nil {
 		counter.Inc()
@@ -1222,13 +1223,13 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	switch sqlType {
 	case "Insert":
-		affectedRowsCounterInsert.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
 	case "Replace":
-		affectedRowsCounterReplace.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
 	case "Delete":
-		affectedRowsCounterDelete.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 	case "Update":
-		affectedRowsCounterUpdate.Add(float64(affectedRows))
+		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
 	metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
@@ -1244,9 +1245,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		connIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+		server_metrics.ConnIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	} else {
-		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+		server_metrics.ConnIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
 	cfg := config.GetGlobalConfig()

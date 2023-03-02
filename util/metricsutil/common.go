@@ -22,23 +22,23 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
+	domain_metrics "github.com/pingcap/tidb/domain/metrics"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
+	infoschema_metrics "github.com/pingcap/tidb/infoschema/metrics"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/metrics"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session"
+	plannercore "github.com/pingcap/tidb/planner/core/metrics"
+	server_metrics "github.com/pingcap/tidb/server/metrics"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/sessiontxn/isolation"
-	statshandler "github.com/pingcap/tidb/statistics/handle"
+	isolation_metrics "github.com/pingcap/tidb/sessiontxn/isolation/metrics"
+	statshandler_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/store"
-	"github.com/pingcap/tidb/store/copr"
+	copr_metrics "github.com/pingcap/tidb/store/copr/metrics"
 	unimetrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/util"
-	topsqlreporter "github.com/pingcap/tidb/util/topsql/reporter"
+	topsqlreporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 )
@@ -104,16 +104,16 @@ func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	metrics.InitMetrics()
 	metrics.RegisterMetrics()
 
-	copr.InitMetricsVars()
-	domain.InitMetricsVars()
-	executor.InitMetricsVars()
-	infoschema.InitMetricsVars()
-	isolation.InitMetricsVars()
+	copr_metrics.InitMetricsVars()
+	domain_metrics.InitMetricsVars()
+	executor_metrics.InitMetricsVars()
+	infoschema_metrics.InitMetricsVars()
+	isolation_metrics.InitMetricsVars()
 	plannercore.InitMetricsVars()
-	server.InitMetricsVars()
-	session.InitMetricsVars()
-	statshandler.InitMetricsVars()
-	topsqlreporter.InitMetricsVars()
+	server_metrics.InitMetricsVars()
+	session_metrics.InitMetricsVars()
+	statshandler_metrics.InitMetricsVars()
+	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
 

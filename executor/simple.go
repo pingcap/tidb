@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -813,13 +814,13 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 			isInternal = true
 		}
 		if isInternal && sessVars.TxnCtx.IsPessimistic {
-			transactionDurationPessimisticRollbackInternal.Observe(duration)
+			executor_metrics.TransactionDurationPessimisticRollbackInternal.Observe(duration)
 		} else if isInternal && !sessVars.TxnCtx.IsPessimistic {
-			transactionDurationOptimisticRollbackInternal.Observe(duration)
+			executor_metrics.TransactionDurationOptimisticRollbackInternal.Observe(duration)
 		} else if !isInternal && sessVars.TxnCtx.IsPessimistic {
-			transactionDurationPessimisticRollbackGeneral.Observe(duration)
+			executor_metrics.TransactionDurationPessimisticRollbackGeneral.Observe(duration)
 		} else if !isInternal && !sessVars.TxnCtx.IsPessimistic {
-			transactionDurationOptimisticRollbackGeneral.Observe(duration)
+			executor_metrics.TransactionDurationOptimisticRollbackGeneral.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()

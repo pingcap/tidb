@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package metrics
 
 import (
 	"github.com/pingcap/tidb/metrics"
@@ -20,24 +20,25 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// server metrics vars
 var (
-	queryTotalCountOk  []prometheus.Counter
-	queryTotalCountErr []prometheus.Counter
+	QueryTotalCountOk  []prometheus.Counter
+	QueryTotalCountErr []prometheus.Counter
 
-	disconnectNormal            prometheus.Counter
-	disconnectByClientWithError prometheus.Counter
-	disconnectErrorUndetermined prometheus.Counter
+	DisconnectNormal            prometheus.Counter
+	DisconnectByClientWithError prometheus.Counter
+	DisconnectErrorUndetermined prometheus.Counter
 
-	connIdleDurationHistogramNotInTxn prometheus.Observer
-	connIdleDurationHistogramInTxn    prometheus.Observer
+	ConnIdleDurationHistogramNotInTxn prometheus.Observer
+	ConnIdleDurationHistogramInTxn    prometheus.Observer
 
-	affectedRowsCounterInsert  prometheus.Counter
-	affectedRowsCounterUpdate  prometheus.Counter
-	affectedRowsCounterDelete  prometheus.Counter
-	affectedRowsCounterReplace prometheus.Counter
+	AffectedRowsCounterInsert  prometheus.Counter
+	AffectedRowsCounterUpdate  prometheus.Counter
+	AffectedRowsCounterDelete  prometheus.Counter
+	AffectedRowsCounterReplace prometheus.Counter
 
-	readPacketBytes  prometheus.Counter
-	writePacketBytes prometheus.Counter
+	ReadPacketBytes  prometheus.Counter
+	WritePacketBytes prometheus.Counter
 )
 
 func init() {
@@ -46,7 +47,7 @@ func init() {
 
 // InitMetricsVars init server metrics vars.
 func InitMetricsVars() {
-	queryTotalCountOk = []prometheus.Counter{
+	QueryTotalCountOk = []prometheus.Counter{
 		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
 		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
 		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
@@ -61,7 +62,7 @@ func InitMetricsVars() {
 		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
 		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
 	}
-	queryTotalCountErr = []prometheus.Counter{
+	QueryTotalCountErr = []prometheus.Counter{
 		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
 		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
 		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
@@ -77,18 +78,18 @@ func InitMetricsVars() {
 		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
 	}
 
-	disconnectNormal = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
-	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
-	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
+	DisconnectNormal = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
+	DisconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
+	DisconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
 
-	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
-	connIdleDurationHistogramInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
+	ConnIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
+	ConnIdleDurationHistogramInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
 
-	affectedRowsCounterInsert = metrics.AffectedRowsCounter.WithLabelValues("Insert")
-	affectedRowsCounterUpdate = metrics.AffectedRowsCounter.WithLabelValues("Update")
-	affectedRowsCounterDelete = metrics.AffectedRowsCounter.WithLabelValues("Delete")
-	affectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
+	AffectedRowsCounterInsert = metrics.AffectedRowsCounter.WithLabelValues("Insert")
+	AffectedRowsCounterUpdate = metrics.AffectedRowsCounter.WithLabelValues("Update")
+	AffectedRowsCounterDelete = metrics.AffectedRowsCounter.WithLabelValues("Delete")
+	AffectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
 
-	readPacketBytes = metrics.PacketIOCounter.WithLabelValues("read")
-	writePacketBytes = metrics.PacketIOCounter.WithLabelValues("write")
+	ReadPacketBytes = metrics.PacketIOCounter.WithLabelValues("read")
+	WritePacketBytes = metrics.PacketIOCounter.WithLabelValues("write")
 }

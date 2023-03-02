@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -146,9 +147,9 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 
 	defer func() {
 		if err == nil {
-			dumpHistoricalStatsSuccessCounter.Inc()
+			handle_metrics.DumpHistoricalStatsSuccessCounter.Inc()
 		} else {
-			dumpHistoricalStatsFailedCounter.Inc()
+			handle_metrics.DumpHistoricalStatsFailedCounter.Inc()
 		}
 	}()
 	pi := tableInfo.GetPartitionInfo()

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -553,7 +554,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 		distribution[4] += 1
 	}
 	for i, val := range distribution {
-		statsHealthyGauges[i].Set(float64(val))
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
 }
 
@@ -1015,7 +1016,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	}
 	h.statsCache.Unlock()
 	if updated && enableQuota {
-		costGauge.Set(float64(newCost))
+		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return
 }

@@ -17,6 +17,7 @@ package domain
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -79,10 +80,10 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
 	}
 	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo, tableID, isPartition); err != nil {
-		generateHistoricalStatsFailedCounter.Inc()
+		domain_metrics.GenerateHistoricalStatsFailedCounter.Inc()
 		return errors.Errorf("record table %s.%s's historical stats failed, err:%v", dbInfo.Name.O, tblInfo.Name.O, err)
 	}
-	generateHistoricalStatsSuccessCounter.Inc()
+	domain_metrics.GenerateHistoricalStatsSuccessCounter.Inc()
 	return nil
 }
 

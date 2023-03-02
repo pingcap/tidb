@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -203,7 +204,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		nonTransactionalDeleteCount.Inc()
+		session_metrics.NonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
 		if err := checkTableRef(s.TableRefs, true); err != nil {
 			return err
@@ -211,7 +212,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(s.Limit, s.Order); err != nil {
 			return err
 		}
-		nonTransactionalUpdateCount.Inc()
+		session_metrics.NonTransactionalUpdateCount.Inc()
 	case *ast.InsertStmt:
 		if s.Select == nil {
 			return errors.New("Non-transactional insert supports insert select stmt only")
@@ -226,7 +227,7 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
 			return err
 		}
-		nonTransactionalInsertCount.Inc()
+		session_metrics.NonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}

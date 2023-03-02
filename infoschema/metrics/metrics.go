@@ -12,21 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema
+package metrics
 
 import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// infoschema metrics vars
 var (
-	getLatestCounter  prometheus.Counter
-	getTSCounter      prometheus.Counter
-	getVersionCounter prometheus.Counter
+	GetLatestCounter  prometheus.Counter
+	GetTSCounter      prometheus.Counter
+	GetVersionCounter prometheus.Counter
 
-	hitLatestCounter  prometheus.Counter
-	hitTSCounter      prometheus.Counter
-	hitVersionCounter prometheus.Counter
+	HitLatestCounter  prometheus.Counter
+	HitTSCounter      prometheus.Counter
+	HitVersionCounter prometheus.Counter
 )
 
 func init() {
@@ -35,11 +36,11 @@ func init() {
 
 // InitMetricsVars init infoschema metrics vars.
 func InitMetricsVars() {
-	getLatestCounter = metrics.InfoCacheCounters.WithLabelValues("get", "latest")
-	getTSCounter = metrics.InfoCacheCounters.WithLabelValues("get", "ts")
-	getVersionCounter = metrics.InfoCacheCounters.WithLabelValues("get", "version")
+	GetLatestCounter = metrics.InfoCacheCounters.WithLabelValues("get", "latest")
+	GetTSCounter = metrics.InfoCacheCounters.WithLabelValues("get", "ts")
+	GetVersionCounter = metrics.InfoCacheCounters.WithLabelValues("get", "version")
 
-	hitLatestCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
-	hitTSCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
-	hitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
+	HitLatestCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
+	HitTSCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
+	HitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
 }

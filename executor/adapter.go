@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -883,10 +884,10 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 
 		if isFirstAttempt {
-			selectForUpdateFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
+			executor_metrics.SelectForUpdateFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
 			isFirstAttempt = false
 		} else {
-			selectForUpdateRetryDuration.Observe(time.Since(startTime).Seconds())
+			executor_metrics.SelectForUpdateRetryDuration.Observe(time.Since(startTime).Seconds())
 		}
 
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -1018,10 +1019,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		}
 
 		if isFirstAttempt {
-			dmlFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
+			executor_metrics.DmlFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
 			isFirstAttempt = false
 		} else {
-			dmlRetryDuration.Observe(time.Since(startTime).Seconds())
+			executor_metrics.DmlRetryDuration.Observe(time.Since(startTime).Seconds())
 		}
 
 		if err != nil {
@@ -1262,15 +1263,15 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 	if internal {
-		if ob, found := phaseDurationObserverMapInternal[phase]; found {
+		if ob, found := executor_metrics.PhaseDurationObserverMapInternal[phase]; found {
 			return ob
 		}
-		return execUnknownInternal
+		return executor_metrics.ExecUnknownInternal
 	}
-	if ob, found := phaseDurationObserverMap[phase]; found {
+	if ob, found := executor_metrics.PhaseDurationObserverMap[phase]; found {
 		return ob
 	}
-	return execUnknown
+	return executor_metrics.ExecUnknown
 }
 
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
@@ -1278,14 +1279,14 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 		duration time.Duration
 		phase    string
 	}{
-		{a.phaseBuildDurations[0], phaseBuildFinal},
-		{a.phaseBuildDurations[1], phaseBuildLocking},
-		{a.phaseOpenDurations[0], phaseOpenFinal},
-		{a.phaseOpenDurations[1], phaseOpenLocking},
-		{a.phaseNextDurations[0], phaseNextFinal},
-		{a.phaseNextDurations[1], phaseNextLocking},
-		{a.phaseLockDurations[0], phaseLockFinal},
-		{a.phaseLockDurations[1], phaseLockLocking},
+		{a.phaseBuildDurations[0], executor_metrics.PhaseBuildFinal},
+		{a.phaseBuildDurations[1], executor_metrics.PhaseBuildLocking},
+		{a.phaseOpenDurations[0], executor_metrics.PhaseOpenFinal},
+		{a.phaseOpenDurations[1], executor_metrics.PhaseOpenLocking},
+		{a.phaseNextDurations[0], executor_metrics.PhaseNextFinal},
+		{a.phaseNextDurations[1], executor_metrics.PhaseNextLocking},
+		{a.phaseLockDurations[0], executor_metrics.PhaseLockFinal},
+		{a.phaseLockDurations[1], executor_metrics.PhaseLockLocking},
 	} {
 		if it.duration > 0 {
 			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
@@ -1296,12 +1297,12 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 			duration time.Duration
 			phase    string
 		}{
-			{commitDetails.PrewriteTime, phaseCommitPrewrite},
-			{commitDetails.CommitTime, phaseCommitCommit},
-			{commitDetails.GetCommitTsTime, phaseCommitWaitCommitTS},
-			{commitDetails.GetLatestTsTime, phaseCommitWaitLatestTS},
-			{commitDetails.LocalLatchTime, phaseCommitWaitLatch},
-			{commitDetails.WaitPrewriteBinlogTime, phaseCommitWaitBinlog},
+			{commitDetails.PrewriteTime, executor_metrics.PhaseCommitPrewrite},
+			{commitDetails.CommitTime, executor_metrics.PhaseCommitCommit},
+			{commitDetails.GetCommitTsTime, executor_metrics.PhaseCommitWaitCommitTS},
+			{commitDetails.GetLatestTsTime, executor_metrics.PhaseCommitWaitLatestTS},
+			{commitDetails.LocalLatchTime, executor_metrics.PhaseCommitWaitLatch},
+			{commitDetails.WaitPrewriteBinlogTime, executor_metrics.PhaseCommitWaitBinlog},
 		} {
 			if it.duration > 0 {
 				getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
@@ -1311,7 +1312,7 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 	if stmtDetailsRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey); stmtDetailsRaw != nil {
 		d := stmtDetailsRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
 		if d > 0 {
-			getPhaseDurationObserver(phaseWriteResponse, internal).Observe(d.Seconds())
+			getPhaseDurationObserver(executor_metrics.PhaseWriteResponse, internal).Observe(d.Seconds())
 		}
 	}
 }
@@ -1358,7 +1359,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
-			totalTiFlashQuerySuccCounter.Inc()
+			executor_metrics.TotalTiFlashQuerySuccCounter.Inc()
 		} else {
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
@@ -1368,9 +1369,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
-		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
+		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
-		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
+		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
@@ -1388,22 +1389,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// Update aggressive locking related counters by stmt
 	if execDetail.LockKeysDetail != nil {
 		if execDetail.LockKeysDetail.AggressiveLockNewCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-			aggressiveLockingStmtUsedCount.Inc()
+			executor_metrics.AggressiveLockingStmtUsedCount.Inc()
 			// If this statement is finished when some of the keys are locked with conflict in the last retry, or
 			// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
 			// takes effect on this statement.
 			if execDetail.LockKeysDetail.LockedWithConflictCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-				aggressiveLockingStmtEffectiveCount.Inc()
+				executor_metrics.AggressiveLockingStmtEffectiveCount.Inc()
 			}
 		}
 	}
 	// If the transaction is committed, update aggressive locking related counters by txn
 	if execDetail.CommitDetail != nil {
 		if sessVars.TxnCtx.AggressiveLockingUsed {
-			aggressiveLockingTxnUsedCount.Inc()
+			executor_metrics.AggressiveLockingTxnUsedCount.Inc()
 		}
 		if sessVars.TxnCtx.AggressiveLockingEffective {
-			aggressiveLockingTxnEffectiveCount.Inc()
+			executor_metrics.AggressiveLockingTxnEffectiveCount.Inc()
 		}
 	}
 }
@@ -1561,13 +1562,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	logutil.SlowQueryLogger.Warn(slowLog)
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
-			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
+			executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		} else {
-			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+			executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		}
 		var userString string
 		if sessVars.User != nil {

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -218,9 +219,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 					zap.Strings("sqls", sqls))
 			}
 			errMsg = err.Error()
-			planReplayerDumpTaskFailed.Inc()
+			domain_metrics.PlanReplayerDumpTaskFailed.Inc()
 		} else {
-			planReplayerDumpTaskSuccess.Inc()
+			domain_metrics.PlanReplayerDumpTaskSuccess.Inc()
 		}
 		err1 := zw.Close()
 		if err1 != nil {

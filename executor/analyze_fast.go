@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -231,7 +232,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 			break
 		}
 	}
-	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
+	executor_metrics.FastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
 	return nil
 }
@@ -453,7 +454,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 				return
 			}
 		}
-		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
+		executor_metrics.FastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
@@ -554,7 +555,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
-	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
+	executor_metrics.FastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

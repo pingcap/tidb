@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 )
 
 type statsInnerCache struct {
@@ -51,7 +52,7 @@ func newInnerLruCache(c int64) *innerItemLruCache {
 	if c < 1 {
 		c = math.MaxInt64
 	}
-	capacityGauge.Set(float64(c))
+	handle_metrics.CapacityGauge.Set(float64(c))
 	return &innerItemLruCache{
 		capacity: c,
 		cache:    list.New(),
@@ -326,20 +327,20 @@ func (s *statsInnerCache) capacity() int64 {
 func (c *innerItemLruCache) get(tblID, id int64, isIndex bool) (*lruCacheItem, bool) {
 	v, ok := c.elements[tblID]
 	if !ok {
-		missCounter.Inc()
+		handle_metrics.MissCounter.Inc()
 		return nil, false
 	}
 	isIndexSet, ok := v[isIndex]
 	if !ok {
-		missCounter.Inc()
+		handle_metrics.MissCounter.Inc()
 		return nil, false
 	}
 	ele, ok := isIndexSet[id]
 	if !ok {
-		missCounter.Inc()
+		handle_metrics.MissCounter.Inc()
 		return nil, false
 	}
-	hitCounter.Inc()
+	handle_metrics.HitCounter.Inc()
 	c.cache.MoveToFront(ele)
 	return ele.Value.(*lruCacheItem), true
 }
@@ -357,7 +358,7 @@ func (c *innerItemLruCache) del(tblID, id int64, isIndex bool) {
 	if !ok {
 		return
 	}
-	delCounter.Inc()
+	handle_metrics.DelCounter.Inc()
 	memUsage := c.elements[tblID][isIndex][id].Value.(*lruCacheItem).innerMemUsage
 	delete(c.elements[tblID][isIndex], id)
 	c.cache.Remove(ele)
@@ -371,7 +372,7 @@ func (c *innerItemLruCache) del(tblID, id int64, isIndex bool) {
 func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.TableCacheItem, itemMem statistics.CacheItemMemoryUsage,
 	needEvict, needMove bool) {
 	defer func() {
-		updateCounter.Inc()
+		handle_metrics.UpdateCounter.Inc()
 		if needEvict {
 			c.evictIfNeeded()
 		}
@@ -420,7 +421,7 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
 	for c.trackingCost > c.capacity && curr != nil {
-		evictCounter.Inc()
+		handle_metrics.EvictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
@@ -462,6 +463,6 @@ func (c *innerItemLruCache) setCapacity(capacity int64) {
 		capacity = math.MaxInt64
 	}
 	c.capacity = capacity
-	capacityGauge.Set(float64(c.capacity))
+	handle_metrics.CapacityGauge.Set(float64(c.capacity))
 	c.evictIfNeeded()
 }

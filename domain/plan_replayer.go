@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain/infosync"
+	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -193,10 +194,10 @@ func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) bool {
 		if !task.IsContinuesCapture {
 			h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
 		}
-		planReplayerCaptureTaskSendCounter.Inc()
+		domain_metrics.PlanReplayerCaptureTaskSendCounter.Inc()
 		return true
 	default:
-		planReplayerCaptureTaskDiscardCounter.Inc()
+		domain_metrics.PlanReplayerCaptureTaskDiscardCounter.Inc()
 		// directly discard the task if the task channel is full in order not to block the query process
 		logutil.BgLogger().Warn("discard one plan replayer dump task",
 			zap.String("sql-digest", task.SQLDigest), zap.String("plan-digest", task.PlanDigest))
@@ -234,7 +235,7 @@ func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
 		}
 	}
 	h.setupTasks(tasks)
-	planReplayerRegisterTaskGauge.Set(float64(len(tasks)))
+	domain_metrics.PlanReplayerRegisterTaskGauge.Set(float64(len(tasks)))
 	return nil
 }
 
