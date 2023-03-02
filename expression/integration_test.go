@@ -7910,10 +7910,10 @@ func TestIssue40015(t *testing.T) {
 	tk.MustExec("CREATE TABLE test ( c1 varchar(20));")
 	tk.MustExec("INSERT INTO test VALUES (101111),(11100),(101111),(101111);")
 	tk.MustExec("set tidb_enable_vectorized_expression = true;")
-	tk.MustQuery("SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;").Check(testkit.Rows(
+	tk.MustQuery("SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;").Sort().Check(testkit.Rows(
+		"2010-11-11 01:00:00",
+		"2010-11-11 01:00:00",
 		"2010-11-11 01:00:00",
 		"<nil>",
-		"2010-11-11 01:00:00",
-		"2010-11-11 01:00:00",
 	))
 }
