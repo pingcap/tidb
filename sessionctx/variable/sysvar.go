@@ -50,7 +50,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -375,15 +374,7 @@ var defaultSysVars = []*SysVar{
 		cfg := config.GetGlobalConfig().Log.ToLogConfig()
 		cfg.Config.File.MaxDays = int(maxAge)
 
-		opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-			keyspaceName := keyspace.GetKeyspaceNameBySettings()
-			if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-				core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
-			}
-			return core
-		})
-
-		err = logutil.ReplaceLogger(cfg, opt)
+		err = logutil.ReplaceLogger(cfg, keyspace.WrapZapcoreWithKeyspace())
 		if err != nil {
 			return err
 		}
