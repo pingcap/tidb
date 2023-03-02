@@ -42,13 +42,14 @@ func TestCPUValue(t *testing.T) {
 		}()
 	}
 	observer.Start()
-	time.Sleep(5 * time.Second)
-	value, unsupported := GetCPUUsage()
-	require.False(t, unsupported)
-	require.GreaterOrEqual(t, value, 0.0)
-	value, unsupported = GetCPUUsage()
-	require.False(t, unsupported)
-	require.Less(t, value, 1.0)
+	for n := 0; n < 10; n++ {
+		time.Sleep(1 * time.Second)
+		value, unsupported := GetCPUUsage()
+		require.False(t, unsupported)
+		require.GreaterOrEqual(t, value, 0.0)
+		require.Less(t, value, 1.0)
+	}
+
 	observer.Stop()
 	close(exit)
 	wg.Wait()
