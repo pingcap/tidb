@@ -193,6 +193,8 @@ func (m *txnManager) OnTxnEnd() {
 	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
 		logutil.BgLogger().Info(
 			"slow transaction", zap.Duration("duration", duration),
+			zap.Uint64("conn", m.sctx.GetSessionVars().ConnectionID),
+			zap.Uint64("txnStartTS", m.sctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Objects("events", m.events),
 		)
 	}
@@ -260,8 +262,6 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
 
-	m.events = append(m.events, event{event: "txn activate", duration: time.Since(m.lastInstant)})
-	m.lastInstant = time.Now()
 	return m.ctxProvider.ActivateTxn()
 }
 

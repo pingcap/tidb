@@ -333,10 +333,6 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBSlowTxnLogThreshold)
-	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowTxnThreshold), 10), val)
-
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBRecordPlanInSlowLog)
 	require.NoError(t, err)
 	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
