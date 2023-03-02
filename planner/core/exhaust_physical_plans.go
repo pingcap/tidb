@@ -2023,7 +2023,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 	if hasMPPJoinHints(p.preferJoinType) {
 		if !checkMPPHintAvailable(p.preferJoinType) {
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now.")
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now."))
 			p.preferJoinType = 0
 		}
 	}

@@ -237,7 +237,9 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now."
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -252,7 +254,9 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now."
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -267,7 +271,9 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now."
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -282,7 +288,9 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now."
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), hash_agg() */ a, sum(b) from t group by a, c",
