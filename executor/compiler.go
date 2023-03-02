@@ -320,6 +320,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.ShowStmt:
+		dbLabelSet[x.DBName] = struct{}{}
 		if x.Table != nil {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}
