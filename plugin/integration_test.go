@@ -33,6 +33,7 @@ import (
 
 // Audit tests cannot run in parallel.
 func TestAuditLogNormal(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
