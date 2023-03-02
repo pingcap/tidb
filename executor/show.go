@@ -1274,7 +1274,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
-			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			if len(tableInfo.TTLInfo.JobInterval) == 0 {
+				restoreCtx.WriteString(model.DefaultJobInterval.String())
+			} else {
+				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			}
 			return nil
 		})
 

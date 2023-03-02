@@ -16,7 +16,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
-        "//parser/duration",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
