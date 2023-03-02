@@ -1578,8 +1578,8 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		// see https://github.com/pingcap/tidb/issues/41626 for more details.
 		exprType := args[1-conIdx].GetType()
 		if exprType.GetType() == mysql.TypeYear {
-			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, reason)
 			return true
 		}
 
@@ -1588,8 +1588,8 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		conType := args[conIdx].GetType().EvalType()
 		if exprType.EvalType() == types.ETInt &&
 			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
-			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, reason)
 			return true
 		}
 	}
