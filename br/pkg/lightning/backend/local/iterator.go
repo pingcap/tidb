@@ -16,8 +16,11 @@ package local
 
 import (
 	"bytes"
+<<<<<<< HEAD
 	"context"
 	"math"
+=======
+>>>>>>> caa1a7c4c0 (lightning: remove ctx from dupDetectIter (#41867))
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -71,7 +74,6 @@ var _ Iter = pebbleIter{}
 const maxDuplicateBatchSize = 4 << 20
 
 type dupDetectIter struct {
-	ctx       context.Context
 	iter      *pebble.Iterator
 	curKey    []byte
 	curRawKey []byte
@@ -144,7 +146,7 @@ func (d *dupDetectIter) record(rawKey, key, val []byte) {
 
 func (d *dupDetectIter) Next() bool {
 	recordFirst := false
-	for d.err == nil && d.ctx.Err() == nil && d.iter.Next() {
+	for d.err == nil && d.iter.Next() {
 		d.nextKey, d.err = d.keyAdapter.Decode(d.nextKey[:0], d.iter.Key())
 		if d.err != nil {
 			return false
@@ -168,9 +170,6 @@ func (d *dupDetectIter) Next() bool {
 			recordFirst = true
 		}
 		d.record(d.iter.Key(), d.nextKey, d.iter.Value())
-	}
-	if d.err == nil {
-		d.err = d.ctx.Err()
 	}
 	return false
 }
@@ -205,7 +204,7 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 
 var _ Iter = &dupDetectIter{}
 
-func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
+func newDupDetectIter(db *pebble.DB, keyAdapter KeyAdapter,
 	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt dupDetectOpt) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
@@ -215,7 +214,6 @@ func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
 		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
 	}
 	return &dupDetectIter{
-		ctx:        ctx,
 		iter:       db.NewIter(newOpts),
 		keyAdapter: keyAdapter,
 		writeBatch: dupDB.NewBatch(),
