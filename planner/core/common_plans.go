@@ -555,6 +555,7 @@ type LoadData struct {
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Format      string
+	SchemaName  string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause

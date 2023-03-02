@@ -31,10 +31,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -43,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -58,8 +62,8 @@ const (
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
-	// InTest is a flag that bypass gcs authentication in unit tests.
-	InTest bool
+	// InTest is a counter that bypass gcs authentication in unit tests.
+	InTest atomic.Int64
 )
 
 // LoadDataExec represents a load data executor.
@@ -126,7 +130,7 @@ func (e *LoadDataExec) loadFromRemote(
 	filename string,
 ) error {
 	opt := &storage.ExternalStorageOptions{}
-	if InTest {
+	if InTest.Load() > 0 {
 		opt.NoCredentials = true
 	}
 	s, err := storage.New(ctx, b, opt)
@@ -164,10 +168,13 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// commitTask is used for fetching data from data preparing routine into committing routine.
+// commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
 	cnt  uint64
 	rows [][]types.Datum
+
+	loadedRows     uint64
+	loadedFileSize int64
 }
 
 type loadRemoteInfo struct {
@@ -188,6 +195,7 @@ type LoadDataWorker struct {
 	IgnoreLines uint64
 
 	format             string
+	schemaName         string
 	columnAssignments  []*ast.Assignment
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
@@ -198,6 +206,9 @@ type LoadDataWorker struct {
 	rows            [][]types.Datum
 	commitTaskQueue chan commitTask
 	loadRemoteInfo  loadRemoteInfo
+	progress        atomic.Pointer[asyncloaddata.Progress]
+	getSysSessionFn func() (sessionctx.Context, error)
+	putSysSessionFn func(context.Context, sessionctx.Context)
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
@@ -205,6 +216,8 @@ func NewLoadDataWorker(
 	sctx sessionctx.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
+	getSysSessionFn func() (sessionctx.Context, error),
+	putSysSessionFn func(context.Context, sessionctx.Context),
 ) (*LoadDataWorker, error) {
 	insertVal := &InsertValues{
 		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
@@ -221,6 +234,7 @@ func NewLoadDataWorker(
 		InsertValues:       insertVal,
 		Path:               plan.Path,
 		format:             plan.Format,
+		schemaName:         plan.SchemaName,
 		table:              tbl,
 		FieldsInfo:         plan.FieldsInfo,
 		LinesInfo:          plan.LinesInfo,
@@ -230,6 +244,8 @@ func NewLoadDataWorker(
 		columnsAndUserVars: plan.ColumnsAndUserVars,
 		onDuplicate:        plan.OnDuplicate,
 		Ctx:                sctx,
+		getSysSessionFn:    getSysSessionFn,
+		putSysSessionFn:    putSysSessionFn,
 	}
 	columnNames := loadDataWorker.initFieldMappings()
 	err := loadDataWorker.initLoadColumns(columnNames)
@@ -365,9 +381,46 @@ func (e *LoadDataWorker) reorderColumns(columnNames []string) error {
 // Load reads from readerFn and do load data job.
 func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
 	var (
+		jobID  int64
 		parser mydump.Parser
 		err    error
 	)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+
+	s, err := e.getSysSessionFn()
+	if err != nil {
+		return err
+	}
+	defer e.putSysSessionFn(ctx, s)
+
+	sqlExec := s.(sqlexec.SQLExecutor)
+	jobID, err = asyncloaddata.CreateLoadDataJob(
+		ctx, sqlExec, e.Path, e.schemaName, e.table.Meta().Name.O,
+		"logical", e.Ctx.GetSessionVars().User.String())
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err == nil {
+			err2 := asyncloaddata.FinishJob(
+				ctx,
+				sqlExec,
+				jobID,
+				e.Ctx.GetSessionVars().StmtCtx.GetMessage())
+			terror.Log(err2)
+			return
+		}
+		errMsg := err.Error()
+		if errImpl, ok := err.(*errors.Error); ok {
+			errMsg = terror.ToSQLError(errImpl).Error()
+		}
+
+		err2 := asyncloaddata.FailJob(ctx, sqlExec, jobID, errMsg)
+		terror.Log(err2)
+	}()
+
+	failpoint.Inject("AfterCreateLoadDataJob", nil)
 
 	switch strings.ToLower(e.format) {
 	case "":
@@ -407,18 +460,61 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
-	err = sessiontxn.NewTxn(ctx, e.Ctx)
+	progress := asyncloaddata.Progress{
+		SourceFileSize: -1,
+		LoadedFileSize: 0,
+		LoadedRows:     0,
+	}
+	// TODO try to read total file size from remote storage. gcs seems wrongly
+	// implement io.Seek
+	e.progress.Store(&progress)
+
+	err = asyncloaddata.StartJob(ctx, sqlExec, jobID)
 	if err != nil {
 		return err
 	}
-	group, groupCtx := errgroup.WithContext(ctx)
 
-	// processStream process input data, enqueue commit task
+	failpoint.Inject("AfterStartJob", nil)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	// done is used to let commitWork goroutine notify UpdateJobProgress
+	// goroutine that the job is finished.
+	done := make(chan struct{})
+
+	// UpdateJobProgress goroutine.
 	group.Go(func() error {
-		return e.processStream(groupCtx, parser)
+		ticker := time.NewTicker(time.Duration(asyncloaddata.HeartBeatInSec) * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return nil
+			case <-groupCtx.Done():
+				return nil
+			case <-ticker.C:
+				p := e.progress.Load()
+				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, p.String())
+				if err2 != nil {
+					return err2
+				}
+				if !ok {
+					return errors.Errorf("failed to keepalive for LOAD DATA job %d", jobID)
+				}
+			}
+		}
 	})
+	// processStream goroutine.
 	group.Go(func() error {
-		return e.commitWork(groupCtx)
+		return e.processStream(groupCtx, parser, reader)
+	})
+	// commitWork goroutine.
+	group.Go(func() error {
+		err2 := e.commitWork(groupCtx)
+		if err2 == nil {
+			close(done)
+		}
+		return err2
 	})
 
 	err = group.Wait()
@@ -426,10 +522,12 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	return err
 }
 
-// processStream process input stream from network
+// processStream process input stream from parser. When returns nil, it means
+// all data is read.
 func (e *LoadDataWorker) processStream(
 	ctx context.Context,
 	parser mydump.Parser,
+	seeker io.Seeker,
 ) (err error) {
 	defer func() {
 		r := recover()
@@ -455,6 +553,7 @@ func (e *LoadDataWorker) processStream(
 		}
 
 	TrySendTask:
+		pos, _ := seeker.Seek(0, io.SeekCurrent)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -465,7 +564,12 @@ func (e *LoadDataWorker) processStream(
 				return ErrQueryInterrupted
 			}
 			goto TrySendTask
-		case e.commitTaskQueue <- commitTask{e.curBatchCnt, e.rows}:
+		case e.commitTaskQueue <- commitTask{
+			cnt:            e.curBatchCnt,
+			rows:           e.rows,
+			loadedRows:     e.rowCount,
+			loadedFileSize: pos,
+		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
 		e.ResetBatch()
@@ -478,7 +582,8 @@ func (e *LoadDataWorker) ResetBatch() {
 	e.curBatchCnt = 0
 }
 
-// commitWork commit batch sequentially
+// commitWork commit batch sequentially. When returns nil, it means the job is
+// finished.
 func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 	defer func() {
 		r := recover()
@@ -489,6 +594,11 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
+
+	err = sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
 
 	var tasks uint64
 	for {
@@ -509,6 +619,7 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 				zap.Uint64("keys processed", task.cnt),
 				zap.Uint64("tasks processed", tasks),
 				zap.Int("tasks in queue", len(e.commitTaskQueue)))
+			failpoint.Inject("AfterCommitOneTask", nil)
 		}
 	}
 }
@@ -538,7 +649,14 @@ func (e *LoadDataWorker) commitOneTask(ctx context.Context, task commitTask) err
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
 		return err
 	}
-	return err
+	p := e.progress.Load()
+	newP := &asyncloaddata.Progress{
+		SourceFileSize: p.SourceFileSize,
+		LoadedFileSize: task.loadedFileSize,
+		LoadedRows:     task.loadedRows,
+	}
+	e.progress.Store(newP)
+	return nil
 }
 
 // CheckAndInsertOneBatch is used to commit one transaction batch fulfilled data
