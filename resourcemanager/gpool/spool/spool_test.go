@@ -208,7 +208,6 @@ func TestExitTask(t *testing.T) {
 	var wg tidbutil.WaitGroupWrapper
 	wg.Run(func() {
 		p.Run(longRunningFunc)
-
 	})
 	for i := 0; i < 10; i++ {
 		exit <- struct{}{}
