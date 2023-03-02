@@ -2,10 +2,11 @@ package example
 
 import (
 	"errors"
+	"math/rand"
+
 	"github.com/pingcap/tidb/distribute_framework/dispatcher"
 	"github.com/pingcap/tidb/distribute_framework/proto"
 	"github.com/pingcap/tidb/util/logutil"
-	"math/rand"
 )
 
 type NumberExampleHandle struct {
@@ -59,5 +60,5 @@ func (n NumberExampleHandle) HandleError(d *dispatcher.Dispatcher, gTask *proto.
 }
 
 func init() {
-	dispatcher.RegisterTaskDispatcherHandle(proto.TaskTypeExample, NumberExampleHandle{})
+	dispatcher.RegisterGTaskFlowHandle(proto.TaskTypeExample, NumberExampleHandle{})
 }

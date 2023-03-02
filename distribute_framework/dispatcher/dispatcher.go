@@ -117,7 +117,7 @@ func (d *Dispatcher) DetectionTaskLoop() {
 }
 
 func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
-	err := GetTaskDispatcherHandle(gTask.Type).HandleError(d, gTask, receiveErr)
+	err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 	}
@@ -125,7 +125,7 @@ func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
 
 func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
 	// Generate the needed global task meta and subTask meta.
-	finished, subtasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask, fromPending)
+	finished, subtasks, err := GetGTaskFlowHandle(gTask.Type).Progress(d, gTask, fromPending)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err

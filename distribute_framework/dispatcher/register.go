@@ -18,17 +18,20 @@ import (
 	"github.com/pingcap/tidb/distribute_framework/proto"
 )
 
-type TaskDispatcherHandle interface {
+// GTaskFlowHandle is used to control the process operations for each global task.
+type GTaskFlowHandle interface {
 	Progress(d *Dispatcher, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error)
 	HandleError(d *Dispatcher, gTask *proto.Task, receive string) error
 }
 
-var TaskDispatcherHandleConstructors = make(map[proto.TaskType]TaskDispatcherHandle)
+var taskDispatcherHandleMap = make(map[proto.TaskType]GTaskFlowHandle)
 
-func RegisterTaskDispatcherHandle(taskType proto.TaskType, dispatcherHandle TaskDispatcherHandle) {
-	TaskDispatcherHandleConstructors[taskType] = dispatcherHandle
+// RegisterGTaskFlowHandle is used to register the handle.
+func RegisterGTaskFlowHandle(taskType proto.TaskType, dispatcherHandle GTaskFlowHandle) {
+	taskDispatcherHandleMap[taskType] = dispatcherHandle
 }
 
-func GetTaskDispatcherHandle(taskType proto.TaskType) TaskDispatcherHandle {
-	return TaskDispatcherHandleConstructors[taskType]
+// GetGTaskFlowHandle is used to get the handle.
+func GetGTaskFlowHandle(taskType proto.TaskType) GTaskFlowHandle {
+	return taskDispatcherHandleMap[taskType]
 }
