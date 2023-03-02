@@ -16,27 +16,14 @@ package dispatcher
 
 import (
 	"github.com/pingcap/tidb/distribute_framework/proto"
-	"github.com/pingcap/tidb/kv"
 )
-
-type Splitter interface {
-	// SplitTask splits the task into subtasks.
-	SplitTask() (task []*proto.Subtask, err error)
-}
 
 type TaskDispatcherHandle interface {
 	Progress(d *Dispatcher, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error)
 	HandleError(d *Dispatcher, gTask *proto.Task, receive string) error
 }
 
-var (
-	SplitterConstructors             = make(map[proto.TaskType]Splitter)
-	TaskDispatcherHandleConstructors = make(map[proto.TaskType]TaskDispatcherHandle)
-)
-
-func RegisterSplitter(taskType proto.TaskType, splitter Splitter) {
-	SplitterConstructors[taskType] = splitter
-}
+var TaskDispatcherHandleConstructors = make(map[proto.TaskType]TaskDispatcherHandle)
 
 func RegisterTaskDispatcherHandle(taskType proto.TaskType, dispatcherHandle TaskDispatcherHandle) {
 	TaskDispatcherHandleConstructors[taskType] = dispatcherHandle
@@ -44,19 +31,4 @@ func RegisterTaskDispatcherHandle(taskType proto.TaskType, dispatcherHandle Task
 
 func GetTaskDispatcherHandle(taskType proto.TaskType) TaskDispatcherHandle {
 	return TaskDispatcherHandleConstructors[taskType]
-}
-
-type AddIndexSplitter struct {
-	startKey kv.Key
-	endKey   kv.Key
-}
-
-func (splitter *AddIndexSplitter) SplitTask() (task []*proto.Subtask, err error) {
-	return nil, nil
-}
-
-func init() {
-	// TODO: Implement AddIndexSplitter
-	addIdxSplitter := &AddIndexSplitter{}
-	RegisterSplitter(proto.TaskTypeCreateIndex, addIdxSplitter)
 }

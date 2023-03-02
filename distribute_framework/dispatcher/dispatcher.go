@@ -29,6 +29,7 @@ import (
 const (
 	DefaultConcurrency        = 8
 	DefaultSubtaskConcurrency = 16
+	MaxSubtaskConcurrency     = 256
 	checkTaskFinishedInterval = 300 * time.Millisecond
 	checkTaskRunningInterval  = 300 * time.Millisecond
 )
@@ -101,7 +102,7 @@ func (d *Dispatcher) DetectionTaskLoop() {
 			return
 		case <-ticker.C:
 			gTasks := d.getRunningGlobalTasks()
-			// TODO: Do we need to handle it asynchronously.
+			// TODO: Do we need to handle it asynchronously?
 			for _, gTask := range gTasks {
 				stepIsFinished, errStr := d.detectionTask(gTask)
 				if errStr != "" {
@@ -124,7 +125,7 @@ func (d *Dispatcher) HandleError(gTask *proto.Task, receiveErr string) {
 
 func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
 	// Generate the needed global task meta and subTask meta.
-	finished, subTasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask, fromPending)
+	finished, subtasks, err := GetTaskDispatcherHandle(gTask.Type).Progress(d, gTask, fromPending)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
@@ -133,6 +134,9 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 	// Adjust global task meta.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
+	}
+	if gTask.Concurrency > MaxSubtaskConcurrency {
+		gTask.Concurrency = MaxSubtaskConcurrency
 	}
 	if finished {
 		gTask.State = proto.TaskStateSucceed
@@ -162,12 +166,12 @@ func (d *Dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 	// TODO: Consider batch splitting
 	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
 	// TODO: batch insert
-	// Write the subTask meta into the storage.
-	for _, subTask := range subTasks {
+	// Write subtasks into the storage.
+	for _, subtask := range subtasks {
 		// TODO: Get TiDB_Instance_ID
-		err := d.subTaskMgr.AddNewTask(gTask.ID, subTask.SchedulerID, subTask.Meta.Serialize(), gTask.Type)
+		err := d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), gTask.Type)
 		if err != nil {
-			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subTask", subTask), zap.Error(err))
+			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
 			return err
 		}
 	}
@@ -186,19 +190,22 @@ func (d *Dispatcher) DispatchTaskLoop() {
 		case <-ticker.C:
 			cnt := len(d.getRunningGlobalTasks())
 
-			// TODO: Consider retry
-			gTask, err := d.gTaskMgr.GetNewTask()
-			if err != nil {
-				logutil.BgLogger().Warn("get new task failed", zap.Error(err))
-				continue
+			for cnt < DefaultConcurrency {
+				// TODO: Consider retry
+				gTask, err := d.gTaskMgr.GetNewTask()
+				if err != nil {
+					logutil.BgLogger().Warn("get new task failed", zap.Error(err))
+					break
+				}
+				// There are currently no global tasks to work on.
+				if gTask == nil {
+					break
+				}
+				d.wg.Run(func() {
+					d.loadTaskAndProgress(gTask, true)
+				})
+				cnt++
 			}
-			if gTask == nil {
-				continue
-			}
-			d.wg.Run(func() {
-				d.loadTaskAndProgress(gTask, true)
-			})
-			cnt++
 		}
 	}
 }
