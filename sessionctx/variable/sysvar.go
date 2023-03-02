@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -49,6 +50,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -372,7 +374,16 @@ var defaultSysVars = []*SysVar{
 		GlobalLogMaxDays.Store(int32(maxAge))
 		cfg := config.GetGlobalConfig().Log.ToLogConfig()
 		cfg.Config.File.MaxDays = int(maxAge)
-		err = logutil.ReplaceLogger(cfg)
+
+		opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+			keyspaceName := keyspace.GetKeyspaceNameBySettings()
+			if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+				core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
+			}
+			return core
+		})
+
+		err = logutil.ReplaceLogger(cfg, opt)
 		if err != nil {
 			return err
 		}

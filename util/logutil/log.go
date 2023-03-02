@@ -98,8 +98,9 @@ const (
 var SlowQueryLogger = log.L()
 
 // InitLogger initializes a logger with cfg.
-func InitLogger(cfg *LogConfig) error {
-	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
+func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
+	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
+	gl, props, err := log.InitLogger(&cfg.Config, opts...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -138,8 +139,9 @@ func initGRPCLogger(gl *zap.Logger) {
 }
 
 // ReplaceLogger replace global logger instance with given log config.
-func ReplaceLogger(cfg *LogConfig) error {
-	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
+func ReplaceLogger(cfg *LogConfig, opts ...zap.Option) error {
+	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
+	gl, props, err := log.InitLogger(&cfg.Config, opts...)
 	if err != nil {
 		return errors.Trace(err)
 	}

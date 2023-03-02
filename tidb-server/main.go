@@ -86,6 +86,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Flag Names
@@ -787,8 +788,16 @@ func setGlobalVars() {
 }
 
 func setupLog() {
+	opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		keyspaceName := keyspace.GetKeyspaceNameBySettings()
+		if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+			core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
+		}
+		return core
+	})
+
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig(), opt)
 	terror.MustNil(err)
 
 	// trigger internal http(s) client init.
