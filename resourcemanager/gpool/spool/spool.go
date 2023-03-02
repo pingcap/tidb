@@ -107,7 +107,7 @@ func (p *Pool) run(fn func()) {
 }
 
 // RunWithConcurrency runs a function in the pool with concurrency.
-func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
+func (p *Pool) RunWithConcurrency(fns chan func(), concurrency int) error {
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
@@ -118,7 +118,11 @@ func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
 	// TODO: taskManager need to refactor
 	p.taskManager.RegisterTask(p.NewTaskID(), conc)
 	for n := int32(0); n < conc; n++ {
-		p.run(fn)
+		p.run(func() {
+			for fn := range fns {
+				fn()
+			}
+		})
 	}
 	return nil
 }

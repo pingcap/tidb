@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/resourcemanager/gpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,27 +48,25 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
 			_ = p.Run(func() {
-				time.Sleep(1 * time.Second)
+				time.Sleep(1 * time.Microsecond)
 			})
 		}
 	}()
-
 	go func() {
 		defer wg.Done()
 		for i := 100; i < 130; i++ {
 			_ = p.Run(func() {
-				time.Sleep(1 * time.Second)
+				time.Sleep(1 * time.Microsecond)
 			})
 		}
 	}()
-	time.Sleep(3 * time.Second)
-	p.ReleaseAndWait()
 	wg.Wait()
+	p.ReleaseAndWait()
 }
 
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	c := make(chan struct{})
-	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN)
+	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(false))
 	for i := 0; i < 2; i++ {
 		_ = p.Run(func() {
 			<-c
@@ -107,16 +104,36 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
-	err := p.Run(func() {})
-	require.Error(t, err)
-	err = p.RunWithConcurrency(func() {}, 10)
-	require.Error(t, err)
-	time.Sleep(10 * time.Millisecond)
 	require.Equal(t, 2, p.Running())
-	wg.Wait()
 	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
+	require.Equal(t, 0, p.Running())
+
+	err := p.Run(func() {})
+	require.Error(t, err)
+	var cnt atomic.Int32
+	workerFn := func() {
+		t.Log("ok")
+		cnt.Add(1)
+	}
+	fnChan := make(chan func(), 10)
+	for i := 0; i < 2; i++ {
+		c <- struct{}{}
+	}
+	wg.Wait()
+	err = p.RunWithConcurrency(fnChan, 2)
+	require.Equal(t, 2, p.Running())
+	for i := 0; i < 10; i++ {
+		fnChan <- workerFn
+	}
+	require.Error(t, err)
+	time.Sleep(10 * time.Millisecond)
+	require.Equal(t, 10, cnt.Load())
+	require.Equal(t, 2, p.Running())
+	close(fnChan)
+	time.Sleep(time.Microsecond)
+	require.Equal(t, 0, p.Running())
 	p.ReleaseAndWait()
 }
 
@@ -146,75 +163,31 @@ func TestRunOverload(t *testing.T) {
 
 func TestRunWithNotEnough(t *testing.T) {
 	var stop atomic.Bool
-	longRunningFunc := func() {
-		for {
-			if stop.Load() {
-				break
-			}
-			runtime.Gosched()
-		}
-	}
+	fnChan := make(chan func(), 10)
 	poolSize := 10
 	p, err := NewPool("TestRunWithNotEnough", int32(poolSize), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
-	require.NoError(t, p.RunWithConcurrency(longRunningFunc, poolSize+100), "submit when pool is not full shouldn't return error")
+	require.NoError(t, p.RunWithConcurrency(fnChan, poolSize+100), "submit when pool is not full shouldn't return error")
 	require.Equal(t, 10, p.Running())
-	require.Error(t, p.RunWithConcurrency(longRunningFunc, 1))
-	require.Error(t, p.Run(longRunningFunc))
+	require.Error(t, p.RunWithConcurrency(fnChan, 1))
+	require.Error(t, p.Run(func() {}))
+	close(fnChan)
+	time.Sleep(time.Microsecond)
+	require.Equal(t, 0, p.Running())
 }
 
 func TestRunWithNotEnough2(t *testing.T) {
-	var stop atomic.Bool
-	longRunningFunc := func() {
-		for {
-			if stop.Load() {
-				break
-			}
-			runtime.Gosched()
-		}
-	}
+	fnChan := make(chan func(), 10)
 	p, err := NewPool("TestRunWithNotEnough2", int32(1), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
-	defer stop.Store(true)
-	require.NoError(t, p.RunWithConcurrency(longRunningFunc, 2), "submit when pool is not full shouldn't return error")
+	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
 	require.Equal(t, 1, p.Running())
-	require.Error(t, p.RunWithConcurrency(longRunningFunc, 1))
-	require.Error(t, p.Run(longRunningFunc))
-}
-
-func TestExitTask(t *testing.T) {
-	exit := make(chan struct{})
-	longRunningFunc := func() {
-		<-exit
-	}
-	p, err := NewPool("TestExitTask", int32(10), util.UNKNOWN, WithBlocking(true))
-	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
-	defer p.ReleaseAndWait()
-	p.RunWithConcurrency(longRunningFunc, 10)
-	for i := 0; i < 10; i++ {
-		exit <- struct{}{}
-		time.Sleep(10 * time.Millisecond)
-		require.Equal(t, 10-i-1, p.Running())
-	}
-	p.RunWithConcurrency(longRunningFunc, 10)
-	var wg tidbutil.WaitGroupWrapper
-	wg.Run(func() {
-		p.Run(longRunningFunc)
-	})
-	for i := 0; i < 10; i++ {
-		exit <- struct{}{}
-	}
-	time.Sleep(10 * time.Millisecond)
-	require.Equal(t, 1, p.Running())
-	exit <- struct{}{}
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		_ = p.Run(func() {
-			wg.Done()
-		})
-	}
-	wg.Wait()
+	require.Error(t, p.RunWithConcurrency(fnChan, 1))
+	require.Error(t, p.Run(func() {}))
+	close(fnChan)
+	time.Sleep(time.Microsecond)
+	require.Equal(t, 0, p.Running())
 }
