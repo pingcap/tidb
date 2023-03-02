@@ -28,7 +28,7 @@ import (
 
 type Scheduler interface {
 	InitSubtaskExecEnv(context.Context) error
-	SplitSubtasks([]*proto.Subtask) []*proto.Subtask
+	SplitSubtask(*proto.Subtask) []*proto.Subtask
 	CleanupSubtaskExecEnv(context.Context) error
 }
 
@@ -87,70 +87,86 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 		}
 	}()
 
-	subtasks, err := s.subtaskTable.GetSubtasksInStates(s.id, task.ID, string(proto.TaskStatePending))
-	if err != nil {
-		s.onError(err)
-		return s.getError()
-	}
-	subtasks = scheduler.SplitSubtasks(subtasks)
-
 	subtaskCtx, subtaskCancel := context.WithCancel(s.ctx)
 	defer subtaskCancel()
-	subtaskCh := make(chan *proto.Subtask, len(subtasks))
-	s.subtaskWg.Add(len(subtasks))
+	subtaskCh := make(chan *proto.Subtask, task.Concurrency)
 	err = s.pool.RunWithConcurrency(func() {
 		for subtask := range subtaskCh {
 			// defer in a loop is not recommended, fix it after we support wait group in pool.
 			// we should fetch all subtasks from subtaskCh even if there is an error or cancel.
 			defer s.subtaskWg.Done()
-
-			logutil.BgLogger().Info("scheduler run a subtask", zap.Any("id", s.id), zap.Any("subtask", subtask))
-			select {
-			case <-subtaskCtx.Done():
-				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-				continue
-			default:
-			}
-			if s.getError() != nil {
-				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-				continue
-			}
-
-			executor, err := s.createSubtaskExecutor(subtask, task.Step)
-			if err != nil {
-				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
-				s.onError(err)
-				continue
-			}
-
-			if err = executor.Run(subtaskCtx); err != nil {
-				if errors.Cause(err) == context.Canceled {
-					s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-				} else {
-					s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
-				}
-				s.onError(err)
-				continue
-			}
-
-			// TODO: if scheduler split subtasks, we update the status to succeed by original subtask id only when all split subtasks are successful.
-			s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
+			s.runSubtask(subtaskCtx, subtask, task.Step)
 		}
 	}, task.Concurrency)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
-	for _, subtask := range subtasks {
-		subtaskCh <- subtask
+
+	for {
+		subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, string(proto.TaskStatePending))
+		if err != nil {
+			s.onError(err)
+			break
+		}
+		if subtask == nil {
+			logutil.BgLogger().Info("scheduler finished subtasks", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
+			break
+		}
+		s.updateSubtaskState(subtask.ID, proto.TaskStateRunning)
+		if err := s.getError(); err != nil {
+			break
+		}
+
+		subtasks := scheduler.SplitSubtask(subtask)
+		for _, subtask := range subtasks {
+			s.subtaskWg.Add(1)
+			subtaskCh <- subtask
+		}
 	}
+
 	close(subtaskCh)
 	s.subtaskWg.Wait()
 	return s.getError()
 }
 
+func (s *SchedulerImpl) runSubtask(subtaskCtx context.Context, subtask *proto.Subtask, step proto.TaskStep) {
+	logutil.BgLogger().Info("scheduler run a subtask", zap.Any("id", s.id), zap.Any("subtask", subtask))
+	select {
+	case <-subtaskCtx.Done():
+		s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+		return
+	default:
+	}
+	if s.getError() != nil {
+		s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+		return
+	}
+
+	executor, err := s.createSubtaskExecutor(subtask, step)
+	if err != nil {
+		s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
+		s.onError(err)
+		return
+	}
+
+	if err = executor.Run(subtaskCtx); err != nil {
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+		} else {
+			s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
+		}
+		s.onError(err)
+		return
+	}
+
+	// TODO: if scheduler split subtasks, we update the status to succeed by original subtask id only when all split subtasks are successful.
+	s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
+}
+
 func (s *SchedulerImpl) Stop() {
 	s.cancel()
+	s.subtaskWg.Wait()
 	s.wg.Wait()
 }
 

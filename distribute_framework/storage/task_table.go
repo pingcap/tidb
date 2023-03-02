@@ -164,6 +164,9 @@ func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
 	if err != nil {
 		return task, err
 	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
 
 	t := &proto.Task{
 		ID:           proto.TaskID(rs[0].GetInt64(0)),
@@ -216,6 +219,9 @@ func (stm *GlobalTaskManager) GetTaskByID(taskID proto.TaskID) (task *proto.Task
 	if err != nil {
 		return task, err
 	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
 
 	task = &proto.Task{
 		ID:           proto.TaskID(rs[0].GetInt64(0)),
@@ -257,6 +263,9 @@ func (stm *SubTaskManager) GetSubaskByTiDBID(InstanceID proto.InstanceID) (*prot
 	if err != nil {
 		return nil, err
 	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
 
 	t := &proto.Subtask{
 		ID:          proto.SubtaskID(rs[0].GetInt64(0)),
@@ -285,7 +294,7 @@ func (stm *SubTaskManager) UpdateTask(subTaskID proto.SubtaskID, meta []byte) er
 	return nil
 }
 
-func (stm *SubTaskManager) GetSubtasksInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (subtasks []*proto.Subtask, err error) {
+func (stm *SubTaskManager) GetSubtaskInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (*proto.Subtask, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -293,23 +302,23 @@ func (stm *SubTaskManager) GetSubtasksInStates(InstanceID proto.InstanceID, task
 	args = append(args, states...)
 	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
-		return subtasks, err
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
 	}
 
-	for _, r := range rs {
-		t := &proto.Subtask{
-			ID:          proto.SubtaskID(r.GetInt64(0)),
-			Type:        proto.TaskType(r.GetString(1)),
-			TaskID:      proto.TaskID(r.GetInt64(2)),
-			SchedulerID: proto.InstanceID(r.GetString(3)),
-			State:       proto.TaskState(r.GetString(4)),
-			Meta:        proto.UnSerializeSubTaskMeta(r.GetBytes(6)),
-		}
-		t.StartTime, _ = r.GetTime(5).GoTime(time.UTC)
-		subtasks = append(subtasks, t)
+	t := &proto.Subtask{
+		ID:          proto.SubtaskID(rs[0].GetInt64(0)),
+		Type:        proto.TaskType(rs[0].GetString(1)),
+		TaskID:      proto.TaskID(rs[0].GetInt64(2)),
+		SchedulerID: proto.InstanceID(rs[0].GetString(3)),
+		State:       proto.TaskState(rs[0].GetString(4)),
+		Meta:        proto.UnSerializeSubTaskMeta(rs[0].GetBytes(6)),
 	}
+	t.StartTime, _ = rs[0].GetTime(5).GoTime(time.UTC)
 
-	return subtasks, nil
+	return t, nil
 }
 
 func (stm *SubTaskManager) HasSubtasksInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (bool, error) {

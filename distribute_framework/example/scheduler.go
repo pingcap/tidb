@@ -40,16 +40,16 @@ func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error 
 
 func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
-func (s *ExampleStepOneScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask {
-	return subtasks
+func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []*proto.Subtask {
+	return []*proto.Subtask{subtask}
 }
 
 func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
-func (s *ExampleStepTwoScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Subtask {
-	return subtasks
+func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []*proto.Subtask {
+	return []*proto.Subtask{subtask}
 }
 
 func init() {
