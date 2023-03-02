@@ -31,17 +31,21 @@ import (
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 const getJobWithoutPartition = -1
 
 type backfillWorkerContext struct {
-	currID           int
-	mu               sync.Mutex
-	sessCtxs         []sessionctx.Context
-	backfillWorkers  []*backfillWorker
-	copReqSenderPool *copReqSenderPool
+	currID          int
+	mu              sync.Mutex
+	sessCtxs        []sessionctx.Context
+	backfillWorkers []*backfillWorker
+	copReqSender    struct {
+		syncutil.RWMutex
+		pools map[int64]*copReqSenderPool
+	}
 }
 
 type newBackfillerFunc func(bfCtx *backfillCtx) (bf backfiller, err error)
@@ -110,6 +114,40 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
+func (bwCtx *backfillWorkerContext) hasCopReqSenderPool() bool {
+	bwCtx.copReqSender.RLock()
+	defer bwCtx.copReqSender.RUnlock()
+	return bwCtx.copReqSender.pools != nil
+}
+
+func (bwCtx *backfillWorkerContext) setCopReqSenderPool(pID int64, copReqPool *copReqSenderPool) {
+	bwCtx.copReqSender.Lock()
+	defer bwCtx.copReqSender.Unlock()
+	bwCtx.copReqSender.pools[pID] = copReqPool
+}
+
+func (bwCtx *backfillWorkerContext) sendCopReq(d *ddl, bfWorker *backfillWorker, task *reorgBackfillTask) {
+	if !bwCtx.hasCopReqSenderPool() {
+		return
+	}
+	addIdxWorker, ok := bfWorker.backfiller.(*addIndexWorker)
+	if !ok {
+		return
+	}
+
+	if addIdxWorker.copReqSenderPool.copCtx.tblInfo.ID == task.bfJob.PhysicalTableID {
+		addIdxWorker.copReqSenderPool.sendTask(task)
+		return
+	}
+
+	bfJob := task.bfJob
+	copReqPool := initCopReqSenderPool(d.ctx, d.store, task.physicalTable, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
+	copReqPool.adjustSize(len(bwCtx.backfillWorkers)/2 + 1)
+	addIdxWorker.copReqSenderPool = copReqPool
+	copReqPool.sendTask(task)
+	bwCtx.setCopReqSenderPool(bfJob.PhysicalTableID, copReqPool)
+}
+
 func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
@@ -127,9 +165,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	workerCnt = len(workerCtx.backfillWorkers)
 	bwMgr := newBackfilWorkerManager(workerCtx)
 	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
-		if workerCtx.copReqSenderPool != nil {
-			workerCtx.copReqSenderPool.sendTask(task)
-		}
+		workerCtx.sendCopReq(d, bfWorker, task)
 		return bfWorker.runTask(task)
 	})
 
@@ -160,9 +196,11 @@ func (bwCtx *backfillWorkerContext) close(d *ddl) {
 	for _, w := range bwCtx.backfillWorkers {
 		d.backfillCtxPool.put(w)
 	}
-	if bwCtx.copReqSenderPool != nil {
-		bwCtx.copReqSenderPool.close()
+	bwCtx.copReqSender.Lock()
+	for _, pool := range bwCtx.copReqSender.pools {
+		pool.close()
 	}
+	bwCtx.copReqSender.Unlock()
 }
 
 type backfilWorkerManager struct {
@@ -237,6 +275,7 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 		bfJob:         bfJob,
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
+		id:         int(bfJob.ID),
 		sqlQuery:   bfJob.Meta.Query,
 		startKey:   bfJob.Meta.StartKey,
 		endKey:     bfJob.Meta.EndKey,

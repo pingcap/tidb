@@ -653,6 +653,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 			zap.Int64("batch added count", taskAddedCount),
 			zap.String("task failed error", err.Error()),
 			zap.String("take time", elapsedTime.String()),
+			zap.Bool("cop read", scheduler.copReqSenderPool != nil),
 			zap.NamedError("updateHandleError", err1))
 		failpoint.Inject("MockGetIndexRecordErr", func() {
 			// Make sure this job didn't failed because by the "Write conflict" error.
@@ -673,6 +674,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		zap.String("next key", hex.EncodeToString(nextKey)),
 		zap.Int64("batch added count", taskAddedCount),
 		zap.String("take time", elapsedTime.String()),
+		zap.Bool("cop read", scheduler.copReqSenderPool != nil),
 		zap.NamedError("updateHandleError", err1))
 	return nil
 }

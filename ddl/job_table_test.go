@@ -807,7 +807,7 @@ func TestGetTasks(t *testing.T) {
 	wg.Run(func() {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
-		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, pID, 1)
+		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, &pID, 1)
 		require.Nil(t, err)
 		require.Len(t, bJobs, 1)
 	})
@@ -817,7 +817,7 @@ func TestGetTasks(t *testing.T) {
 		tk1.MustExec("use test")
 		se1 := ddl.NewSession(tk1.Session())
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
-		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, pID, 1)
+		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, &pID, 1)
 		require.Nil(t, err1)
 		require.Len(t, bJobs1, 1)
 	})

@@ -1425,7 +1425,7 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 	var copReqPool *copReqSenderPool
 	if bfJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
 		copReqPool = initCopReqSenderPool(d.ctx, d.store, phyTbl, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
-		copReqPool.adjustSize(workerCnt)
+		copReqPool.adjustSize(workerCnt/2 + 1)
 	}
 	backfillWorkerCtx, err := newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.JobID, bfJob.Meta,
 		func(bfCtx *backfillCtx) (backfiller, error) {
@@ -1441,7 +1441,10 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 	if err != nil {
 		return nil, err
 	}
-	backfillWorkerCtx.copReqSenderPool = copReqPool
+	if copReqPool != nil {
+		backfillWorkerCtx.copReqSender.pools = make(map[int64]*copReqSenderPool, 1)
+		backfillWorkerCtx.copReqSender.pools[phyTbl.Meta().ID] = copReqPool
+	}
 	return backfillWorkerCtx, nil
 }
 
