@@ -24,14 +24,14 @@ type GTaskFlowHandle interface {
 	HandleError(d Dispatch, gTask *proto.Task, receive string) error
 }
 
-var taskDispatcherHandleMap = make(map[proto.TaskType]GTaskFlowHandle)
+var taskDispatcherHandleMap = make(map[string]GTaskFlowHandle)
 
 // RegisterGTaskFlowHandle is used to register the handle.
-func RegisterGTaskFlowHandle(taskType proto.TaskType, dispatcherHandle GTaskFlowHandle) {
+func RegisterGTaskFlowHandle(taskType string, dispatcherHandle GTaskFlowHandle) {
 	taskDispatcherHandleMap[taskType] = dispatcherHandle
 }
 
 // GetGTaskFlowHandle is used to get the handle.
-func GetGTaskFlowHandle(taskType proto.TaskType) GTaskFlowHandle {
+func GetGTaskFlowHandle(taskType string) GTaskFlowHandle {
 	return taskDispatcherHandleMap[taskType]
 }

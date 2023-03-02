@@ -64,7 +64,7 @@ func init() {
 	scheduler.RegisterSchedulerConstructor(
 		proto.TaskTypeExample,
 		// The order of the scheduler is the same as the order of the subtasks.
-		func(task *proto.Task, step proto.TaskStep) (scheduler.Scheduler, error) {
+		func(task *proto.Task, step int64) (scheduler.Scheduler, error) {
 			switch step {
 			case proto.StepOne:
 				return &ExampleStepOneScheduler{task: task}, nil

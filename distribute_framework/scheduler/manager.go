@@ -38,15 +38,15 @@ type Manager struct {
 	subtaskExecutorPool proto.Pool
 	mu                  struct {
 		sync.Mutex
-		runnableTasks map[proto.TaskID]*SchedulerImpl
+		runnableTasks map[int64]*SchedulerImpl
 	}
-	id     proto.InstanceID
+	id     string
 	wg     sync.WaitGroup
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewManager(ctx context.Context, id proto.InstanceID, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) *Manager {
+func NewManager(ctx context.Context, id string, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) *Manager {
 	m := &Manager{
 		id:                  id,
 		globalTaskTable:     globalTaskTable,
@@ -55,7 +55,7 @@ func NewManager(ctx context.Context, id proto.InstanceID, globalTaskTable *stora
 		subtaskExecutorPool: proto.NewPool(subtaskExecutorPoolSize),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.runnableTasks = make(map[proto.TaskID]*SchedulerImpl)
+	m.mu.runnableTasks = make(map[int64]*SchedulerImpl)
 	return m
 }
 
@@ -160,7 +160,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	for _, scheduler := range m.mu.runnableTasks {
 		scheduler.Stop()
 	}
-	m.mu.runnableTasks = make(map[proto.TaskID]*SchedulerImpl)
+	m.mu.runnableTasks = make(map[int64]*SchedulerImpl)
 }
 
 func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
@@ -177,7 +177,7 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 	tasks = tasks[:i]
 }
 
-func (m *Manager) onRunnableTask(ctx context.Context, taskID proto.TaskID) {
+func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 	scheduler := NewScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPool)
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -206,7 +206,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID proto.TaskID) {
 	}
 }
 
-func (m *Manager) addRunnableTask(id proto.TaskID, scheduler *SchedulerImpl) {
+func (m *Manager) addRunnableTask(id int64, scheduler *SchedulerImpl) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mu.runnableTasks[id] = scheduler

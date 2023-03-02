@@ -2,6 +2,9 @@ package example
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"github.com/pingcap/tidb/distribute_framework/dispatcher"
 	"github.com/pingcap/tidb/distribute_framework/handle"
 	"github.com/pingcap/tidb/distribute_framework/proto"
@@ -12,8 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/goleak"
-	"testing"
-	"time"
 )
 
 func TestMain(m *testing.M) {

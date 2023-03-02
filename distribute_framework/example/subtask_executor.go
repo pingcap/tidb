@@ -16,6 +16,7 @@ package example
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
 	"github.com/pingcap/tidb/util/logutil"
 
@@ -45,7 +46,7 @@ func init() {
 	scheduler.RegisterSubtaskExectorConstructor(
 		proto.TaskTypeExample,
 		// The order of the subtask executors is the same as the order of the subtasks.
-		func(subtask *proto.Subtask, step proto.TaskStep) (scheduler.SubtaskExecutor, error) {
+		func(subtask *proto.Subtask, step int64) (scheduler.SubtaskExecutor, error) {
 			switch step {
 			case proto.StepOne:
 				return &ExampleStepOneSubtaskExecutor{subtask: subtask}, nil

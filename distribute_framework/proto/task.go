@@ -19,20 +19,12 @@ import (
 	"time"
 )
 
-type TaskID uint64
-
-type TaskType string
-
-type InstanceID string
-
 const (
-	TaskTypeExample     TaskType = "example"
-	TaskTypeCreateIndex TaskType = "create_index"
-	TaskTypeImport      TaskType = "import"
-	TaskTypeTTL         TaskType = "ttl"
+	TaskTypeExample     = "example"
+	TaskTypeCreateIndex = "create_index"
+	TaskTypeImport      = "import"
+	TaskTypeTTL         = "ttl"
 )
-
-type TaskState string
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
@@ -46,35 +38,33 @@ type TaskState string
 //  3. rollback:		revert_pending -> reverting -> reverted/revert_failed/canceled
 //  4. pause/resume:	pending -> running -> paused -> running
 const (
-	TaskStatePending       TaskState = "pending"
-	TaskStateRunning       TaskState = "running"
-	TaskStateSucceed       TaskState = "succeed"
-	TaskStateCanceling     TaskState = "canceling"
-	TaskStateReverting     TaskState = "reverting"
-	TaskStateFailed        TaskState = "failed"
-	TaskStateRevertFailed  TaskState = "revert_failed"
-	TaskStateCanceled      TaskState = "canceled"
-	TaskStatePausing       TaskState = "pausing"
-	TaskStatePaused        TaskState = "paused"
-	TaskStateRevertPending TaskState = "revert_pending"
-	TaskStateReverted      TaskState = "reverted"
+	TaskStatePending       = "pending"
+	TaskStateRunning       = "running"
+	TaskStateSucceed       = "succeed"
+	TaskStateCanceling     = "canceling"
+	TaskStateReverting     = "reverting"
+	TaskStateFailed        = "failed"
+	TaskStateRevertFailed  = "revert_failed"
+	TaskStateCanceled      = "canceled"
+	TaskStatePausing       = "pausing"
+	TaskStatePaused        = "paused"
+	TaskStateRevertPending = "revert_pending"
+	TaskStateReverted      = "reverted"
 )
 
-type TaskStep int
-
 const (
-	StepInit TaskStep = -1
-	StepOne  TaskStep = iota
+	StepInit int64 = iota
+	StepOne
 	StepTwo
 )
 
 type Task struct {
-	ID    TaskID
-	Type  TaskType
-	State TaskState
+	ID    int64
+	Type  string
+	State string
 	// TODO: redefine
 	Meta GlobalTaskMeta
-	Step TaskStep
+	Step int64
 
 	DispatcherID string
 	StartTime    time.Time
@@ -82,14 +72,12 @@ type Task struct {
 	Concurrency uint64
 }
 
-type SubtaskID uint64
-
 type Subtask struct {
-	ID          SubtaskID
-	Type        TaskType
-	TaskID      TaskID
-	State       TaskState
-	SchedulerID InstanceID
+	ID          int64
+	Type        string
+	TaskID      int64
+	State       string
+	SchedulerID string
 	Meta        SubTaskMeta
 
 	StartTime time.Time
@@ -101,7 +89,7 @@ func (st *Subtask) String() string {
 
 type GlobalTaskMeta interface {
 	Serialize() []byte
-	GetType() TaskType
+	GetType() string
 	GetConcurrency() uint64
 }
 
@@ -136,7 +124,7 @@ func (g *SimpleNumberGTaskMeta) Serialize() []byte {
 	return []byte{0x1}
 }
 
-func (g *SimpleNumberGTaskMeta) GetType() TaskType {
+func (g *SimpleNumberGTaskMeta) GetType() string {
 	return TaskTypeExample
 }
 

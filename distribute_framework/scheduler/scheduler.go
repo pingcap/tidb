@@ -46,8 +46,8 @@ func (s *DefaultScheduler) SplitSubtasks(subtasks []*proto.Subtask) []*proto.Sub
 type SchedulerImpl struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
-	id           proto.InstanceID
-	taskID       proto.TaskID
+	id           string
+	taskID       int64
 	subtaskTable *storage.SubTaskManager
 	pool         proto.Pool
 	wg           sync.WaitGroup
@@ -59,7 +59,7 @@ type SchedulerImpl struct {
 	}
 }
 
-func NewScheduler(ctx context.Context, id proto.InstanceID, taskID proto.TaskID, subtaskTable *storage.SubTaskManager, pool proto.Pool) *SchedulerImpl {
+func NewScheduler(ctx context.Context, id string, taskID int64, subtaskTable *storage.SubTaskManager, pool proto.Pool) *SchedulerImpl {
 	schedulerImpl := &SchedulerImpl{
 		id:           id,
 		taskID:       taskID,
@@ -131,7 +131,7 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 	return s.getError()
 }
 
-func (s *SchedulerImpl) runSubtask(subtaskCtx context.Context, subtask *proto.Subtask, step proto.TaskStep) {
+func (s *SchedulerImpl) runSubtask(subtaskCtx context.Context, subtask *proto.Subtask, step int64) {
 	logutil.BgLogger().Info("scheduler run a subtask", zap.Any("id", s.id), zap.Any("subtask", subtask))
 	select {
 	case <-subtaskCtx.Done():
@@ -235,7 +235,7 @@ func (s *SchedulerImpl) createScheduler(task *proto.Task) (Scheduler, error) {
 	return constructor(task, task.Step)
 }
 
-func (s *SchedulerImpl) createSubtaskExecutor(subtask *proto.Subtask, step proto.TaskStep) (SubtaskExecutor, error) {
+func (s *SchedulerImpl) createSubtaskExecutor(subtask *proto.Subtask, step int64) (SubtaskExecutor, error) {
 	constructor, ok := subtaskExecutorConstructors[subtask.Type]
 	if !ok {
 		return nil, errors.Errorf("constructor of subtask executor for type %s not found", subtask.Type)
@@ -263,7 +263,7 @@ func (s *SchedulerImpl) getError() error {
 	return s.mu.err
 }
 
-func (s *SchedulerImpl) updateSubtaskState(id proto.SubtaskID, state proto.TaskState) {
+func (s *SchedulerImpl) updateSubtaskState(id int64, state string) {
 	err := s.subtaskTable.UpdateSubtaskState(id, state)
 	if err != nil {
 		s.onError(err)

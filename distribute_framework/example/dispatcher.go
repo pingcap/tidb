@@ -12,9 +12,9 @@ import (
 type NumberExampleHandle struct {
 }
 
-var mockTiDBIDList = []proto.InstanceID{"id1", "id2", "id3"}
+var mockTiDBIDList = []string{"id1", "id2", "id3"}
 
-func assignRandomTiDB() proto.InstanceID {
+func assignRandomTiDB() string {
 	return mockTiDBIDList[rand.Intn(3)]
 }
 

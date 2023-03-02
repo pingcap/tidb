@@ -26,25 +26,25 @@ type SubtaskExecutor interface {
 
 type schedulerRegisterOptions struct{}
 
-type SchedulerConstructor func(task *proto.Task, step proto.TaskStep) (Scheduler, error)
+type SchedulerConstructor func(task *proto.Task, step int64) (Scheduler, error)
 
 type SchedulerRegisterOption func(opts *schedulerRegisterOptions)
 
-type SubtaskExecutorConstructor func(subtask *proto.Subtask, step proto.TaskStep) (SubtaskExecutor, error)
+type SubtaskExecutorConstructor func(subtask *proto.Subtask, step int64) (SubtaskExecutor, error)
 
 type subtaskExecutorRegisterOptions struct{}
 
 type SubtaskExecutorRegisterOption func(opts *subtaskExecutorRegisterOptions)
 
 var (
-	schedulerConstructors = make(map[proto.TaskType]SchedulerConstructor)
-	schedulerOptions      = make(map[proto.TaskType]schedulerRegisterOptions)
+	schedulerConstructors = make(map[string]SchedulerConstructor)
+	schedulerOptions      = make(map[string]schedulerRegisterOptions)
 
-	subtaskExecutorConstructors = make(map[proto.TaskType]SubtaskExecutorConstructor)
-	subtaskExecutorOptions      = make(map[proto.TaskType]subtaskExecutorRegisterOptions)
+	subtaskExecutorConstructors = make(map[string]SubtaskExecutorConstructor)
+	subtaskExecutorOptions      = make(map[string]subtaskExecutorRegisterOptions)
 )
 
-func RegisterSchedulerConstructor(taskType proto.TaskType, constructor SchedulerConstructor, opts ...SchedulerRegisterOption) {
+func RegisterSchedulerConstructor(taskType string, constructor SchedulerConstructor, opts ...SchedulerRegisterOption) {
 	schedulerConstructors[taskType] = constructor
 
 	var option schedulerRegisterOptions
@@ -54,7 +54,7 @@ func RegisterSchedulerConstructor(taskType proto.TaskType, constructor Scheduler
 	schedulerOptions[taskType] = option
 }
 
-func RegisterSubtaskExectorConstructor(taskType proto.TaskType, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
+func RegisterSubtaskExectorConstructor(taskType string, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
 	subtaskExecutorConstructors[taskType] = constructor
 
 	var option subtaskExecutorRegisterOptions

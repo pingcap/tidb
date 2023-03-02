@@ -40,7 +40,7 @@ type Dispatch interface {
 	// Stop stops the dispatcher.
 	Stop()
 	// GetEligibleInstance gets an eligible instance.
-	GetEligibleInstance() proto.InstanceID
+	GetEligibleInstance() string
 }
 
 type dispatcher struct {
@@ -65,7 +65,7 @@ func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
 func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
-	d.runningGlobalTasks.tasks[int64(gTask.ID)] = gTask
+	d.runningGlobalTasks.tasks[gTask.ID] = gTask
 }
 
 func (d *dispatcher) delRunningGlobalTasks(globalTaskID int64) {
@@ -248,6 +248,6 @@ func (d *dispatcher) Stop() {
 }
 
 // GetEligibleInstance implements Dispatch.GetEligibleInstance interface.
-func (d *dispatcher) GetEligibleInstance() proto.InstanceID {
+func (d *dispatcher) GetEligibleInstance() string {
 	return ""
 }

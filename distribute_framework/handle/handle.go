@@ -31,12 +31,12 @@ type Handle struct {
 	gm  *storage.GlobalTaskManager
 }
 
-func (h *Handle) checkGlobalTaskDone(id proto.TaskID, ch chan struct{}) {
+func (h *Handle) checkGlobalTaskDone(id int64, ch chan struct{}) {
 	tk := time.Tick(50 * time.Millisecond)
 	for {
 		select {
 		case <-tk:
-			r, err := storage.ExecSQL(h.ctx, h.se, "select count(*) from mysql.tidb_global_task where state = %? and id = %?", string(proto.TaskStateSucceed), string(id))
+			r, err := storage.ExecSQL(h.ctx, h.se, "select count(*) from mysql.tidb_global_task where state = %? and id = %?", string(proto.TaskStateSucceed), id)
 			if err != nil {
 				logutil.BgLogger().Error("check global task done failed", zap.Error(err))
 			}
@@ -61,7 +61,7 @@ func NewHandle(ctx context.Context, se sessionctx.Context) (Handle, error) {
 	}, nil
 }
 
-func (h *Handle) SubmitGlobalTaskAndRun(taskMeta proto.GlobalTaskMeta) (taskID proto.TaskID, done chan struct{}, err error) {
+func (h *Handle) SubmitGlobalTaskAndRun(taskMeta proto.GlobalTaskMeta) (taskID int64, done chan struct{}, err error) {
 	id, err := h.gm.AddNewTask(taskMeta.GetType(), 1, taskMeta.Serialize())
 	if err != nil {
 		return 0, nil, err
