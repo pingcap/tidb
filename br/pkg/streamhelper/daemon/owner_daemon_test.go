@@ -33,10 +33,11 @@ func newTestApp(t *testing.T) *anApp {
 	}
 }
 
+// OnStart implements daemon.Interface.
 func (a *anApp) OnStart(ctx context.Context) {
 }
 
-// OnStart would be called once become the owner.
+// OOnBecomeOwner would be called once become the owner.
 // The context passed in would be canceled once it is no more the owner.
 func (a *anApp) OnBecomeOwner(ctx context.Context) {
 	a.Lock()
