@@ -60,7 +60,7 @@ func TestSimple(t *testing.T) {
 	require.Greater(t, int(id), 0)
 	<-doneCh
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// cleanup
 	dsp.Stop()

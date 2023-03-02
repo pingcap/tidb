@@ -21,14 +21,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/util"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 type GlobalTaskManager struct {
@@ -156,32 +154,6 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	return nil
 }
 
-func (stm *GlobalTaskManager) GetRunnableTask() (task *proto.Task, err error) {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	rs, err := ExecSQL(stm.ctx, stm.se, "select * from mysql.tidb_global_task where state = %? limit 1", string(proto.TaskStatePending))
-	if err != nil {
-		return task, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
-	}
-
-	t := &proto.Task{
-		ID:           proto.TaskID(rs[0].GetInt64(0)),
-		Type:         proto.TaskType(rs[0].GetString(1)),
-		DispatcherID: rs[0].GetString(2),
-		State:        proto.TaskState(rs[0].GetString(3)),
-		Meta:         proto.UnSerializeGlobalTaskMeta(rs[0].GetBytes(5)),
-		Concurrency:  uint64(rs[0].GetInt64(6)),
-		Step:         proto.TaskStep(rs[0].GetInt64(7)),
-	}
-	t.StartTime, _ = rs[0].GetTime(4).GoTime(time.UTC)
-
-	return task, nil
-}
-
 func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
@@ -255,45 +227,6 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID proto.TaskID, designatedTiDBI
 	return nil
 }
 
-func (stm *SubTaskManager) GetSubaskByTiDBID(InstanceID proto.InstanceID) (*proto.Subtask, error) {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	rs, err := ExecSQL(stm.ctx, stm.se, "select id, meta from mysql.tidb_sub_task where designate_tidb_id = %? limit 1", string(InstanceID))
-	if err != nil {
-		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
-	}
-
-	t := &proto.Subtask{
-		ID:          proto.SubtaskID(rs[0].GetInt64(0)),
-		Type:        proto.TaskType(rs[0].GetString(1)),
-		TaskID:      proto.TaskID(rs[0].GetInt64(2)),
-		SchedulerID: proto.InstanceID(rs[0].GetString(3)),
-		State:       proto.TaskState(rs[0].GetString(4)),
-		Meta:        proto.UnSerializeSubTaskMeta(rs[0].GetBytes(6)),
-	}
-	t.StartTime, _ = rs[0].GetTime(5).GoTime(time.UTC)
-
-	return t, nil
-}
-
-func (stm *SubTaskManager) UpdateTask(subTaskID proto.SubtaskID, meta []byte) error {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	logutil.BgLogger().Info("update subtask meta")
-
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set meta = %? where id = %?", meta, uint64(subTaskID))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (stm *SubTaskManager) GetSubtaskInStates(InstanceID proto.InstanceID, taskID proto.TaskID, states ...interface{}) (*proto.Subtask, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
@@ -351,18 +284,6 @@ func (stm *SubTaskManager) UpdateHeartbeat(TiDB proto.InstanceID, taskID proto.T
 	return err
 }
 
-func (stm *SubTaskManager) DeleteTask(subTaskID int64) error {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	_, err := ExecSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where where id = %?", subTaskID)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (stm *SubTaskManager) DeleteTasks(globelTaskID proto.TaskID) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
@@ -389,8 +310,4 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID proto.TaskID, state proto
 	}
 
 	return rs[0].GetInt64(0), nil
-}
-
-func (stm *SubTaskManager) IsFinishedTask(globalTaskID proto.TaskID) (isFinished bool, err error) {
-	return isFinished, nil
 }
