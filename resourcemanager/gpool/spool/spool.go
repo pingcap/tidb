@@ -111,7 +111,7 @@ func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
-	conc, run := p.check(int32(concurrency))
+	conc, run := p.checkAndAddRunning(int32(concurrency))
 	if !run {
 		return gpool.ErrPoolOverload
 	}
@@ -123,12 +123,12 @@ func (p *Pool) RunWithConcurrency(fn func(), concurrency int) error {
 	return nil
 }
 
-// check is to check if task can run.
-func (p *Pool) check(concurrency int32) (conc int32, run bool) {
+// checkAndAddRunning is to check if task can run. if can, add the running number.
+func (p *Pool) checkAndAddRunning(concurrency int32) (conc int32, run bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for {
-		value, run := p.checkInternal(concurrency)
+		value, run := p.checkAndAddRunningInternal(concurrency)
 		if run {
 			return value, run
 		}
@@ -139,7 +139,7 @@ func (p *Pool) check(concurrency int32) (conc int32, run bool) {
 	}
 }
 
-func (p *Pool) checkInternal(concurrency int32) (conc int32, run bool) {
+func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bool) {
 	n := p.capacity.Load() - p.running.Load()
 	if n <= 0 {
 		return 0, false
