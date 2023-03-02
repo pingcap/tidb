@@ -310,7 +310,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
+	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
