@@ -62,8 +62,6 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/toml v1.2.1 h1:9F2/+DoOYIOksmaJFPw1tGFy1eDnIJXg+UHjuD8lTak=
 github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
-github.com/CabinfeverB/client-go/v2 v2.0.0-20230301105120-1d7895c319b2 h1:DHMDHdrWx0twdBZuQgOYG1nPLGb/bxmWh1cRbxJLjDA=
-github.com/CabinfeverB/client-go/v2 v2.0.0-20230301105120-1d7895c319b2/go.mod h1:HdCAbFaUCsjI4n5vlCJ0rGpMfIHoD1o6UlA1rwD9u1o=
 github.com/CloudyKit/fastprinter v0.0.0-20170127035650-74b38d55f37a/go.mod h1:EFZQ978U7x8IRnstaskI3IysnWY5Ao3QgZUKOXlsAdw=
 github.com/CloudyKit/jet v2.1.3-0.20180809161101-62edd43e4f88+incompatible/go.mod h1:HPYO+50pSWkPoj9Q/eq0aRGByCL6ScRlUmiEX5Zgm+w=
 github.com/DATA-DOG/go-sqlmock v1.5.0 h1:Shsta01QNfFxHCfpW6YH2STWB0MudeXXEWMr20OEh60=
@@ -939,6 +937,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tikv/client-go/v2 v2.0.6-0.20230302054057-3f7860f10959 h1:3BQR4RmBxu391t3z/q9h7BjDTS3cuRn8dfgYgMWk57s=
+github.com/tikv/client-go/v2 v2.0.6-0.20230302054057-3f7860f10959/go.mod h1:HdCAbFaUCsjI4n5vlCJ0rGpMfIHoD1o6UlA1rwD9u1o=
 github.com/tikv/pd/client v0.0.0-20230301094509-c82b237672a0 h1:1fomIvN2iiKT5uZbe2E6uNHZnRzmS6O47D/PJ9BAuPw=
 github.com/tikv/pd/client v0.0.0-20230301094509-c82b237672a0/go.mod h1:4wjAY2NoMn4wx5+hZrEhrSGBs3jvKb+lxfUt+thHFQ4=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
