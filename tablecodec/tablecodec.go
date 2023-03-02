@@ -17,6 +17,9 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strings"
 	"time"
@@ -1315,7 +1318,24 @@ func DecodeTempIndexValue(value []byte) (TempIndexValue, error) {
 	)
 	for len(value) > 0 {
 		v := &TempIndexValueElem{}
-		value, err = v.DecodeOne(value)
+		value, err = v.DecodeOne(nil, value)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// DecodeTempIndexValue1111 decodes the temp index value.
+func DecodeTempIndexValue1111(k []byte, value []byte) (TempIndexValue, error) {
+	var (
+		values []*TempIndexValueElem
+		err    error
+	)
+	for len(value) > 0 {
+		v := &TempIndexValueElem{}
+		value, err = v.DecodeOne(k, value)
 		if err != nil {
 			return nil, err
 		}
@@ -1325,13 +1345,18 @@ func DecodeTempIndexValue(value []byte) (TempIndexValue, error) {
 }
 
 // DecodeOne decodes one temp index value element.
-func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
+func (v *TempIndexValueElem) DecodeOne(k, b []byte) (remain []byte, err error) {
+	origin := make([]byte, len(b))
+	copy(origin, b)
 	flag := TempIndexValueFlag(b[0])
 	b = b[1:]
 	switch flag {
 	case TempIndexValueFlagNormal:
 		vLen := (uint16(b[0]) << 8) + uint16(b[1])
 		b = b[2:]
+		if int(vLen) > len(b) {
+			logutil.BgLogger().Warn("invalid vLen in DecodeOne", zap.String("b", hex.EncodeToString(origin)), zap.String("k", hex.EncodeToString(k)))
+		}
 		v.Value = b[:vLen]
 		b = b[vLen:]
 		v.KeyVer = b[0]
