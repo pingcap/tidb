@@ -58,7 +58,7 @@ type txnManager struct {
 	reservedOptimisticProviders [2]isolation.OptimisticTxnContextProvider
 
 	// used for slow transaction logs
-	eventDurations  []event
+	events          []event
 	lastInstant     time.Time
 	enterTxnInstant time.Time
 }
@@ -174,8 +174,8 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 
-	m.eventDurations = make([]event, 0, 10)
-	m.eventDurations = append(m.eventDurations, event{event: "enter txn", duration: time.Duration(0)})
+	m.events = make([]event, 0, 10)
+	m.events = append(m.events, event{event: "enter txn", duration: time.Duration(0)})
 	m.lastInstant = time.Now()
 	m.enterTxnInstant = m.lastInstant
 	return nil
@@ -185,15 +185,14 @@ func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
 	m.stmtNode = nil
 
-	// this does not count the COMMIT statement
-	m.eventDurations = append(m.eventDurations, event{event: "txn end", duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: "txn end", duration: time.Since(m.lastInstant)})
 
 	duration := time.Since(m.enterTxnInstant)
 	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
 	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
 		logutil.BgLogger().Info(
 			"slow transaction", zap.Duration("duration", duration),
-			zap.Objects("events", m.eventDurations),
+			zap.Objects("events", m.events),
 		)
 	}
 
@@ -212,14 +211,14 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 		return errors.New("context provider not set")
 	}
 
-	m.eventDurations = append(m.eventDurations, event{event: node.OriginalText(), duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: node.OriginalText(), duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
 // OnStmtEnd implements the TxnManager interface
 func (m *txnManager) OnStmtEnd() {
-	m.eventDurations = append(m.eventDurations, event{event: "stmt end", duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: "stmt end", duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 }
 
@@ -255,7 +254,7 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
 
-	m.eventDurations = append(m.eventDurations, event{event: "txn activate", duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: "txn activate", duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 	return m.ctxProvider.ActivateTxn()
 }
@@ -273,7 +272,7 @@ func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	m.eventDurations = append(m.eventDurations, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtCommit(ctx)
 }
@@ -283,7 +282,7 @@ func (m *txnManager) OnStmtRollback(ctx context.Context, isForPessimisticRetry b
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	m.eventDurations = append(m.eventDurations, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
+	m.events = append(m.events, event{event: "stmt commit", duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtRollback(ctx, isForPessimisticRetry)
 }
