@@ -62,7 +62,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("alter resource group `default` ru_per_sec=10000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 NO"))
-	tk.MustContainErrMsg("drop resource group `default`", "can't drop internal resource groups")
+	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
