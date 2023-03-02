@@ -95,7 +95,7 @@ require (
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba
 	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.54.0
-	google.golang.org/grpc v1.40.0
+	google.golang.org/grpc v1.41.0
 	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/mathutil v1.4.1
 	sigs.k8s.io/yaml v1.2.0 // indirect
