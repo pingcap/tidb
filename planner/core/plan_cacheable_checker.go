@@ -321,3 +321,73 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 	}
 	return false
 }
+<<<<<<< HEAD
+=======
+
+// isPlanCacheable returns whether this plan is cacheable and the reason if not.
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+	var pp PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		pp = x.SelectPlan
+	case *Update:
+		pp = x.SelectPlan
+	case *Delete:
+		pp = x.SelectPlan
+	case PhysicalPlan:
+		pp = x
+	default:
+		return false, fmt.Sprintf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String())
+	}
+	if pp == nil { // simple DML statements
+		return true, ""
+	}
+	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
+}
+
+// isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	var subPlans []PhysicalPlan
+	switch x := p.(type) {
+	case *PhysicalTableDual:
+		if paramNum > 0 {
+			return false, "skip plan-cache: get a TableDual plan"
+		}
+	case *PhysicalTableReader:
+		if x.StoreType == kv.TiFlash {
+			return false, "skip plan-cache: TiFlash plan is un-cacheable"
+		}
+	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
+		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalMemTable:
+		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
+	case *PhysicalIndexMergeReader:
+		if x.AccessMVIndex {
+			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+		}
+		underIndexMerge = true
+		subPlans = append(subPlans, x.partialPlans...)
+	case *PhysicalIndexScan:
+		if underIndexMerge && x.isFullScan() {
+			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+		}
+	case *PhysicalTableScan:
+		if underIndexMerge && x.isFullScan() {
+			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+		}
+	case *PhysicalApply:
+		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
+	}
+
+	subPlans = append(subPlans, p.Children()...)
+	for _, c := range subPlans {
+		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum, underIndexMerge); !cacheable {
+			return cacheable, reason
+		}
+	}
+	return true, ""
+}
+>>>>>>> a4aa274c515 (planner: fix the issue that cached IndexMerge plans can return wrong results in some cases (#41870))

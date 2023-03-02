@@ -781,8 +781,14 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 7)
+<<<<<<< HEAD
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[2][0])
+=======
+	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
+	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
+>>>>>>> a4aa274c515 (planner: fix the issue that cached IndexMerge plans can return wrong results in some cases (#41870))
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
 	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[4][4])
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[5][0])
