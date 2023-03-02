@@ -73,7 +73,7 @@ func (p *Pool) Run(fn func()) error {
 	if p.isStop.Load() {
 		return gpool.ErrPoolClosed
 	}
-	_, run := p.check(1)
+	_, run := p.checkAndAddRunning(1)
 	if !run {
 		return gpool.ErrPoolOverload
 	}
