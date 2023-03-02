@@ -253,18 +253,33 @@ type nonPreparedPlanCacheableChecker struct {
 	cacheable bool
 	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
+	constCnt  int
 }
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *ast.PatternInExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			checker.reason = "query has some unsupported binary operation"
+		}
+		return in, !checker.cacheable
+	case *driver.ValueExpr:
+		if node.IsNull() {
+			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
+			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
+			// optimization and a table-full-scan will be generated.
+			checker.cacheable = false
+			checker.reason = "query has null constants"
+		}
+		checker.constCnt++
+		if checker.constCnt > 50 { // just for safety and reduce memory cost
+			checker.cacheable = false
+			checker.reason = "query has more than 50 constants"
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
@@ -377,6 +392,8 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalMemTable:
+		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex {
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
