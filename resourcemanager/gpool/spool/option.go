@@ -32,7 +32,9 @@ type Options struct {
 
 // DefaultOption is the default option.
 func DefaultOption() *Options {
-	return &Options{}
+	return &Options{
+		Blocking: true,
+	}
 }
 
 // WithBlocking indicates whether the pool is blocking.
