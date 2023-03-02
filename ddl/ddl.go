@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/syncer"
@@ -682,7 +683,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
-
+	var err error
+	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
+		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
+	if err != nil {
+		log.Fatal("create backfill worker pool failed", zap.Error(err))
+	}
+	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
+		return bfWorker.runTask(task)
+	})
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -747,12 +756,6 @@ func (d *ddl) prepareBackfillWorkers() error {
 		return bk, nil
 	}
 	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory, backfillWorkerCnt, backfillWorkerCnt, 0))
-	var err error
-	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
-		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
-	if err != nil {
-		return err
-	}
 	d.backfillJobCh = make(chan struct{}, 1)
 	d.wg.Run(d.startDispatchBackfillJobsLoop)
 	return nil
