@@ -114,6 +114,7 @@ go_library(
         "//domain/infosync",
         "//errno",
         "//executor/aggfuncs",
+        "//executor/asyncloaddata",
         "//expression",
         "//expression/aggregation",
         "//infoschema",

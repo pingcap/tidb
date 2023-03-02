@@ -80,7 +80,6 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 func (s *mockGCSSuite) TestInternalStatus() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_tsv;")
 	s.tk.MustExec("CREATE DATABASE load_tsv;")
-	s.tk.MustExec(CreateLoadDataJobs)
 	s.tk.MustExec("CREATE TABLE load_tsv.t (i INT);")
 
 	s.server.CreateObject(fakestorage.Object{
