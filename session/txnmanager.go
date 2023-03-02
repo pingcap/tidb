@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -211,7 +212,12 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 		return errors.New("context provider not set")
 	}
 
-	m.events = append(m.events, event{event: node.OriginalText(), duration: time.Since(m.lastInstant)})
+	sql := node.OriginalText()
+	if m.sctx.GetSessionVars().EnableRedactLog {
+		sql = parser.Normalize(sql)
+	}
+
+	m.events = append(m.events, event{event: sql, duration: time.Since(m.lastInstant)})
 	m.lastInstant = time.Now()
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }

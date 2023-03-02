@@ -87,8 +87,6 @@ func TestPessimisticTxn(t *testing.T) {
 	// Make the name has different indent for easier read.
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk.MustExec("set @@tidb_slow_txn_log_threshold=1")
-	tk1.MustExec("set @@tidb_slow_txn_log_threshold=1")
 
 	tk.MustExec("drop table if exists pessimistic")
 	tk.MustExec("create table pessimistic (k int, v int)")
