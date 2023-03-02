@@ -21,7 +21,6 @@ import (
 	"math"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +61,10 @@ const (
 
 	logicalImportMode   = "logical"  // tidb backend
 	physicalImportMode  = "physical" // local backend
-	unlimitedWriteSpeed = config.ByteSize(-1)
+	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
+	minBatchSize        = config.ByteSize(1 << 10)  // 1KiB
+	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
 	diskQuotaOption     = "disk_quota"
@@ -95,6 +97,14 @@ var (
 		splitFileOption:     true,
 		recordErrorsOption:  true,
 		detachedOption:      false,
+	}
+
+	// options only allowed when import mode is physical
+	optionsForPhysicalImport = map[string]struct{}{
+		diskQuotaOption: {},
+		checksumOption:  {},
+		addIndexOption:  {},
+		analyzeOption:   {},
 	}
 )
 
@@ -314,36 +324,10 @@ func (e *LoadDataWorker) initDefaultOptions() {
 	e.detached = false
 }
 
-func (e *LoadDataWorker) optionAsString(n ast.ExprNode) (string, error) {
-	datum, err := expression.EvalAstExpr(e.Ctx, n)
-	if err != nil {
-		return "", err
-	}
-	return datum.GetString(), nil
-}
-
-func (e *LoadDataWorker) optionAsBool(n ast.ExprNode) (bool, error) {
-	datum, err := expression.EvalAstExpr(e.Ctx, n)
-	if err != nil {
-		return false, err
-	}
-	s := fmt.Sprintf("%v", datum.GetValue())
-	return strconv.ParseBool(s)
-}
-
-func (e *LoadDataWorker) optionAsInt64(n ast.ExprNode) (int64, error) {
-	datum, err := expression.EvalAstExpr(e.Ctx, n)
-	if err != nil {
-		return 0, err
-	}
-	v := fmt.Sprintf("%v", datum.GetValue())
-	return strconv.ParseInt(v, 10, 64)
-}
-
-func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
+func (e *LoadDataWorker) initOptions(options []*plannercore.LoadDataOpt) error {
 	e.initDefaultOptions()
 
-	specifiedOptions := map[string]*ast.LoadDataOpt{}
+	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
 		hasValue, ok := supportedOptions[opt.Name]
 		if !ok {
@@ -359,12 +343,13 @@ func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
 	}
 
 	var (
-		v   string
-		err error
+		v      string
+		err    error
+		isNull bool
 	)
 	if opt, ok := specifiedOptions[importModeOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		v = strings.ToLower(v)
@@ -373,18 +358,27 @@ func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
 		}
 		e.importMode = v
 	}
+
+	if e.importMode == logicalImportMode {
+		// some options are only allowed in physical mode
+		for _, opt := range specifiedOptions {
+			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
+				return ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+			}
+		}
+	}
 	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil {
+		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[checksumOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = e.checksum.FromStringValue(v); err != nil {
@@ -392,13 +386,19 @@ func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
 		}
 	}
 	if opt, ok := specifiedOptions[addIndexOption]; ok {
-		if e.addIndex, err = e.optionAsBool(opt.Value); err != nil {
+		var vInt int64
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.addIndex = vInt == 1
 	}
 	if opt, ok := specifiedOptions[analyzeOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		if err = e.analyze.FromStringValue(v); err != nil {
@@ -407,42 +407,43 @@ func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
-		e.threadCnt, err = e.optionAsInt64(opt.Value)
-		if err != nil || e.threadCnt <= 0 {
+		e.threadCnt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.threadCnt <= 0 {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		// max value is cpu-count
-		numCPU := int64(runtime.NumCPU())
-		if e.threadCnt > numCPU {
-			e.threadCnt = numCPU
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil {
+		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
-		v, err = e.optionAsString(opt.Value)
-		if err != nil {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil {
+		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
 	if opt, ok := specifiedOptions[splitFileOption]; ok {
-		if e.splitFile, err = e.optionAsBool(opt.Value); err != nil {
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+		var vInt int64
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.splitFile = vInt == 1
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
-		e.maxRecordedErrors, err = e.optionAsInt64(opt.Value)
-		if err != nil || e.maxRecordedErrors < -1 {
+		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.maxRecordedErrors < -1 {
 			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		// todo: set a max value for this param?
@@ -450,7 +451,26 @@ func (e *LoadDataWorker) initOptions(options []*ast.LoadDataOpt) error {
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		e.detached = true
 	}
+
+	e.adjustOptions()
 	return nil
+}
+
+func (e *LoadDataWorker) adjustOptions() {
+	if e.diskQuota < minDiskQuota {
+		e.diskQuota = minDiskQuota
+	}
+	// max value is cpu-count
+	numCPU := int64(runtime.NumCPU())
+	if e.threadCnt > numCPU {
+		e.threadCnt = numCPU
+	}
+	if e.batchSize < minBatchSize {
+		e.batchSize = minBatchSize
+	}
+	if e.maxWriteSpeed < minWriteSpeed {
+		e.maxWriteSpeed = minWriteSpeed
+	}
 }
 
 // FieldMapping indicates the relationship between input field and table column or user variable

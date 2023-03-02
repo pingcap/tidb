@@ -88,4 +88,5 @@ var (
 	ErrUnknownOption             = dbterror.ClassExecutor.NewStd(mysql.ErrUnknownOption)
 	ErrInvalidOptionVal          = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidOptionVal)
 	ErrDuplicateOption           = dbterror.ClassExecutor.NewStd(mysql.ErrDuplicateOption)
+	ErrLoadDataUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedOption)
 )

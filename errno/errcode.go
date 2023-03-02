@@ -1057,6 +1057,7 @@ const (
 	ErrUnknownOption                       = 8163
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
