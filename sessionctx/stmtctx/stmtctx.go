@@ -608,10 +608,13 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
+// PlanCacheType is the flag of plan cache
 type PlanCacheType int
 
 const (
+	// SessionPrepared session prepared plan cache
 	SessionPrepared PlanCacheType = iota
+	// SessionNonPrepared session non-prepared plan cache
 	SessionNonPrepared
 )
 
