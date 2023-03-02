@@ -42,7 +42,7 @@ func f(n int) {
 
 func TestSpool(t *testing.T) {
 	var wg sync.WaitGroup
-	p, err := NewPool("test", 1, util.UNKNOWN, WithNonblocking(false))
+	p, err := NewPool("test", 1, util.UNKNOWN, WithBlocking(true))
 	require.NoError(t, err)
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
@@ -136,7 +136,7 @@ func TestRunOverload(t *testing.T) {
 		}
 	}
 	poolSize := 10
-	p, err := NewPool("TestMaxBlockingSubmit", int32(poolSize), util.UNKNOWN, WithNonblocking(true))
+	p, err := NewPool("TestMaxBlockingSubmit", int32(poolSize), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
@@ -160,7 +160,7 @@ func TestRunWithNotEnough(t *testing.T) {
 		}
 	}
 	poolSize := 10
-	p, err := NewPool("TestRunWithNotEnough", int32(poolSize), util.UNKNOWN, WithNonblocking(true))
+	p, err := NewPool("TestRunWithNotEnough", int32(poolSize), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
@@ -180,7 +180,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 			runtime.Gosched()
 		}
 	}
-	p, err := NewPool("TestRunWithNotEnough2", int32(1), util.UNKNOWN, WithNonblocking(true))
+	p, err := NewPool("TestRunWithNotEnough2", int32(1), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
@@ -195,7 +195,7 @@ func TestExitTask(t *testing.T) {
 	longRunningFunc := func() {
 		<-exit
 	}
-	p, err := NewPool("TestExitTask", int32(10), util.UNKNOWN, WithNonblocking(false))
+	p, err := NewPool("TestExitTask", int32(10), util.UNKNOWN, WithBlocking(true))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	p.RunWithConcurrency(longRunningFunc, 10)

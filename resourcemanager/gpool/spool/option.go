@@ -35,9 +35,9 @@ func DefaultOption() *Options {
 	return &Options{}
 }
 
-// WithNonblocking indicates that pool will return nil when there is no available workers.
-func WithNonblocking(nonblocking bool) Option {
+// WithBlocking indicates whether the pool is blocking.
+func WithBlocking(blocking bool) Option {
 	return func(opts *Options) {
-		opts.Blocking = nonblocking
+		opts.Blocking = blocking
 	}
 }

@@ -11,9 +11,9 @@ go_library(
     deps = [
         "//metrics",
         "//resourcemanager",
+        "//resourcemanager/gpool",
         "//resourcemanager/pooltask",
         "//resourcemanager/util",
-        "//util/gpool",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_prometheus_client_golang//prometheus",
