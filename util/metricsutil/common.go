@@ -98,7 +98,7 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 
 func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	if keyspaceMeta != nil {
-		metrics.SetKeyspaceLabels(fmt.Sprint(keyspaceMeta.GetId()))
+		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
 	}
 
 	metrics.InitMetrics()
