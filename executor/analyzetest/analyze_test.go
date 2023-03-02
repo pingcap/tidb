@@ -3193,8 +3193,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
-	_, err = tk0.Exec(sql)
-	require.NoError(t, err)
+	tk0.MustExec(sql)
 }
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
