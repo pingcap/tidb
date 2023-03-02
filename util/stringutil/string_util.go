@@ -430,18 +430,18 @@ func LowerOneString(str string) string {
 }
 
 // Sometimes we want to lower strings excluding a specific char
-func LowerOneStringExcludingSpecificChar(str string, excluded_char rune) string {
+func LowerOneStringExcludingSpecificChar(str string, escape_char rune) string {
 	escaped := false
 	ret_str := []rune(str)
 	str_len := len(ret_str)
 	for i := 0; i < str_len; i++ {
 		if IsUpperAscii(ret_str[i]) {
-			if ret_str[i] != excluded_char {
+			if ret_str[i] != escape_char {
 				ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
-			} else if ret_str[i] == excluded_char {
-				// Do not lower the escaping char, however when a char is equal to
-				// an escaping char, we still lower it.
-				// For example: "AA" (escape 'a'), -> "Aa"
+			} else if ret_str[i] == escape_char {
+				// Do not lower the escape char, however when a char is equal to
+				// an escape char and it's after an escape char, we still lower it
+				// For example: "AA" (escape 'A'), -> "Aa"
 				if escaped {
 					// It means that this char is after an escape char
 					ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
