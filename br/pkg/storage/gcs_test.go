@@ -216,17 +216,15 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, 5, n)
 	require.Equal(t, "67572", string(p))
 
-	/* Since fake_gcs_server hasn't support for negative offset yet.
 	p = make([]byte, 5)
 	offs, err = efr.Seek(int64(-7), io.SeekEnd)
 	require.NoError(t, err)
-	require.Equal(t, int64(-7), offs)
+	require.Equal(t, int64(26), offs)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 5, n)
 	require.Equal(t, "97222", string(p))
-	*/
 
 	err = efr.Close()
 	require.NoError(t, err)

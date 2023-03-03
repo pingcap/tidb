@@ -172,6 +172,13 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 	object := s.objectName(path)
 	handle := s.bucket.Object(object)
 
+	attrs, err := handle.Attrs(ctx)
+	if err != nil {
+		return nil, errors.Annotatef(err,
+			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
+			s.gcs.Bucket, path)
+	}
+
 	rc, err := handle.NewRangeReader(ctx, 0, -1)
 	if err != nil {
 		return nil, errors.Annotatef(err,
@@ -185,6 +192,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 		objHandle: handle,
 		reader:    rc,
 		ctx:       ctx,
+		totalSize: attrs.Size,
 	}, nil
 }
 
@@ -345,6 +353,7 @@ type gcsObjectReader struct {
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
 	pos       int64
+	totalSize int64
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -395,8 +404,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 		if offset >= 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
-		// GCS supports `NewRangeReader(ctx, -10, -1)`, which means read the last 10 bytes.
-		realOffset = offset
+		realOffset = offset + r.totalSize
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
