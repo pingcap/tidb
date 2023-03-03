@@ -66,6 +66,9 @@ func TestIlike(t *testing.T) {
 		{"A", "aA", int('a'), 1, 1},
 		{"a", "aA", int('a'), 1, 1},
 		{"aaa", "AAaA", int('a'), 1, 1},
+		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('A'), 1, 1},
+		{"啊aAa啊啊啊aA", "啊AAA啊啊啊AA", int('a'), 1, 1},
+		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('a'), 0, 0},
 	}
 	var charset_and_collation_general = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
 
