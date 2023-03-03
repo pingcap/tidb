@@ -9,116 +9,283 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 ## Highlights of what we are planning
 
 <table>
-<thead>
-  <tr>
-    <th></th>
-    <th>Mid-year stable<br></th>
-    <th>End of year stable<br></th>
-    <th>2-3 year projection</th>
-  </tr>
-</thead>
-<tbody>
-  <tr>
-    <td rowspan="4"><b>Scalability and Performance</b><br>Enhance horsepower</td>
-    <td><b>General plan cache</b><br><i>Improve general read performance</i></td>
-    <td><b>Stability at PB scale</b><br><i>Reliable and consistent performance for tremendous data</i></td>
-    <td>Next generation, more powerful storage engine</td>
-  </tr>
-  <tr>
-    <td><b>Partitioned-raft-kv storage engine</b><br><i>Increased write velocity, faster scaling operations, larger clusters</i></td>
-    <td><b>Disaggregate TiFlash compute/storage (auto-caling)</b><br><i>Elastic HTAP resource utilization</i></td>
-    <td>Unlimited transaction size</td>
-  </tr>
-  <tr>
-    <td><b>TiFlash performance boost</b><br><i>TiFlash optimization such as late materialization, runtime filter, etc</i></td>
-    <td><b>TiFlash S3 based storage engine</b><br><i>Shared storage, lower cost</i></td>
-    <td>Multi-model support</td>
-  </tr>
-  <tr>
-    <td><b>Fastest online DDL distributed framework</b><br><i>Complete the distributed framework to support fastest online DDL</i></td>
-    <td></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td rowspan="4"><b>Reliability and Availability</b><br>Enhance dependability</td>
-    <td><b>Resource control: quotas and scheduling for resource groups and background tasks</b><br><i>Reliably and efficiently manage workloads and applications sharing the same cluster</i></td>
-    <td><b>Multi-tenancy</b><br><i>Fine-grained resource control, isolation to reduce cost</i></td>
-    <td>TiDB memory management re-architecture</td>
-  </tr>
-  <tr>
-    <td><b>TiCDC/PiTR recovery objectives enhancements</b><br><i>Increase business continuity and minimize the impact of system failures</i></td>
-    <td><b>Improved cluster/node level fault tolerance</b><br><i>Resilience enhancement</i></td>
-    <td>Global Table</td>
-  </tr>
-  <tr>
-    <td><b>TiProxy</b><br><i>Keep database connections during cluster upgrade and scale in/out and avoid impact to applications</i></td>
-    <td><b>TiFlash spill to disk</b><br><i>Avoid TiFlash OOM</i></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td><b>End-to-end data correctness check</b><br><i>Prevents data error or corruptions through TiCDC</i></td>
-    <td></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td rowspan="4"><b>SQL</b><br>Enhance functionality and compatibility</td>
-    <td><b>Production ready TTL (time-to-live) data management</b><br><i>Manage database size and improve performance by automatically expiring outdated data</i></td>
-    <td><b>Materialized views</b><br><i>Pre-calculation to boost query performance</i></td>
-    <td>Federated Query</td>
-  </tr>
-  <tr>
-    <td><b>Table level flashback</b><br><i>SQL support for traveling a single table to specific time point</i></td>
-    <td></td>
-    <td>Cascades Optimizer</td>
-  </tr>
-  <tr>
-    <td></td>
-    <td></td>
-    <td>Full text search &amp; GIS Support</td>
-  </tr>
-  <tr>
-    <td></td>
-    <td></td>
-    <td>User-defined functions</td>
-  </tr>
-  <tr>
-    <td rowspan="4"><b>Database Operations and Observability</b><br>Enhance DB manageability and its ecosystem</td>
-    <td><b>Distributed TiCDC single table replication</b><br><i>Dramatically improve TiCDC throughput by distributing the workload to multiple nodes</i></td>
-    <td><b>Import major performance boost </b><br><i>Expecting 3-4 times improvements</i></td>
-    <td>AI-indexing</td>
-  </tr>
-  <tr>
-    <td><b>Production ready TiCDC sink to S3 and Azure object store</b><br><i>Enhance ecosystem to better work with big data</i></td>
-    <td><b>TiCDC to support multiple upstreams</b><br>(i.e., N:1 TiDB to TiCDC)</td>
-    <td>Heterogeneous database migration support</td>
-  </tr>
-  <tr>
-    <td><b>TiDB Operator fast scale-in</b><br><i>From scale-in one by one to scale at once</i></td>
-    <td><b>SQL-based data management</b><br><i>for TiCDC, data migration, and backup&amp;restore tools</i></td>
-    <td>Re-invented AI-SQL performance advisor</td>
-  </tr>
-  <tr>
-    <td><b>SQL-based data import</b><br><i>User-friendly operational enhancement</i></td>
-    <td><b>Automatic pause/resume DDL during upgrade</b><br><i>Ensure a smooth upgrade experience</i></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td rowspan="3"><b>Security</b><br>Enhance data safety and privacy</td>
-    <td><b>JWT authentication</b><br><i>secure, standard authentication</i></td>
-    <td><b>Field-level/row-level access control</b><br><i>Finer-grained control</i></td>
-    <td>Enhanced client-side encryption</td>
-  </tr>
-  <tr>
-    <td><b>LDAP integration</b><br><i>Authenticate via LDAP server over TLS</i></td>
-    <td><b>Database encryption</b><br><i>Data-at-rest encryption for database files</i></td>
-    <td>Enhanced data masking</td>
-  </tr>
-  <tr>
-    <td><b>Audit log enhancement</b><br><i>Enhance with greater details</i></td>
-    <td><b>Unified TLS CA/Key rotation policy</b><br><i>Enhanced security and operational efficiency for all TiDB components</i></td>
-    <td>Enhanced data lifecycle management</td>
-  </tr>
-</tbody>
+  <thead>
+    <tr>
+      <th></th>
+      <th>Mid-year stable<br /></th>
+      <th>End of year stable<br /></th>
+      <th>2-3 year projection</th>
+    </tr>
+  </thead>
+  <tbody style="vertical-align: top">
+    <tr>
+      <td><b>Scalability and Performance</b><br />Enhance horsepower</td>
+      <td>
+        <ul>
+          <li>
+            <b>General plan cache</b><br />Improve general read performance
+          </li>
+          <li>
+            <b>Partitioned-raft-kv storage engine</b><br />Increased write
+            velocity, faster scaling operations, larger clusters
+          </li>
+          <li>
+            <b>TiFlash performance boost</b><br />TiFlash optimization such
+            as late materialization, runtime filter, etc
+          </li>
+          <li>
+            <b>Fastest online DDL distributed framework</b><br />Complete
+            the distributed framework to support fastest online DDL
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Stability at PB scale</b><br />
+            Reliable and consistent performance for tremendous data
+          </li>
+          <li>
+            <b>Disaggregate TiFlash compute/storage (auto-caling) </b
+            ><br />Elastic HTAP resource utilization
+          </li>
+          <li>
+            <b>TiFlash S3 based storage engine</b>
+            <br />Shared storage, lower cost
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Next generation, more powerful storage engine</b>
+          </li>
+          <li>
+            <b>Unlimited transaction size</b>
+          </li>
+          <li>
+            <b>Multi-model support</b>
+          </li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <b>Reliability and Availability</b>
+        <br />Enhance dependability
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b
+              >Resource control: quotas and scheduling for resource groups
+              and background tasks</b
+            >
+            <br />Reliably and efficiently manage workloads and applications
+            sharing the same cluster
+          </li>
+          <li>
+            <b>TiCDC/PiTR recovery objectives enhancements</b>
+            <br />Increase business continuity and minimize the impact of
+            system failures
+          </li>
+          <li>
+            <b>TiProxy</b>
+            <br />Keep database connections during cluster upgrade and scale
+            in/out and avoid impact to applications
+          </li>
+          <li>
+            <b>End-to-end data correctness check</b>
+            <br />Prevents data error or corruptions through TiCDC
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Multi-tenancy</b>
+            <br />Fine-grained resource control, isolation to reduce cost
+          </li>
+          <li>
+            <b>Improved cluster/node level fault tolerance</b>
+            <br />Resilience enhancement
+          </li>
+          <li>
+            <b>TiFlash spill to disk</b>
+            <br />Avoid TiFlash OOM
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>TiDB memory management re-architecture</b>
+          </li>
+          <li>
+            <b>Global Table</b>
+          </li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <b>SQL</b>
+        <br />Enhance functionality and compatibility
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Production ready TTL (time-to-live) data management</b>
+            <br />Manage database size and improve performance by
+            automatically expiring outdated data
+          </li>
+          <li>
+            <b>Table level flashback</b>
+            <br />SQL support for traveling a single table to specific time
+            point
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Materialized views</b>
+            <br />Pre-calculation to boost query performance
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Federated Query</b>
+          </li>
+          <li>
+            <b>Cascades Optimizer</b>
+          </li>
+          <li>
+            <b>Full text search & GIS Support</b>
+          </li>
+          <li>
+            <b>User-defined functions</b>
+          </li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <b>Database Operations and Observability</b>
+        <br />Enhance DB manageability and its ecosystem
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Distributed TiCDC single table replication</b>
+            <br />Dramatically improve TiCDC throughput by distributing the
+            workload to multiple nodes
+          </li>
+          <li>
+            <b>Production ready TiCDC sink to S3 and Azure object store</b>
+            <br />Enhance ecosystem to better work with big data
+          </li>
+          <li>
+            <b>TiDB Operator fast scale-in</b>
+            <br />From scale-in one by one to scale at once
+          </li>
+          <li>
+            <b>SQL-based data import</b>
+            <br />User-friendly operational enhancement
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Import major performance boost </b>
+            <br />Expecting 3-4 times improvements
+          </li>
+          <li>
+            <b> TiCDC to support multiple upstreams </b>
+            <br />(i.e., N:1 TiDB to TiCDC)
+          </li>
+          <li>
+            <b> SQL-based data management </b>
+            <br />for TiCDC, data migration, and backup&restore tools
+          </li>
+          <li>
+            <b> Automatic pause/resume DDL during upgrade </b>
+            <br />Ensure a smooth upgrade experience
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>AI-indexing</b>
+          </li>
+          <li>
+            <b>Heterogeneous database migration support</b>
+          </li>
+          <li>
+            <b>Re-invented AI-SQL performance advisor</b>
+          </li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <b>Security</b>
+        <br />Enhance data safety and privacy
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>JWT authentication</b>
+            <br />secure, standard authentication
+          </li>
+          <li>
+            <b> LDAP integration </b>
+            <br />Authenticate via LDAP server over TLS
+          </li>
+          <li>
+            <b> Audit log enhancement </b>
+            <br />
+            Enhance with greater details
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Field-level/row-level access control</b>
+            <br />
+            Finer-grained control
+          </li>
+          <li>
+            <b>Database encryption</b>
+            <br />Data-at-rest encryption for database files
+          </li>
+          <li>
+            <b>Unified TLS CA/Key rotation policy</b>
+            <br />Enhanced security and operational efficiency for all TiDB
+            components
+          </li>
+        </ul>
+      </td>
+      <td>
+        <ul>
+          <li>
+            <b>Enhanced client-side encryption</b>
+          </li>
+          <li>
+            <b>Enhanced data masking</b>
+          </li>
+          <li>
+            <b>Enhanced data lifecycle management</b>
+          </li>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
 </table>
 
 These are non-exhaustive plans and subject to change. Features may differ per service subscriptions.
