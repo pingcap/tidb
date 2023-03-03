@@ -2157,7 +2157,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		}
 		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
 		preInfoGetter.dbInfosCache = ca.dbInfos
-		msgs, err := ci.SchemaIsValid(ctx, ca.tableMeta)
+		msgs, err := ci.SchemaIsValid(ctx, ca.tableMeta, ca.dbInfos)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
@@ -2241,7 +2241,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 				},
 			},
 		},
-	})
+	}, dbInfos)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), msgs, 0)
 }
