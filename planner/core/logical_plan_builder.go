@@ -702,7 +702,7 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 		}
 	}
 	if preferJoinType&preferINLHJ > 0 {
-		resJoinType &= ^preferINLHJ
+		preferJoinType &= ^preferINLHJ
 		if isLeft {
 			resJoinType |= preferLeftAsINLHJInner
 		} else {
