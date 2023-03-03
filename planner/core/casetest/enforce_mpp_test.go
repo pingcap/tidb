@@ -39,6 +39,7 @@ func TestEnforceMPP(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
