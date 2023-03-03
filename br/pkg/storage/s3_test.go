@@ -1220,9 +1220,9 @@ func TestObjectLock(t *testing.T) {
 
 func TestS3StorageBucketRegion(t *testing.T) {
 	type testcase struct {
-		name   string
-		region string
-		s3     *backuppb.S3
+		name         string
+		expectRegion string
+		s3           *backuppb.S3
 	}
 
 	require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
@@ -1275,6 +1275,8 @@ func TestS3StorageBucketRegion(t *testing.T) {
 		func(name string, region string, s3 *backuppb.S3) {
 			s := createGetBucketRegionServer(region, 200, true)
 			defer s.Close()
+			s3.ForcePathStyle = true
+			s3.Endpoint = s.URL
 
 			t.Log(name)
 			es, err := New(context.Background(),
@@ -1285,6 +1287,6 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, region, ss.GetOptions().Region)
 
-		}(ca.name, ca.region, ca.s3)
+		}(ca.name, ca.expectRegion, ca.s3)
 	}
 }
