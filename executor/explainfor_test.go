@@ -768,7 +768,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
+	require.Len(t, res.Rows(), 7)
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
 	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
