@@ -77,7 +77,7 @@ func (p *Pool) Run(fn func()) error {
 	if !run {
 		return gpool.ErrPoolOverload
 	}
-	p.taskManager.RegisterTask(p.NewTaskID(), 1)
+	p.taskManager.RegisterTask(p.GenTaskID(), 1)
 	p.run(fn)
 	return nil
 }
@@ -116,7 +116,7 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency int) error {
 		return gpool.ErrPoolOverload
 	}
 	// TODO: taskManager need to refactor
-	p.taskManager.RegisterTask(p.NewTaskID(), conc)
+	p.taskManager.RegisterTask(p.GenTaskID(), conc)
 	for n := int32(0); n < conc; n++ {
 		p.run(func() {
 			for fn := range fns {
