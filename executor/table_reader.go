@@ -287,6 +287,9 @@ func (e *TableReaderExecutor) Close() error {
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+	if e.table.Meta().Name.O == "t1" {
+		time.Sleep(time.Millisecond)
+	}
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
@@ -319,6 +322,9 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if e.table.Meta().Name.O == "t" {
 		time.Sleep(time.Millisecond)
 	}
+
+	// add a sortedSelectResults when partition table with keepOrder = true
+	// sortedSelect should have a function to compare two chunks.
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {

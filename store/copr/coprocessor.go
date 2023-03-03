@@ -1026,6 +1026,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return it.Next(ctx)
 		}
 	} else {
+		// order matters, task is ordered by partitionID and startKey
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
