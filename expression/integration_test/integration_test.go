@@ -7591,6 +7591,7 @@ func TestCompareJSONWithOtherType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("create table t(a JSON)")
 	tk.MustExec("insert into t values ('{}'), ('true'), ('5')")
 	tk.MustQuery("select * from t where a = TRUE;").Check(testkit.Rows("true"))
