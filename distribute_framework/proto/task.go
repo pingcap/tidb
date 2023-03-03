@@ -28,14 +28,14 @@ const (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> canceling -> reverting -> failed/revert_failed
-//  3. canceled:		pending -> running -> canceling -> reverting -> canceled/revert_failed
+//  2. failed:			pending -> running -> reverting -> failed/revert_failed
+//  3. canceled:		pending -> running -> reverting -> canceled/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> resuming -> running
 //
 // subtask state machine
 //  1. succeed/failed:	pending -> running -> succeed/failed
 //  2. canceled:		pending -> running -> canceled
-//  3. rollback:		revert_pending -> reverting -> reverted/revert_failed/canceled
+//  3. rollback:		revert_pending -> reverting -> reverted/revert_failed
 //  4. pause/resume:	pending -> running -> paused -> running
 const (
 	TaskStatePending       = "pending"
@@ -86,6 +86,8 @@ type Subtask struct {
 func (st *Subtask) String() string {
 	return ""
 }
+
+type MinimalTask interface{}
 
 type GlobalTaskMeta interface {
 	Serialize() []byte

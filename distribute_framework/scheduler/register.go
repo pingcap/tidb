@@ -30,7 +30,7 @@ type SchedulerConstructor func(task *proto.Task, step int64) (Scheduler, error)
 
 type SchedulerRegisterOption func(opts *schedulerRegisterOptions)
 
-type SubtaskExecutorConstructor func(subtask *proto.Subtask, step int64) (SubtaskExecutor, error)
+type SubtaskExecutorConstructor func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error)
 
 type subtaskExecutorRegisterOptions struct{}
 
