@@ -18,7 +18,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -32,21 +31,8 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
-)
-
-var (
-	stmtNodeCounterUse       = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow      = metrics.StmtNodeCounter.WithLabelValues("Show")
-	stmtNodeCounterBegin     = metrics.StmtNodeCounter.WithLabelValues("Begin")
-	stmtNodeCounterCommit    = metrics.StmtNodeCounter.WithLabelValues("Commit")
-	stmtNodeCounterRollback  = metrics.StmtNodeCounter.WithLabelValues("Rollback")
-	stmtNodeCounterInsert    = metrics.StmtNodeCounter.WithLabelValues("Insert")
-	stmtNodeCounterReplace   = metrics.StmtNodeCounter.WithLabelValues("Replace")
-	stmtNodeCounterDelete    = metrics.StmtNodeCounter.WithLabelValues("Delete")
-	stmtNodeCounterUpdate    = metrics.StmtNodeCounter.WithLabelValues("Update")
-	stmtNodeCounterSelect    = metrics.StmtNodeCounter.WithLabelValues("Select")
-	stmtNodeCounterSavepoint = metrics.StmtNodeCounter.WithLabelValues("Savepoint")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -56,11 +42,9 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecStmt, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "executor.Compile")
+	defer r.End()
+
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -209,40 +193,21 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := ast.GetStmtLabel(stmtNode)
-	switch typeLabel {
-	case "Use":
-		stmtNodeCounterUse.Inc()
-	case "Show":
-		stmtNodeCounterShow.Inc()
-	case "Begin":
-		stmtNodeCounterBegin.Inc()
-	case "Commit":
-		stmtNodeCounterCommit.Inc()
-	case "Rollback":
-		stmtNodeCounterRollback.Inc()
-	case "Insert":
-		stmtNodeCounterInsert.Inc()
-	case "Replace":
-		stmtNodeCounterReplace.Inc()
-	case "Delete":
-		stmtNodeCounterDelete.Inc()
-	case "Update":
-		stmtNodeCounterUpdate.Inc()
-	case "Select":
-		stmtNodeCounterSelect.Inc()
-	case "Savepoint":
-		stmtNodeCounterSavepoint.Inc()
-	default:
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
-	}
 
-	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
-		return
-	}
-
-	dbLabels := getStmtDbLabel(stmtNode)
-	for dbLabel := range dbLabels {
-		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
+		dbLabels := getStmtDbLabel(stmtNode)
+		switch {
+		case config.GetGlobalConfig().Status.RecordQPSbyDB:
+			for dbLabel := range dbLabels {
+				metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+			}
+		case config.GetGlobalConfig().Status.RecordDBLabel:
+			for dbLabel := range dbLabels {
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+			}
+		}
+	} else {
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
 	}
 }
 
@@ -251,26 +216,37 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.CreateIndexStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.CreateTableStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.InsertStmt:
-		dbLabels := getDbFromResultNode(x.Table.TableRefs)
-		for _, db := range dbLabels {
-			dbLabelSet[db] = struct{}{}
+		var dbLabels []string
+		if x.Table != nil {
+			dbLabels = getDbFromResultNode(x.Table.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
 		}
 		dbLabels = getDbFromResultNode(x.Select)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.DropIndexStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelSet[dbLabel] = struct{}{}
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.DropTableStmt:
 		tables := x.Tables
 		for _, table := range tables {
@@ -364,7 +340,9 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 			return getDbFromResultNode(x.From.TableRefs)
 		}
 	case *ast.TableName:
-		dbLabels = append(dbLabels, x.DBInfo.Name.O)
+		if x.DBInfo != nil {
+			dbLabels = append(dbLabels, x.DBInfo.Name.O)
+		}
 	case *ast.Join:
 		if x.Left != nil {
 			dbs := getDbFromResultNode(x.Left)

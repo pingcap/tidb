@@ -454,6 +454,9 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.grantDynamicPriv(priv.Name, user, internalSession)
 	}
+	if priv.Priv == mysql.UsagePriv {
+		return nil
+	}
 	switch e.Level.Level {
 	case ast.GrantLevelGlobal:
 		return e.grantGlobalLevel(priv, user, internalSession)
@@ -492,10 +495,6 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 
 // grantGlobalLevel manipulates mysql.user table.
 func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == 0 || priv.Priv == mysql.UsagePriv {
-		return nil
-	}
-
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "Y")
@@ -511,9 +510,6 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == mysql.UsagePriv {
-		return nil
-	}
 	for _, v := range mysql.StaticGlobalOnlyPrivs {
 		if v == priv.Priv {
 			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
@@ -540,9 +536,6 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	if priv.Priv == mysql.UsagePriv {
-		return nil
-	}
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB

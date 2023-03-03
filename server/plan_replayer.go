@@ -276,7 +276,7 @@ func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
 			}
 			//nolint: errcheck,all_revive
 			defer v.Close()
-			_, err = toml.DecodeReader(v, &varMap)
+			_, err = toml.NewDecoder(v).Decode(&varMap)
 			if err != nil {
 				return 0, errors.AddStack(err)
 			}

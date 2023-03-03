@@ -33,6 +33,15 @@ const (
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
+
+	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
+	FlashbackRetryTime       = 3
+	FlashbackWaitInterval    = 3 * time.Second
+	FlashbackMaxWaitInterval = 15 * time.Second
+
+	ChecksumRetryTime       = 8
+	ChecksumWaitInterval    = 1 * time.Second
+	ChecksumMaxWaitInterval = 30 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.

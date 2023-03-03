@@ -79,6 +79,18 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 }
 
 func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) {
+	v := h.statsCache.Load()
+	if v == nil {
+		return
+	}
+	sc := v.(statsCache)
+	tbl, ok := sc.Get(tableID)
+	if !ok {
+		return
+	}
+	if !tbl.IsInitialized() {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version, source)
@@ -86,6 +98,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
 			zap.Uint64("version", version),
+			zap.String("source", source),
 			zap.Error(err))
 	}
 }

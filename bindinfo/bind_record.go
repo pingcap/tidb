@@ -115,6 +115,17 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
+// Copy get the copy of bindRecord
+func (br *BindRecord) Copy() *BindRecord {
+	nbr := &BindRecord{
+		OriginalSQL: br.OriginalSQL,
+		Db:          br.Db,
+	}
+	nbr.Bindings = make([]Binding, len(br.Bindings))
+	copy(nbr.Bindings, br.Bindings)
+	return nbr
+}
+
 // HasEnabledBinding checks if there are any enabled bindings in bind record.
 func (br *BindRecord) HasEnabledBinding() bool {
 	for _, binding := range br.Bindings {

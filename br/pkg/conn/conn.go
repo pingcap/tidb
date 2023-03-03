@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -174,7 +175,8 @@ func NewMgr(
 	}
 
 	// Disable GC because TiDB enables GC already.
-	storage, err := g.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddrs), securityOption)
+	path := fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddrs, config.GetGlobalKeyspaceName())
+	storage, err := g.Open(path, securityOption)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

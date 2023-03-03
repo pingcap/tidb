@@ -4,7 +4,7 @@ go_library(
     name = "distributereorg",
     srcs = [
         "default.go",
-        "non_default.go",
+        "non_default.go",  #keep
     ],
     importpath = "github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg",
     visibility = ["//visibility:public"],

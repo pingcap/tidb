@@ -31,12 +31,16 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -76,6 +80,7 @@ type TiFlashReplicaManagerCtx struct {
 	etcdCli              *clientv3.Client
 	sync.RWMutex         // protect tiflashProgressCache
 	tiflashProgressCache map[int64]float64
+	codec                tikv.Codec
 }
 
 // Close is called to close TiFlashReplicaManagerCtx.
@@ -89,10 +94,19 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
+		failpoint.Inject("OneTiFlashStoreDown", func() {
+			if store.Store.StateName == "Down" {
+				err = errors.New("mock TiFlasah down")
+			}
+		})
 		if err != nil {
 			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
-			return 0, err
+			// Just skip down or offline or tomestone stores, because PD will migrate regions from these stores.
+			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
+				return 0, err
+			}
+			continue
 		}
 		flashPeerCount += len(regionReplica)
 	}
@@ -220,6 +234,11 @@ func (m *TiFlashReplicaManagerCtx) SetTiFlashGroupConfig(ctx context.Context) er
 
 // SetPlacementRule is a helper function to set placement rule.
 func (m *TiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
+	// TODO(iosmanthus): remove this check after TiDB supports tiflash multi-tenancy.
+	if m.codec.GetAPIVersion() == kvrpcpb.APIVersion_V2 {
+		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("set TiFlash replica count while enabling API V2"))
+	}
 	if err := m.SetTiFlashGroupConfig(ctx); err != nil {
 		return err
 	}

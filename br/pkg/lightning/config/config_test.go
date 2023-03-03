@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -476,15 +477,15 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '\'
 				backslash-escape = true
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV separator and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
 				[mydumper.csv]
 				delimiter = '\'
-				backslash-escape = true
+				escaped-by = '\'
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV delimiter and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
@@ -527,7 +528,7 @@ func TestInvalidCSV(t *testing.T) {
 		if tc.err != "" {
 			require.EqualError(t, err, tc.err, comment)
 		} else {
-			require.NoError(t, err)
+			require.NoError(t, err, tc.input)
 		}
 	}
 }
@@ -540,6 +541,25 @@ func TestInvalidTOML(t *testing.T) {
 		backslash-escape = true
 	`))
 	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
+}
+
+func TestStringOrStringSlice(t *testing.T) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = '\N'
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 'NULL' ]
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 123 ]
+	`))
+	require.ErrorContains(t, err, "invalid string slice")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
@@ -559,6 +579,126 @@ func TestDurationUnmarshal(t *testing.T) {
 	err = duration.UnmarshalText([]byte("13x20s"))
 	require.Error(t, err)
 	require.Regexp(t, "time: unknown unit .?x.? in duration .?13x20s.?", err.Error())
+}
+
+func TestMaxErrorUnmarshal(t *testing.T) {
+	type testCase struct {
+		TOMLStr        string
+		ExpectedValues map[string]int64
+		ExpectErrStr   string
+		CaseName       string
+	}
+	for _, tc := range []*testCase{
+		{
+			TOMLStr: `max-error = 123`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     123,
+				"conflict": math.MaxInt64,
+			},
+			CaseName: "Normal_Int",
+		},
+		{
+			TOMLStr: `max-error = -123`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": math.MaxInt64,
+			},
+			CaseName: "Abnormal_Negative_Int",
+		},
+		{
+			TOMLStr:      `max-error = "abcde"`,
+			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			CaseName:     "Abnormal_String",
+		},
+		{
+			TOMLStr: `[max-error]
+syntax = 1
+charset = 2
+type = 3
+conflict = 4
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     3,
+				"conflict": 4,
+			},
+			CaseName: "Normal_Map_All_Set",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set",
+		},
+		{
+			TOMLStr: `max-error = { conflict = 1000, type = 123 }`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     123,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_OneLineMap_Partial_Set",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+not_exist = 123
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set_Invalid_Key",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+type = -123
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set_Invalid_Value",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+type = abc
+`,
+			ExpectErrStr: `toml: line 3 (last key "max-error.type"): expected value but found "abc" instead`,
+			CaseName:     "Normal_Map_Partial_Set_Invalid_ValueType",
+		},
+	} {
+		targetLightningCfg := new(config.Lightning)
+		err := toml.Unmarshal([]byte(tc.TOMLStr), targetLightningCfg)
+		if len(tc.ExpectErrStr) > 0 {
+			require.Errorf(t, err, "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectErrStr, err.Error(), "test case: %s", tc.CaseName)
+		} else {
+			require.NoErrorf(t, err, "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["syntax"], targetLightningCfg.MaxError.Syntax.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["charset"], targetLightningCfg.MaxError.Charset.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["type"], targetLightningCfg.MaxError.Type.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["conflict"], targetLightningCfg.MaxError.Conflict.Load(), "test case: %s", tc.CaseName)
+		}
+	}
 }
 
 func TestDurationMarshalJSON(t *testing.T) {
@@ -1022,4 +1162,18 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 		originalDefaultCfg,
 	))
 	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
+}
+
+func TestCompressionType(t *testing.T) {
+	var ct config.CompressionType
+	require.NoError(t, ct.FromStringValue(""))
+	require.Equal(t, config.CompressionNone, ct)
+	require.NoError(t, ct.FromStringValue("gzip"))
+	require.Equal(t, config.CompressionGzip, ct)
+	require.NoError(t, ct.FromStringValue("gz"))
+	require.Equal(t, config.CompressionGzip, ct)
+	require.EqualError(t, ct.FromStringValue("zstd"), "invalid compression-type 'zstd', please choose valid option between ['gzip']")
+
+	require.Equal(t, "", config.CompressionNone.String())
+	require.Equal(t, "gzip", config.CompressionGzip.String())
 }

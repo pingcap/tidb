@@ -358,17 +358,24 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
-		FetchHandleTotal: int64(5 * time.Second),
-		FetchHandle:      int64(2 * time.Second),
-		TaskWait:         int64(2 * time.Second),
-		TableRowScan:     int64(2 * time.Second),
-		TableTaskNum:     2,
-		Concurrency:      1,
+		FetchHandleTotal:         int64(5 * time.Second),
+		FetchHandle:              int64(2 * time.Second),
+		TaskWait:                 int64(2 * time.Second),
+		TableRowScan:             int64(2 * time.Second),
+		TableTaskNum:             2,
+		Concurrency:              1,
+		NextWaitIndexScan:        time.Second,
+		NextWaitTableLookUpBuild: 2 * time.Second,
+		NextWaitTableLookUpResp:  3 * time.Second,
 	}
-	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}"+
+		", table_task: {total_time: 2s, num: 2, concurrency: 1}"+
+		", next: {wait_index: 1s, wait_table_lookup_build: 2s, wait_table_lookup_resp: 3s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}"+
+		", table_task: {total_time: 4s, num: 4, concurrency: 1}"+
+		", next: {wait_index: 2s, wait_table_lookup_build: 4s, wait_table_lookup_resp: 6s}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
@@ -632,4 +639,62 @@ func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
 	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
 	tk.MustExec(`set @a=0x61219F79C90D3541F70E, @b=5501707547099269248, @c=0xEC43EFD30131DEA2CB8B, @d="呣丼蒢咿卻鹻铴础湜僂頃ǆ縍套衞陀碵碼幓9", @e="鹹楞睕堚尛鉌翡佾搁紟精廬姆燵藝潐楻翇慸嵊";`)
 	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+}
+
+func TestCoprocessorBatchByStore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(id int primary key, c1 int, c2 int, key i(c1))")
+	tk.MustExec(`create table t1(id int primary key, c1 int, c2 int, key i(c1)) partition by range(id) (
+    	partition p0 values less than(10000),
+    	partition p1 values less than (50000),
+    	partition p2 values less than (100000))`)
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
+		tk.MustExec("insert into t1 values(?, ?, ?)", i*10000, i*10000, i%2)
+	}
+	tk.MustQuery("split table t between (0) and (100000) regions 20").Check(testkit.Rows("20 1"))
+	tk.MustQuery("split table t1 between (0) and (100000) regions 20").Check(testkit.Rows("60 1"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
+	}()
+	ranges := []string{
+		"(c1 >= 0 and c1 < 5000)",
+		"(c1 >= 10000 and c1 < 15000)",
+		"(c1 >= 20000 and c1 < 25000)",
+		"(c1 >= 30000 and c1 < 35000)",
+		"(c1 >= 40000 and c1 < 45000)",
+		"(c1 >= 50000 and c1 < 55000)",
+		"(c1 >= 60000 and c1 < 65000)",
+		"(c1 >= 70000 and c1 < 75000)",
+		"(c1 >= 80000 and c1 < 85000)",
+		"(c1 >= 90000 and c1 < 95000)",
+	}
+	evenRows := testkit.Rows("0 0 0", "20000 20000 0", "40000 40000 0", "60000 60000 0", "80000 80000 0")
+	oddRows := testkit.Rows("10000 10000 1", "30000 30000 1", "50000 50000 1", "70000 70000 1", "90000 90000 1")
+	reverseOddRows := testkit.Rows("90000 90000 1", "70000 70000 1", "50000 50000 1", "30000 30000 1", "10000 10000 1")
+	for _, table := range []string{"t", "t1"} {
+		baseSQL := fmt.Sprintf("select * from %s force index(i) where id < 100000 and (%s)", table, strings.Join(ranges, " or "))
+		for _, paging := range []string{"on", "off"} {
+			tk.MustExec("set session tidb_enable_paging=?", paging)
+			for size := 0; size < 10; size++ {
+				tk.MustExec("set session tidb_store_batch_size=?", size)
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				// every batched task will get region error and fallback.
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+			}
+		}
+	}
 }
