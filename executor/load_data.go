@@ -126,7 +126,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// CSV-like
-	if e.loadDataWorker.format == "" {
+	if e.loadDataWorker.format == LoadDataFormatCSV {
 		if e.loadDataWorker.NullInfo != nil && e.loadDataWorker.NullInfo.OptEnclosed &&
 			(e.loadDataWorker.FieldsInfo == nil || e.loadDataWorker.FieldsInfo.Enclosed == nil) {
 			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")

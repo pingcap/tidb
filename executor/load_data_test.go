@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadDataWorker_initDefaultOptions(t *testing.T) {
+func TestLoadDataWorkerInitDefaultOptions(t *testing.T) {
 	e := LoadDataWorker{}
 	e.initDefaultOptions()
 	require.Equal(t, logicalImportMode, e.importMode)
@@ -49,7 +49,7 @@ func TestLoadDataWorker_initDefaultOptions(t *testing.T) {
 	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), e.threadCnt)
 }
 
-func TestLoadDataWorker_initOptions(t *testing.T) {
+func TestLoadDataWorkerInitOptions(t *testing.T) {
 	cases := []struct {
 		OptionStr string
 		Err       error
@@ -170,7 +170,7 @@ func TestLoadDataWorker_initOptions(t *testing.T) {
 	require.True(t, e.detached, sql)
 }
 
-func TestLoadDataWorker_adjustOptions(t *testing.T) {
+func TestLoadDataWorkerAdjustOptions(t *testing.T) {
 	e := LoadDataWorker{
 		diskQuota:     1,
 		threadCnt:     100000000,
