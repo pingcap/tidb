@@ -166,6 +166,7 @@ func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 		rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
 		// Partition table can't be inner side of index merge join, because it can't keep order.
 		require.Equal(t, -1, strings.Index(rows[0], "IndexMergeJoin"))
+		require.Equal(t, true, len(tk.MustQuery("show warnings").Rows()) > 0)
 
 		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
