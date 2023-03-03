@@ -2766,6 +2766,21 @@ error = '''
 TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction
 '''
 
+["tikv:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["tikv:8251"]
+error = '''
+Resource group configuration is unavailable
+'''
+
+["tikv:8252"]
+error = '''
+Exceeded resource group quota limitation
+'''
+
 ["tikv:9001"]
 error = '''
 PD server timeout: %s
