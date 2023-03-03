@@ -1702,7 +1702,18 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
+<<<<<<< HEAD
 			logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", stmtNode.Text()))
+=======
+			if !variable.ErrUnknownSystemVar.Equal(err) {
+				sql := stmtNode.Text()
+				if s.sessionVars.EnableRedactLog {
+					sql = parser.Normalize(sql)
+				}
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+					zap.String("SQL", sql))
+			}
+>>>>>>> 5ba709f9554 (session: check redact when log compile error (#41832))
 		}
 		return nil, err
 	}
