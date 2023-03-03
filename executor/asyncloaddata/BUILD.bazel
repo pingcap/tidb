@@ -29,6 +29,7 @@ go_test(
     embed = [":asyncloaddata"],
     flaky = True,
     deps = [
+        "//br/pkg/lightning/config",
         "//executor",
         "//kv",
         "//parser/auth",
