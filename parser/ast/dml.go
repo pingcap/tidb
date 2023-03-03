@@ -1953,7 +1953,8 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 }
 
 type LoadDataOpt struct {
-	Name  string
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
 	Value ExprNode
 }
 
