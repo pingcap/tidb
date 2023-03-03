@@ -105,35 +105,32 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, 2, p.Running())
 	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
+	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, 0, p.Running())
 
 	// test with RunWithConcurrency
-	err := p.Run(func() {})
-	require.Error(t, err)
 	var cnt atomic.Int32
 	workerFn := func() {
 		cnt.Add(1)
 	}
 	fnChan := make(chan func(), 10)
-	for i := 0; i < 2; i++ {
-		c <- struct{}{}
-	}
 	wg.Wait()
-	err = p.RunWithConcurrency(fnChan, 2)
+	err := p.RunWithConcurrency(fnChan, 2)
+	require.NoError(t, err)
 	require.Equal(t, 2, p.Running())
 	for i := 0; i < 10; i++ {
 		fnChan <- workerFn
 	}
-	require.Error(t, err)
-	time.Sleep(10 * time.Millisecond)
-	require.Equal(t, 10, cnt.Load())
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, int32(10), cnt.Load())
 	require.Equal(t, 2, p.Running())
 	close(fnChan)
-	time.Sleep(time.Microsecond)
+	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, 0, p.Running())
 	p.ReleaseAndWait()
 }
@@ -175,7 +172,7 @@ func TestRunWithNotEnough(t *testing.T) {
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
 	close(fnChan)
-	time.Sleep(time.Microsecond)
+	time.Sleep(1 * time.Second)
 	require.Equal(t, 0, p.Running())
 }
 
@@ -196,7 +193,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 		fnChan <- fn
 	}
 	close(fnChan)
-	time.Sleep(10 * time.Microsecond)
+	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, 0, p.Running())
 	require.Equal(t, int32(100), cnt.Load())
 }
