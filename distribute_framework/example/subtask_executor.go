@@ -39,7 +39,7 @@ func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
 
 func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
 	globalNumberCounter.Add(-2 * e.minimalTask.(int64))
-	logutil.BgLogger().Info("sub task executor run step one")
+	logutil.BgLogger().Info("sub task executor run step two")
 	return nil
 }
 
