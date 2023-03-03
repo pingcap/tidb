@@ -885,9 +885,9 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	var runDML bool
-	callback.OnJobRunAfterExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
