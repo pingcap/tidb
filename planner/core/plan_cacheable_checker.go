@@ -312,6 +312,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				checker.reason = "queries that access views are not supported"
 				return in, !checker.cacheable
 			}
+			if !tb.Type().IsNormalTable() {
+				checker.cacheable = false
+				checker.reason = "queries that access in-memory tables"
+				return in, !checker.cacheable
+			}
 		}
 		return in, !checker.cacheable
 	}
