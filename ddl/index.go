@@ -1948,11 +1948,7 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 			return defs[i+1].ID, nil
 		}
 	}
-	defIDs := make([]int64, 0, len(defs))
-	for _, def := range defs {
-		defIDs = append(defIDs, def.ID)
-	}
-	return 0, errors.Errorf("partition id not found %d in %v", currentPartition, defIDs)
+	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
 // AllocateIndexID allocates an index ID from TableInfo.
