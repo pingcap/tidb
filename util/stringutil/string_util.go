@@ -407,49 +407,45 @@ func ConvertPosInUtf8(str *string, pos int64) int64 {
 	return int64(preStrNum + 1)
 }
 
-func toLowerIfAlphaASCII(c rune) rune {
+func toLowerIfAlphaASCII(c byte) byte {
 	return c | 0x20
 }
 
-func IsUpperAscii(c rune) bool {
+func IsUpperAscii(c byte) bool {
 	if c >= 'A' && c <= 'Z' {
 		return true
 	}
 	return false
 }
 
-func LowerOneString(str string) string {
-	ret_str := []rune(str)
-	str_len := len(ret_str)
+func LowerOneString(str []byte) {
+	str_len := len(str)
 	for i := 0; i < str_len; i++ {
-		if IsUpperAscii(ret_str[i]) {
-			ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
+		if IsUpperAscii(str[i]) {
+			str[i] = toLowerIfAlphaASCII(str[i])
 		}
 	}
-	return string(ret_str)
 }
 
-// Sometimes we want to lower strings excluding a specific char
-func LowerOneStringExcludingSpecificChar(str string, escape_char rune) string {
+// Sometimes we want to lower strings and exclude an escape char
+func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) {
 	escaped := false
-	ret_str := []rune(str)
-	str_len := len(ret_str)
+	str_len := len(str)
 	for i := 0; i < str_len; i++ {
-		if IsUpperAscii(ret_str[i]) {
+		if IsUpperAscii(str[i]) {
 			// Do not lower the escape char, however when a char is equal to
 			// an escape char and it's after an escape char, we still lower it
 			// For example: "AA" (escape 'A'), -> "Aa"
-			if ret_str[i] != escape_char || escaped {
-				ret_str[i] = toLowerIfAlphaASCII(ret_str[i])
-			} else if ret_str[i] == escape_char {
+			if str[i] != escape_char || escaped {
+				str[i] = toLowerIfAlphaASCII(str[i])
+			} else if str[i] == escape_char {
 				escaped = true
 				continue
 			}
 		} else {
-			len := Utf8Len(byte(ret_str[i]))
+			len := Utf8Len(str[i])
 			i += len - 1
 		}
 		escaped = false
 	}
-	return string(ret_str)
 }

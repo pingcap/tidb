@@ -86,12 +86,18 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	valStr = stringutil.LowerOneString(valStr)
-	if stringutil.IsUpperAscii(rune(escape)) {
-		patternStr = stringutil.LowerOneStringExcludingSpecificChar(patternStr, rune(escape))
+	valStrBytes := []byte(valStr)
+	patternStrBytes := []byte(patternStr)
+
+	stringutil.LowerOneString(valStrBytes)
+	if stringutil.IsUpperAscii(byte(escape)) {
+		stringutil.LowerOneStringExcludeEscapeChar(patternStrBytes, byte(escape))
 	} else {
-		patternStr = stringutil.LowerOneString(patternStr)
+		stringutil.LowerOneString(patternStrBytes)
 	}
+
+	valStr = string(valStrBytes)
+	patternStr = string(patternStrBytes)
 
 	memorization := func() {
 		if b.pattern == nil {

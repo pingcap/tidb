@@ -15,40 +15,28 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-func LowerAlphaAsciiAndStoreInNewColumn(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int) {
-	lowered_col.ReserveString(elem_num)
-	for i := 0; i < elem_num; i++ {
-		if src_col.IsNull(i) {
-			lowered_col.AppendString("")
-			lowered_col.SetNull(i, true)
-			continue
-		}
+func LowerAlphaAscii(lowered_col *chunk.Column, row_num int) {
+	for i := 0; i < row_num; i++ {
+		str := lowered_col.GetString(i)
+		str_bytes := hack.Slice(str)
 
-		src_str := src_col.GetString(i)
-		lowered_col.AppendString(stringutil.LowerOneString(src_str))
-		lowered_col.SetNull(i, false)
+		stringutil.LowerOneString(str_bytes)
 	}
 }
 
-func LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(src_col *chunk.Column, lowered_col *chunk.Column, elem_num int, excluded_char []int64) {
-	lowered_col.ReserveString(elem_num)
-	for i := 0; i < elem_num; i++ {
-		if src_col.IsNull(i) {
-			lowered_col.AppendString("")
-			lowered_col.SetNull(i, true)
-			continue
-		}
+func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, row_num int, excluded_char []int64) {
+	for i := 0; i < row_num; i++ {
+		str := lowered_col.GetString(i)
+		str_bytes := hack.Slice(str)
+		escape_char := excluded_char[i]
 
-		src_str := src_col.GetString(i)
-		lowered_col.AppendString(stringutil.LowerOneStringExcludingSpecificChar(src_str, rune(excluded_char[i])))
-		lowered_col.SetNull(i, false)
+		stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape_char))
 	}
 }
 
@@ -88,10 +76,10 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	// Must not use b.pattern to avoid data race
 	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 
-	tmp_val_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
-	tmp_pattern_col := chunk.NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
-	LowerAlphaAsciiAndStoreInNewColumn(bufVal, tmp_val_col, row_num)
-	LowerAlphaAsciiAndStoreInNewColumnExcludingEscape(bufPattern, tmp_pattern_col, row_num, escapes)
+	tmp_val_col := bufVal.CopyConstruct(nil)
+	tmp_pattern_col := bufPattern.CopyConstruct(nil)
+	LowerAlphaAscii(tmp_val_col, row_num)
+	LowerAlphaAsciiExcludeEscapeChar(tmp_pattern_col, row_num, escapes)
 	bufVal = tmp_val_col
 	bufPattern = tmp_pattern_col
 
