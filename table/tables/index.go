@@ -177,7 +177,12 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	if !distinct || skipCheck || opt.Untouched {
 		val := idxVal
-		if keyIsTempIdxKey && !opt.Untouched { // Untouched key-values never occur in the storage.
+		if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
+			// Untouched key-values never occur in the storage and the temp index is not public.
+			// It is unnecessary to write the untouched temp index key-values.
+			return nil, nil
+		}
+		if keyIsTempIdxKey {
 			tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 			val = tempVal.Encode(nil)
 		}
@@ -185,69 +190,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
 		if len(tempKey) > 0 {
-			if !opt.Untouched { // Untouched key-values never occur in the storage.
-				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
-				val = tempVal.Encode(nil)
-			}
+			tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
+			val = tempVal.Encode(nil)
 			err = txn.GetMemBuffer().Set(tempKey, val)
-=======
-
-		opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
-
-		if !distinct || skipCheck || opt.Untouched {
-			val := idxVal
-			if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
-				// Untouched key-values never occur in the storage and the temp index is not public.
-				// It is unnecessary to write the untouched temp index key-values.
-				continue
-			}
-			if keyIsTempIdxKey {
-				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
-				val = tempVal.Encode(nil)
-			}
-			err = txn.GetMemBuffer().Set(key, val)
-			if err != nil {
-				return nil, err
-			}
-			if len(tempKey) > 0 {
-				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
-				val = tempVal.Encode(nil)
-				err = txn.GetMemBuffer().Set(tempKey, val)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if !opt.IgnoreAssertion && (!opt.Untouched) {
-				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
-				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
-				}
-			}
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		var value []byte
-		if c.tblInfo.TempTableType != model.TempTableNone {
-			// Always check key for temporary table because it does not write to TiKV
-			value, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
-			value, err = txn.GetMemBuffer().Get(ctx, key)
-		} else {
-			value, err = txn.Get(ctx, key)
-		}
-		if err != nil && !kv.IsErrNotFound(err) {
-			return nil, err
-		}
-		var tempIdxVal tablecodec.TempIndexValue
-		if len(value) > 0 && keyIsTempIdxKey {
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
->>>>>>> 1c1c388d6e (ddl: never write untouched index values to temp index (#41879))
 			if err != nil {
 				return nil, err
 			}
