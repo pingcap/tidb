@@ -1721,16 +1721,18 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
-	// when column is not null, ifnull on such column is not necessary.
+	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		stackLen := len(er.ctxStack)
-		arg1 := er.ctxStack[stackLen-2]
-		col, isColumn := arg1.(*expression.Column)
+		lhs := er.ctxStack[stackLen-2]
+		rhs := er.ctxStack[stackLen-1]
+		col, isColumn := lhs.(*expression.Column)
 		var isEnumSet bool
+<<<<<<< HEAD
 		if arg1.GetType().Tp == mysql.TypeEnum || arg1.GetType().Tp == mysql.TypeSet {
 			isEnumSet = true
 		}
@@ -1739,8 +1741,28 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.Flag) {
 			name := er.ctxNameStk[stackLen-2]
 			newCol := col.Clone().(*expression.Column)
+=======
+		if lhs.GetType().GetType() == mysql.TypeEnum || lhs.GetType().GetType() == mysql.TypeSet {
+			isEnumSet = true
+		}
+		// if expr1 is a column with not null flag, then we can optimize it as a cast.
+		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			retTp.AddFlag((lhs.GetType().GetFlag() & mysql.NotNullFlag) | (rhs.GetType().GetFlag() & mysql.NotNullFlag))
+			if lhs.GetType().GetType() == mysql.TypeNull && rhs.GetType().GetType() == mysql.TypeNull {
+				retTp.SetType(mysql.TypeNull)
+				retTp.SetFlen(0)
+				retTp.SetDecimal(0)
+				types.SetBinChsClnFlag(retTp)
+			}
+>>>>>>> 227b461fe13 (planner: optimize `ifnull(not-null-column, ...)` to a cast instead of eliminating it. tidb-test=pr/2098 (#41823))
 			er.ctxStackPop(len(v.Args))
-			er.ctxStackAppend(newCol, name)
+			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
+			er.ctxStackAppend(casted, types.EmptyName)
 			return true
 		}
 
