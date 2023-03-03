@@ -7074,7 +7074,11 @@ func hasMPPJoinHints(preferJoinType uint) bool {
 	return (preferJoinType&preferBCJoin > 0) || (preferJoinType&preferShuffleJoin > 0)
 }
 
-func checkMPPHintAvailable(preferJoinType uint) bool {
+// checkHint4MPPModeAvailable is used to check if the specified join hint is available under MPP mode.
+func checkHint4MPPModeAvailable(preferJoinType uint) bool {
+	if preferJoinType == 0 {
+		return true
+	}
 	mppMask := preferShuffleJoin ^ preferBCJoin
 	// Currently, TiFlash only supports HASH JOIN, so the hint for HASH JOIN is available while other join method hints are forbidden.
 	joinMethodHintSupportedByTiflash := preferHashJoin ^ preferLeftAsHJBuild ^ preferRightAsHJBuild ^ preferLeftAsHJProbe ^ preferRightAsHJProbe
