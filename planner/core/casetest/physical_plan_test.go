@@ -1684,6 +1684,7 @@ func TestEnumIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
 	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")

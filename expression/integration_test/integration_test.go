@@ -6062,7 +6062,7 @@ func TestEnumIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 	tk.MustExec("drop table if exists t,tidx")
 	tk.MustExec("create table t(e enum(" + strings.Join(elems, ",") + "))")
 	tk.MustExec("create table tidx(e enum(" + strings.Join(elems, ",") + "), index idx(e))")
