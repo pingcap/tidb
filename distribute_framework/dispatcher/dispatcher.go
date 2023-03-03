@@ -268,5 +268,5 @@ func (d *dispatcher) GetEligibleInstance(ctx context.Context) (string, error) {
 		}
 		num--
 	}
-	return "", nil
+	return "", errors.New("not found instance")
 }
