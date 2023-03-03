@@ -677,7 +677,7 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, 'xxx', 'zzz')")
+	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
 	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
