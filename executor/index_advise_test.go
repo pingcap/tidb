@@ -70,6 +70,7 @@ func TestIndexJoinProjPattern(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_opt_advanced_join_hint=0;")
 	tk.MustExec(`create table t1(
 pnbrn_cnaps varchar(5) not null,
 new_accno varchar(18) not null,
@@ -130,6 +131,7 @@ func TestIndexJoinSelPattern(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec(` create table tbl_miss(
 id bigint(20) unsigned not null
 ,txn_dt date default null

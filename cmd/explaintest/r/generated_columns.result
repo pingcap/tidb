@@ -72,14 +72,15 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN format = 'brief' SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
-IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:test.sgc2.a, inner key:test.sgc1.a, equal cond:eq(test.sgc2.a, test.sgc1.a)
-├─TableReader(Build)	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		not(isnull(test.sgc2.a))
-│   └─TableFullScan	1.00	cop[tikv]	table:sgc2	keep order:false
-└─IndexLookUp(Probe)	5.00	root		
-  ├─Selection(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
-  │ └─IndexRangeScan	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
-  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
+Projection	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
+└─IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:test.sgc2.a, inner key:test.sgc1.a, equal cond:eq(test.sgc2.a, test.sgc1.a)
+  ├─TableReader(Build)	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+  │   └─TableFullScan	1.00	cop[tikv]	table:sgc2	keep order:false
+  └─IndexLookUp(Probe)	5.00	root		
+    ├─Selection(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+    │ └─IndexRangeScan	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
+    └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
 EXPLAIN format = 'brief' SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
 Projection	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
