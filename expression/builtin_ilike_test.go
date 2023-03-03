@@ -37,11 +37,11 @@ func TestIlike(t *testing.T) {
 		generalMatch int
 		unicodeMatch int
 	}{
-		// {"a", "", 0, 0, 0},
-		// {"a", "a", 0, 1, 1},
-		// {"ü", "Ü", 0, 0, 0},
-		// {"a", "á", 0, 0, 0},
-		// {"a", "b", 0, 0, 0},
+		{"a", "", 0, 0, 0},
+		{"a", "a", 0, 1, 1},
+		{"ü", "Ü", 0, 0, 0},
+		{"a", "á", 0, 0, 0},
+		{"a", "b", 0, 0, 0},
 		{"aA", "Aa", 0, 1, 1},
 		{"áAb", `Aa%`, 0, 0, 0},
 		{"áAb", `%ab%`, 0, 1, 1},
@@ -56,6 +56,8 @@ func TestIlike(t *testing.T) {
 		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", 0, 1, 1},
 
 		// escape tests
+		{"abc", "ABC", int('a'), 1, 1},
+		{"aaz", "Aaaz", int('a'), 1, 1},
 		{"a", "Aa", int('A'), 1, 1},
 		{"a", "AA", int('A'), 1, 1},
 		{"Aa", "AAAA", int('A'), 1, 1},
@@ -63,6 +65,7 @@ func TestIlike(t *testing.T) {
 		{"gTAp", "AGTAap", int('A'), 1, 1},
 		{"A", "aA", int('a'), 1, 1},
 		{"a", "aA", int('a'), 1, 1},
+		{"aaa", "AAaA", int('a'), 1, 1},
 	}
 	var charset_and_collation_general = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
 
@@ -110,11 +113,11 @@ var vecBuiltinIlikeCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners: []dataGenerator{
 				&selectStringGener{
-					candidates: []string{"aaa", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ", "Ü", "a", "A"},
+					candidates: []string{"aaa", "abc", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ", "Ü", "a", "A"},
 					randGen:    newDefaultRandGen(),
 				},
 				&selectStringGener{
-					candidates: []string{"aaa", "啊啊啊啊", "üÜ", "ü", "a", "A"},
+					candidates: []string{"aaa", "ABC", "啊啊啊啊", "üÜ", "ü", "a", "A"},
 					randGen:    newDefaultRandGen(),
 				},
 				newRangeInt64Gener(65, 122)},

@@ -36,7 +36,7 @@ func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, row_num int, ex
 		str_bytes := hack.Slice(str)
 		escape_char := excluded_char[i]
 
-		stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape_char))
+		excluded_char[i] = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape_char)))
 	}
 }
 
@@ -86,6 +86,7 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	result.ResizeInt64(row_num, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
+
 	for i := 0; i < row_num; i++ {
 		if result.IsNull(i) {
 			continue

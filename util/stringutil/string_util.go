@@ -411,8 +411,19 @@ func toLowerIfAlphaASCII(c byte) byte {
 	return c | 0x20
 }
 
+func toUpperIfAlphaASCII(c byte) byte {
+	return c ^ 0x20
+}
+
 func IsUpperAscii(c byte) bool {
 	if c >= 'A' && c <= 'Z' {
+		return true
+	}
+	return false
+}
+
+func IsLowerAscii(c byte) bool {
+	if c >= 'a' && c <= 'z' {
 		return true
 	}
 	return false
@@ -428,9 +439,19 @@ func LowerOneString(str []byte) {
 }
 
 // Sometimes we want to lower strings and exclude an escape char
-func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) {
+//
+// When escape_char is a lower char, we need to convert it to the capital char
+// Because: when lowering "ABC" with escape 'a', after lower, "ABC" -> "abc",
+// then 'a' will be an escape char and it is not expected.
+// Morever, when escape char is uppered we need to tell it to the caller.
+func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) byte {
+	actual_escape_char := escape_char
+	if IsLowerAscii(escape_char) {
+		actual_escape_char = toUpperIfAlphaASCII(escape_char)
+	}
 	escaped := false
 	str_len := len(str)
+
 	for i := 0; i < str_len; i++ {
 		if IsUpperAscii(str[i]) {
 			// Do not lower the escape char, however when a char is equal to
@@ -443,9 +464,19 @@ func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) {
 				continue
 			}
 		} else {
+			if str[i] == escape_char && !escaped {
+				escaped = true
+
+				// It should be `str[i] = toUpperIfAlphaASCII(str[i])`,
+				// but 'actual_escape_char' is always equal to 'toUpperIfAlphaASCII(str[i])'
+				str[i] = actual_escape_char
+				continue
+			}
 			len := Utf8Len(str[i])
 			i += len - 1
 		}
 		escaped = false
 	}
+
+	return actual_escape_char
 }
