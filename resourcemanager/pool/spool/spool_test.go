@@ -196,7 +196,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 		fnChan <- fn
 	}
 	close(fnChan)
-	time.Sleep(time.Microsecond)
+	time.Sleep(10 * time.Microsecond)
 	require.Equal(t, 0, p.Running())
 	require.Equal(t, int32(100), cnt.Load())
 }
