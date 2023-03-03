@@ -669,3 +669,23 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleColumnIndexNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1, 1, 'xxx', 'xxx'), (2, 2, 'yyy', 'yyy'), (1, 3, 'xxx', 'zzz')")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Sort().Rows()
+	expectedResults := [][]string{{"a", "2"}, {"b", "3"}, {"c", "2"}, {"d", "3"}, {"idx_a", "2"}, {"idx_b", "3"}, {"idx_c", "2"}, {"idx_d", "3"}}
+	for i, row := range rows {
+		require.Equal(t, expectedResults[i][0], row[3])
+		require.Equal(t, expectedResults[i][1], row[6])
+	}
+}
