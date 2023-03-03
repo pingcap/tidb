@@ -159,6 +159,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if tryRowHint {
 			buildOpt.rowHints = hints
 		}
+		// split task by regionID
 		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err

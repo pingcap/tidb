@@ -185,6 +185,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
+
+	if e.table.Meta().Name.O == "t1" || e.table.Meta().Name.O == "t2" {
+		time.Sleep(time.Millisecond)
+	}
+
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
@@ -311,6 +316,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
+	if e.table.Meta().Name.O == "t" {
+		time.Sleep(time.Millisecond)
+	}
+
 	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {
 		return nil, err
@@ -318,6 +327,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
+	// order by partitions, if we have 4 partitions, it only has 4 ranges.
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
