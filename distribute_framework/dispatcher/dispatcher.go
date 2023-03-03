@@ -155,7 +155,7 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 
 	// Special handling for the new/finished tasks.
 	if gTask.State == proto.TaskStateSucceed {
-		d.delRunningGlobalTasks(int64(gTask.ID))
+		d.delRunningGlobalTasks(gTask.ID)
 		_ = d.subTaskMgr.DeleteTasks(gTask.ID)
 	} else if gTask.State == proto.TaskStatePending {
 		gTask.StartTime = time.Now()
@@ -212,9 +212,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if gTask == nil {
 					break
 				}
-				d.wg.Run(func() {
-					d.loadTaskAndProgress(gTask, true)
-				})
+				d.loadTaskAndProgress(gTask, true)
 				cnt++
 			}
 		}
