@@ -3765,6 +3765,21 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	}
 
 	if is.Index.Global {
+		tmp, ok := b.is.TableByID(ret.table.Meta().ID)
+		if !ok {
+			b.err = infoschema.ErrTableNotExists
+			return nil
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			b.err = exeerrors.ErrBuildExecutor
+			return nil
+		}
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			b.err = err
+			return nil
+		}
 		return ret
 	}
 
@@ -3964,8 +3979,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			b.err = err
 			return nil
 		}
-		tbl, ok1 := tmp.(table.PartitionedTable)
-		if !ok1 {
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
@@ -4495,6 +4510,30 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(tbInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		if e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+		if err := e.Open(ctx); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
@@ -4544,6 +4583,32 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if is.Index.Global {
+		tmp, ok := builder.is.TableByID(ts.Table.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists
+		}
+		tbl, ok := tmp.(table.PartitionedTable)
+		if !ok {
+			return nil, exeerrors.ErrBuildExecutor
+		}
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			return nil, err
+		}
+		e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		if err := e.Open(ctx); err != nil {
+			return nil, err
+		}
+		return e, err
+	}
+
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
