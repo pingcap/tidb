@@ -26,11 +26,11 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>General plan cache</b><br />Improve general read performance
           </li>
           <li>
-            <b>Partitioned-raft-kv storage engine</b><br />Increased write
+            <b>Partitioned Raft KV storage engine</b><br />Provide increased write
             velocity, faster scaling operations, larger clusters
           </li>
           <li>
-            <b>TiFlash performance boost</b><br />TiFlash optimization such
+            <b>TiFlash performance boost</b><br />Implement TiFlash optimization such
             as late materialization and runtime filter
           </li>
           <li>
