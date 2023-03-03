@@ -190,7 +190,6 @@
           "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "MPP mode may be blocked because there aren't tiflash replicas of table `t`."
         ]
       },
@@ -208,7 +207,6 @@
           "    └─IndexRangeScan_16 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "MPP mode may be blocked because tiflash replicas of table `t` not ready."
         ]
       },
@@ -231,7 +229,6 @@
           "    └─IndexRangeScan_16 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'."
         ]
       },
@@ -249,7 +246,6 @@
           "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because you have set a hint to read table `t` from TiKV."
         ]
       },
@@ -264,9 +260,7 @@
           "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node"
-        ]
+        "Warn": null
       },
       {
         "SQL": "EXPLAIN format = 'brief' SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
@@ -280,7 +274,6 @@
           "    └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported",
           "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now."
         ]
       },
@@ -293,7 +286,6 @@
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
@@ -310,7 +302,6 @@
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
@@ -325,7 +316,6 @@
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
@@ -343,7 +333,6 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
@@ -360,7 +349,6 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
@@ -393,7 +381,6 @@
           "      └─TableFullScan_30 10000.00 batchCop[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "MPP mode may be blocked because table `t`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`."
         ]
       },
@@ -427,7 +414,6 @@
           "      └─TableFullScan_21 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.",
           "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.",
           "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now."
@@ -446,9 +432,7 @@
           "    └─Selection_17(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "      └─TableFullScan_16 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported"
-        ]
+        "Warn": null
       }
     ]
   },
@@ -470,7 +454,6 @@
           "  └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
@@ -485,7 +468,6 @@
           "  └─TableRangeScan_11 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
@@ -500,7 +482,6 @@
           "  └─TableRangeScan_10 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
@@ -515,7 +496,6 @@
           "  └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
@@ -535,7 +515,6 @@
           "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported",
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.",
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`."
         ]
@@ -555,7 +534,6 @@
           "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported",
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
         ]
@@ -576,9 +554,7 @@
           "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2",
@@ -596,9 +572,7 @@
           "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that access multiple tables are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
@@ -618,9 +592,7 @@
           "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─TableFullScan_24(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
@@ -635,9 +607,7 @@
           "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─TableFullScan_24(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
@@ -649,7 +619,6 @@
           "  └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node",
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information."
         ]
