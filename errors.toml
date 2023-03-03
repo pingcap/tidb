@@ -1686,6 +1686,26 @@ error = '''
 
 '''
 
+["executor:8163"]
+error = '''
+Unknown option %s
+'''
+
+["executor:8164"]
+error = '''
+Invalid option value for %s
+'''
+
+["executor:8165"]
+error = '''
+Option %s specified more than once
+'''
+
+["executor:8166"]
+error = '''
+Unsupported option %s for %s import mode
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
