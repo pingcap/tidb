@@ -179,18 +179,11 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 			s.gcs.Bucket, path)
 	}
 
-	rc, err := handle.NewRangeReader(ctx, 0, -1)
-	if err != nil {
-		return nil, errors.Annotatef(err,
-			"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
-			s.gcs.Bucket, path)
-	}
-
 	return &gcsObjectReader{
 		storage:   s,
 		name:      path,
 		objHandle: handle,
-		reader:    rc,
+		reader:    nil, // lazy create
 		ctx:       ctx,
 		totalSize: attrs.Size,
 	}, nil
@@ -413,7 +406,9 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return realOffset, nil
 	}
 
-	_ = r.reader.Close()
+	if r.reader != nil {
+		_ = r.reader.Close()
+	}
 	r.pos = realOffset
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
