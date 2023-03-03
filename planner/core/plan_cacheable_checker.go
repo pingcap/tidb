@@ -284,21 +284,33 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.TableName:
 		if checker.schema != nil {
-			if isPartitionTable(checker.schema, node) {
+			tb, err := checker.schema.TableByName(node.Schema, node.Name)
+			if err != nil {
+				checker.cacheable = false
+				checker.reason = "table cannot be found in schema"
+				return in, !checker.cacheable
+			}
+			if tb.Meta().GetPartitionInfo() != nil {
 				checker.cacheable = false
 				checker.reason = "queries that access partitioning table are not supported"
+				return in, !checker.cacheable
 			}
-			if hasGeneratedCol(checker.schema, node) {
-				checker.cacheable = false
-				checker.reason = "queries that have generated columns are not supported"
+			for _, col := range tb.Cols() {
+				if col.IsGenerated() {
+					checker.cacheable = false
+					checker.reason = "queries that have generated columns are not supported"
+					return in, !checker.cacheable
+				}
 			}
-			if isTempTable(checker.schema, node) {
+			if tb.Meta().TempTableType != model.TempTableNone {
 				checker.cacheable = false
 				checker.reason = "queries that access temporary tables are not supported"
+				return in, !checker.cacheable
 			}
-			if isView(checker.schema, node) {
+			if tb.Meta().IsView() {
 				checker.cacheable = false
 				checker.reason = "queries that access views are not supported"
+				return in, !checker.cacheable
 			}
 		}
 		return in, !checker.cacheable
