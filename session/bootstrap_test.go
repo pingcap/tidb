@@ -1081,13 +1081,13 @@ func TestUpgradeToVer85(t *testing.T) {
 }
 
 func TestInitializeSQLFile(t *testing.T) {
-	testEmptyInitSqlFile(t)
+	testEmptyInitSQLFile(t)
 	testInitSystemVariable(t)
 	testInitUsers(t)
 	testErrorHappenWhileInit(t)
 }
 
-func testEmptyInitSqlFile(t *testing.T) {
+func testEmptyInitSQLFile(t *testing.T) {
 	// An non-existent sql file would stop the bootstrap of the tidb cluster
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
