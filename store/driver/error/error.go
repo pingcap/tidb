@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	tikverr "github.com/tikv/client-go/v2/error"
+	pderr "github.com/tikv/pd/client/errs"
 )
 
 // tikv error instance
@@ -53,6 +54,12 @@ var (
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
+	// ErrResourceGroupNotExists is the error when resource group does not exist.
+	ErrResourceGroupNotExists = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupNotExists)
+	// ErrResourceGroupConfigUnavailable is the error when resource group configuration is unavailable.
+	ErrResourceGroupConfigUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupConfigUnavailable)
+	// ErrResourceGroupThrottled is the error when resource group is exceeded quota limitation
+	ErrResourceGroupThrottled = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupThrottled)
 	// ErrUnknown is the unknow error.
 	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
@@ -161,6 +168,19 @@ func ToTiDBErr(err error) error {
 
 	if tikverr.IsErrorUndetermined(err) {
 		return terror.ErrResultUndetermined
+	}
+
+	var errGetResourceGroup *pderr.ErrClientGetResourceGroup
+	if stderrs.As(err, &errGetResourceGroup) {
+		return ErrResourceGroupNotExists.FastGenByArgs(errGetResourceGroup.ResourceGroupName)
+	}
+
+	if stderrs.Is(err, pderr.ErrClientResourceGroupConfigUnavailable) {
+		return ErrResourceGroupConfigUnavailable
+	}
+
+	if stderrs.Is(err, pderr.ErrClientResourceGroupThrottled) {
+		return ErrResourceGroupThrottled
 	}
 
 	return errors.Trace(err)
