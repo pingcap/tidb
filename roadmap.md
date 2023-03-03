@@ -17,7 +17,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
       <th>2-3 year projection</th>
     </tr>
   </thead>
-  <tbody style="vertical-align: top">
+  <tbody valign="top">
     <tr>
       <td><b>Scalability and Performance</b><br />Enhance horsepower</td>
       <td>
