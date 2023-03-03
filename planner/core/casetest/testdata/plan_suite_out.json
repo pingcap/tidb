@@ -7140,58 +7140,58 @@
       {
         "SQL": "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "TableReader 12500.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+          "TableReader 12500.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
+          "TableReader 12500.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "TableReader 12500.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t1.a, test.t2.a",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "Warning 1105 MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
+        "Warning": null
       }
     ]
   },
