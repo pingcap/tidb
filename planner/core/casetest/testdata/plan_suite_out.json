@@ -15,9 +15,7 @@
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
@@ -33,9 +31,7 @@
           "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a, test.t.c",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -52,9 +48,7 @@
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -69,9 +63,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
@@ -86,9 +78,7 @@
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
@@ -104,9 +94,7 @@
           "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a, test.t.c",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -123,9 +111,7 @@
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -140,9 +126,7 @@
           "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
@@ -158,7 +142,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -176,7 +159,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -194,7 +176,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -212,7 +193,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -230,7 +210,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -248,7 +227,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -266,7 +244,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -284,7 +261,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -302,7 +278,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -320,7 +295,6 @@
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
@@ -337,9 +311,7 @@
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), stream_agg() */ a, sum(b) from t group by a, c",
@@ -355,9 +327,7 @@
           "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#8, test.t.a, test.t.c",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), use_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
@@ -370,7 +340,6 @@
           "      └─TableRowIDScan 3333.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
           "[planner:1815]The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
         ]
@@ -389,9 +358,7 @@
           "              └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 1)",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), force_index(t, idx_b) */ a, sum(b) from t where b < 2 group by a, c",
@@ -404,7 +371,6 @@
           "      └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
           "[planner:1815]The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
         ]
@@ -425,7 +391,6 @@
           "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[parser:8061]Optimizer hint index_merge is not supported by TiDB and is ignored"
         ]
       },
@@ -451,9 +416,7 @@
           "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), leading(t3, t1) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
@@ -478,7 +441,6 @@
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint",
           "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
@@ -501,9 +463,7 @@
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), leading(t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
@@ -524,7 +484,6 @@
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
           "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint",
           "[planner:1815]leading hint is inapplicable, check the join type or the join algorithm hint"
         ]
@@ -542,9 +501,7 @@
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ qb_name(qb, v), MPP_2PHASE_AGG(@qb) */ * from v",
@@ -560,9 +517,7 @@
           "              └─Projection 10000.00 mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#12, test.t.a, test.t.c",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ qb_name(qb, v1), shuffle_join(t1@qb, t2@qb) */ * from v1",
@@ -580,9 +535,7 @@
           "          └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ qb_name(qb, v1), broadcast_join(t1@qb, t2@qb) */ * from v1",
@@ -598,9 +551,7 @@
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
@@ -621,9 +572,7 @@
           "          └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
@@ -644,9 +593,7 @@
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select * from t t1 where t1.a < (select /*+ MPP_1PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
@@ -667,9 +614,7 @@
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select * from t t1 where t1.a < (select /*+ MPP_2PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
@@ -691,9 +636,7 @@
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: query has some unsupported Node"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -715,9 +658,7 @@
           "              └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -740,9 +681,7 @@
           "                └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 60)",
           "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -767,9 +706,7 @@
           "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -792,9 +729,7 @@
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -822,9 +757,7 @@
           "                      └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -854,9 +787,7 @@
           "                        └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
           "                          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: not a select statement"
-        ]
+        "Warn": null
       },
       {
         "SQL": "WITH CTE AS (SELECT /*+ MERGE(), shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
@@ -891,7 +822,6 @@
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: not a select statement",
           "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t) */. Maybe you can use the table alias name",
           "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
         ]
@@ -925,7 +855,6 @@
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "skip non-prep plan cache: not a select statement",
           "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t) */. Maybe you can use the table alias name",
           "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ BROADCAST_JOIN(t1, t, t1, t, t1, t) */ or /*+ TIDB_BCJ(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
         ]
