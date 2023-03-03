@@ -23,6 +23,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/executor"
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/kv"
@@ -139,7 +140,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:08
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":3,"LoadedRows":1}`
+		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":0,"LoadedRows":1}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:09
 		// commit one task and sleep 3 seconds
@@ -147,7 +148,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:11
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":3,"LoadedRows":2}`
+		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":2,"LoadedRows":2}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:12
 		// finish job
@@ -165,6 +166,16 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	HeartBeatInSec = 1
 	s.T().Cleanup(func() {
 		HeartBeatInSec = backup
+	})
+	backup2 := executor.LoadDataReadBlockSize
+	executor.LoadDataReadBlockSize = 1
+	s.T().Cleanup(func() {
+		executor.LoadDataReadBlockSize = backup2
+	})
+	backup3 := config.BufferSizeScale
+	config.BufferSizeScale = 1
+	s.T().Cleanup(func() {
+		config.BufferSizeScale = backup3
 	})
 
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCreateLoadDataJob", `sleep(3000)`)

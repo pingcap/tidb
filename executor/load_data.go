@@ -173,8 +173,8 @@ type commitTask struct {
 	cnt  uint64
 	rows [][]types.Datum
 
-	loadedRows     uint64
-	loadedFileSize int64
+	loadedRows      uint64
+	scannedFileSize int64
 }
 
 type loadRemoteInfo struct {
@@ -378,6 +378,9 @@ func (e *LoadDataWorker) reorderColumns(columnNames []string) error {
 	return nil
 }
 
+// LoadDataReadBlockSize is exposed for test.
+var LoadDataReadBlockSize = int64(config.ReadBlockSize)
+
 // Load reads from readerFn and do load data job.
 func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
 	var (
@@ -435,7 +438,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			ctx,
 			e.GenerateCSVConfig(),
 			reader,
-			int64(config.ReadBlockSize),
+			LoadDataReadBlockSize,
 			nil,
 			false,
 			// TODO: support charset conversion
@@ -445,7 +448,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			ctx,
 			e.Ctx.GetSessionVars().SQLMode,
 			reader,
-			int64(config.ReadBlockSize),
+			LoadDataReadBlockSize,
 			nil,
 		)
 	case LoadDataFormatParquet:
@@ -495,6 +498,13 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		for {
 			select {
 			case <-done:
+				// try to update progress to set 100% progress
+				p := e.progress.Load()
+				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, p.String())
+				if !ok || err2 != nil {
+					logutil.Logger(ctx).Warn("failed to update job progress when finished",
+						zap.Bool("ok", ok), zap.Error(err2))
+				}
 				return nil
 			case <-groupCtx.Done():
 				return nil
@@ -571,10 +581,10 @@ func (e *LoadDataWorker) processStream(
 			}
 			goto TrySendTask
 		case e.commitTaskQueue <- commitTask{
-			cnt:            e.curBatchCnt,
-			rows:           e.rows,
-			loadedRows:     e.rowCount,
-			loadedFileSize: pos,
+			cnt:             e.curBatchCnt,
+			rows:            e.rows,
+			loadedRows:      e.rowCount,
+			scannedFileSize: pos,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -606,19 +616,47 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 		return err
 	}
 
-	var tasks uint64
+	var (
+		tasks               uint64
+		lastScannedFileSize int64
+		currScannedFileSize int64
+	)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case task, ok := <-e.commitTaskQueue:
 			if !ok {
+				p := e.progress.Load()
+				newP := &asyncloaddata.Progress{
+					SourceFileSize: p.SourceFileSize,
+					LoadedFileSize: currScannedFileSize,
+					LoadedRows:     p.LoadedRows,
+				}
+				e.progress.Store(newP)
 				return nil
 			}
 			start := time.Now()
 			if err = e.commitOneTask(ctx, task); err != nil {
 				return err
 			}
+			// we want to report "loaded" progress, not "scanned" progress, the
+			// difference of these two is the latest block we read is still in
+			// processing. So when "scanned" progress get forward we know the
+			// last block is processed.
+			// The corner case is when a record is larger than the block size,
+			// but that's should be rare.
+			if task.scannedFileSize != currScannedFileSize {
+				lastScannedFileSize = currScannedFileSize
+				currScannedFileSize = task.scannedFileSize
+			}
+			p := e.progress.Load()
+			newP := &asyncloaddata.Progress{
+				SourceFileSize: p.SourceFileSize,
+				LoadedFileSize: lastScannedFileSize,
+				LoadedRows:     task.loadedRows,
+			}
+			e.progress.Store(newP)
 			tasks++
 			logutil.Logger(ctx).Info("commit one task success",
 				zap.Duration("commit time usage", time.Since(start)),
@@ -655,13 +693,6 @@ func (e *LoadDataWorker) commitOneTask(ctx context.Context, task commitTask) err
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
 		return err
 	}
-	p := e.progress.Load()
-	newP := &asyncloaddata.Progress{
-		SourceFileSize: p.SourceFileSize,
-		LoadedFileSize: task.loadedFileSize,
-		LoadedRows:     task.loadedRows,
-	}
-	e.progress.Store(newP)
 	return nil
 }
 
