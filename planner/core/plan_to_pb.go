@@ -393,14 +393,21 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	// todo: mpp na-key toPB.
-	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
-	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
+	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys)+len(p.LeftNAJoinKeys))
+	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys)+len(p.RightNAJoinKeys))
 	for _, leftKey := range p.LeftJoinKeys {
+		leftJoinKeys = append(leftJoinKeys, leftKey)
+	}
+	for _, leftKey := range p.LeftNAJoinKeys {
 		leftJoinKeys = append(leftJoinKeys, leftKey)
 	}
 	for _, rightKey := range p.RightJoinKeys {
 		rightJoinKeys = append(rightJoinKeys, rightKey)
 	}
+	for _, rightKey := range p.RightNAJoinKeys {
+		rightJoinKeys = append(rightJoinKeys, rightKey)
+	}
+
 	lChildren, err := p.children[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -481,7 +488,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		probeFiledTypes = append(probeFiledTypes, ty)
 		buildFiledTypes = append(buildFiledTypes, ty)
 	}
-	// todo: arenatlx, push down hash join
+	isNullAwareSemiJoin := len(p.LeftNAJoinKeys) > 0
 	join := &tipb.Join{
 		JoinType:                pbJoinType,
 		JoinExecType:            tipb.JoinExecType_TypeHashJoin,
@@ -495,6 +502,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		OtherConditions:         otherConditions,
 		OtherEqConditionsFromIn: otherEqConditions,
 		Children:                []*tipb.Executor{lChildren, rChildren},
+		IsNullAwareSemiJoin:     &isNullAwareSemiJoin,
 	}
 
 	executorID := p.ExplainID().String()
