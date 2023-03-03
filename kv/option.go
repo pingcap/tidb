@@ -188,4 +188,6 @@ const (
 	InternalTxnTrace = "Trace"
 	// InternalTxnTTL is the type of TTL usage
 	InternalTxnTTL = "TTL"
+	// InternalLoadData is the type of LOAD DATA usage
+	InternalLoadData = "LoadData"
 )
