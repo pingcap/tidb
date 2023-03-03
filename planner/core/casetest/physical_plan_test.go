@@ -865,6 +865,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t(a int, b int, c int)")
 

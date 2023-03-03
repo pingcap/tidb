@@ -172,6 +172,7 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
 	tk.MustExec(`create table t(a int, b int) partition by hash(a) partitions 3`)
