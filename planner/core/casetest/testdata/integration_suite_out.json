@@ -8026,9 +8026,7 @@
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "set mpp_exchange_compression_mode = UNSPECIFIED",
@@ -8047,9 +8045,7 @@
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "set mpp_version = 0",
@@ -8073,9 +8069,7 @@
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       },
       {
         "SQL": "set mpp_version = -1",
@@ -8099,9 +8093,7 @@
           "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"
-        ]
+        "Warn": null
       }
     ]
   },
