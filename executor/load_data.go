@@ -646,7 +646,89 @@ func (e *LoadDataInfo) SetMessage() {
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 
+<<<<<<< HEAD
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+=======
+// ReadRows reads rows from parser. When parser's reader meet EOF, it will return
+// nil. For other errors it will return directly. When the rows batch is full it
+// will also return nil.
+// The result rows are saved in e.rows and update some members, caller can check
+// if curBatchCnt == 0 to know if reached EOF.
+func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) error {
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
+	for e.IgnoreLines > 0 {
+		err := ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
+			}
+			return err
+		}
+
+		e.IgnoreLines--
+	}
+	for {
+		if err := parser.ReadRow(); err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
+			}
+			return ErrLoadDataCantRead.GenWithStackByArgs(
+				err.Error(),
+				"Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)",
+			)
+		}
+		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
+		// So should add first here.
+		e.rowCount++
+		r, err := e.parserData2TableData(ctx, parser.LastRow().Row)
+		if err != nil {
+			return err
+		}
+		e.rows = append(e.rows, r)
+		e.curBatchCnt++
+		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
+			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
+			return nil
+		}
+	}
+}
+
+// parserData2TableData encodes the data of parser output.
+func (e *LoadDataWorker) parserData2TableData(
+	ctx context.Context,
+	parserData []types.Datum,
+) ([]types.Datum, error) {
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	restrictive := e.Ctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		e.onDuplicate != ast.OnDuplicateKeyHandlingIgnore
+
+	var errColNumMismatch error
+	switch {
+	case len(parserData) < len(e.fieldMappings):
+		errColNumMismatch = ErrWarnTooFewRecords.GenWithStackByArgs(e.rowCount)
+	case len(parserData) > len(e.fieldMappings):
+		errColNumMismatch = ErrWarnTooManyRecords.GenWithStackByArgs(e.rowCount)
+	}
+
+	if errColNumMismatch != nil {
+		if restrictive {
+			return nil, errColNumMismatch
+		}
+		e.handleWarning(errColNumMismatch)
+	}
+
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793))
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
 	setVar := func(name string, col *field) {
@@ -657,10 +739,17 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 	}
 
+<<<<<<< HEAD
 	for i := 0; i < len(e.FieldMappings); i++ {
 		if i >= len(cols) {
 			if e.FieldMappings[i].Column == nil {
 				setVar(e.FieldMappings[i].UserVar.Name, nil)
+=======
+	for i := 0; i < len(e.fieldMappings); i++ {
+		if i >= len(parserData) {
+			if e.fieldMappings[i].Column == nil {
+				setVar(e.fieldMappings[i].UserVar.Name, nil)
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793))
 				continue
 			}
 
@@ -674,6 +763,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			continue
 		}
 
+<<<<<<< HEAD
 		if e.FieldMappings[i].Column == nil {
 			setVar(e.FieldMappings[i].UserVar.Name, &cols[i])
 			continue
@@ -685,14 +775,25 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 
 		row = append(row, types.NewDatum(string(cols[i].str)))
+=======
+		if e.fieldMappings[i].Column == nil {
+			setVar(e.fieldMappings[i].UserVar.Name, &parserData[i])
+			continue
+		}
+
+		row = append(row, parserData[i])
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793))
 	}
 
 	for i := 0; i < len(e.ColumnAssignmentExprs); i++ {
 		// eval expression of `SET` clause
 		d, err := e.ColumnAssignmentExprs[i].Eval(chunk.Row{})
 		if err != nil {
+			if restrictive {
+				return nil, err
+			}
 			e.handleWarning(err)
-			return nil
+			return nil, nil
 		}
 		row = append(row, d)
 	}
@@ -703,11 +804,14 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	// a new row buffer will be allocated in getRow
 	newRow, err := e.getRow(ctx, row)
 	if err != nil {
+		if restrictive {
+			return nil, err
+		}
 		e.handleWarning(err)
-		return nil
+		return nil, nil
 	}
 
-	return newRow
+	return newRow, nil
 }
 
 func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {

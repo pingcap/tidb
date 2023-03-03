@@ -505,7 +505,7 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 		if err != nil {
 			return value, err
 		}
-		if err := col.CheckNotNull(&value); err == nil {
+		if err := col.CheckNotNull(&value, 0); err == nil {
 			return value, nil // the most normal case
 		}
 		isBadNullValue = true
@@ -529,7 +529,7 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
+		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx, 0)
 	default:
 		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
 		if col.DefaultIsExpr {

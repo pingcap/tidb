@@ -1876,8 +1876,13 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 			require.Equal(t, tt.restData, data, comment)
 		}
 		ld.SetMessage()
+<<<<<<< HEAD:executor/write_test.go
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
 		ctx.StmtCommit()
+=======
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
+		ctx.StmtCommit(context.Background())
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1912,7 +1917,11 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeHour := curTime.Hour()
 	timeMinute := curTime.Minute()
 	tests := []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -1922,7 +1931,11 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeMinute = curTime.Minute()
 	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
@@ -1992,7 +2005,11 @@ func TestIssue34358(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, ld)
 	checkCases([]testCase{
+<<<<<<< HEAD:executor/write_test.go
 		{nil, []byte("\\N\n"), []string{"<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
 }
 
@@ -2037,6 +2054,7 @@ func TestLoadData(t *testing.T) {
 	sc.IgnoreTruncate = false
 	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		// data1 = nil, data2 != nil
 		{nil, []byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{nil, []byte("\t\n"), []string{"2|0|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -2057,12 +2075,30 @@ func TestLoadData(t *testing.T) {
 
 		// data1 != nil, data2 != nil, InsertData returns data isn't nil
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"
+		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("\t\n"), []string{"2|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, trivialMsg},
+		{[]byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("6\t2\t3\n"), []string{"6|2|3|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{"7|2|3|4", "8|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{"7|2|3|4"}, "Records: 2  Deleted: 0  Skipped: 1  Warnings: 1"},
+
+		// outdated test but still increase AUTO_INCREMENT
+		{[]byte("\t2\t3\t4"), []string{"9|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("\t2\t3\t4\t5\n"), []string{"10|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("\t2\t34\t5\n"), []string{"11|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
 	tests = []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		// data1 != nil, data2 != nil
 		{[]byte("0\t2\t3"), []byte("\t4\t5||"), []string{"12|2|3|4"}, nil, trivialMsg},
 		{[]byte("1\t2\t3\t4\t5|"), []byte("|"), []string{"1|2|3|4"}, nil, trivialMsg},
@@ -2073,6 +2109,17 @@ func TestLoadData(t *testing.T) {
 		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"),
 			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{"6|2|34|5"}, nil, trivialMsg},
+=======
+		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("2\t2\t3\t4\t5||3\t22\t33\t44\t55||"),
+			[]string{"2|2|3|4", "3|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("3\t2\t3\t4\t5||4\t22\t33||"), []string{
+			"3|2|3|4", "4|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("4\t2\t3\t4\t5||5\t22\t33||6\t222||"),
+			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("6\t2\t34\t5||"), []string{"6|2|34|5"}, trivialMsg},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -2081,6 +2128,7 @@ func TestLoadData(t *testing.T) {
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
 	tests = []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		// data1 = nil, data2 != nil
 		{nil, []byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{nil, []byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -2089,6 +2137,15 @@ func TestLoadData(t *testing.T) {
 		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{nil, []byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, nil, trivialMsg},
 		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
+=======
+		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, trivialMsg},
+		{[]byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 			"16|2|3|4",
 			"17|22|33|44"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{nil, []byte("\\2\\3\\4|!#^\\22\\33\\44|!#^xxx\\222\\333\\444|!#^"), []string{
@@ -2100,6 +2157,7 @@ func TestLoadData(t *testing.T) {
 		{[]byte("\\2\\3\\4|!#^xxx18\\22\\33\\44|!#^"), nil,
 			[]string{"18|22|33|44"}, nil, trivialMsg},
 
+<<<<<<< HEAD:executor/write_test.go
 		// data1 != nil, data2 != nil
 		{[]byte("xxx10\\2\\3"), []byte("\\4|!#^"),
 			[]string{"10|2|3|4"}, nil, trivialMsg},
@@ -2126,6 +2184,23 @@ func TestLoadData(t *testing.T) {
 		{[]byte("xxx1\\2\\3\\4\\5|!"), []byte("#^xxx2\\22\\33|!#^3\\222|!#^"),
 			[]string{"1|2|3|4", "2|22|33|<nil>"}, []byte("#^"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("xxx10\\2\\3\\4|!#^"),
+			[]string{"10|2|3|4"}, trivialMsg},
+		{[]byte("10\\2\\3xxx11\\4\\5|!#^"),
+			[]string{"11|4|5|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("xxx21\\2\\3\\4\\5|!#^"),
+			[]string{"21|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("xxx22\\2\\3\\4\\5|!#^xxx23\\22\\33\\44\\55|!#^"),
+			[]string{"22|2|3|4", "23|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx23\\2\\3\\4\\5|!#^xxx24\\22\\33|!#^"),
+			[]string{"23|2|3|4", "24|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx24\\2\\3\\4\\5|!#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
+			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("xxx25\\2\\3\\4\\5|!#^26\\22\\33|!#^xxx27\\222|!#^"),
+			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx\\2\\34\\5|!#^"), []string{"28|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -2175,9 +2250,15 @@ func TestLoadData(t *testing.T) {
 	ld.LinesInfo.Terminated = "#\n"
 	ld.FieldsInfo.Terminated = "#"
 	tests = []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		{[]byte("xxx1#\nxxx2#\n"), nil, []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), nil, []string{"1|2|3|4", "2|3|4|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), nil, []string{"1|2|3#|4", "2|3|#4#\n|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), []string{"1|2|3#|4", "2|3|#4#\n|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -2265,8 +2346,43 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NotNil(t, ld)
 	tests := []testCase{
+<<<<<<< HEAD:executor/write_test.go
 		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+=======
+		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataNULL(t *testing.T) {
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+	// - For the default FIELDS and LINES values, NULL is written as a field value of \N for output, and a field value of \N is read as NULL for input (assuming that the ESCAPED BY character is \).
+	// - If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value. This differs from the word NULL enclosed within FIELDS ENCLOSED BY characters, which is read as the string 'NULL'.
+	// - If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id VARCHAR(20), value VARCHAR(20)) CHARACTER SET utf8")
+	tk.MustExec(`load data local infile '/tmp/nonexistence.csv' into table load_data_test
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{
+			[]byte(`NULL,"NULL"
+\N,"\N"
+"\\N"`),
+			[]string{"<nil>|NULL", "<nil>|<nil>", "\\N|<nil>"},
+			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 1",
+		},
+>>>>>>> 1d293d8159a (executor: implement part of restrictive LOAD DATA (#41793)):executor/writetest/write_test.go
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
