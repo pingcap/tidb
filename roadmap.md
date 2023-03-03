@@ -11,7 +11,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <table>
   <thead>
     <tr>
-      <th></th>
+      <th>Category</th>
       <th>Mid-year stable<br /></th>
       <th>End of year stable<br /></th>
       <th>2-3 year projection</th>
