@@ -584,7 +584,8 @@ type taskMeta struct {
 	status       taskMetaStatus
 	state        int
 	sourceBytes  uint64
-	clusterAvail uint64
+	tikvAvail    uint64
+	tiflashAvail uint64
 }
 
 type storedCfgs struct {
@@ -658,7 +659,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
-			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from %s FOR UPDATE", m.tableName),
+			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, tikv_avail, tiflash_avail from %s FOR UPDATE", m.tableName),
 		)
 		if err != nil {
 			return errors.Annotate(err, "fetch task metas failed")
@@ -669,7 +670,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		for rows.Next() {
 			var task taskMeta
 			var statusValue string
-			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.clusterAvail); err != nil {
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.tikvAvail, &task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
 			status, err := parseTaskMetaStatus(statusValue)
@@ -688,8 +689,8 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		}
 		for _, task := range newTasks {
 			// nolint:gosec
-			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
-			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.clusterAvail); err != nil {
+			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
+			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.tikvAvail, task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1101,7 +1102,8 @@ type singleTaskMetaMgr struct {
 	taskID       int64
 	initialized  bool
 	sourceBytes  uint64
-	clusterAvail uint64
+	tikvAvail    uint64
+	tiflashAvail uint64
 }
 
 func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
@@ -1116,13 +1118,15 @@ func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action fu
 			taskID:       m.taskID,
 			status:       taskMetaStatusInitial,
 			sourceBytes:  m.sourceBytes,
-			clusterAvail: m.clusterAvail,
+			tikvAvail:    m.tikvAvail,
+			tiflashAvail: m.tiflashAvail,
 		},
 	})
 	for _, t := range newTasks {
 		if m.taskID == t.taskID {
 			m.sourceBytes = t.sourceBytes
-			m.clusterAvail = t.clusterAvail
+			m.tikvAvail = t.tikvAvail
+			m.tiflashAvail = t.tiflashAvail
 		}
 	}
 	return err

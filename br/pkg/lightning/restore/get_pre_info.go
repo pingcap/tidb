@@ -560,6 +560,10 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, o
 		}
 	}
 
+	if !isTiDBBackend(p.cfg) {
+		sizeWithIndex = sizeWithIndex / 3
+	}
+
 	result = &EstimateSourceDataSizeResult{
 		SizeWithIndex:        sizeWithIndex,
 		SizeWithoutIndex:     sourceTotalSize,

@@ -115,7 +115,8 @@ const (
 		status  VARCHAR(32) NOT NULL,
 		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
 		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
-		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tikv_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tiflash_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 
