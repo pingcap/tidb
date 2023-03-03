@@ -276,7 +276,7 @@ func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
 
 func (b *builtinCurrentResourceGroupSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	data := b.ctx.GetSessionVars()
-	if data == nil || data.ActiveRoles == nil {
+	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	return data.ResourceGroupName, false, nil
