@@ -183,7 +183,6 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
-			require.Equal(t, mockChecksumKVClientErr, errors.Cause(err))
 			continue
 		}
 		require.NoError(t, err)

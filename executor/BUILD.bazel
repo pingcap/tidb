@@ -347,6 +347,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/errors",
         "//config",
         "//ddl",
         "//ddl/placement",

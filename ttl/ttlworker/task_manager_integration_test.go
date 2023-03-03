@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -38,6 +40,7 @@ import (
 func TestParallelLockNewTask(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -50,7 +53,7 @@ func TestParallelLockNewTask(t *testing.T) {
 
 	isc := cache.NewInfoSchemaCache(time.Minute)
 	require.NoError(t, isc.Update(se))
-	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "test-id")
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "test-id", store)
 
 	// insert and lock a new task
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
@@ -87,7 +90,7 @@ func TestParallelLockNewTask(t *testing.T) {
 
 				isc := cache.NewInfoSchemaCache(time.Minute)
 				require.NoError(t, isc.Update(se))
-				m := ttlworker.NewTaskManager(context.Background(), nil, isc, scanManagerID)
+				m := ttlworker.NewTaskManager(context.Background(), nil, isc, scanManagerID, store)
 
 				_, err := m.LockScanTask(se, &cache.TTLTask{
 					ScanID:  1,
@@ -113,6 +116,7 @@ func TestParallelSchedule(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	sessionFactory := sessionFactory(t, store)
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
@@ -135,7 +139,7 @@ func TestParallelSchedule(t *testing.T) {
 			workers = append(workers, scanWorker)
 		}
 
-		m := ttlworker.NewTaskManager(context.Background(), nil, isc, fmt.Sprintf("task-manager-%d", i))
+		m := ttlworker.NewTaskManager(context.Background(), nil, isc, fmt.Sprintf("task-manager-%d", i), store)
 		m.SetScanWorkers4Test(workers)
 		scheduleWg.Add(1)
 		go func() {
@@ -157,6 +161,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	sessionFactory := sessionFactory(t, store)
 
 	// create table and scan task
@@ -174,7 +179,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
 	scanWorker.Start()
-	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
 	m.RescheduleTasks(sessionFactory(), now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
@@ -182,7 +187,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	// another task manager should fetch this task after heartbeat expire
 	scanWorker2 := ttlworker.NewMockScanWorker(t)
 	scanWorker2.Start()
-	m2 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-2")
+	m2 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-2", store)
 	m2.SetScanWorkers4Test([]ttlworker.Worker{scanWorker2})
 	m2.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-2"))
@@ -193,7 +198,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	m2.CheckFinishedTask(sessionFactory(), now)
 	scanWorker3 := ttlworker.NewMockScanWorker(t)
 	scanWorker3.Start()
-	m3 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-3")
+	m3 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-3", store)
 	m3.SetScanWorkers4Test([]ttlworker.Worker{scanWorker3})
 	m3.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("finished task-manager-2"))
@@ -203,6 +208,7 @@ func TestTaskMetrics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	sessionFactory := sessionFactory(t, store)
 
 	// create table and scan task
@@ -220,7 +226,7 @@ func TestTaskMetrics(t *testing.T) {
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
 	scanWorker.Start()
-	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
 	m.RescheduleTasks(sessionFactory(), now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
@@ -235,6 +241,7 @@ func TestRescheduleWithError(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 
 	sessionFactory := sessionFactory(t, store)
 	// insert a wrong scan task with random table id
@@ -248,7 +255,7 @@ func TestRescheduleWithError(t *testing.T) {
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
 	scanWorker.Start()
-	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1")
+	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
 	notify := make(chan struct{})
 	go func() {
@@ -264,4 +271,70 @@ func TestRescheduleWithError(t *testing.T) {
 	case <-notify:
 	}
 	tk.MustQuery("select status from mysql.tidb_ttl_task").Check(testkit.Rows("waiting"))
+}
+
+func TestTTLRunningTasksLimitation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	tk.MustExec("set global tidb_ttl_running_tasks = 32")
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// 64 tasks and 128 scan workers (in 16 task manager) should only schedule 32 tasks
+	for i := 0; i < 128; i++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", table.Meta().ID, i)
+		tk.MustExec(sql)
+	}
+	isc := cache.NewInfoSchemaCache(time.Second)
+	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
+	scheduleWg := sync.WaitGroup{}
+	for i := 0; i < 16; i++ {
+		workers := []ttlworker.Worker{}
+		for j := 0; j < 8; j++ {
+			scanWorker := ttlworker.NewMockScanWorker(t)
+			scanWorker.Start()
+			workers = append(workers, scanWorker)
+		}
+
+		ctx := logutil.WithKeyValue(context.Background(), "ttl-worker-test", fmt.Sprintf("task-manager-%d", i))
+		m := ttlworker.NewTaskManager(ctx, nil, isc, fmt.Sprintf("task-manager-%d", i), store)
+		m.SetScanWorkers4Test(workers)
+		scheduleWg.Add(1)
+		go func() {
+			se := sessionFactory()
+			m.RescheduleTasks(se, now)
+			scheduleWg.Done()
+		}()
+	}
+	scheduleWg.Wait()
+	// all tasks should have been scheduled
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("32"))
+}
+
+func TestMeetTTLRunningTasks(t *testing.T) {
+	// initialize a cluster with 3 TiKV
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithMultiStores(c, 3)
+		}))
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	// -1, the default value, means the count of TiKV
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
+
+	// positive number means the limitation
+	tk.MustExec("set global tidb_ttl_running_tasks = 32")
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(32))
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(31))
+
+	// set it back to auto value
+	tk.MustExec("set global tidb_ttl_running_tasks = -1")
+	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(2))
+	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3))
 }

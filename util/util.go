@@ -144,7 +144,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		logFields = append(logFields, zap.String("stats", buf.String()))
 	}
 	if info.ID != 0 {
-		logFields = append(logFields, zap.Uint64("conn_id", info.ID))
+		logFields = append(logFields, zap.Uint64("conn", info.ID))
 	}
 	if len(info.User) > 0 {
 		logFields = append(logFields, zap.String("user", info.User))

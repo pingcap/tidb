@@ -253,18 +253,33 @@ type nonPreparedPlanCacheableChecker struct {
 	cacheable bool
 	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
+	constCnt  int
 }
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *ast.PatternInExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			checker.reason = "query has some unsupported binary operation"
+		}
+		return in, !checker.cacheable
+	case *driver.ValueExpr:
+		if node.IsNull() {
+			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
+			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
+			// optimization and a table-full-scan will be generated.
+			checker.cacheable = false
+			checker.reason = "query has null constants"
+		}
+		checker.constCnt++
+		if checker.constCnt > 50 { // just for safety and reduce memory cost
+			checker.cacheable = false
+			checker.reason = "query has more than 50 constants"
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
@@ -361,11 +376,12 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
 	}
-	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum)
+	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
-func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	var subPlans []PhysicalPlan
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {
@@ -377,16 +393,29 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalMemTable:
+		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex {
 			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+		}
+		underIndexMerge = true
+		subPlans = append(subPlans, x.partialPlans...)
+	case *PhysicalIndexScan:
+		if underIndexMerge && x.isFullScan() {
+			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+		}
+	case *PhysicalTableScan:
+		if underIndexMerge && x.isFullScan() {
+			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalApply:
 		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
 	}
 
-	for _, c := range p.Children() {
-		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum); !cacheable {
+	subPlans = append(subPlans, p.Children()...)
+	for _, c := range subPlans {
+		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum, underIndexMerge); !cacheable {
 			return cacheable, reason
 		}
 	}

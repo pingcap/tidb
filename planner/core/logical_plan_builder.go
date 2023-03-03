@@ -689,9 +689,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	}
 }
 
-// setPreferredJoinType4PhysicalOp generates hint information for the logicalJoin based on the hint information of its left and right children.
-// This information is used for selecting the physical operator.
-func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
+// setPreferredJoinType generates hint information for the logicalJoin based on the hint information of its left and right children.
+func (p *LogicalJoin) setPreferredJoinType() {
 	leftHintInfo := p.leftPreferJoinType
 	rightHintInfo := p.rightPreferJoinType
 	if leftHintInfo == 0 && rightHintInfo == 0 {
@@ -710,8 +709,8 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
 			p.preferJoinType = rightHintInfo
 		}
 		preferJoinType := uint(0)
-		// Some implementations of physical operators are dependent on the direction,
-		// and adjustments need to be made based on the direction.
+		// Some implementations of physical joins are dependent on the direction,
+		// so adjustments need to be made based on the direction.
 		switch p.preferJoinType {
 		case preferINLJ:
 			if leftHintInfo != 0 {
@@ -725,37 +724,34 @@ func (p *LogicalJoin) setPreferredJoinType4PhysicalOp() {
 				preferJoinType |= preferLeftAsINLHJInner
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsINLHJInner
+				preferJoinType |= preferRightAsINLHJInner
 			}
 		case preferINLMJ:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsINLMJInner
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsINLMJInner
+				preferJoinType |= preferRightAsINLMJInner
 			}
 		case preferHJBuild:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsHJBuild
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsHJBuild
+				preferJoinType |= preferRightAsHJBuild
 			}
 		case preferHJProbe:
 			if leftHintInfo != 0 {
 				preferJoinType |= preferLeftAsHJProbe
 			}
 			if rightHintInfo != 0 {
-				preferJoinType |= preferLeftAsHJProbe
+				preferJoinType |= preferRightAsHJProbe
 			}
 		default:
 			preferJoinType = p.preferJoinType
 		}
 		p.preferJoinType = preferJoinType
 	}
-	// Clear information from left and right child nodes to prevent multiple calls to this function.
-	p.leftPreferJoinType = 0
-	p.rightPreferJoinType = 0
 }
 
 func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
@@ -5300,6 +5296,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
 	}
+	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
 	return ap
 }
 
@@ -5341,7 +5338,8 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 }
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, b.getSelectOffset())
+	// The query block of the MaxOneRow operator should be the same as that of its child.
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }
@@ -5377,42 +5375,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
-	if b.TableHints() != nil {
-		hintInfo := b.TableHints()
-		outerAlias := extractTableAlias(outerPlan, joinPlan.blockOffset)
-		innerAlias := extractTableAlias(innerPlan, joinPlan.blockOffset)
-		if hintInfo.ifPreferMergeJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferMergeJoin
-		}
-		if hintInfo.ifPreferHashJoin(outerAlias, innerAlias) {
-			joinPlan.preferJoinType |= preferHashJoin
-		}
-		if hintInfo.ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLJInner
-		}
-		if hintInfo.ifPreferINLHJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLHJInner
-		}
-		if hintInfo.ifPreferINLMJ(innerAlias) {
-			joinPlan.preferJoinType = preferRightAsINLMJInner
-		}
-		if hintInfo.ifPreferHJBuild(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJBuild
-		}
-		if hintInfo.ifPreferHJBuild(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJBuild
-		}
-		if hintInfo.ifPreferHJProbe(outerAlias) {
-			joinPlan.preferJoinType |= preferLeftAsHJProbe
-		}
-		if hintInfo.ifPreferHJProbe(innerAlias) {
-			joinPlan.preferJoinType |= preferRightAsHJProbe
-		}
-		// If there're multiple join hints, they're conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
-			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
-		}
-	}
+	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
 		joinPlan.preferJoinType |= preferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite

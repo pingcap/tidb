@@ -75,9 +75,11 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		sctx.GetSessionVars().StmtCtx.InRestrictedSQL { // is internal SQL
+		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		stmtCtx.InRestrictedSQL { // is internal SQL
 		return nil, nil, false, nil
 	}
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
@@ -95,15 +97,16 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, err
 	}
 	defer func() {
-		if err != nil {
-			// keep the stmt unchanged if err so that it can fallback to the normal optimization path.
+		// If some error occurs, just return the error directly.
+		// If no error but this stmt is not supported, restore the AST node so that it can fallback to the normal optimization path
+		if err == nil && !ok {
 			// TODO: add metrics
 			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
 		}
 	}()
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	if val == nil {
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, paramSQL, stmt)
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt)
 		if err != nil {
 			return nil, nil, false, err
 		}
