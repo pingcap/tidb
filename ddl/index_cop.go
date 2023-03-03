@@ -265,12 +265,13 @@ func (c *copReqSenderPool) recycleIdxRecordsAndChunk(idxRecs []*indexRecord, chk
 // copContext contains the information that is needed when building a coprocessor request.
 // It is unchanged after initialization.
 type copContext struct {
-	tblInfo  *model.TableInfo
-	idxInfo  *model.IndexInfo
-	pkInfo   *model.IndexInfo
-	colInfos []*model.ColumnInfo
-	fieldTps []*types.FieldType
-	sessCtx  sessionctx.Context
+	physicalTableID int64
+	tblInfo         *model.TableInfo
+	idxInfo         *model.IndexInfo
+	pkInfo          *model.IndexInfo
+	colInfos        []*model.ColumnInfo
+	fieldTps        []*types.FieldType
+	sessCtx         sessionctx.Context
 
 	expColInfos         []*expression.Column
 	idxColOutputOffsets []int
@@ -279,8 +280,9 @@ type copContext struct {
 	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+func newCopContext(tbl table.PhysicalTable, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
 	var err error
+	tblInfo := tbl.Meta()
 	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
 	var handleIDs []int64
@@ -334,12 +336,13 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
 	copCtx := &copContext{
-		tblInfo:  tblInfo,
-		idxInfo:  idxInfo,
-		pkInfo:   primaryIdx,
-		colInfos: colInfos,
-		fieldTps: fieldTps,
-		sessCtx:  sessCtx,
+		physicalTableID: tbl.GetPhysicalID(),
+		tblInfo:         tblInfo,
+		idxInfo:         idxInfo,
+		pkInfo:          primaryIdx,
+		colInfos:        colInfos,
+		fieldTps:        fieldTps,
+		sessCtx:         sessCtx,
 
 		expColInfos:         expColInfos,
 		idxColOutputOffsets: idxOffsets,
@@ -413,7 +416,7 @@ func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*t
 }
 
 func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
-	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.colInfos)
+	dagPB, err := buildDAGPB(c.sessCtx, c.tblInfo, c.physicalTableID, c.colInfos)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +492,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
-func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
+func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, physicalTableID int64, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
 	sc := sCtx.GetSessionVars().StmtCtx
@@ -497,7 +500,7 @@ func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*m
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := constructTableScanPB(sCtx, tblInfo, colInfos)
+	execPB, err := constructTableScanPB(sCtx, tblInfo, physicalTableID, colInfos)
 	if err != nil {
 		return nil, err
 	}
@@ -506,9 +509,9 @@ func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*m
 	return dagReq, nil
 }
 
-func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, physicalTableID int64, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
-	tblScan.TableId = tblInfo.ID
+	tblScan.TableId = physicalTableID
 	err := tables.SetPBColumnsDefaultValue(sCtx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }

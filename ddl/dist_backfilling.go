@@ -126,6 +126,24 @@ func (bwCtx *backfillWorkerContext) setCopReqSenderPool(pID int64, copReqPool *c
 	bwCtx.copReqSender.pools[pID] = copReqPool
 }
 
+func (bwCtx *backfillWorkerContext) getCopReqSenderPool(d *ddl, task *reorgBackfillTask) *copReqSenderPool {
+	bwCtx.copReqSender.Lock()
+	defer bwCtx.copReqSender.Unlock()
+
+	bfJob := task.bfJob
+	if pool, ok := bwCtx.copReqSender.pools[bfJob.PhysicalTableID]; ok {
+		return pool
+	}
+	copReqPool := initCopReqSenderPool(d.ctx, d.store, task.physicalTable, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
+	logutil.BgLogger().Warn("zzz---------------------------------",
+		zap.Int64("tid", copReqPool.copCtx.tblInfo.ID), zap.Int64("pid", copReqPool.copCtx.physicalTableID),
+		zap.Int64("bfJob pid", bfJob.PhysicalTableID),
+		zap.Int64("task tid", task.physicalTable.Meta().ID), zap.Int64("task pid", task.physicalTable.GetPhysicalID()))
+	copReqPool.adjustSize(len(bwCtx.backfillWorkers)/2 + 1)
+	bwCtx.copReqSender.pools[bfJob.PhysicalTableID] = copReqPool
+	return copReqPool
+}
+
 func (bwCtx *backfillWorkerContext) sendCopReq(d *ddl, bfWorker *backfillWorker, task *reorgBackfillTask) {
 	if !bwCtx.hasCopReqSenderPool() {
 		return
@@ -135,17 +153,13 @@ func (bwCtx *backfillWorkerContext) sendCopReq(d *ddl, bfWorker *backfillWorker,
 		return
 	}
 
-	if addIdxWorker.copReqSenderPool.copCtx.tblInfo.ID == task.bfJob.PhysicalTableID {
+	if addIdxWorker.copReqSenderPool.copCtx.physicalTableID == task.bfJob.PhysicalTableID {
 		addIdxWorker.copReqSenderPool.sendTask(task)
 		return
 	}
 
-	bfJob := task.bfJob
-	copReqPool := initCopReqSenderPool(d.ctx, d.store, task.physicalTable, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
-	copReqPool.adjustSize(len(bwCtx.backfillWorkers)/2 + 1)
-	addIdxWorker.copReqSenderPool = copReqPool
-	copReqPool.sendTask(task)
-	bwCtx.setCopReqSenderPool(bfJob.PhysicalTableID, copReqPool)
+	addIdxWorker.copReqSenderPool = bwCtx.getCopReqSenderPool(d, task)
+	addIdxWorker.copReqSenderPool.sendTask(task)
 }
 
 func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {

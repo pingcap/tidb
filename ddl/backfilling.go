@@ -985,7 +985,7 @@ func initCopReqSenderPool(ctx context.Context, store kv.Storage,
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil
 	}
-	copCtx, err := newCopContext(tbl.Meta(), indexInfo, sessCtx)
+	copCtx, err := newCopContext(tbl, indexInfo, sessCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil
