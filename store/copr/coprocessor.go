@@ -1135,6 +1135,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
+	// TODO: Load-based replica read is currently not compatible with store batched tasks now.
+	// The batched tasks should be dispatched to their own followers, but it's not implemented yet.
+	// So, only enable load-based replica read when there is no batched tasks.
+	var busyThresholdMs uint32
+	if len(copReq.Tasks) == 0 {
+		busyThresholdMs = uint32(worker.req.StoreBusyThreshold.Milliseconds())
+	}
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:          priorityToPB(worker.req.Priority),
@@ -1144,6 +1151,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		TaskId:            worker.req.TaskID,
 		RequestSource:     task.requestSource.GetRequestSource(),
 		ResourceGroupName: worker.req.ResourceGroupName,
+		BusyThresholdMs:   busyThresholdMs,
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)

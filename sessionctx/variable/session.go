@@ -1373,6 +1373,10 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

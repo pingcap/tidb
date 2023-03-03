@@ -308,6 +308,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
+	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
 	return builder
 }
 

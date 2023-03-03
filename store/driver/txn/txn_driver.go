@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -276,6 +277,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetTxnSource(val.(uint64))
 	case kv.ResourceGroupName:
 		txn.KVTxn.SetResourceGroupName(val.(string))
+	case kv.LoadBasedReplicaReadThreshold:
+		txn.KVTxn.GetSnapshot().SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	}
 }
 
