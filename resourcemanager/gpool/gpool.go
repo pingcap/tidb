@@ -28,6 +28,9 @@ var (
 
 	// ErrPoolOverload will be returned when the pool is full and no workers available.
 	ErrPoolOverload = errors.New("the number of concurrency has reached the upper limit and Block is set")
+
+	// ErrPoolParamsInvalid will be returned when the pool params are invalid.
+	ErrPoolParamsInvalid = errors.New("the pool params are invalid")
 )
 
 // BasePool is base class of pool

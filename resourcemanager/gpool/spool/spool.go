@@ -51,6 +51,9 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
 	}
+	if size == 0 {
+		return nil, gpool.ErrPoolParamsInvalid
+	}
 	result.SetName(name)
 	result.capacity.Store(size)
 	result.concurrencyMetrics.Set(float64(size))
@@ -63,6 +66,9 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 
 // Tune changes the pool size.
 func (p *Pool) Tune(size int) {
+	if size == 0 {
+		return
+	}
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	p.concurrencyMetrics.Set(float64(size))
