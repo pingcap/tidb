@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/resourcemanager/gpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
@@ -158,7 +157,7 @@ func TestRunOverload(t *testing.T) {
 	}
 	// p is full now.
 	require.NoError(t, p.Run(longRunningFunc), "submit when pool is not full shouldn't return error")
-	require.EqualError(t, p.Run(demoFunc), gpool.ErrPoolOverload.Error(),
+	require.EqualError(t, p.Run(demoFunc), pool.ErrPoolOverload.Error(),
 		"blocking submit when pool reach max blocking submit should return ErrPoolOverload")
 }
 

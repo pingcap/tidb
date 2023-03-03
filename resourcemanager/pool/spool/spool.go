@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager"
-	"github.com/pingcap/tidb/resourcemanager/gpool"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,7 +39,7 @@ type Pool struct {
 	isStop             atomic.Bool
 	concurrencyMetrics prometheus.Gauge
 	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
-	gpool.BasePool
+	pool.BasePool
 }
 
 // NewPool create a single goroutine pool.
@@ -52,7 +51,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
 	}
 	if size == 0 {
-		return nil, gpool.ErrPoolParamsInvalid
+		return nil, pool.ErrPoolParamsInvalid
 	}
 	result.SetName(name)
 	result.capacity.Store(size)
@@ -77,11 +76,11 @@ func (p *Pool) Tune(size int) {
 // Run runs a function in the pool.
 func (p *Pool) Run(fn func()) error {
 	if p.isStop.Load() {
-		return gpool.ErrPoolClosed
+		return pool.ErrPoolClosed
 	}
 	_, run := p.checkAndAddRunning(1)
 	if !run {
-		return gpool.ErrPoolOverload
+		return pool.ErrPoolOverload
 	}
 	p.taskManager.RegisterTask(p.GenTaskID(), 1)
 	p.run(fn)
@@ -115,11 +114,11 @@ func (p *Pool) run(fn func()) {
 // RunWithConcurrency runs a function in the pool with concurrency.
 func (p *Pool) RunWithConcurrency(fns chan func(), concurrency int) error {
 	if p.isStop.Load() {
-		return gpool.ErrPoolClosed
+		return pool.ErrPoolClosed
 	}
 	conc, run := p.checkAndAddRunning(int32(concurrency))
 	if !run {
-		return gpool.ErrPoolOverload
+		return pool.ErrPoolOverload
 	}
 	// TODO: taskManager need to refactor
 	p.taskManager.RegisterTask(p.GenTaskID(), conc)

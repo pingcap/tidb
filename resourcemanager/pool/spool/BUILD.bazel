@@ -6,12 +6,11 @@ go_library(
         "option.go",
         "spool.go",
     ],
-    importpath = "github.com/pingcap/tidb/resourcemanager/gpool/spool",
+    importpath = "github.com/pingcap/tidb/resourcemanager/pool/spool",
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
         "//resourcemanager",
-        "//resourcemanager/gpool",
         "//resourcemanager/pooltask",
         "//resourcemanager/util",
         "//util/logutil",
@@ -31,7 +30,6 @@ go_test(
     embed = [":spool"],
     shard_count = 2,
     deps = [
-        "//resourcemanager/gpool",
         "//resourcemanager/util",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

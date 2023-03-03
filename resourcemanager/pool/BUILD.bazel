@@ -7,3 +7,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = ["@org_uber_go_atomic//:atomic"],
 )
+
+go_library(
+    name = "pool",
+    srcs = ["basepool.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanager/pool",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_atomic//:atomic"],
+)
