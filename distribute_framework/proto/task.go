@@ -30,7 +30,7 @@ const (
 //  1. succeed:			pending -> running -> succeed
 //  2. failed:			pending -> running -> reverting -> failed/revert_failed
 //  3. canceled:		pending -> running -> reverting -> canceled/revert_failed
-//  3. pause/resume:	pending -> running -> pausing -> paused -> resuming -> running
+//  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
 // subtask state machine
 //  1. succeed/failed:	pending -> running -> succeed/failed
@@ -41,7 +41,6 @@ const (
 	TaskStatePending       = "pending"
 	TaskStateRunning       = "running"
 	TaskStateSucceed       = "succeed"
-	TaskStateCanceling     = "canceling"
 	TaskStateReverting     = "reverting"
 	TaskStateFailed        = "failed"
 	TaskStateRevertFailed  = "revert_failed"
