@@ -56,12 +56,15 @@ func TestSimple(t *testing.T) {
 	handleTk := testkit.NewTestKit(t, store)
 	hd, err := handle.NewHandle(util.WithInternalSourceType(context.Background(), "handle"), handleTk.Session())
 	require.NoError(t, err)
+	globalNumberCounter.Store(0)
 	id, doneCh, err := hd.SubmitGlobalTaskAndRun(&proto.SimpleNumberGTaskMeta{})
 	require.NoError(t, err)
 	require.Greater(t, int(id), 0)
 	<-doneCh
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(1 * time.Second)
+
+	require.Equal(t, int64(-450), globalNumberCounter.Load())
 
 	// cleanup
 	dsp.Stop()

@@ -2,6 +2,7 @@ package example
 
 import (
 	"errors"
+	"go.uber.org/zap"
 	"math/rand"
 
 	"github.com/pingcap/tidb/distribute_framework/dispatcher"
@@ -29,9 +30,10 @@ func (n NumberExampleHandle) Progress(d dispatcher.Dispatch, gTask *proto.Task, 
 		for i := 0; i < 10; i++ {
 			subTasksM := proto.SimpleNumberSTaskMeta{Numbers: make([]int, 0, 10)}
 			for j := 0; j < 10; j++ {
-				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
+				subTasksM.Numbers = append(subTasksM.Numbers, j)
 			}
 			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM, SchedulerID: assignRandomTiDB()})
+			logutil.BgLogger().Info("new sub task", zap.Any("sche id", subTasks[len(subTasks)-1].SchedulerID))
 		}
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
@@ -40,7 +42,7 @@ func (n NumberExampleHandle) Progress(d dispatcher.Dispatch, gTask *proto.Task, 
 		for i := 0; i < 10; i++ {
 			subTasksM := proto.SimpleNumberSTaskMeta{Numbers: make([]int, 0, 10)}
 			for j := 0; j < 10; j++ {
-				subTasksM.Numbers = append(subTasksM.Numbers, i*10+j)
+				subTasksM.Numbers = append(subTasksM.Numbers, j)
 			}
 			subTasks = append(subTasks, &proto.Subtask{Meta: &subTasksM, SchedulerID: assignRandomTiDB()})
 		}

@@ -115,10 +115,12 @@ func (s *SchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 		}
 
 		minimalTasks := scheduler.SplitSubtask(subtask)
+		logutil.BgLogger().Info("splite subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("id", s.id))
 		for _, minimalTask := range minimalTasks {
 			minimalTaskWg.Add(1)
+			j := minimalTask
 			minimalTaskCh <- func() {
-				s.runMinimalTask(minimalTaskCtx, minimalTask, task.Type, task.Step)
+				s.runMinimalTask(minimalTaskCtx, j, task.Type, task.Step)
 				minimalTaskWg.Done()
 			}
 		}

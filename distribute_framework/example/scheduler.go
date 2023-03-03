@@ -34,14 +34,18 @@ type ExampleStepTwoScheduler struct {
 }
 
 func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	globalNumberCounter.Store(0)
 	return nil
 }
 
 func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
-	return []proto.MinimalTask{subtask}
+	m, _ := subtask.Meta.(*proto.SimpleNumberSTaskMeta)
+	miniTask := make([]proto.MinimalTask, 0, len(m.Numbers))
+	for _, number := range m.Numbers {
+		miniTask = append(miniTask, int64(number))
+	}
+	return miniTask
 }
 
 func (s *ExampleStepOneScheduler) Rollback(ctx context.Context) error {
@@ -53,7 +57,12 @@ func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error 
 func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
 func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
-	return []proto.MinimalTask{subtask}
+	m, _ := subtask.Meta.(*proto.SimpleNumberSTaskMeta)
+	miniTask := make([]proto.MinimalTask, 0, len(m.Numbers))
+	for _, number := range m.Numbers {
+		miniTask = append(miniTask, int64(number))
+	}
+	return miniTask
 }
 
 func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
