@@ -50,8 +50,6 @@ import (
 )
 
 const (
-	// LoadDataFormatCSV represents the data source file is of CSV or TSV format
-	LoadDataFormatCSV = "csv"
 	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
 	// mydumper-format DML file
 	LoadDataFormatSQLDump = "sql file"
@@ -126,7 +124,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// CSV-like
-	if e.loadDataWorker.format == LoadDataFormatCSV {
+	if e.loadDataWorker.format == "" {
 		if e.loadDataWorker.NullInfo != nil && e.loadDataWorker.NullInfo.OptEnclosed &&
 			(e.loadDataWorker.FieldsInfo == nil || e.loadDataWorker.FieldsInfo.Enclosed == nil) {
 			return ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
@@ -274,16 +272,12 @@ func NewLoadDataWorker(
 		txnInUse:       sync.Mutex{},
 		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
 	}
-	dataFormat := plan.Format
-	if dataFormat == "" {
-		dataFormat = LoadDataFormatCSV
-	}
 	loadDataWorker := &LoadDataWorker{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
 		commitTaskQueue:    make(chan commitTask, taskQueueSize),
 		InsertValues:       insertVal,
 		Path:               plan.Path,
-		format:             dataFormat,
+		format:             plan.Format,
 		table:              tbl,
 		FieldsInfo:         plan.FieldsInfo,
 		LinesInfo:          plan.LinesInfo,
@@ -603,7 +597,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	)
 
 	switch strings.ToLower(e.format) {
-	case LoadDataFormatCSV:
+	case "":
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
