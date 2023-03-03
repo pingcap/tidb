@@ -69,25 +69,25 @@ func NewScheduler(ctx context.Context, id string, taskID int64, subtaskTable *st
 	return schedulerImpl
 }
 
-func (s *SchedulerImpl) Run(task *proto.Task) error {
+func (s *SchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("scheduler run a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
-	if err := scheduler.InitSubtaskExecEnv(s.ctx); err != nil {
+	if err := scheduler.InitSubtaskExecEnv(ctx); err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 	defer func() {
-		err := scheduler.CleanupSubtaskExecEnv(s.ctx)
+		err := scheduler.CleanupSubtaskExecEnv(ctx)
 		if err != nil {
 			logutil.BgLogger().Error("cleanup subtask exec env failed", zap.Error(err))
 		}
 	}()
 
-	minimalTaskCtx, minimalTaskCancel := context.WithCancel(s.ctx)
+	minimalTaskCtx, minimalTaskCancel := context.WithCancel(ctx)
 	defer minimalTaskCancel()
 	minimalTaskCh := make(chan func(), task.Concurrency)
 	defer close(minimalTaskCh)
@@ -161,7 +161,7 @@ func (s *SchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTa
 	}
 }
 
-func (s *SchedulerImpl) Rollback(task *proto.Task) error {
+func (s *SchedulerImpl) Rollback(ctx context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("scheduler rollback a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
@@ -177,17 +177,17 @@ func (s *SchedulerImpl) Rollback(task *proto.Task) error {
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 		return nil
 	}
+	s.updateSubtaskState(subtask.ID, proto.TaskStateReverting)
+	if err := s.getError(); err != nil {
+		return err
+	}
 
-	rollbackCtx, cancel := context.WithCancel(s.ctx)
+	rollbackCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	err = scheduler.Rollback(rollbackCtx)
 	if err != nil {
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-		} else {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
-			s.onError(err)
-		}
+		s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
+		s.onError(err)
 	} else {
 		s.updateSubtaskState(subtask.ID, proto.TaskStateReverted)
 	}

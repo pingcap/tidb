@@ -38,7 +38,9 @@ type Manager struct {
 	subtaskExecutorPool proto.Pool
 	mu                  struct {
 		sync.Mutex
-		runnableTasks map[int64]*SchedulerImpl
+		// taskID -> cancelFunc
+		// cancelFunc is used to fast cancel the scheduler.Run
+		handlingTasks map[int64]context.CancelFunc
 	}
 	id     string
 	wg     sync.WaitGroup
@@ -55,7 +57,7 @@ func NewManager(ctx context.Context, id string, globalTaskTable *storage.GlobalT
 		subtaskExecutorPool: proto.NewPool(subtaskExecutorPoolSize),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.runnableTasks = make(map[int64]*SchedulerImpl)
+	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 	return m
 }
 
@@ -69,7 +71,7 @@ func (m *Manager) Start() {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.fetchAndHandleCanceledTasks(m.ctx)
+		m.fetchAndFastCancelTasks(m.ctx)
 	}()
 
 	// TODO: handle rollback tasks
@@ -100,7 +102,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 	}
 }
 
-func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
+func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
@@ -109,7 +111,7 @@ func (m *Manager) fetchAndHandleCanceledTasks(ctx context.Context) {
 			logutil.BgLogger().Info("fetchAndHandleCanceledTasks done")
 			return
 		case <-ticker.C:
-			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateCanceling)
+			tasks, err := m.globalTaskTable.GetTasksInStates(proto.TaskStateReverting)
 			if err != nil {
 				m.onError(err)
 				continue
@@ -147,9 +149,8 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range tasks {
-		if scheduler, ok := m.mu.runnableTasks[task.ID]; ok {
-			scheduler.Stop()
-			delete(m.mu.runnableTasks, task.ID)
+		if cancel, ok := m.mu.handlingTasks[task.ID]; ok {
+			cancel()
 		}
 	}
 }
@@ -157,10 +158,9 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 func (m *Manager) cancelAllRunningTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, scheduler := range m.mu.runnableTasks {
-		scheduler.Stop()
+	for _, cancel := range m.mu.handlingTasks {
+		cancel()
 	}
-	m.mu.runnableTasks = make(map[int64]*SchedulerImpl)
 }
 
 func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
@@ -169,7 +169,7 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 
 	var i int
 	for _, task := range tasks {
-		if _, ok := m.mu.runnableTasks[task.ID]; !ok {
+		if _, ok := m.mu.handlingTasks[task.ID]; !ok {
 			tasks[i] = task
 			i++
 		}
@@ -178,10 +178,16 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 }
 
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
+	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
+	runCtx, cancel := context.WithCancel(ctx)
+	m.addHandlingTask(taskID, cancel)
 	scheduler := NewScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPool)
 	scheduler.Start()
-	defer scheduler.Stop()
-	m.addRunnableTask(taskID, scheduler)
+	defer func() {
+		cancel()
+		scheduler.Stop()
+		m.removeHandlingTask(taskID)
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -202,30 +208,29 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 		} else if !exist {
 			continue
 		}
-		m.handleTask(scheduler, task)
+
+		switch task.State {
+		case proto.TaskStateRunning:
+			err = scheduler.Run(runCtx, task)
+		case proto.TaskStateReverting:
+			err = scheduler.Rollback(ctx, task)
+		}
+		if err != nil {
+			logutil.BgLogger().Error("failed to handle task", zap.Error(err))
+		}
 	}
 }
 
-func (m *Manager) addRunnableTask(id int64, scheduler *SchedulerImpl) {
+func (m *Manager) addHandlingTask(id int64, cancel context.CancelFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.runnableTasks[id] = scheduler
+	m.mu.handlingTasks[id] = cancel
 }
 
-func (m *Manager) handleTask(scheduler *SchedulerImpl, task *proto.Task) {
-	logutil.BgLogger().Info("handle task", zap.Any("id", task.ID), zap.Any("state", task.State))
-	switch task.State {
-	case proto.TaskStateRunning:
-		if err := scheduler.Run(task); err != nil {
-			logutil.BgLogger().Error("run task failed", zap.Error(err))
-		}
-	case proto.TaskStateReverting:
-		if err := scheduler.Rollback(task); err != nil {
-			logutil.BgLogger().Error("revert task failed", zap.Error(err))
-		}
-	default:
-		// TODO: handle other status
-	}
+func (m *Manager) removeHandlingTask(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.mu.handlingTasks, id)
 }
 
 func (m *Manager) onError(err error) {
