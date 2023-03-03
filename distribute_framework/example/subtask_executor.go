@@ -25,11 +25,11 @@ import (
 )
 
 type ExampleStepOneSubtaskExecutor struct {
-	subtask *proto.Subtask
+	minimalTask proto.MinimalTask
 }
 
 type ExampleStepTwoSubtaskExecutor struct {
-	subtask *proto.Subtask
+	minimalTask proto.MinimalTask
 }
 
 func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
@@ -46,12 +46,12 @@ func init() {
 	scheduler.RegisterSubtaskExectorConstructor(
 		proto.TaskTypeExample,
 		// The order of the subtask executors is the same as the order of the subtasks.
-		func(subtask *proto.Subtask, step int64) (scheduler.SubtaskExecutor, error) {
+		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 			switch step {
 			case proto.StepOne:
-				return &ExampleStepOneSubtaskExecutor{subtask: subtask}, nil
+				return &ExampleStepOneSubtaskExecutor{minimalTask: minimalTask}, nil
 			case proto.StepTwo:
-				return &ExampleStepTwoSubtaskExecutor{subtask: subtask}, nil
+				return &ExampleStepTwoSubtaskExecutor{minimalTask: minimalTask}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)
 		},

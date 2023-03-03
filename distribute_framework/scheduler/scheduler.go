@@ -28,7 +28,7 @@ import (
 
 type Scheduler interface {
 	InitSubtaskExecEnv(context.Context) error
-	SplitSubtask(*proto.Subtask) []*proto.Subtask
+	SplitSubtask(*proto.Subtask) []proto.MinimalTask
 	CleanupSubtaskExecEnv(context.Context) error
 	Rollback(context.Context) error
 }
@@ -51,7 +51,6 @@ type SchedulerImpl struct {
 	subtaskTable *storage.SubTaskManager
 	pool         proto.Pool
 	wg           sync.WaitGroup
-	subtaskWg    sync.WaitGroup
 
 	mu struct {
 		sync.Mutex
@@ -70,29 +69,31 @@ func NewScheduler(ctx context.Context, id string, taskID int64, subtaskTable *st
 	return schedulerImpl
 }
 
-func (s *SchedulerImpl) Run(task *proto.Task) error {
+func (s *SchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("scheduler run a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
-	if err := scheduler.InitSubtaskExecEnv(s.ctx); err != nil {
+	if err := scheduler.InitSubtaskExecEnv(ctx); err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 	defer func() {
-		err := scheduler.CleanupSubtaskExecEnv(s.ctx)
+		err := scheduler.CleanupSubtaskExecEnv(ctx)
 		if err != nil {
 			logutil.BgLogger().Error("cleanup subtask exec env failed", zap.Error(err))
 		}
 	}()
 
-	subtaskCtx, subtaskCancel := context.WithCancel(s.ctx)
-	defer subtaskCancel()
-	subtaskCh := make(chan func(), task.Concurrency)
+	minimalTaskCtx, minimalTaskCancel := context.WithCancel(ctx)
+	defer minimalTaskCancel()
+	minimalTaskCh := make(chan func(), task.Concurrency)
+	defer close(minimalTaskCh)
+	var minimalTaskWg sync.WaitGroup
 
-	err = s.pool.RunWithConcurrency(subtaskCh, task.Concurrency)
+	err = s.pool.RunWithConcurrency(minimalTaskCh, task.Concurrency)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -113,63 +114,61 @@ func (s *SchedulerImpl) Run(task *proto.Task) error {
 			break
 		}
 
-		subtasks := scheduler.SplitSubtask(subtask)
-		for _, subtask := range subtasks {
-			s.subtaskWg.Add(1)
-			subtaskCh <- func() {
-				s.runSubtask(subtaskCtx, subtask, task.Step)
-				s.subtaskWg.Done()
+		minimalTasks := scheduler.SplitSubtask(subtask)
+		for _, minimalTask := range minimalTasks {
+			minimalTaskWg.Add(1)
+			minimalTaskCh <- func() {
+				s.runMinimalTask(minimalTaskCtx, minimalTask, task.Type, task.Step)
+				minimalTaskWg.Done()
 			}
+		}
+		minimalTaskWg.Wait()
+		if err := s.getError(); err != nil {
+			if errors.Cause(err) == context.Canceled {
+				s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+			} else {
+				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
+			}
+			break
+		} else {
+			s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
 		}
 	}
 
-	close(subtaskCh)
-	s.subtaskWg.Wait()
 	return s.getError()
 }
 
-func (s *SchedulerImpl) runSubtask(subtaskCtx context.Context, subtask *proto.Subtask, step int64) {
-	logutil.BgLogger().Info("scheduler run a subtask", zap.Any("id", s.id), zap.Any("subtask", subtask))
+func (s *SchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
+	logutil.BgLogger().Info("scheduler run a minimalTask", zap.Any("id", s.id), zap.Any("type", tp), zap.Any("minimal_task", minimalTask))
 	select {
-	case <-subtaskCtx.Done():
-		s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
+	case <-minimalTaskCtx.Done():
+		s.onError(minimalTaskCtx.Err())
 		return
 	default:
 	}
 	if s.getError() != nil {
-		s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
 		return
 	}
 
-	executor, err := s.createSubtaskExecutor(subtask, step)
+	executor, err := s.createSubtaskExecutor(minimalTask, tp, step)
 	if err != nil {
-		s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 		s.onError(err)
 		return
 	}
 
-	if err = executor.Run(subtaskCtx); err != nil {
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-		} else {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
-			s.onError(err)
-		}
-		return
+	if err = executor.Run(minimalTaskCtx); err != nil {
+		s.onError(err)
 	}
-
-	// TODO: if scheduler split subtasks, we update the status to succeed by original subtask id only when all split subtasks are successful.
-	s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
 }
 
-func (s *SchedulerImpl) Rollback(task *proto.Task) error {
+func (s *SchedulerImpl) Rollback(ctx context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("scheduler rollback a step", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 	scheduler, err := s.createScheduler(task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, string(proto.TaskStateRevertPending))
+	subtask, err := s.subtaskTable.GetSubtaskInStates(s.id, task.ID, proto.TaskStateRevertPending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -178,17 +177,17 @@ func (s *SchedulerImpl) Rollback(task *proto.Task) error {
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("id", s.id), zap.Any("step", task.Step), zap.Any("con", task.Concurrency))
 		return nil
 	}
+	s.updateSubtaskState(subtask.ID, proto.TaskStateReverting)
+	if err := s.getError(); err != nil {
+		return err
+	}
 
-	rollbackCtx, cancel := context.WithCancel(s.ctx)
+	rollbackCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	err = scheduler.Rollback(rollbackCtx)
 	if err != nil {
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateCanceled)
-		} else {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
-			s.onError(err)
-		}
+		s.updateSubtaskState(subtask.ID, proto.TaskStateRevertFailed)
+		s.onError(err)
 	} else {
 		s.updateSubtaskState(subtask.ID, proto.TaskStateReverted)
 	}
@@ -197,7 +196,6 @@ func (s *SchedulerImpl) Rollback(task *proto.Task) error {
 
 func (s *SchedulerImpl) Stop() {
 	s.cancel()
-	s.subtaskWg.Wait()
 	s.wg.Wait()
 }
 
@@ -232,12 +230,12 @@ func (s *SchedulerImpl) createScheduler(task *proto.Task) (Scheduler, error) {
 	return constructor(task, task.Step)
 }
 
-func (s *SchedulerImpl) createSubtaskExecutor(subtask *proto.Subtask, step int64) (SubtaskExecutor, error) {
-	constructor, ok := subtaskExecutorConstructors[subtask.Type]
+func (s *SchedulerImpl) createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
+	constructor, ok := subtaskExecutorConstructors[tp]
 	if !ok {
-		return nil, errors.Errorf("constructor of subtask executor for type %s not found", subtask.Type)
+		return nil, errors.Errorf("constructor of subtask executor for type %s not found", tp)
 	}
-	return constructor(subtask, step)
+	return constructor(minimalTask, step)
 }
 
 func (s *SchedulerImpl) onError(err error) {
