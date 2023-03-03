@@ -2839,3 +2839,19 @@ func TestForeignKeyAndMultiValuedIndex(t *testing.T) {
 	tk.MustExec("admin check table t1")
 	tk.MustExec("admin check table t2")
 }
+
+func TestForeignKeyAndSessionVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (t timestamp, index(t));")
+	tk.MustExec("create table t2 (t timestamp, foreign key (t) references t1(t) on delete cascade);")
+	tk.MustExec("set @@time_zone='+8:00';")
+	tk.MustExec("insert into t1 values ('2023-01-28 10:29:16');")
+	tk.MustExec("insert into t2 values ('2023-01-28 10:29:16');")
+	tk.MustExec("set @@time_zone='+6:00';")
+	tk.MustExec("delete from t1;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+}

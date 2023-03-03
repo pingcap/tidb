@@ -77,41 +77,6 @@ func (s SchemaState) String() string {
 	}
 }
 
-// BackfillState is the state used by the backfill-merge process.
-type BackfillState byte
-
-const (
-	// BackfillStateInapplicable means the backfill-merge process is not used.
-	BackfillStateInapplicable BackfillState = iota
-	// BackfillStateRunning is the state that the backfill process is running.
-	// In this state, the index's write and delete operations are redirected to a temporary index.
-	BackfillStateRunning
-	// BackfillStateReadyToMerge is the state that the temporary index's records are ready to be merged back
-	// to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	// This state is used to make sure that all the TiDB instances are aware of the copy during the merge(BackfillStateMerging).
-	BackfillStateReadyToMerge
-	// BackfillStateMerging is the state that the temp index is merging back to the origin index.
-	// In this state, the index's write and delete operations are copied to a temporary index.
-	BackfillStateMerging
-)
-
-// String implements fmt.Stringer interface.
-func (s BackfillState) String() string {
-	switch s {
-	case BackfillStateRunning:
-		return "backfill state running"
-	case BackfillStateReadyToMerge:
-		return "backfill state ready to merge"
-	case BackfillStateMerging:
-		return "backfill state merging"
-	case BackfillStateInapplicable:
-		return "backfill state inapplicable"
-	default:
-		return "backfill state unknown"
-	}
-}
-
 const (
 	// ColumnInfoVersion0 means the column info version is 0.
 	ColumnInfoVersion0 = uint64(0)
@@ -757,6 +722,9 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1193,6 +1161,8 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+	// Only used during ReorganizePartition so far
+	DDLState SchemaState `json:"ddl_state"`
 }
 
 // Clone clones itself.
@@ -1327,15 +1297,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // IndexColumn provides index column info.
@@ -1736,6 +1706,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.
@@ -1846,20 +1817,17 @@ type ResourceGroupRefInfo struct {
 
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
-	RRURate          uint64 `json:"rru_per_sec"`
-	WRURate          uint64 `json:"wru_per_sec"`
+	RURate           uint64 `json:"ru_per_sec"`
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
+	BurstLimit       int64  `json:"burst_limit"`
 }
 
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
-	if p.RRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "RRU_PER_SEC", p.RRURate)
-	}
-	if p.WRURate != 0 {
-		writeSettingIntegerToBuilder(sb, "WRU_PER_SEC", p.WRURate)
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
@@ -1870,7 +1838,19 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
 	}
+	// Once burst limit is negative, meaning allow burst with unlimit.
+	if p.BurstLimit < 0 {
+		writeSettingItemToBuilder(sb, "BURSTABLE")
+	}
 	return sb.String()
+}
+
+// Adjust adjusts the resource group settings.
+func (p *ResourceGroupSettings) Adjust() {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
+	if p.BurstLimit == 0 {
+		p.BurstLimit = int64(p.RURate)
+	}
 }
 
 // Clone clones the resource group settings.
@@ -1879,7 +1859,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	return &cloned
 }
 
-// ResourceGroupInfo is the struct to store the placement policy.
+// ResourceGroupInfo is the struct to store the resource group.
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`

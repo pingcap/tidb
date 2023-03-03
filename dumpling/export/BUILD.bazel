@@ -107,6 +107,7 @@ go_test(
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_sync//errgroup",

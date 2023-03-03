@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -45,7 +45,7 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	n := 100
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))

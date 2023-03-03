@@ -49,6 +49,34 @@ func (m *taskManager) RescheduleTasks(se session.Session, now time.Time) {
 	m.rescheduleTasks(se, now)
 }
 
+// ReportMetrics is an exported version of reportMetrics
+func (m *taskManager) ReportMetrics() {
+	m.reportMetrics()
+}
+
+// CheckFinishedTask is an exported version of checkFinishedTask
+func (m *taskManager) CheckFinishedTask(se session.Session, now time.Time) {
+	m.checkFinishedTask(se, now)
+}
+
+// ReportTaskFinished is an exported version of reportTaskFinished
+func (m *taskManager) GetRunningTasks() []*runningScanTask {
+	return m.runningTasks
+}
+
+// MeetTTLRunningTasks is an exported version of meetTTLRunningTask
+func (m *taskManager) MeetTTLRunningTasks(count int) bool {
+	return m.meetTTLRunningTask(count)
+}
+
+// ReportTaskFinished is an exported version of reportTaskFinished
+func (t *runningScanTask) SetResult(err error) {
+	t.result = &ttlScanTaskExecResult{
+		task: t.ttlScanTask,
+		err:  err,
+	}
+}
+
 func TestResizeWorkers(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 
@@ -57,7 +85,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker1.Start()
 	scanWorker2 := NewMockScanWorker(t)
 
-	m := newTaskManager(context.Background(), nil, nil, "test-id")
+	m := newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
@@ -76,7 +104,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = NewMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = newTaskManager(context.Background(), nil, nil, "test-id")
+	m = newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
@@ -92,7 +120,7 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = NewMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = newTaskManager(context.Background(), nil, nil, "test-id")
+	m = newTaskManager(context.Background(), nil, nil, "test-id", nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,

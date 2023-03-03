@@ -169,6 +169,48 @@ var (
 			Name:      "compact_partition_usage",
 			Help:      "Counter of compact table partition",
 		})
+	TelemetryReorganizePartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "reorganize_partition_usage",
+			Help:      "Counter of alter table reorganize partition",
+		})
+	TelemetryDistReorgCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "distributed_reorg_count",
+			Help:      "Counter of usage of distributed reorg DDL tasks count",
+		})
+	TelemetryStoreBatchedQueryCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched_query",
+			Help:      "Counter of queries which use store batched coprocessor tasks",
+		})
+	TelemetryBatchedQueryTaskCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "batched_query_task",
+			Help:      "Counter of coprocessor tasks in batched queries",
+		})
+	TelemetryStoreBatchedCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched",
+			Help:      "Counter of store batched coprocessor tasks",
+		})
+	TelemetryStoreBatchedFallbackCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched_fallback",
+			Help:      "Counter of store batched fallback coprocessor tasks",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -269,6 +311,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
 	TablePartitionComactCnt                   int64 `json:"table_TablePartitionComactCnt"`
+	TablePartitionReorganizePartitionCnt      int64 `json:"table_reorganize_partition_cnt"`
 }
 
 // ExchangePartitionUsageCounter records the usages of exchange partition.
@@ -307,22 +350,24 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
 		TablePartitionComactCnt:                   c.TablePartitionComactCnt - rhs.TablePartitionComactCnt,
+		TablePartitionReorganizePartitionCnt:      c.TablePartitionReorganizePartitionCnt - rhs.TablePartitionReorganizePartitionCnt,
 	}
 }
 
 // ResetTablePartitionCounter gets the TxnCommitCounter.
 func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionCnt:                readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListCnt:            readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeCnt:           readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashCnt:            readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsCnt:    readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionRangeColumnsGt1Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
-		TablePartitionRangeColumnsGt2Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
-		TablePartitionRangeColumnsGt3Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
-		TablePartitionListColumnsCnt:     readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsCnt:   mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionCnt:                    readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:                readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:               readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:                readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:        readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeColumnsGt1Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
+		TablePartitionRangeColumnsGt2Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
+		TablePartitionRangeColumnsGt3Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
+		TablePartitionListColumnsCnt:         readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt:       mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionReorganizePartitionCnt: readCounter(TelemetryReorganizePartitionCnt),
 	}
 }
 
@@ -343,6 +388,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionAddIntervalPartitionsCnt:    readCounter(TelemetryTablePartitionAddIntervalPartitionsCnt),
 		TablePartitionDropIntervalPartitionsCnt:   readCounter(TelemetryTablePartitionDropIntervalPartitionsCnt),
 		TablePartitionComactCnt:                   readCounter(TelemetryCompactPartitionCnt),
+		TablePartitionReorganizePartitionCnt:      readCounter(TelemetryReorganizePartitionCnt),
 	}
 }
 
@@ -373,7 +419,7 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 
 // GetSavepointStmtCounter gets the savepoint statement executed counter.
 func GetSavepointStmtCounter() int64 {
-	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
+	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint", LblDb: ""}))
 }
 
 // GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
@@ -386,6 +432,7 @@ type DDLUsageCounter struct {
 	AddIndexIngestUsed   int64 `json:"add_index_ingest_used"`
 	MetadataLockUsed     bool  `json:"metadata_lock_used"`
 	FlashbackClusterUsed int64 `json:"flashback_cluster_used"`
+	DistReorgUsed        int64 `json:"dist_reorg_used"`
 }
 
 // Sub returns the difference of two counters.
@@ -393,6 +440,7 @@ func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
 	return DDLUsageCounter{
 		AddIndexIngestUsed:   a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
 		FlashbackClusterUsed: a.FlashbackClusterUsed - rhs.FlashbackClusterUsed,
+		DistReorgUsed:        a.DistReorgUsed - rhs.DistReorgUsed,
 	}
 }
 
@@ -401,6 +449,7 @@ func GetDDLUsageCounter() DDLUsageCounter {
 	return DDLUsageCounter{
 		AddIndexIngestUsed:   readCounter(TelemetryAddIndexIngestCnt),
 		FlashbackClusterUsed: readCounter(TelemetryFlashbackClusterCnt),
+		DistReorgUsed:        readCounter(TelemetryDistReorgCnt),
 	}
 }
 
@@ -420,5 +469,61 @@ func (i IndexMergeUsageCounter) Sub(rhs IndexMergeUsageCounter) IndexMergeUsageC
 func GetIndexMergeCounter() IndexMergeUsageCounter {
 	return IndexMergeUsageCounter{
 		IndexMergeUsed: readCounter(TelemetryIndexMergeUsage),
+	}
+}
+
+// StoreBatchCoprCounter records the usages of batch copr statements.
+type StoreBatchCoprCounter struct {
+	// BatchSize is the global value of `tidb_store_batch_size`
+	BatchSize int `json:"batch_size"`
+	// BatchedQuery is the counter of queries that use this feature.
+	BatchedQuery int64 `json:"query"`
+	// BatchedQueryTask is the counter of total tasks in queries above.
+	BatchedQueryTask int64 `json:"tasks"`
+	// BatchedCount is the counter of successfully batched tasks.
+	BatchedCount int64 `json:"batched"`
+	// BatchedFallbackCount is the counter of fallback batched tasks by region miss.
+	BatchedFallbackCount int64 `json:"batched_fallback"`
+}
+
+// Sub returns the difference of two counters.
+func (n StoreBatchCoprCounter) Sub(rhs StoreBatchCoprCounter) StoreBatchCoprCounter {
+	return StoreBatchCoprCounter{
+		BatchedQuery:         n.BatchedQuery - rhs.BatchedQuery,
+		BatchedQueryTask:     n.BatchedQueryTask - rhs.BatchedQueryTask,
+		BatchedCount:         n.BatchedCount - rhs.BatchedCount,
+		BatchedFallbackCount: n.BatchedFallbackCount - rhs.BatchedFallbackCount,
+	}
+}
+
+// GetStoreBatchCoprCounter gets the IndexMerge usage counter.
+func GetStoreBatchCoprCounter() StoreBatchCoprCounter {
+	return StoreBatchCoprCounter{
+		BatchedQuery:         readCounter(TelemetryStoreBatchedQueryCnt),
+		BatchedQueryTask:     readCounter(TelemetryBatchedQueryTaskCnt),
+		BatchedCount:         readCounter(TelemetryStoreBatchedCnt),
+		BatchedFallbackCount: readCounter(TelemetryStoreBatchedFallbackCnt),
+	}
+}
+
+// AggressiveLockingUsageCounter records the usage of Aggressive Locking feature of pessimistic transaction.
+type AggressiveLockingUsageCounter struct {
+	TxnAggressiveLockingUsed      int64 `json:"txn_aggressive_locking_used"`
+	TxnAggressiveLockingEffective int64 `json:"txn_aggressive_locking_effective"`
+}
+
+// Sub returns the difference of two counters.
+func (i AggressiveLockingUsageCounter) Sub(rhs AggressiveLockingUsageCounter) AggressiveLockingUsageCounter {
+	return AggressiveLockingUsageCounter{
+		TxnAggressiveLockingUsed:      i.TxnAggressiveLockingUsed - rhs.TxnAggressiveLockingUsed,
+		TxnAggressiveLockingEffective: i.TxnAggressiveLockingEffective - rhs.TxnAggressiveLockingEffective,
+	}
+}
+
+// GetAggressiveLockingUsageCounter returns the Aggressive Locking usage counter.
+func GetAggressiveLockingUsageCounter() AggressiveLockingUsageCounter {
+	return AggressiveLockingUsageCounter{
+		TxnAggressiveLockingUsed:      readCounter(AggressiveLockingUsageCount.WithLabelValues(LblAggressiveLockingTxnUsed)),
+		TxnAggressiveLockingEffective: readCounter(AggressiveLockingUsageCount.WithLabelValues(LblAggressiveLockingTxnEffective)),
 	}
 }

@@ -110,21 +110,31 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsINLJInner uint = 1 << iota
+	// Hint flag for join
+	preferINLJ uint = 1 << iota
+	preferINLHJ
+	preferINLMJ
+	preferHJBuild
+	preferHJProbe
+	preferHashJoin
+	preferMergeJoin
+	preferBCJoin
+	preferShuffleJoin
+	preferRewriteSemiJoin
+
+	// Hint flag to specify the join with direction
+	preferLeftAsINLJInner
 	preferRightAsINLJInner
 	preferLeftAsINLHJInner
 	preferRightAsINLHJInner
 	preferLeftAsINLMJInner
 	preferRightAsINLMJInner
-	preferHashJoin
 	preferLeftAsHJBuild
 	preferRightAsHJBuild
 	preferLeftAsHJProbe
 	preferRightAsHJProbe
-	preferMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
+
+	// Hint flag for Agg
 	preferHashAgg
 	preferStreamAgg
 	preferMPP1PhaseAgg
@@ -146,9 +156,11 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo        *tableHintInfo
-	preferJoinType  uint
-	preferJoinOrder bool
+	hintInfo            *tableHintInfo
+	preferJoinType      uint
+	preferJoinOrder     bool
+	leftPreferJoinType  uint
+	rightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	NAEQConditions  []*expression.ScalarFunction
@@ -1637,10 +1649,17 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems    []*util.ByItems
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	ByItems []*util.ByItems
+	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1661,9 +1680,15 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // LogicalLock represents a select lock plan.
@@ -1732,6 +1757,11 @@ type LogicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+}
+
+// GetPartitionBy returns partition by fields.
+func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.

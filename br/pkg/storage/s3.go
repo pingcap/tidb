@@ -140,6 +140,7 @@ type S3BackendOptions struct {
 	ACL                   string `json:"acl" toml:"acl"`
 	AccessKey             string `json:"access-key" toml:"access-key"`
 	SecretAccessKey       string `json:"secret-access-key" toml:"secret-access-key"`
+	SessionToken          string `json:"session-token" toml:"session-token"`
 	Provider              string `json:"provider" toml:"provider"`
 	ForcePathStyle        bool   `json:"force-path-style" toml:"force-path-style"`
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
@@ -156,10 +157,10 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 			return errors.Trace(err)
 		}
 		if u.Scheme == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "scheme not found in endpoint")
+			return errors.Errorf("scheme not found in endpoint")
 		}
 		if u.Host == "" {
-			return errors.Annotate(berrors.ErrStorageInvalidConfig, "host not found in endpoint")
+			return errors.Errorf("host not found in endpoint")
 		}
 	}
 	// In some cases, we need to set ForcePathStyle to false.
@@ -184,6 +185,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.Acl = options.ACL
 	s3.AccessKey = options.AccessKey
 	s3.SecretAccessKey = options.SecretAccessKey
+	s3.SessionToken = options.SessionToken
 	s3.ForcePathStyle = options.ForcePathStyle
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
@@ -262,7 +264,7 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 // auto access without ak / sk.
 func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
 	endpoint := qs.Endpoint
 	// if endpoint is empty,return no error and run default(aws) follow.
@@ -287,7 +289,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -330,6 +332,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		// Clear the credentials if exists so that they will not be sent to TiKV
 		backend.AccessKey = ""
 		backend.SecretAccessKey = ""
+		backend.SessionToken = ""
 	} else if ses.Config.Credentials != nil {
 		if qs.AccessKey == "" || qs.SecretAccessKey == "" {
 			v, cerr := ses.Config.Credentials.Get()
@@ -338,6 +341,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 			}
 			backend.AccessKey = v.AccessKeyID
 			backend.SecretAccessKey = v.SecretAccessKey
+			backend.SessionToken = v.SessionToken
 		}
 	}
 
@@ -367,7 +371,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 		}
 	}
-	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
+	region, err := s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 	}

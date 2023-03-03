@@ -668,7 +668,7 @@ Too many keys specified; max %d keys allowed
 
 ["ddl:1071"]
 error = '''
-Specified key was too long; max key length is %d bytes
+Specified key was too long (%d bytes); max key length is %d bytes
 '''
 
 ["ddl:1072"]
@@ -1388,7 +1388,7 @@ column %s id %d does not exist, this column may have been updated by other DDL r
 
 ["ddl:8246"]
 error = '''
-Error happened when enable/disable DDL: %s
+Error happened when %s DDL: %s
 '''
 
 ["ddl:8247"]
@@ -1644,6 +1644,46 @@ setting %s has no effect in TiDB
 ["executor:8147"]
 error = '''
 transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
+["executor:8154"]
+error = '''
+Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first
+'''
+
+["executor:8155"]
+error = '''
+Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage
+'''
+
+["executor:8156"]
+error = '''
+The value of INFILE must not be empty when LOAD DATA from LOCAL
+'''
+
+["executor:8157"]
+error = '''
+The FORMAT '%s' is not supported
+'''
+
+["executor:8158"]
+error = '''
+The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+'''
+
+["executor:8159"]
+error = '''
+Access to the source file has been denied. Please check the URI, access key and secret access key are correct
+'''
+
+["executor:8160"]
+error = '''
+Failed to read source files. Reason: %s. %s
+'''
+
+["executor:8162"]
+error = '''
+
 '''
 
 ["executor:8212"]
@@ -2709,6 +2749,21 @@ assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, e
 ["tikv:8229"]
 error = '''
 TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction
+'''
+
+["tikv:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["tikv:8251"]
+error = '''
+Resource group configuration is unavailable
+'''
+
+["tikv:8252"]
+error = '''
+Exceeded resource group quota limitation
 '''
 
 ["tikv:9001"]
