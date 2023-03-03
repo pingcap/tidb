@@ -344,10 +344,6 @@ func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 	return false
 }
 
-func isView(schema infoschema.InfoSchema, tn *ast.TableName) bool {
-	return schema.TableIsView(tn.Schema, tn.Name)
-}
-
 func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
