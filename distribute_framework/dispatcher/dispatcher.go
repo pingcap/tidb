@@ -16,11 +16,14 @@ package dispatcher
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distribute_framework/proto"
 	"github.com/pingcap/tidb/distribute_framework/storage"
+	"github.com/pingcap/tidb/domain/infosync"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -40,7 +43,7 @@ type Dispatch interface {
 	// Stop stops the dispatcher.
 	Stop()
 	// GetEligibleInstance gets an eligible instance.
-	GetEligibleInstance() string
+	GetEligibleInstance(ctx context.Context) (string, error)
 }
 
 type dispatcher struct {
@@ -248,6 +251,22 @@ func (d *dispatcher) Stop() {
 }
 
 // GetEligibleInstance implements Dispatch.GetEligibleInstance interface.
-func (d *dispatcher) GetEligibleInstance() string {
-	return ""
+func (d *dispatcher) GetEligibleInstance(ctx context.Context) (string, error) {
+	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(serverInfos) == 0 {
+		return "", errors.New("not found instance")
+	}
+
+	// TODO: Consider valid instances, and then consider scheduling strategies.
+	num := rand.Intn(len(serverInfos))
+	for _, info := range serverInfos {
+		if num == 0 {
+			return info.ID, nil
+		}
+		num--
+	}
+	return "", nil
 }
