@@ -19,7 +19,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 </thead>
 <tbody>
   <tr>
-    <td rowspan="4"><b>Scalability and Performance</b><br><i>Enhance horsepower</i></td>
+    <td rowspan="4"><b>Scalability and Performance</b><br>Enhance horsepower</td>
     <td><b>General plan cache</b><br><i>Improve general read performance</i></td>
     <td><b>Stability at PB scale</b><br><i>Reliable and consistent performance for tremendous data</i></td>
     <td>Next generation, more powerful storage engine</td>
