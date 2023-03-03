@@ -175,6 +175,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 
+	m.resetEvents()
 	m.recordEvent("enter txn")
 	return nil
 }
@@ -218,7 +219,6 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 			sql = parser.Normalize(sql)
 		}
 	}
-	m.resetEvents()
 	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
@@ -293,7 +293,7 @@ func (m *txnManager) resetEvents() {
 	} else {
 		m.events = m.events[:0]
 	}
-	m.enterTxnInstant = m.lastInstant
+	m.enterTxnInstant = time.Now()
 }
 
 // OnStmtRollback is the hook that should be called when a statement fails to execute.
