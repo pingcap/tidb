@@ -31,11 +31,11 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           </li>
           <li>
             <b>TiFlash performance boost</b><br />TiFlash optimization such
-            as late materialization, runtime filter, etc
+            as late materialization and runtime filter
           </li>
           <li>
             <b>Fastest online DDL distributed framework</b><br />Complete
-            the distributed framework to support fastest online DDL
+            the distributed framework to support the fastest online DDL
           </li>
         </ul>
       </td>
@@ -43,15 +43,15 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
         <ul>
           <li>
             <b>Stability at PB scale</b><br />
-            Reliable and consistent performance for tremendous data
+            Provide reliable and consistent performance for tremendous data
           </li>
           <li>
-            <b>Disaggregate TiFlash compute/storage (auto-caling) </b
-            ><br />Elastic HTAP resource utilization
+            <b>Disaggregate TiFlash compute and storage (auto-scaling) </b
+            ><br />Realize elastic HTAP resource utilization
           </li>
           <li>
             <b>TiFlash S3 based storage engine</b>
-            <br />Shared storage, lower cost
+            <br />Provide shared storage at lower cost
           </li>
         </ul>
       </td>
@@ -85,18 +85,18 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             sharing the same cluster
           </li>
           <li>
-            <b>TiCDC/PiTR recovery objectives enhancements</b>
+            <b>TiCDC/PITR recovery objective enhancements</b>
             <br />Increase business continuity and minimize the impact of
             system failures
           </li>
           <li>
             <b>TiProxy</b>
             <br />Keep database connections during cluster upgrade and scale
-            in/out and avoid impact to applications
+            in/out and avoid impact on applications
           </li>
           <li>
             <b>End-to-end data correctness check</b>
-            <br />Prevents data error or corruptions through TiCDC
+            <br />Prevent data error or corruption through TiCDC
           </li>
         </ul>
       </td>
@@ -104,11 +104,11 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
         <ul>
           <li>
             <b>Multi-tenancy</b>
-            <br />Fine-grained resource control, isolation to reduce cost
+            <br />Provide fine-grained resource control and isolation to reduce cost
           </li>
           <li>
             <b>Improved cluster/node level fault tolerance</b>
-            <br />Resilience enhancement
+            <br />Enhance cluster resilience
           </li>
           <li>
             <b>TiFlash spill to disk</b>
@@ -122,7 +122,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>TiDB memory management re-architecture</b>
           </li>
           <li>
-            <b>Global Table</b>
+            <b>Global table</b>
           </li>
         </ul>
       </td>
@@ -135,13 +135,13 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
       <td>
         <ul>
           <li>
-            <b>Production ready TTL (time-to-live) data management</b>
+            <b>Production-ready TTL (time-to-live) data management</b>
             <br />Manage database size and improve performance by
             automatically expiring outdated data
           </li>
           <li>
             <b>Table level flashback</b>
-            <br />SQL support for traveling a single table to specific time
+            <br />Support traveling a single table to a specific time via SQL
             point
           </li>
         </ul>
@@ -150,20 +150,20 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
         <ul>
           <li>
             <b>Materialized views</b>
-            <br />Pre-calculation to boost query performance
+            <br />Support pre-calculation to boost query performance
           </li>
         </ul>
       </td>
       <td>
         <ul>
           <li>
-            <b>Federated Query</b>
+            <b>Federated query</b>
           </li>
           <li>
-            <b>Cascades Optimizer</b>
+            <b>Cascades optimizer</b>
           </li>
           <li>
-            <b>Full text search & GIS Support</b>
+            <b>Full text search & GIS support</b>
           </li>
           <li>
             <b>User-defined functions</b>
@@ -184,32 +184,32 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             workload to multiple nodes
           </li>
           <li>
-            <b>Production ready TiCDC sink to S3 and Azure object store</b>
+            <b>Production-ready TiCDC sink to Amazon S3 and Azure object storage</b>
             <br />Enhance ecosystem to better work with big data
           </li>
           <li>
             <b>TiDB Operator fast scale-in</b>
-            <br />From scale-in one by one to scale at once
+            <br />Improve from scaling in one by one to scaling in at once
           </li>
           <li>
             <b>SQL-based data import</b>
-            <br />User-friendly operational enhancement
+            <br />Improve user-friendliness through operational enhancements
           </li>
         </ul>
       </td>
       <td>
         <ul>
           <li>
-            <b>Import major performance boost </b>
-            <br />Expecting 3-4 times improvements
+            <b>Major performance boost for data import</b>
+            <br />Expect 3-4 times of improvements
           </li>
           <li>
-            <b> TiCDC to support multiple upstreams </b>
-            <br />(i.e., N:1 TiDB to TiCDC)
+            <b>Multiple upstreams for TiCDC</b>
+            <br />Support N:1 TiDB to TiCDC
           </li>
           <li>
             <b> SQL-based data management </b>
-            <br />for TiCDC, data migration, and backup&restore tools
+            <br />Improve data management for TiCDC, data migration, and backup and restore tools
           </li>
           <li>
             <b> Automatic pause/resume DDL during upgrade </b>
@@ -240,7 +240,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
         <ul>
           <li>
             <b>JWT authentication</b>
-            <br />secure, standard authentication
+            <br />Provide secure and standard authentication
           </li>
           <li>
             <b> LDAP integration </b>
@@ -249,7 +249,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b> Audit log enhancement </b>
             <br />
-            Enhance with greater details
+            Enhance logs with greater details
           </li>
         </ul>
       </td>
@@ -258,15 +258,15 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b>Field-level/row-level access control</b>
             <br />
-            Finer-grained control
+            Provide finer-grained control
           </li>
           <li>
             <b>Database encryption</b>
-            <br />Data-at-rest encryption for database files
+            <br />Support data-at-rest encryption for database files
           </li>
           <li>
             <b>Unified TLS CA/Key rotation policy</b>
-            <br />Enhanced security and operational efficiency for all TiDB
+            <br />Enhance security and operational efficiency for all TiDB
             components
           </li>
         </ul>
