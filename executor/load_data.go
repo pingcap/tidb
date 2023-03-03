@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,12 +56,54 @@ const (
 	// LoadDataFormatParquet represents the data source file of LOAD DATA is
 	// parquet
 	LoadDataFormatParquet = "parquet"
+
+	logicalImportMode   = "logical"  // tidb backend
+	physicalImportMode  = "physical" // local backend
+	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
+	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
+	minBatchSize        = config.ByteSize(1 << 10)  // 1KiB
+	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
+
+	importModeOption    = "import_mode"
+	diskQuotaOption     = "disk_quota"
+	checksumOption      = "checksum_table"
+	addIndexOption      = "add_index"
+	analyzeOption       = "analyze_table"
+	threadOption        = "thread"
+	batchSizeOption     = "batch_size"
+	maxWriteSpeedOption = "max_write_speed"
+	splitFileOption     = "split_file"
+	recordErrorsOption  = "record_errors"
+	detachedOption      = "detached"
 )
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 	// InTest is a flag that bypass gcs authentication in unit tests.
 	InTest bool
+
+	// name -> whether the option has value
+	supportedOptions = map[string]bool{
+		importModeOption:    true,
+		diskQuotaOption:     true,
+		checksumOption:      true,
+		addIndexOption:      true,
+		analyzeOption:       true,
+		threadOption:        true,
+		batchSizeOption:     true,
+		maxWriteSpeedOption: true,
+		splitFileOption:     true,
+		recordErrorsOption:  true,
+		detachedOption:      false,
+	}
+
+	// options only allowed when import mode is physical
+	optionsForPhysicalImport = map[string]struct{}{
+		diskQuotaOption: {},
+		checksumOption:  {},
+		addIndexOption:  {},
+		analyzeOption:   {},
+	}
 )
 
 // LoadDataExec represents a load data executor.
@@ -193,6 +237,19 @@ type LoadDataWorker struct {
 	fieldMappings      []*FieldMapping
 	onDuplicate        ast.OnDuplicateKeyHandlingType
 
+	// import options
+	importMode        string
+	diskQuota         config.ByteSize
+	checksum          config.PostOpLevel
+	addIndex          bool
+	analyze           config.PostOpLevel
+	threadCnt         int64
+	batchSize         config.ByteSize
+	maxWriteSpeed     config.ByteSize // per second
+	splitFile         bool
+	maxRecordedErrors int64 // -1 means record all error
+	detached          bool
+
 	table           table.Table
 	row             []types.Datum
 	rows            [][]types.Datum
@@ -231,13 +288,183 @@ func NewLoadDataWorker(
 		onDuplicate:        plan.OnDuplicate,
 		Ctx:                sctx,
 	}
+	if err := loadDataWorker.initOptions(plan.Options); err != nil {
+		return nil, err
+	}
 	columnNames := loadDataWorker.initFieldMappings()
-	err := loadDataWorker.initLoadColumns(columnNames)
-	if err != nil {
+	if err := loadDataWorker.initLoadColumns(columnNames); err != nil {
 		return nil, err
 	}
 	loadDataWorker.ResetBatch()
 	return loadDataWorker, nil
+}
+
+func (e *LoadDataWorker) initDefaultOptions() {
+	threadCnt := runtime.NumCPU()
+	if e.format == LoadDataFormatParquet {
+		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
+	}
+
+	e.importMode = logicalImportMode
+	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
+	e.checksum = config.OpLevelRequired
+	e.addIndex = true
+	e.analyze = config.OpLevelOptional
+	e.threadCnt = int64(threadCnt)
+	_ = e.batchSize.UnmarshalText([]byte("100MiB")) // todo confirm with pm
+	e.maxWriteSpeed = unlimitedWriteSpeed
+	e.splitFile = false
+	e.maxRecordedErrors = 100
+	e.detached = false
+}
+
+func (e *LoadDataWorker) initOptions(options []*plannercore.LoadDataOpt) error {
+	e.initDefaultOptions()
+
+	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
+	for _, opt := range options {
+		hasValue, ok := supportedOptions[opt.Name]
+		if !ok {
+			return ErrUnknownOption.FastGenByArgs(opt.Name)
+		}
+		if hasValue && opt.Value == nil || !hasValue && opt.Value != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if _, ok = specifiedOptions[opt.Name]; ok {
+			return ErrDuplicateOption.FastGenByArgs(opt.Name)
+		}
+		specifiedOptions[opt.Name] = opt
+	}
+
+	var (
+		v      string
+		err    error
+		isNull bool
+	)
+	if opt, ok := specifiedOptions[importModeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		v = strings.ToLower(v)
+		if v != logicalImportMode && v != physicalImportMode {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.importMode = v
+	}
+
+	if e.importMode == logicalImportMode {
+		// some options are only allowed in physical mode
+		for _, opt := range specifiedOptions {
+			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
+				return ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+			}
+		}
+	}
+	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[checksumOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.checksum.FromStringValue(v); err != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[addIndexOption]; ok {
+		var vInt int64
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.addIndex = vInt == 1
+	}
+	if opt, ok := specifiedOptions[analyzeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.analyze.FromStringValue(v); err != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[threadOption]; ok {
+		// boolean true will be taken as 1
+		e.threadCnt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.threadCnt <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[batchSizeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[splitFileOption]; ok {
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		var vInt int64
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.splitFile = vInt == 1
+	}
+	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
+		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.maxRecordedErrors < -1 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// todo: set a max value for this param?
+	}
+	if _, ok := specifiedOptions[detachedOption]; ok {
+		e.detached = true
+	}
+
+	e.adjustOptions()
+	return nil
+}
+
+func (e *LoadDataWorker) adjustOptions() {
+	if e.diskQuota < minDiskQuota {
+		e.diskQuota = minDiskQuota
+	}
+	// max value is cpu-count
+	numCPU := int64(runtime.NumCPU())
+	if e.threadCnt > numCPU {
+		e.threadCnt = numCPU
+	}
+	if e.batchSize < minBatchSize {
+		e.batchSize = minBatchSize
+	}
+	if e.maxWriteSpeed < minWriteSpeed {
+		e.maxWriteSpeed = minWriteSpeed
+	}
 }
 
 // FieldMapping indicates the relationship between input field and table column or user variable

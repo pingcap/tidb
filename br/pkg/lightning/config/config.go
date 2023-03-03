@@ -218,7 +218,7 @@ func (t PostOpLevel) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-// parser command line parameter
+// FromStringValue parse command line parameter.
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	//nolint:goconst // This 'false' and other 'false's aren't the same.

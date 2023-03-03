@@ -1048,6 +1048,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
+	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
+	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
+	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
+	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
