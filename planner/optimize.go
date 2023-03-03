@@ -87,7 +87,9 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		_, isExplain := stmt.(*ast.ExplainStmt)
 		if !isExplain && sctx.GetSessionVars().StmtCtx.InExplainStmt {
 			notice := errors.Errorf("skip non-prep plan cache: %v", reason)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(notice)
+			if notice == nil {
+			}
+			//sctx.GetSessionVars().StmtCtx.AppendWarning(notice)
 		}
 		return nil, nil, false, nil
 	}
