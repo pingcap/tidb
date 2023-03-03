@@ -48,7 +48,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
 			_ = p.Run(func() {
-				time.Sleep(1 * time.Microsecond)
+				time.Sleep(100 * time.Microsecond)
 			})
 		}
 	}()
@@ -56,12 +56,13 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 		defer wg.Done()
 		for i := 100; i < 130; i++ {
 			_ = p.Run(func() {
-				time.Sleep(1 * time.Microsecond)
+				time.Sleep(100 * time.Microsecond)
 			})
 		}
 	}()
-	wg.Wait()
+	time.Sleep(100 * time.Microsecond)
 	p.ReleaseAndWait()
+	wg.Wait()
 }
 
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
@@ -110,11 +111,11 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	}
 	require.Equal(t, 0, p.Running())
 
+	// test with RunWithConcurrency
 	err := p.Run(func() {})
 	require.Error(t, err)
 	var cnt atomic.Int32
 	workerFn := func() {
-		t.Log("ok")
 		cnt.Add(1)
 	}
 	fnChan := make(chan func(), 10)
@@ -180,6 +181,10 @@ func TestRunWithNotEnough(t *testing.T) {
 
 func TestRunWithNotEnough2(t *testing.T) {
 	fnChan := make(chan func(), 10)
+	var cnt atomic.Int32
+	fn := func() {
+		cnt.Add(1)
+	}
 	p, err := NewPool("TestRunWithNotEnough2", int32(1), util.UNKNOWN, WithBlocking(false))
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
@@ -187,7 +192,11 @@ func TestRunWithNotEnough2(t *testing.T) {
 	require.Equal(t, 1, p.Running())
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
+	for i := 0; i < 100; i++ {
+		fnChan <- fn
+	}
 	close(fnChan)
 	time.Sleep(time.Microsecond)
 	require.Equal(t, 0, p.Running())
+	require.Equal(t, int32(100), cnt.Load())
 }
