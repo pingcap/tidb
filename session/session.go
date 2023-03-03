@@ -3492,6 +3492,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	// This only happens in testing, since the failure of loading or parsing sql file
+	// would panic the bootstrapping.
 	if failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, err

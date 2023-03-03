@@ -1088,7 +1088,18 @@ func TestInitializeSQLFile(t *testing.T) {
 }
 
 func testEmptyInitSqlFile(t *testing.T) {
-	// TODO
+	// An non-existent sql file would stop the bootstrap of the tidb cluster
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
+	defer func() {
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	dom, err := BootstrapSession(store)
+	require.Nil(t, dom)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 }
 
 func testInitSystemVariable(t *testing.T) {
@@ -1283,7 +1294,6 @@ insert into test.t values ("abc"); -- invalid statement
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
-		require.NoError(t, store.Close())
 		config.GetGlobalConfig().InitializeSQLFile = ""
 	}()
 
@@ -1291,10 +1301,16 @@ insert into test.t values ("abc"); -- invalid statement
 	dom, err := BootstrapSession(store)
 	require.Nil(t, dom)
 	require.NoError(t, err)
+	require.NoError(t, store.Close())
 
 	runBootstrapSQLFile = false
 
 	// Bootstrap with the second sql file, which would not been executed.
+	store, err = mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
@@ -1302,20 +1318,20 @@ insert into test.t values ("abc"); -- invalid statement
 	ctx := context.Background()
 	_, err = exec(se, `use test;`)
 	require.NoError(t, err)
-	//// Table t has been created.
-	//r, err := exec(se, `show tables;`)
-	//require.NoError(t, err)
-	//req := r.NewChunk(nil)
-	//err = r.Next(ctx, req)
-	//require.NoError(t, err)
-	//require.Equal(t, 1, req.NumRows())
-	//row := req.GetRow(0)
-	//require.Equal(t, "t", row.GetString(0))
-	//require.NoError(t, r.Close())
-	// But data is failed to inserted since the error
-	r, err := exec(se, `select * from test.t`) // FIXME
+	// Table t has been created.
+	r, err := exec(se, `show tables;`)
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "t", row.GetString(0))
+	require.NoError(t, r.Close())
+	// But data is failed to inserted since the error
+	r, err = exec(se, `select * from test.t`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
