@@ -39,7 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	rmclient "github.com/tikv/pd/client/resource_manager/client"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -102,7 +102,7 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
-	control, err := rmclient.NewResourceGroupController(serverID, store.GetPDClient(), rmclient.DefaultRequestUnitConfig())
+	control, err := rmclient.NewResourceGroupController(ctx, serverID, store.GetPDClient(), nil)
 	if err != nil {
 		return err
 	}

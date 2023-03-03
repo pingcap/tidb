@@ -1103,9 +1103,12 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
-	ErrResourceGroupExists                = 8248
-	ErrResourceGroupNotExists             = 8249
-	ErrResourceGroupSupportDisabled       = 8250
+	// Resource group errors.
+	ErrResourceGroupExists            = 8248
+	ErrResourceGroupNotExists         = 8249
+	ErrResourceGroupSupportDisabled   = 8250
+	ErrResourceGroupConfigUnavailable = 8251
+	ErrResourceGroupThrottled         = 8252
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
