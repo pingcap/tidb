@@ -74,7 +74,8 @@ const (
 	// keyOpDefaultTimeout is the default time out for etcd store.
 	keyOpDefaultTimeout = 1 * time.Second
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
-	ReportInterval = 30 * time.Second
+	// 5 seconds for better accuracy.
+	ReportInterval = 5 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
 	TopologyInformationPath = "/topology/tidb"
 	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
@@ -781,6 +782,11 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
 		minStartTS = ts
 	}
+	phyMinStartTs := oracle.ExtractPhysical(minStartTS)
+	metrics.DomainMinStartTsGauge.Set(float64(phyMinStartTs))
+	// Record min start ts lag in seconds.
+	phyNow := oracle.ExtractPhysical(currentVer.Ver)
+	metrics.DomainMinStartTsLagGauge.Set(float64(phyNow-phyMinStartTs) / 1e3)
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
 

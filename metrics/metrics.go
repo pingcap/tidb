@@ -175,6 +175,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(HandleSchemaValidate)
+	prometheus.MustRegister(DomainMinStartTsGauge)
+	prometheus.MustRegister(DomainMinStartTsLagGauge)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
 	prometheus.MustRegister(ConnIdleDurationHistogram)
