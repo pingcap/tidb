@@ -489,16 +489,16 @@
       {
         "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
         "Plan": [
-          "HashJoin_28 12500.00 root  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "├─TableReader_37(Build) 10000.00 root  data:TableFullScan_36",
-          "│ └─TableFullScan_36 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_33(Probe) 10000.00 root  data:TableFullScan_32",
-          "  └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader_44 12500.00 root  MppVersion: 1, data:ExchangeSender_43",
+          "└─ExchangeSender_43 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_6 12500.00 mpp[tiflash]  test.t.a",
+          "    └─HashJoin_38 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "      ├─ExchangeReceiver_41(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_40 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─TableFullScan_39 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan_42(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "set @@tidb_opt_broadcast_cartesian_join = 0",
