@@ -31,6 +31,7 @@ go_test(
     embed = [":spool"],
     shard_count = 2,
     deps = [
+        "//resourcemanager/pool",
         "//resourcemanager/util",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

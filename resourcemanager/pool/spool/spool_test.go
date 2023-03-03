@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/resourcemanager/pool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
