@@ -14,7 +14,6 @@
 package restore
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -590,9 +590,13 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 	}
 
 	checkMsgs := []string{}
+	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
-			msgs, err := ci.checkpointIsValid(ctx, tableInfo)
+			msgs, err := ci.checkpointIsValid(ctx, tableInfo, dbInfos)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -607,7 +611,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -646,10 +650,6 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		return msgs, nil
 	}
 
-	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	dbInfo, ok := dbInfos[tableInfo.DB]
 	if ok {
 		t, ok := dbInfo.Tables[tableInfo.Name]
@@ -779,65 +779,13 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	// check etcd KV of CDC >= v6.2
-	cdcPrefix := "/tidb/cdc/"
-	changefeedPath := []byte("/changefeed/info/")
-
-	nameSet := make(map[string][]string, 1)
-	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix())
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, kv := range resp.Kvs {
-		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-		k := kv.Key[len(cdcPrefix):]
-		clusterAndNamespace, changefeedID, found := bytes.Cut(k, changefeedPath)
-		if !found {
-			continue
-		}
-		if !isActiveCDCChangefeed(kv.Value) {
-			continue
-		}
 
-		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
-	}
-	if len(nameSet) == 0 {
-		// check etcd KV of CDC <= v6.1
-		cdcPrefixV61 := "/tidb/cdc/changefeed/info/"
-		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/changefeed/info/<changefeedID>
-			k := kv.Key[len(cdcPrefixV61):]
-			if len(k) == 0 {
-				continue
-			}
-			if !isActiveCDCChangefeed(kv.Value) {
-				continue
-			}
-
-			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
-		}
-	}
-
-	if len(nameSet) > 0 {
-		var changefeedMsgBuf strings.Builder
-		changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
-		isFirst := true
-		for clusterID, captureIDs := range nameSet {
-			if !isFirst {
-				changefeedMsgBuf.WriteString(", ")
-			}
-			isFirst = false
-			changefeedMsgBuf.WriteString("cluster/namespace: ")
-			changefeedMsgBuf.WriteString(clusterID)
-			changefeedMsgBuf.WriteString(" changefeed(s): ")
-			changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
-		}
-		changefeedMsgBuf.WriteString(",")
-		errorMsg = append(errorMsg, changefeedMsgBuf.String())
+	if !nameSet.Empty() {
+		errorMsg = append(errorMsg, nameSet.MessageToUser())
 	}
 
 	if len(errorMsg) > 0 {
@@ -902,6 +850,11 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		Message:  "table schemas are valid",
 	}
 
+	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	checkMsgs := []string{}
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
@@ -913,7 +866,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 					continue
 				}
 			}
-			msgs, err := ci.SchemaIsValid(ctx, tableInfo)
+			msgs, err := ci.SchemaIsValid(ctx, tableInfo, dbInfos)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -928,17 +881,14 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
 	msgs := make([]string, 0)
-	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	info, ok := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
 		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists,"+

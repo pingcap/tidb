@@ -937,13 +937,11 @@ import (
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
-	LoadDataWithFormatStmt     "Load data with format statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
-	PlanChangeCaptureStmt      "Plan Change Capture Statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -1117,6 +1115,9 @@ import (
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
 	LoadDataSetSpecOpt                     "Optional load data specification"
+	LoadDataOptionListOpt                  "Optional load data option list"
+	LoadDataOptionList                     "Load data option list"
+	LoadDataOption                         "Load data option"
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
@@ -11509,7 +11510,6 @@ Statement:
 |	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
-|	LoadDataWithFormatStmt
 |	LoadStatsStmt
 |	LockStatsStmt
 |	UnlockStatsStmt
@@ -11583,7 +11583,6 @@ TraceableStmt:
 		$$ = sel
 	}
 |	LoadDataStmt
-|	LoadDataWithFormatStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	SavepointStmt
@@ -13775,9 +13774,10 @@ RevokeRoleStmt:
 
 /**************************************LoadDataStmt*****************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+ * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
@@ -13786,6 +13786,7 @@ LoadDataStmt:
 			Table:              $9.(*ast.TableName),
 			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:        $14.(uint64),
+			Options:            $17.([]*ast.LoadDataOpt),
 		}
 		if $3 != nil {
 			x.FileLocRef = ast.FileLocClient
@@ -13817,10 +13818,7 @@ LoadDataStmt:
 
 		$$ = x
 	}
-
-// see https://github.com/pingcap/tidb/issues/40499
-LoadDataWithFormatStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+|	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
@@ -13829,6 +13827,7 @@ LoadDataWithFormatStmt:
 			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
 			Table:              $11.(*ast.TableName),
 			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
+			Options:            $15.([]*ast.LoadDataOpt),
 		}
 		if $3 != nil {
 			x.FileLocRef = ast.FileLocClient
@@ -13876,16 +13875,18 @@ LocalOpt:
 
 Fields:
 	{
+		defaultEscaped := byte('\\')
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
+		defaultEscaped := byte('\\')
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    '\\',
+			Escaped:    &defaultEscaped,
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
@@ -13893,18 +13894,20 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = item.Value
 			case ast.Enclosed:
-				var enclosed byte
+				var enclosed *byte = nil
 				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
+					b := item.Value[0]
+					enclosed = &b
 				}
 				fieldsClause.Enclosed = enclosed
 				if item.OptEnclosed {
 					fieldsClause.OptEnclosed = true
 				}
 			case ast.Escaped:
-				var escaped byte
+				var escaped *byte = nil
 				if len(item.Value) > 0 {
-					escaped = item.Value[0]
+					b := item.Value[0]
+					escaped = &b
 				}
 				fieldsClause.Escaped = escaped
 			}
@@ -14053,6 +14056,35 @@ LoadDataSetItem:
 			Column: $1.(*ast.ColumnNameExpr).Name,
 			Expr:   $3,
 		}
+	}
+
+LoadDataOptionListOpt:
+	{
+		$$ = []*ast.LoadDataOpt{}
+	}
+|	"WITH" LoadDataOptionList
+	{
+		$$ = $2.([]*ast.LoadDataOpt)
+	}
+
+LoadDataOptionList:
+	LoadDataOption
+	{
+		$$ = []*ast.LoadDataOpt{$1.(*ast.LoadDataOpt)}
+	}
+|	LoadDataOptionList ',' LoadDataOption
+	{
+		$$ = append($1.([]*ast.LoadDataOpt), $3.(*ast.LoadDataOpt))
+	}
+
+LoadDataOption:
+	identifier
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
+	}
+|	identifier "=" SignedLiteral
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
 
 /*********************************************************************
@@ -14729,23 +14761,6 @@ PlanReplayerStmt:
 			Where:      nil,
 			OrderBy:    nil,
 			Limit:      nil,
-		}
-
-		$$ = x
-	}
-
-/********************************************************************
- *
- * Plan Chnage Capture Statement
- *
- * PLAN REPLAYER Change 'begin_time' 'end_time'
- *******************************************************************/
-PlanChangeCaptureStmt:
-	"PLAN" "CHANGE" "CAPTURE" stringLit stringLit
-	{
-		x := &ast.PlanChangeCaptureStmt{
-			Begin: $4,
-			End:   $5,
 		}
 
 		$$ = x

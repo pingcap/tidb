@@ -34,6 +34,29 @@ func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Exe
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	groupingSetsPB, err := p.GroupingSets.ToPB(sc, client)
+	if err != nil {
+		return nil, err
+	}
+	expand := &tipb.Expand{
+		GroupingSets: groupingSetsPB,
+	}
+	executorID := ""
+	if storeType == kv.TiFlash {
+		var err error
+		expand.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		executorID = p.ExplainID().String()
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()

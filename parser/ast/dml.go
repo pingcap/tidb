@@ -1830,6 +1830,7 @@ type LoadDataStmt struct {
 	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
+	Options           []*LoadDataOpt
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 }
@@ -1896,6 +1897,19 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore LoadDataStmt.Options")
+			}
+		}
+	}
 	return nil
 }
 
@@ -1938,6 +1952,24 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type LoadDataOpt struct {
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + "=")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore LoadDataOpt")
+		}
+	}
+	return nil
+}
+
 const (
 	Terminated = iota
 	Enclosed
@@ -1953,32 +1985,32 @@ type FieldItem struct {
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated  string
-	Enclosed    byte
-	Escaped     byte
+	Enclosed    *byte
+	Escaped     *byte
 	OptEnclosed bool
 }
 
 // Restore for FieldsClause
 func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Terminated != "\t" || n.Escaped != '\\' {
+	if n.Terminated != "\t" || (n.Escaped == nil || *n.Escaped != '\\') {
 		ctx.WriteKeyWord(" FIELDS")
 		if n.Terminated != "\t" {
 			ctx.WriteKeyWord(" TERMINATED BY ")
 			ctx.WriteString(n.Terminated)
 		}
-		if n.Enclosed != 0 {
+		if n.Enclosed != nil {
 			if n.OptEnclosed {
 				ctx.WriteKeyWord(" OPTIONALLY")
 			}
 			ctx.WriteKeyWord(" ENCLOSED BY ")
-			ctx.WriteString(string(n.Enclosed))
+			ctx.WriteString(string(*n.Enclosed))
 		}
-		if n.Escaped != '\\' {
+		if n.Escaped == nil || *n.Escaped != '\\' {
 			ctx.WriteKeyWord(" ESCAPED BY ")
-			if n.Escaped == 0 {
+			if n.Escaped == nil {
 				ctx.WritePlain("''")
 			} else {
-				ctx.WriteString(string(n.Escaped))
+				ctx.WriteString(string(*n.Escaped))
 			}
 		}
 	}

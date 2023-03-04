@@ -44,53 +44,12 @@ func TestLoadRemote(t *testing.T) {
 }
 
 func (s *mockGCSSuite) SetupSuite() {
-	objects := []fakestorage.Object{
-		{
-			BucketName: "test-bucket",
-			Name:       "no-new-line-at-end.csv",
-			Content: []byte(`i,s
-100,"test100"
-101,"\""
-102,"😄😄😄😄😄"
-104,""`),
-		},
-		{
-			BucketName: "test-bucket",
-			Name:       "new-line-at-end.csv",
-			Content: []byte(`i,s
-100,"test100"
-101,"\""
-102,"😄😄😄😄😄"
-104,""
-`),
-		},
-		{
-			BucketName: "test-bucket",
-			Name:       "ignore-lines-bad-syntax.csv",
-			Content: []byte(`"bad syntax"1
-"b",2
-"c",3
-`),
-		},
-		{
-			BucketName: "test-bucket",
-			Name:       "count-terminator-inside-quotes.csv",
-			Content: []byte(`"a
-",1
-"b
-",2
-"c",3
-`),
-		},
-	}
-
 	var err error
 	opt := fakestorage.Options{
-		InitialObjects: objects,
-		Scheme:         "http",
-		Host:           gcsHost,
-		Port:           gcsPort,
-		PublicHost:     gcsHost,
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)

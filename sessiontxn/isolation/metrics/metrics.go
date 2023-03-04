@@ -12,31 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package isolation
 
 import (
-	"context"
-	"time"
-
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-var _ Executor = &PlanChangeCaptureExec{}
+// isolation metrics vars
+var (
+	RcReadCheckTSWriteConfilictCounter  prometheus.Counter
+	RcWriteCheckTSWriteConfilictCounter prometheus.Counter
+)
 
-// PlanChangeCaptureExec indicates PlanChangeCaptureExec
-type PlanChangeCaptureExec struct {
-	baseExecutor
-
-	Begin time.Time
-	End   time.Time
-	err   error
+func init() {
+	InitMetricsVars()
 }
 
-// Next Implements Executor
-func (e *PlanChangeCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
-	if e.err != nil {
-		return e.err
-	}
-	return nil
+// InitMetricsVars init isolation metrics vars.
+func InitMetricsVars() {
+	RcReadCheckTSWriteConfilictCounter = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCReadCheckTS)
+	RcWriteCheckTSWriteConfilictCounter = metrics.RCCheckTSWriteConfilictCounter.WithLabelValues(metrics.LblRCWriteCheckTS)
 }

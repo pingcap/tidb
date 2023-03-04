@@ -870,14 +870,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			// TODO, always use false for now, need to support transfer bool slices for lwCtx
 			err = bc.FinishImport(indexesInfo[0].ID, false, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
+				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					/*
-						if common.ErrFoundDuplicateKeys.Equal(err) {
-							err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-						}
-					*/
-					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexesInfo, err)
+					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
 					err = tryFallbackToTxnMerge(job, err)
@@ -1033,6 +1031,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
 			job.ReorgMeta.IsDistReorg {
@@ -1135,9 +1136,13 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = idxNames
-			job.Args[1] = ifExists
-			job.Args = append(job.Args, idxIds, getPartitionIDs(tblInfo))
+			// Global index key has t{tableID}_ prefix.
+			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
+			if indexInfo.Global {
+				job.Args = append(job.Args, indexInfo.ID, []int64{})
+			} else {
+				job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			}
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo[0].State))
@@ -1433,8 +1438,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%d_%s_%d_%d'",
-			bfJob.JobID, hex.EncodeToString(bfJob.EleKey), bfJob.EleID, bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackgroundSubtaskTable, fmt.Sprintf("task_key = '%s'", bfJob.keyString()), "update_backfill_task")
 		if err != nil {
 			return err
 		}
@@ -1686,6 +1690,11 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	if w.writerCtx != nil {
+		// For the ingest mode, we use lightning local backend's local check and remote check
+		// to implement the duplicate key detection.
+		return nil
+	}
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
 		// non-unique key need not to check, just overwrite it,
@@ -1833,7 +1842,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = w.writerCtx.WriteRow(key, idxVal)
+					err = w.writerCtx.WriteRow(key, idxVal, idxRecord.handle)
 					if err != nil {
 						return errors.Trace(err)
 					}

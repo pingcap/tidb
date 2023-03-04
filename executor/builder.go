@@ -35,11 +35,11 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -73,19 +73,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"golang.org/x/exp/slices"
-)
-
-var (
-	executorCounterMergeJoinExec            = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
-	executorCountHashJoinExec               = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
-	executorCounterHashAggExec              = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
-	executorStreamAggExec                   = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
-	executorCounterSortExec                 = metrics.ExecutorCounter.WithLabelValues("SortExec")
-	executorCounterTopNExec                 = metrics.ExecutorCounter.WithLabelValues("TopNExec")
-	executorCounterNestedLoopApplyExec      = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
-	executorCounterIndexLookUpJoin          = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
-	executorCounterIndexLookUpExecutor      = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
-	executorCounterIndexMergeReaderExecutor = metrics.ExecutorCounter.WithLabelValues("IndexMergeReaderExecutor")
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -938,44 +925,23 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		Table:        tbl,
-		Columns:      v.Columns,
-		GenExprs:     v.GenCols.Exprs,
-		isLoadData:   true,
-		txnInUse:     sync.Mutex{},
+	if !tbl.Meta().IsBaseTable() {
+		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
 	}
-	loadDataInfo := &LoadDataInfo{
-		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
-		InsertValues:       insertVal,
-		Path:               v.Path,
-		Table:              tbl,
-		FieldsInfo:         v.FieldsInfo,
-		LinesInfo:          v.LinesInfo,
-		IgnoreLines:        v.IgnoreLines,
-		ColumnAssignments:  v.ColumnAssignments,
-		ColumnsAndUserVars: v.ColumnsAndUserVars,
-		OnDuplicate:        v.OnDuplicate,
-		Ctx:                b.ctx,
-	}
-	columnNames := loadDataInfo.initFieldMappings()
-	err := loadDataInfo.initLoadColumns(columnNames)
+
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	loadDataExec := &LoadDataExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		FileLocRef:   v.FileLocRef,
-		OnDuplicate:  v.OnDuplicate,
-		loadDataInfo: loadDataInfo,
-	}
-	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
-	loadDataExec.loadDataInfo.initQueues()
-	loadDataExec.loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 
-	return loadDataExec
+	return &LoadDataExec{
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ID()),
+		FileLocRef:     v.FileLocRef,
+		OnDuplicate:    v.OnDuplicate,
+		loadDataWorker: worker,
+	}
 }
 
 func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
@@ -1014,25 +980,6 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 			Ctx:         b.ctx,
 		},
 	}
-	return e
-}
-
-func (b *executorBuilder) buildPlanChangeCapture(v *plannercore.PlanChangeCapture) Executor {
-	e := &PlanChangeCaptureExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-	}
-	begin, err := time.Parse("2006-01-02 15:04:05", v.Begin)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	end, err := time.Parse("2006-01-02 15:04:05", v.End)
-	if err != nil {
-		e.err = err
-		return e
-	}
-	e.Begin = begin
-	e.End = end
 	return e
 }
 
@@ -1453,7 +1400,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		return nil
 	}
 
-	executorCounterMergeJoinExec.Inc()
+	executor_metrics.ExecutorCounterMergeJoinExec.Inc()
 	return e
 }
 
@@ -1560,7 +1507,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec, e.buildWorker.hashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.hashJoinCtx
 	e.hashJoinCtx.isNullAware = isNAJoin
-	executorCountHashJoinExec.Inc()
+	executor_metrics.ExecutorCountHashJoinExec.Inc()
 
 	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
 	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
@@ -1690,7 +1637,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		}
 	}
 
-	executorCounterHashAggExec.Inc()
+	executor_metrics.ExecutorCounterHashAggExec.Inc()
 	return e
 }
 
@@ -1722,7 +1669,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		}
 	}
 
-	executorStreamAggExec.Inc()
+	executor_metrics.ExecutorStreamAggExec.Inc()
 	return e
 }
 
@@ -2113,7 +2060,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	executorCounterSortExec.Inc()
+	executor_metrics.ExecutorCounterSortExec.Inc()
 	return &sortExec
 }
 
@@ -2127,7 +2074,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	executorCounterTopNExec.Inc()
+	executor_metrics.ExecutorCounterTopNExec.Inc()
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
@@ -2183,7 +2130,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		ctx:          b.ctx,
 		canUseCache:  v.CanUseCache,
 	}
-	executorCounterNestedLoopApplyExec.Inc()
+	executor_metrics.ExecutorCounterNestedLoopApplyExec.Inc()
 
 	// try parallel mode
 	if v.Concurrency > 1 {
@@ -3243,7 +3190,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.hashCollators = hashCollators
 
 	e.joinResult = tryNewCacheChunk(e)
-	executorCounterIndexLookUpJoin.Inc()
+	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
 	return e
 }
 
@@ -3297,7 +3244,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
-	executorCounterIndexLookUpJoin.Inc()
+	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
 
 	readerBuilder, err := b.newDataReaderBuilder(innerPlan)
 	if err != nil {
@@ -3462,6 +3409,29 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
 		memTracker:   memory.NewTracker(v.ID(), -1),
+
+		columns:                    []*model.ColumnInfo{},
+		virtualColumnIndex:         []int{},
+		virtualColumnRetFieldTypes: []*types.FieldType{},
+	}
+
+	var hasVirtualCol bool
+	for _, col := range v.Schema().Columns {
+		if col.VirtualExpr != nil {
+			hasVirtualCol = true
+			break
+		}
+	}
+	if hasVirtualCol {
+		// If hasVirtualCol, Join should not pushdown to tiflash,
+		// so there is only one TableScan.
+		ts, err := v.GetTableScan()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		gather.columns = ts.Columns
+		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
 	}
 	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return gather
@@ -3923,7 +3893,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
-	executorCounterIndexLookUpExecutor.Inc()
+	executor_metrics.ExecutorCounterIndexLookUpExecutor.Inc()
 
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3938,6 +3908,22 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
+		tmp, ok := b.is.TableByID(ts.Table.ID)
+		if !ok {
+			b.err = err
+			return nil
+		}
+		tbl, ok1 := tmp.(table.PartitionedTable)
+		if !ok1 {
+			b.err = ErrBuildExecutor
+			return nil
+		}
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+
 		return ret
 	}
 	if ok, _ := is.IsPartition(); ok {
@@ -4069,7 +4055,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 		}
 	}
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	executorCounterIndexMergeReaderExecutor.Inc()
+	executor_metrics.ExecutorCounterIndexMergeReaderExecutor.Inc()
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
@@ -5135,6 +5121,33 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 			pid := pi.Definitions[idx].ID
 			p := tbl.GetPartition(pid)
 			ret = append(ret, p)
+		}
+	}
+	return ret, nil
+}
+
+func getPartitionIdsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, partInfo *plannercore.PartitionInfo) (map[int64]struct{}, error) {
+	if partInfo == nil {
+		return nil, errors.New("partInfo in getPartitionIdsAfterPruning must not be nil")
+	}
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, partInfo.PruningConds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	var ret map[int64]struct{}
+
+	pi := tbl.Meta().GetPartitionInfo()
+	if fullRangePartition(idxArr) {
+		ret = make(map[int64]struct{}, len(pi.Definitions))
+		for _, def := range pi.Definitions {
+			ret[def.ID] = struct{}{}
+		}
+	} else {
+		ret = make(map[int64]struct{}, len(idxArr))
+		for _, idx := range idxArr {
+			pid := pi.Definitions[idx].ID
+			ret[pid] = struct{}{}
 		}
 	}
 	return ret, nil
