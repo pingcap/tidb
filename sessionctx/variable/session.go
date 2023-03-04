@@ -1374,6 +1374,10 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
+
 	// RevokedGlobalPrivileges records the revoked global privileges from the current user in the session.
 	RevokedGlobalPrivileges map[string]struct{}
 }

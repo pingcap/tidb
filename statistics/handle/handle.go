@@ -31,7 +31,6 @@ import (
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -530,15 +529,6 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
-var statsHealthyGauges = []prometheus.Gauge{
-	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
-	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
-	// [0,100] should always be the last
-	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
-}
-
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
 	v := h.statsCache.Load()
@@ -564,7 +554,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 		distribution[4] += 1
 	}
 	for i, val := range distribution {
-		statsHealthyGauges[i].Set(float64(val))
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
 }
 
@@ -1026,7 +1016,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	}
 	h.statsCache.Unlock()
 	if updated && enableQuota {
-		costGauge.Set(float64(newCost))
+		handle_metrics.CostGauge.Set(float64(newCost))
 	}
 	return
 }

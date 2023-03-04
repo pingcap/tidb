@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -110,62 +111,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-)
-
-var (
-	statementPerTransactionPessimisticOKInternal    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK, metrics.LblInternal)
-	statementPerTransactionPessimisticOKGeneral     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK, metrics.LblGeneral)
-	statementPerTransactionPessimisticErrorInternal = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError, metrics.LblInternal)
-	statementPerTransactionPessimisticErrorGeneral  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError, metrics.LblGeneral)
-	statementPerTransactionOptimisticOKInternal     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK, metrics.LblInternal)
-	statementPerTransactionOptimisticOKGeneral      = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK, metrics.LblGeneral)
-	statementPerTransactionOptimisticErrorInternal  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError, metrics.LblInternal)
-	statementPerTransactionOptimisticErrorGeneral   = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError, metrics.LblGeneral)
-	transactionDurationPessimisticCommitInternal    = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit, metrics.LblInternal)
-	transactionDurationPessimisticCommitGeneral     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit, metrics.LblGeneral)
-	transactionDurationPessimisticAbortInternal     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort, metrics.LblInternal)
-	transactionDurationPessimisticAbortGeneral      = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort, metrics.LblGeneral)
-	transactionDurationOptimisticCommitInternal     = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit, metrics.LblInternal)
-	transactionDurationOptimisticCommitGeneral      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit, metrics.LblGeneral)
-	transactionDurationOptimisticAbortInternal      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort, metrics.LblInternal)
-	transactionDurationOptimisticAbortGeneral       = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort, metrics.LblGeneral)
-	transactionRetryInternal                        = metrics.SessionRetry.WithLabelValues(metrics.LblInternal)
-	transactionRetryGeneral                         = metrics.SessionRetry.WithLabelValues(metrics.LblGeneral)
-
-	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
-	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
-
-	telemetryCTEUsageRecurCTE       = metrics.TelemetrySQLCTECnt.WithLabelValues("recurCTE")
-	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
-	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
-	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryFlashbackClusterUsage  = metrics.TelemetryFlashbackClusterCnt
-
-	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage           = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage            = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage    = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionRangeColumnsGt1Usage = metrics.TelemetryTablePartitionRangeColumnsGt1Cnt
-	telemetryTablePartitionRangeColumnsGt2Usage = metrics.TelemetryTablePartitionRangeColumnsGt2Cnt
-	telemetryTablePartitionRangeColumnsGt3Usage = metrics.TelemetryTablePartitionRangeColumnsGt3Cnt
-	telemetryTablePartitionListColumnsUsage     = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage   = metrics.TelemetryTablePartitionMaxPartitionsCnt
-	telemetryTablePartitionCreateIntervalUsage  = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
-	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
-	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
-	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
-	telemetryTableCompactPartitionUsage         = metrics.TelemetryCompactPartitionCnt
-	telemetryReorganizePartitionUsage           = metrics.TelemetryReorganizePartitionCnt
-
-	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
-	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
-	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
-
-	telemetryIndexMerge        = metrics.TelemetryIndexMergeUsage
-	telemetryStoreBatchedUsage = metrics.TelemetryStoreBatchedQueryCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -1224,9 +1169,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		if s.sessionVars.InRestrictedSQL {
-			transactionRetryInternal.Observe(float64(retryCnt + 1))
+			session_metrics.TransactionRetryInternal.Observe(float64(retryCnt + 1))
 		} else {
-			transactionRetryGeneral.Observe(float64(retryCnt + 1))
+			session_metrics.TransactionRetryGeneral.Observe(float64(retryCnt + 1))
 		}
 		s.sessionVars.SetInTxn(false)
 		if err != nil {
@@ -1740,9 +1685,9 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -1792,9 +1737,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	durParse := time.Since(parseStartTime)
 	if internal {
-		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
-		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -2201,8 +2146,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
 			if !variable.ErrUnknownSystemVar.Equal(err) {
+				sql := stmtNode.Text()
+				if s.sessionVars.EnableRedactLog {
+					sql = parser.Normalize(sql)
+				}
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", stmtNode.Text()))
+					zap.String("SQL", sql))
 			}
 		}
 		return nil, err
@@ -2211,9 +2160,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	durCompile := time.Since(s.sessionVars.StartTime)
 	s.GetSessionVars().DurationCompile = durCompile
 	if s.isInternal() {
-		sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
+		session_metrics.SessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 	} else {
-		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
+		session_metrics.SessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 	}
 	s.currentPlan = stmt.Plan
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
@@ -3886,37 +3835,37 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	if s.sessionVars.TxnCtx.IsPessimistic {
 		if err != nil {
 			if isInternal {
-				transactionDurationPessimisticAbortInternal.Observe(duration)
-				statementPerTransactionPessimisticErrorInternal.Observe(float64(counter))
+				session_metrics.TransactionDurationPessimisticAbortInternal.Observe(duration)
+				session_metrics.StatementPerTransactionPessimisticErrorInternal.Observe(float64(counter))
 			} else {
-				transactionDurationPessimisticAbortGeneral.Observe(duration)
-				statementPerTransactionPessimisticErrorGeneral.Observe(float64(counter))
+				session_metrics.TransactionDurationPessimisticAbortGeneral.Observe(duration)
+				session_metrics.StatementPerTransactionPessimisticErrorGeneral.Observe(float64(counter))
 			}
 		} else {
 			if isInternal {
-				transactionDurationPessimisticCommitInternal.Observe(duration)
-				statementPerTransactionPessimisticOKInternal.Observe(float64(counter))
+				session_metrics.TransactionDurationPessimisticCommitInternal.Observe(duration)
+				session_metrics.StatementPerTransactionPessimisticOKInternal.Observe(float64(counter))
 			} else {
-				transactionDurationPessimisticCommitGeneral.Observe(duration)
-				statementPerTransactionPessimisticOKGeneral.Observe(float64(counter))
+				session_metrics.TransactionDurationPessimisticCommitGeneral.Observe(duration)
+				session_metrics.StatementPerTransactionPessimisticOKGeneral.Observe(float64(counter))
 			}
 		}
 	} else {
 		if err != nil {
 			if isInternal {
-				transactionDurationOptimisticAbortInternal.Observe(duration)
-				statementPerTransactionOptimisticErrorInternal.Observe(float64(counter))
+				session_metrics.TransactionDurationOptimisticAbortInternal.Observe(duration)
+				session_metrics.StatementPerTransactionOptimisticErrorInternal.Observe(float64(counter))
 			} else {
-				transactionDurationOptimisticAbortGeneral.Observe(duration)
-				statementPerTransactionOptimisticErrorGeneral.Observe(float64(counter))
+				session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
+				session_metrics.StatementPerTransactionOptimisticErrorGeneral.Observe(float64(counter))
 			}
 		} else {
 			if isInternal {
-				transactionDurationOptimisticCommitInternal.Observe(duration)
-				statementPerTransactionOptimisticOKInternal.Observe(float64(counter))
+				session_metrics.TransactionDurationOptimisticCommitInternal.Observe(duration)
+				session_metrics.StatementPerTransactionOptimisticOKInternal.Observe(float64(counter))
 			} else {
-				transactionDurationOptimisticCommitGeneral.Observe(duration)
-				statementPerTransactionOptimisticOKGeneral.Observe(float64(counter))
+				session_metrics.TransactionDurationOptimisticCommitGeneral.Observe(duration)
+				session_metrics.StatementPerTransactionOptimisticOKGeneral.Observe(float64(counter))
 			}
 		}
 	}
@@ -4049,83 +3998,83 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	ti := es.Ti
 	if ti.UseRecursive {
-		telemetryCTEUsageRecurCTE.Inc()
+		session_metrics.TelemetryCTEUsageRecurCTE.Inc()
 	} else if ti.UseNonRecursive {
-		telemetryCTEUsageNonRecurCTE.Inc()
+		session_metrics.TelemetryCTEUsageNonRecurCTE.Inc()
 	} else {
-		telemetryCTEUsageNotCTE.Inc()
+		session_metrics.TelemetryCTEUsageNotCTE.Inc()
 	}
 
 	if ti.UseIndexMerge {
-		telemetryIndexMerge.Inc()
+		session_metrics.TelemetryIndexMerge.Inc()
 	}
 
 	if ti.UseMultiSchemaChange {
-		telemetryMultiSchemaChangeUsage.Inc()
+		session_metrics.TelemetryMultiSchemaChangeUsage.Inc()
 	}
 
 	if ti.UseFlashbackToCluster {
-		telemetryFlashbackClusterUsage.Inc()
+		session_metrics.TelemetryFlashbackClusterUsage.Inc()
 	}
 
 	if ti.UseExchangePartition {
-		telemetryExchangePartitionUsage.Inc()
+		session_metrics.TelemetryExchangePartitionUsage.Inc()
 	}
 
 	if ti.PartitionTelemetry != nil {
 		if ti.PartitionTelemetry.UseTablePartition {
-			telemetryTablePartitionUsage.Inc()
-			telemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+			session_metrics.TelemetryTablePartitionUsage.Inc()
+			session_metrics.TelemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
 		}
 		if ti.PartitionTelemetry.UseTablePartitionList {
-			telemetryTablePartitionListUsage.Inc()
+			session_metrics.TelemetryTablePartitionListUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRange {
-			telemetryTablePartitionRangeUsage.Inc()
+			session_metrics.TelemetryTablePartitionRangeUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionHash {
-			telemetryTablePartitionHashUsage.Inc()
+			session_metrics.TelemetryTablePartitionHashUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
-			telemetryTablePartitionRangeColumnsUsage.Inc()
+			session_metrics.TelemetryTablePartitionRangeColumnsUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
-			telemetryTablePartitionRangeColumnsGt1Usage.Inc()
+			session_metrics.TelemetryTablePartitionRangeColumnsGt1Usage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
-			telemetryTablePartitionRangeColumnsGt2Usage.Inc()
+			session_metrics.TelemetryTablePartitionRangeColumnsGt2Usage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
-			telemetryTablePartitionRangeColumnsGt3Usage.Inc()
+			session_metrics.TelemetryTablePartitionRangeColumnsGt3Usage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
-			telemetryTablePartitionListColumnsUsage.Inc()
+			session_metrics.TelemetryTablePartitionListColumnsUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseCreateIntervalPartition {
-			telemetryTablePartitionCreateIntervalUsage.Inc()
+			session_metrics.TelemetryTablePartitionCreateIntervalUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseAddIntervalPartition {
-			telemetryTablePartitionAddIntervalUsage.Inc()
+			session_metrics.TelemetryTablePartitionAddIntervalUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseDropIntervalPartition {
-			telemetryTablePartitionDropIntervalUsage.Inc()
+			session_metrics.TelemetryTablePartitionDropIntervalUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseCompactTablePartition {
-			telemetryTableCompactPartitionUsage.Inc()
+			session_metrics.TelemetryTableCompactPartitionUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseReorganizePartition {
-			telemetryReorganizePartitionUsage.Inc()
+			session_metrics.TelemetryReorganizePartitionUsage.Inc()
 		}
 	}
 
 	if ti.AccountLockTelemetry != nil {
-		telemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
-		telemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
-		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
+		session_metrics.TelemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
+		session_metrics.TelemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
+		session_metrics.TelemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
 	}
 
 	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
-		telemetryStoreBatchedUsage.Inc()
+		session_metrics.TelemetryStoreBatchedUsage.Inc()
 	}
 }
 
