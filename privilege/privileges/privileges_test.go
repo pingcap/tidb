@@ -2142,10 +2142,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 
 func TestDynamicPrivsRegistration(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
-
 	tk := testkit.NewTestKit(t, store)
-	pm := privilege.GetPrivilegeManager(tk.Session())
-
 	count := len(privileges.GetDynamicPrivileges())
 
 	require.False(t, privileges.IsDynamicPrivilege("ACDC_ADMIN"))
