@@ -868,20 +868,22 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				return false, ver, nil
 			}
 			// TODO, always use false for now, need to support transfer bool slices for lwCtx
-			err = bc.FinishImport(indexesInfo[0].ID, false, tbl)
-			if err != nil {
-				if common.ErrFoundDuplicateKeys.Equal(err) {
-					err = convertToKeyExistsErr(err, indexesInfo[0], tbl.Meta())
+			for _, indexInfo := range indexesInfo {
+				err = bc.FinishImport(indexInfo.ID, false, tbl)
+				if err != nil {
+					if common.ErrFoundDuplicateKeys.Equal(err) {
+						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+					}
+					if kv.ErrKeyExists.Equal(err) {
+						logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+						ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexesInfo, err)
+					} else {
+						logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
+						err = tryFallbackToTxnMerge(job, err)
+					}
+					ingest.LitBackCtxMgr.Unregister(job.ID)
+					return false, ver, errors.Trace(err)
 				}
-				if kv.ErrKeyExists.Equal(err) {
-					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexesInfo, err)
-				} else {
-					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-					err = tryFallbackToTxnMerge(job, err)
-				}
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-				return false, ver, errors.Trace(err)
 			}
 			bc.SetDone()
 		case model.ReorgTypeTxnMerge:
@@ -1368,7 +1370,7 @@ type baseIndexWorker struct {
 type addIndexWorker struct {
 	baseIndexWorker
 	index            table.Index
-	writerCtx        *ingest.WriterContext
+	writerCtx        []*ingest.WriterContext
 	copReqSenderPool *copReqSenderPool
 
 	// The following attributes are used to reduce memory allocation.
@@ -1392,19 +1394,23 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	var lwCtx *ingest.WriterContext
+	var lwCtxs []*ingest.WriterContext
 	if bfCtx.reorgTp == model.ReorgTypeLitMerge {
 		bc, ok := ingest.LitBackCtxMgr.Load(jobID)
 		if !ok {
 			return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
 		}
-		ei, err := bc.EngMgr.Register(bc, jobID, elements[0].ID, bfCtx.schemaName, t.Meta().Name.O)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// TODO, always use false for now, need to support transfer bool slices for lwCtx
-		lwCtx, err = ei.NewWriterCtx(bfCtx.id, false)
-		if err != nil {
-			return nil, err
+		for _, ele := range elements {
+			ei, err := bc.EngMgr.Register(bc, jobID, ele.ID, bfCtx.schemaName, t.Meta().Name.O)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// TODO, always use false for now, need to support transfer bool slices for lwCtx
+			lwCtx, err = ei.NewWriterCtx(bfCtx.id, false)
+			if err != nil {
+				return nil, err
+			}
+			lwCtxs = append(lwCtxs, lwCtx)
 		}
 	}
 
@@ -1419,7 +1425,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 			jobContext:    jc,
 		},
 		index:     indexes[0],
-		writerCtx: lwCtx,
+		writerCtx: lwCtxs,
 	}, nil
 }
 
@@ -1838,16 +1844,18 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				vars := w.sessCtx.GetSessionVars()
 				sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 				iter := w.indexes[i%len(w.indexes)].GenIndexKVIter(sCtx, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+				i := 0
 				for iter.Valid() {
 					key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = w.writerCtx.WriteRow(key, idxVal, idxRecord.handle)
+					err = w.writerCtx[i].WriteRow(key, idxVal, idxRecord.handle)
 					if err != nil {
 						return errors.Trace(err)
 					}
 					writeBufs.IndexKeyBuf = key
+					i++
 				}
 			}
 			taskCtx.addedCount++
