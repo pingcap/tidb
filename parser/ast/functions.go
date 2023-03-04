@@ -550,6 +550,13 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		n.Args[1].Format(w)
 		fmt.Fprint(w, ")")
 		return true
+	case Extract:
+		fmt.Fprintf(w, "%s(", n.FnName.L)
+		n.Args[0].Format(w)
+		fmt.Fprint(w, " FROM ")
+		n.Args[1].Format(w)
+		fmt.Fprint(w, ")")
+		return true
 	}
 	return false
 }
