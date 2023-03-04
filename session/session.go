@@ -3168,7 +3168,8 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.UpdateTS = t.StartTS
 		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("create table mysql.tidb_mdl_info failed, ignore", zap.Error(err)
+			return nil
 		}
 
 		return t.SetMDLTables()
