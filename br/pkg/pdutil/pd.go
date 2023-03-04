@@ -1053,3 +1053,45 @@ func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semve
 
 	return parseVersion([]byte(rawVersion.Version)), nil
 }
+
+// FetchStoresAddr get all address of stores
+func FetchStoresAddr(ctx context.Context, tls *common.TLS, pdAddr string) ([]string, error) {
+	// An example of PD stores API.
+	// curl http://pd_address/pd/api/v1/stores
+	// {
+	// 	"stores": [
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.196:20160"
+	// 		}
+	// 	  },
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.194:20160"
+	// 		}
+	// 	  },
+	// 	  {
+	// 		"store": {
+	// 		  "address": "172.16.6.155:20160"
+	// 		}
+	// 	  }
+	// 	]
+	// }
+	var rawStoresAddr struct {
+		Stores []struct {
+			Store struct {
+				Address string
+			}
+		}
+	}
+	strStoresAddr := make([]string, 0, 3)
+	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/stores", &rawStoresAddr)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, store := range rawStoresAddr.Stores {
+		strStoresAddr = append(strStoresAddr, store.Store.Address)
+	}
+	return strStoresAddr, nil
+
+}

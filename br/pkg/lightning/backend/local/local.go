@@ -306,6 +306,9 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
+	if err := tikv.CheckTiDBDestination(ctx, g.tls, g.pdAddr, db); err != nil {
+		return err
+	}
 
 	serverInfo := version.ParseServerInfo(versionStr)
 	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)

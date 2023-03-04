@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
@@ -227,6 +228,22 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	}
 
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
+}
+
+func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, db utils.QueryExecutor) error {
+	var dstIsCorrect bool
+	stores, err := pdutil.FetchStoresAddr(ctx, tls, pdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var queryStoreAddr = fmt.Sprintf("select 1 from information_schema.cluster_info where instance = '%s' and type in ('tikv', 'tiflash');", stores[0])
+	tidbRow := db.QueryRowContext(ctx, queryStoreAddr)
+	err = tidbRow.Scan(&dstIsCorrect)
+	if err != nil {
+		return errors.Errorf("store address `%s` from pd api doesn't in store addresses from tidb cluster_info), please check whether pd-addr and status-port are correct", stores[0])
+	}
+	return nil
 }
 
 func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {

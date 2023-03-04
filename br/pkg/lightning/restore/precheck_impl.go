@@ -185,7 +185,7 @@ func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, err
 		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
-		Message:  "Cluster version check passed",
+		Message:  "Cluster version check passed, destination is correct",
 	}
 	checkCtx := WithPreInfoGetterDBMetas(ctx, ci.dbMetas)
 	if err := ci.preInfoGetter.CheckVersionRequirements(checkCtx); err != nil {
