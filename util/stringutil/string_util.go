@@ -415,30 +415,33 @@ func toUpperIfAlphaASCII(c byte) byte {
 	return c ^ 0x20
 }
 
-func IsUpperAscii(c byte) bool {
+// Judge if this is capital alphabet
+func IsUpperASCII(c byte) bool {
 	if c >= 'A' && c <= 'Z' {
 		return true
 	}
 	return false
 }
 
-func IsLowerAscii(c byte) bool {
+// Judge if this is lower alphabet
+func IsLowerASCII(c byte) bool {
 	if c >= 'a' && c <= 'z' {
 		return true
 	}
 	return false
 }
 
+// Lower the ascii characters in a string
 func LowerOneString(str []byte) {
-	str_len := len(str)
-	for i := 0; i < str_len; i++ {
-		if IsUpperAscii(str[i]) {
+	strLen := len(str)
+	for i := 0; i < strLen; i++ {
+		if IsUpperASCII(str[i]) {
 			str[i] = toLowerIfAlphaASCII(str[i])
 		}
 	}
 }
 
-// Sometimes we want to lower strings and exclude an escape char
+// LowerOneStringExcludeEscapeChar, Sometimes we want to lower strings and exclude an escape char
 //
 // When escape_char is a lower char, we need to convert it to the capital char
 // Because: when lowering "ABC" with escape 'a', after lower, "ABC" -> "abc",
@@ -446,14 +449,14 @@ func LowerOneString(str []byte) {
 // Morever, when escape char is uppered we need to tell it to the caller.
 func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
 	actualEscapeChar := escapeChar
-	if IsLowerAscii(escapeChar) {
+	if IsLowerASCII(escapeChar) {
 		actualEscapeChar = toUpperIfAlphaASCII(escapeChar)
 	}
 	escaped := false
 	strLen := len(str)
 
 	for i := 0; i < strLen; i++ {
-		if IsUpperAscii(str[i]) {
+		if IsUpperASCII(str[i]) {
 			// Do not lower the escape char, however when a char is equal to
 			// an escape char and it's after an escape char, we still lower it
 			// For example: "AA" (escape 'A'), -> "Aa"
@@ -472,8 +475,7 @@ func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
 				str[i] = actualEscapeChar
 				continue
 			}
-			len := Utf8Len(str[i])
-			i += len - 1
+			i += Utf8Len(str[i]) - 1
 		}
 		escaped = false
 	}

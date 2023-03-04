@@ -90,7 +90,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	patternStrBytes := []byte(patternStr)
 
 	stringutil.LowerOneString(valStrBytes)
-	if stringutil.IsUpperAscii(byte(escape)) || stringutil.IsLowerAscii(byte(escape)) {
+	if stringutil.IsUpperASCII(byte(escape)) || stringutil.IsLowerASCII(byte(escape)) {
 		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(patternStrBytes, byte(escape)))
 	} else {
 		stringutil.LowerOneString(patternStrBytes)
