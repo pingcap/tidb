@@ -683,9 +683,13 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 	}
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Sort().Rows()
-	expectedResults := [][]string{{"a", "2"}, {"b", "3"}, {"c", "2"}, {"d", "1"}, {"idx_a", "2"}, {"idx_b", "3"}, {"idx_c", "2"}, {"idx_d", "1"}}
+	expectedResults := [][]string{
+		{"a", "2", "0"}, {"b", "3", "0"}, {"c", "2", "32"}, {"d", "1", "0"},
+		{"idx_a", "2", "0"}, {"idx_b", "3", "0"}, {"idx_c", "2", "32"}, {"idx_d", "1", "0"},
+	}
 	for i, row := range rows {
-		require.Equal(t, expectedResults[i][0], row[3])
-		require.Equal(t, expectedResults[i][1], row[6])
+		require.Equal(t, expectedResults[i][0], row[3]) // column_name
+		require.Equal(t, expectedResults[i][1], row[6]) // distinct_count
+		require.Equal(t, expectedResults[i][2], row[7]) // null_count
 	}
 }
