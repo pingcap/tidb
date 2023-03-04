@@ -2158,8 +2158,20 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		// test for CTE
 		dbt.MustExec("WITH RECURSIVE cte (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM cte WHERE n < 5) SELECT * FROM cte;")
 
+		dbt.MustExec("use DBStatementCount")
+		dbt.MustExec("create table t2 (id int);")
+		dbt.MustExec("truncate table t2;")
+		dbt.MustExec("show tables;")
+		dbt.MustExec("show create table t2;")
+		dbt.MustExec("analyze table t2;")
+		dbt.MustExec("analyze table test;")
+		dbt.MustExec("alter table t2 add column name varchar(10);")
+		dbt.MustExec("rename table t2 to t3;")
+		dbt.MustExec("rename table t3 to t2;")
+		dbt.MustExec("drop table t2;")	
+
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
-		require.Equal(t, originStmtCnt["CreateTable"]+1, currentStmtCnt["CreateTable"])
+		require.Equal(t, originStmtCnt["CreateTable"]+2, currentStmtCnt["CreateTable"])
 		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
 		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
 		require.Equal(t, originStmtCnt["Update"]+2, currentStmtCnt["Update"])
@@ -2167,6 +2179,13 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
 		require.Equal(t, originStmtCnt["Execute"]+0, currentStmtCnt["Execute"])
 		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])
+		require.Equal(t, originStmtCnt["Use"]+3, currentStmtCnt["Use"])
+		require.Equal(t, originStmtCnt["TruncateTable"]+1, currentStmtCnt["TruncateTable"])
+		require.Equal(t, originStmtCnt["Show"]+2, currentStmtCnt["Show"])
+		require.Equal(t, originStmtCnt["AnalyzeTable"]+2, currentStmtCnt["AnalyzeTable"])
+		require.Equal(t, originStmtCnt["AlterTable"]+1, currentStmtCnt["AlterTable"])
+		require.Equal(t, originStmtCnt["DropTable"]+1, currentStmtCnt["DropTable"])
+		require.Equal(t, originStmtCnt["other"]+2, currentStmtCnt["other"])
 	})
 }
 
