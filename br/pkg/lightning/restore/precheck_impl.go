@@ -590,9 +590,13 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 	}
 
 	checkMsgs := []string{}
+	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
-			msgs, err := ci.checkpointIsValid(ctx, tableInfo)
+			msgs, err := ci.checkpointIsValid(ctx, tableInfo, dbInfos)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -607,7 +611,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -646,10 +650,6 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		return msgs, nil
 	}
 
-	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	dbInfo, ok := dbInfos[tableInfo.DB]
 	if ok {
 		t, ok := dbInfo.Tables[tableInfo.Name]
@@ -850,6 +850,11 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		Message:  "table schemas are valid",
 	}
 
+	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	checkMsgs := []string{}
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
@@ -861,7 +866,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 					continue
 				}
 			}
-			msgs, err := ci.SchemaIsValid(ctx, tableInfo)
+			msgs, err := ci.SchemaIsValid(ctx, tableInfo, dbInfos)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -876,17 +881,14 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
 	msgs := make([]string, 0)
-	dbInfos, err := ci.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	info, ok := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
 		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists,"+

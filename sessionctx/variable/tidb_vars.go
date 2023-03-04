@@ -821,6 +821,9 @@ const (
 
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
+	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -941,6 +944,9 @@ const (
 	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
 	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
 	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
 )
 
 // TiDB intentional limits
@@ -1169,7 +1175,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
-	DefTiDBOptAdvancedJoinHint                   = false
+	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1194,6 +1200,7 @@ const (
 	DefTiDBTTLDeleteBatchMaxSize                           = 10240
 	DefTiDBTTLDeleteBatchMinSize                           = 1
 	DefTiDBTTLDeleteRateLimit                              = 0
+	DefTiDBTTLRunningTasks                                 = -1
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
 	DefTiDBStoreBatchSize                                  = 4
@@ -1208,6 +1215,7 @@ const (
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBLoadBasedReplicaReadThreshold                   = 0
 )
 
 // Process global variables.
@@ -1285,6 +1293,7 @@ var (
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
 )
 
 var (
