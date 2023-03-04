@@ -1560,7 +1560,7 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	return nil
 }
 
-// PrivilegeHandle returns the MySQLPrivilege.
+// PrivilegeHandle returns the MySQLPrivilegeCache.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }

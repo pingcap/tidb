@@ -77,6 +77,11 @@ type UserPrivileges struct {
 	extensionAccessCheckFuncs []extension.AccessCheckFunc
 }
 
+func init() {
+	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
+	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
+}
+
 // NewUserPrivileges creates a new UserPrivileges
 func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPrivileges {
 	return &UserPrivileges{
@@ -208,7 +213,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
 }
 
-func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
+func checkEncodedPWDLength(record *UserRecord) bool {
 	pwd := record.AuthenticationString
 	if pwd == "" {
 		return true
@@ -251,7 +256,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	if p.isValidHash(record) {
+	if checkEncodedPWDLength(record) {
 		return record.AuthenticationString
 	}
 	return ""
@@ -271,13 +276,13 @@ func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, 
 	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		return record.AuthPlugin, nil
 	}
-	// zero-length auth string means no password for native and caching_sha2 auth.
+	// zero-length auth string means no password for native, caching_sha2 and sm3 auth.
 	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
 	// and the OS user.
 	if record.AuthenticationString == "" && record.AuthPlugin != mysql.AuthSocket {
 		return "", nil
 	}
-	if p.isValidHash(record) {
+	if checkEncodedPWDLength(record) {
 		return record.AuthPlugin, nil
 	}
 	return "", errors.New("Failed to get plugin for user")
@@ -293,7 +298,7 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
-	if !p.isValidHash(record) {
+	if !checkEncodedPWDLength(record) {
 		return "", errors.New("Failed to get plugin for user")
 	}
 	return record.AuthPlugin, nil
@@ -389,7 +394,9 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 }
 
 // CheckPasswordExpired checks whether the password has been expired.
-func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
+// The return boolean value indicates whether to enter sandbox mode or not.
+// See https://dev.mysql.com/doc/mysql-security-excerpt/8.0/en/expired-password-handling.html for more details.
+func CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
 	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
 	if record.PasswordExpired {
 		if isSandBoxModeEnabled {
@@ -481,14 +488,9 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	return true
 }
 
-// BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
-func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
-	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
-}
-
 // BuildPasswordLockingJSON builds PasswordLocking JSON string.
-func BuildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+func BuildPasswordLockingJSON(failedLoginAttempts int64, passwordLockTimeDays int64, autoAccountLocked string,
+	failedLoginCount int64, autoLockedLastChanged string) string {
 	var passwordLockingArray []string
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
@@ -532,8 +534,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
-	if globalPriv != nil {
+	if globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost); globalPriv != nil {
 		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
 			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
@@ -541,10 +542,10 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	}
 
-	pwd := record.AuthenticationString
-	if !p.isValidHash(record) {
+	if !checkEncodedPWDLength(record) {
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
+	pwd := record.AuthenticationString
 
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
@@ -554,13 +555,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
-			logutil.BgLogger().Error("empty authentication")
+			logutil.BgLogger().Error("empty authentication string")
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
-		var (
-			claims map[string]interface{}
-		)
+		var claims map[string]interface{}
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
@@ -628,7 +627,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	// Skip checking password expiration if the session is migrated from another session.
 	// Otherwise, the user cannot log in or execute statements after migration.
 	if user.AuthPlugin != mysql.AuthTiDBSessionToken {
-		info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+		info.InSandBoxMode, err = CheckPasswordExpired(sessionVars, record)
 	}
 	return
 }
@@ -889,12 +888,11 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 		return make([]*auth.RoleIdentity, 0, 10)
 	}
 
-	mysqlPrivilege := p.Handle.Get()
-	return mysqlPrivilege.getAllRoles(user, host)
+	return p.Handle.Get().getAllRoles(user, host)
 }
 
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
-func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
+func IsDynamicPrivilege(privName string) bool {
 	privNameInUpper := strings.ToUpper(privName)
 	for _, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
@@ -950,11 +948,6 @@ func RemoveDynamicPrivilege(privName string) bool {
 	return false
 }
 
-func init() {
-	extension.RegisterDynamicPrivilege = RegisterDynamicPrivilege
-	extension.RemoveDynamicPrivilege = RemoveDynamicPrivilege
-}
-
 // PasswordLocking is the User_attributes->>"$.Password_locking".
 // It records information about failed-login tracking and temporary account locking.
 type PasswordLocking struct {
@@ -966,38 +959,38 @@ type PasswordLocking struct {
 }
 
 // ParseJSON parses information about PasswordLocking.
-func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.BinaryJSON) error {
+func (pl *PasswordLocking) ParseJSON(passwordLockingJSON types.BinaryJSON) error {
 	var err error
 
-	passwordLocking.FailedLoginAttempts, err =
+	pl.FailedLoginAttempts, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
 	if err != nil {
 		return err
 	}
-	passwordLocking.FailedLoginAttempts = mathutil.Min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
-	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
+	pl.FailedLoginAttempts = mathutil.Min(pl.FailedLoginAttempts, math.MaxInt16)
+	pl.FailedLoginAttempts = mathutil.Max(pl.FailedLoginAttempts, 0)
 
-	passwordLocking.PasswordLockTimeDays, err =
+	pl.PasswordLockTimeDays, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = mathutil.Min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
+	pl.PasswordLockTimeDays = mathutil.Min(pl.PasswordLockTimeDays, math.MaxInt16)
+	pl.PasswordLockTimeDays = mathutil.Max(pl.PasswordLockTimeDays, -1)
 
-	passwordLocking.FailedLoginCount, err =
+	pl.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")
 	if err != nil {
 		return err
 	}
 
-	passwordLocking.AutoLockedLastChanged, err =
+	pl.AutoLockedLastChanged, err =
 		extractTimeUnixFromJSON(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if err != nil {
 		return err
 	}
 
-	passwordLocking.AutoAccountLocked, err =
+	pl.AutoAccountLocked, err =
 		extractBoolFromJSON(passwordLockingJSON, "$.Password_locking.auto_account_locked")
 	if err != nil {
 		return err

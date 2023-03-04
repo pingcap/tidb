@@ -2148,18 +2148,18 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 
 	count := len(privileges.GetDynamicPrivileges())
 
-	require.False(t, pm.IsDynamicPrivilege("ACDC_ADMIN"))
+	require.False(t, privileges.IsDynamicPrivilege("ACDC_ADMIN"))
 	require.Nil(t, privileges.RegisterDynamicPrivilege("ACDC_ADMIN"))
-	require.True(t, pm.IsDynamicPrivilege("ACDC_ADMIN"))
+	require.True(t, privileges.IsDynamicPrivilege("ACDC_ADMIN"))
 	require.Len(t, privileges.GetDynamicPrivileges(), count+1)
 
-	require.False(t, pm.IsDynamicPrivilege("iAmdynamIC"))
+	require.False(t, privileges.IsDynamicPrivilege("iAmdynamIC"))
 	require.Nil(t, privileges.RegisterDynamicPrivilege("IAMdynamic"))
-	require.True(t, pm.IsDynamicPrivilege("IAMdyNAMIC"))
+	require.True(t, privileges.IsDynamicPrivilege("IAMdyNAMIC"))
 	require.Len(t, privileges.GetDynamicPrivileges(), count+2)
 
 	require.Equal(t, "privilege name is longer than 32 characters", privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error())
-	require.False(t, pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"))
+	require.False(t, privileges.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"))
 
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER privassigntest")
@@ -3030,10 +3030,9 @@ func TestCheckPasswordExpired(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
 	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	record := privileges.NewUserRecord("%", "root")
-	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(), nil)
 
 	record.PasswordExpired = true
-	_, err := userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err := privileges.CheckPasswordExpired(sessionVars, &record)
 	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
 
 	record.PasswordExpired = false
@@ -3043,26 +3042,26 @@ func TestCheckPasswordExpired(t *testing.T) {
 	record.PasswordLifeTime = -1
 	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
 	time.Sleep(time.Second)
-	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err = privileges.CheckPasswordExpired(sessionVars, &record)
 	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
 	record.PasswordLastChanged = time.Now().AddDate(0, 0, -1)
-	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err = privileges.CheckPasswordExpired(sessionVars, &record)
 	require.NoError(t, err)
 
 	// never expire
 	record.PasswordLifeTime = 0
 	record.PasswordLastChanged = time.Now().AddDate(0, 0, -10)
-	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err = privileges.CheckPasswordExpired(sessionVars, &record)
 	require.NoError(t, err)
 
 	// expire with the specified time
 	record.PasswordLifeTime = 3
 	record.PasswordLastChanged = time.Now().AddDate(0, 0, -3)
 	time.Sleep(time.Second)
-	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err = privileges.CheckPasswordExpired(sessionVars, &record)
 	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
 	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
-	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	_, err = privileges.CheckPasswordExpired(sessionVars, &record)
 	require.NoError(t, err)
 }
 

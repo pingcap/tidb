@@ -2763,8 +2763,8 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	}
 	if passwordLocking.FailedLoginCount != 0 {
 		// If the number of account login failures is not zero, it will be updated to 0.
-		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
-			passwordLocking.PasswordLockTimeDays)
+		passwordLockingJSON := privileges.BuildPasswordLockingJSON(passwordLocking.FailedLoginAttempts, passwordLocking.PasswordLockTimeDays,
+			"N", 0, time.Now().Format(time.UnixDate))
 		if passwordLockingJSON != "" {
 			if err := s.passwordLocking(user, host, passwordLockingJSON); err != nil {
 				return err

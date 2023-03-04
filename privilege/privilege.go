@@ -56,7 +56,7 @@ type Manager interface {
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
-	// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
+	// HasExplicitlyGrantedDynamicPrivilege verifies whether a user has a dynamic privilege granted
 	// without using the SUPER privilege as a fallback.
 	HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
@@ -77,7 +77,7 @@ type Manager interface {
 	// Requires exact match on user name and host name.
 	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) (VerificationInfo, error)
 
-	// AuthSuccess records auth success state
+	// AuthSuccess records auth success state and update the latest username and host.
 	AuthSuccess(authUser, authHost string)
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
@@ -108,9 +108,6 @@ type Manager interface {
 
 	// GetAllRoles return all roles of user.
 	GetAllRoles(user, host string) []*auth.RoleIdentity
-
-	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
-	IsDynamicPrivilege(privNameInUpper string) bool
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 	GetAuthPluginForConnection(user, host string) (string, error)
