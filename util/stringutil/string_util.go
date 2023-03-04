@@ -444,32 +444,32 @@ func LowerOneString(str []byte) {
 // Because: when lowering "ABC" with escape 'a', after lower, "ABC" -> "abc",
 // then 'a' will be an escape char and it is not expected.
 // Morever, when escape char is uppered we need to tell it to the caller.
-func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) byte {
-	actual_escape_char := escape_char
-	if IsLowerAscii(escape_char) {
-		actual_escape_char = toUpperIfAlphaASCII(escape_char)
+func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
+	actualEscapeChar := escapeChar
+	if IsLowerAscii(escapeChar) {
+		actualEscapeChar = toUpperIfAlphaASCII(escapeChar)
 	}
 	escaped := false
-	str_len := len(str)
+	strLen := len(str)
 
-	for i := 0; i < str_len; i++ {
+	for i := 0; i < strLen; i++ {
 		if IsUpperAscii(str[i]) {
 			// Do not lower the escape char, however when a char is equal to
 			// an escape char and it's after an escape char, we still lower it
 			// For example: "AA" (escape 'A'), -> "Aa"
-			if str[i] != escape_char || escaped {
+			if str[i] != escapeChar || escaped {
 				str[i] = toLowerIfAlphaASCII(str[i])
-			} else if str[i] == escape_char {
+			} else {
 				escaped = true
 				continue
 			}
 		} else {
-			if str[i] == escape_char && !escaped {
+			if str[i] == escapeChar && !escaped {
 				escaped = true
 
 				// It should be `str[i] = toUpperIfAlphaASCII(str[i])`,
 				// but 'actual_escape_char' is always equal to 'toUpperIfAlphaASCII(str[i])'
-				str[i] = actual_escape_char
+				str[i] = actualEscapeChar
 				continue
 			}
 			len := Utf8Len(str[i])
@@ -478,5 +478,5 @@ func LowerOneStringExcludeEscapeChar(str []byte, escape_char byte) byte {
 		escaped = false
 	}
 
-	return actual_escape_char
+	return actualEscapeChar
 }

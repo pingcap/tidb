@@ -45,7 +45,7 @@ func (b *builtinIlikeSig) vectorized() bool {
 }
 
 func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	row_num := input.NumRows()
+	rowNum := input.NumRows()
 	bufVal, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -76,18 +76,18 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	// Must not use b.pattern to avoid data race
 	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 
-	tmp_val_col := bufVal.CopyConstruct(nil)
-	tmp_pattern_col := bufPattern.CopyConstruct(nil)
-	LowerAlphaAscii(tmp_val_col, row_num)
-	LowerAlphaAsciiExcludeEscapeChar(tmp_pattern_col, row_num, escapes)
-	bufVal = tmp_val_col
-	bufPattern = tmp_pattern_col
+	tmpValCol := bufVal.CopyConstruct(nil)
+	tmpPatternCol := bufPattern.CopyConstruct(nil)
+	LowerAlphaAscii(tmpValCol, rowNum)
+	LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escapes)
+	bufVal = tmpValCol
+	bufPattern = tmpPatternCol
 
-	result.ResizeInt64(row_num, false)
+	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
 
-	for i := 0; i < row_num; i++ {
+	for i := 0; i < rowNum; i++ {
 		if result.IsNull(i) {
 			continue
 		}
