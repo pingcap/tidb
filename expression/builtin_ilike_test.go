@@ -58,6 +58,7 @@ func TestIlike(t *testing.T) {
 		// escape tests
 		{"abc", "ABC", int('a'), 1, 1},
 		{"aaz", "Aaaz", int('a'), 1, 1},
+		{"AAz", "AAAAz", int('a'), 1, 1},
 		{"a", "Aa", int('A'), 1, 1},
 		{"a", "AA", int('A'), 1, 1},
 		{"Aa", "AAAA", int('A'), 1, 1},
@@ -66,6 +67,7 @@ func TestIlike(t *testing.T) {
 		{"A", "aA", int('a'), 1, 1},
 		{"a", "aA", int('a'), 1, 1},
 		{"aaa", "AAaA", int('a'), 1, 1},
+		{"a啊啊a", "a啊啊A", int('A'), 1, 1},
 		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('A'), 1, 1},
 		{"啊aAa啊啊啊aA", "啊AAA啊啊啊AA", int('a'), 1, 1},
 		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('a'), 0, 0},
