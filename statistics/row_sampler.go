@@ -258,7 +258,9 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 		datumBuffer = datumBuffer[:0]
 		for _, c := range group {
 			datumBuffer = append(datumBuffer, cols[c])
-			s.TotalSizes[colLen+i] += sizes[c] - 1
+			if !cols[c].IsNull() {
+				s.TotalSizes[colLen+i] += sizes[c] - 1
+			}
 		}
 		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
 		if err != nil {
