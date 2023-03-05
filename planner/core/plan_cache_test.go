@@ -213,6 +213,17 @@ func TestNonPreparedPlanCacheInListChange(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestNonPreparedPlanCacheMemoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'`)
+	tk.MustExec(`select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
