@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
@@ -253,15 +254,35 @@ type nonPreparedPlanCacheableChecker struct {
 	cacheable bool
 	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
-	constCnt  int
+
+	tableNode *ast.TableName
+	constCnt  int // the number of constants/parameters in this query
+	filterCnt int // the number of filters in the current node
 }
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if checker.isFilterNode(in) {
+		checker.filterCnt++
+	}
+
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
+	case *ast.ColumnName:
+		if checker.filterCnt > 0 {
+			// this column is appearing some filters, e.g. `col = 1`
+			colType, found := getColType(checker.schema, checker.tableNode, node)
+			if !found {
+				checker.cacheable = false
+				checker.reason = "some column is not found in table schema"
+			} else if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
+				checker.cacheable = false
+				checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
+			}
+		}
+		return in, !checker.cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
@@ -283,6 +304,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
+		checker.tableNode = node
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
@@ -327,7 +349,18 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 // Leave implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	if checker.isFilterNode(in) {
+		checker.filterCnt--
+	}
 	return in, checker.cacheable
+}
+
+func (checker *nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BetweenExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
+		return true
+	}
+	return false
 }
 
 func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
@@ -342,6 +375,22 @@ func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 		}
 	}
 	return false
+}
+
+func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.ColumnName) (colType byte, found bool) {
+	if tbl == nil {
+		return 0, false
+	}
+	tb, err := schema.TableByName(tbl.Schema, tbl.Name)
+	if err != nil {
+		return 0, false
+	}
+	for _, c := range tb.Cols() {
+		if c.Name.L == col.Name.L {
+			return c.GetType(), true
+		}
+	}
+	return 0, false
 }
 
 func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
