@@ -445,17 +445,26 @@ func CheckOnce(cols []*Column) error {
 }
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
-func (c *Column) CheckNotNull(data *types.Datum) error {
+// When caller is LOAD DATA, `rowCntInLoadData` should be greater than 0 and it
+// will return a ErrWarnNullToNotnull when error.
+// Otherwise, it will return a ErrColumnCantNull when error.
+func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error {
 	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
+		if rowCntInLoadData > 0 {
+			return ErrWarnNullToNotnull.GenWithStackByArgs(c.Name, rowCntInLoadData)
+		}
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil
 }
 
 // HandleBadNull handles the bad null error.
+// When caller is LOAD DATA, `rowCntInLoadData` should be greater than 0 the
+// error is ErrWarnNullToNotnull.
+// Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext) error {
-	if err := c.CheckNotNull(d); err != nil {
+func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext, rowCntInLoadData uint64) error {
+	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
 		if sc.BadNullAsWarning {
 			sc.AppendWarning(err)
 			*d = GetZeroValue(c.ToInfo())
@@ -474,16 +483,6 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 // IsCommonHandleColumn checks if the column is common handle column.
 func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
-}
-
-// CheckNotNull checks if row has nil value set to a column with NotNull flag set.
-func CheckNotNull(cols []*Column, row []types.Datum) error {
-	for _, c := range cols {
-		if err := c.CheckNotNull(&row[c.Offset]); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
