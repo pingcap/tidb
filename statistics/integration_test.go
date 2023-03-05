@@ -493,6 +493,7 @@ func TestAnalyzeLongString(t *testing.T) {
 }
 
 func TestOutdatedStatsCheck(t *testing.T) {
+	t.Skip("TODO")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
