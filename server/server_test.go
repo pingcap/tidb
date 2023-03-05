@@ -2168,7 +2168,7 @@ func (cli *testServerClient) runTestDBStmtCount(t *testing.T) {
 		dbt.MustExec("alter table t2 add column name varchar(10);")
 		dbt.MustExec("rename table t2 to t3;")
 		dbt.MustExec("rename table t3 to t2;")
-		dbt.MustExec("drop table t2;")	
+		dbt.MustExec("drop table t2;")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
 		require.Equal(t, originStmtCnt["CreateTable"]+2, currentStmtCnt["CreateTable"])
