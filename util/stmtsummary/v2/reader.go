@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
@@ -443,8 +444,9 @@ func (c *stmtChecker) needStop(curBegin int64) bool {
 }
 
 type stmtTinyRecord struct {
-	Begin int64 `json:"begin"`
-	End   int64 `json:"end"`
+	Begin        int64  `json:"begin"`
+	End          int64  `json:"end"`
+	KeyspaceName string `json:"keyspace_name,omitempty"`
 }
 
 type stmtFile struct {
@@ -716,6 +718,9 @@ func (*stmtScanWorker) parse(raw []byte) (*stmtTinyRecord, error) {
 }
 
 func (w *stmtScanWorker) needStop(record *stmtTinyRecord) bool {
+	if keyspace.GetKeyspaceNameBySettings() != record.KeyspaceName {
+		return false
+	}
 	return w.checker.needStop(record.Begin)
 }
 

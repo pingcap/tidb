@@ -145,8 +145,8 @@ type StmtRecord struct {
 	ExecRetryCount uint          `json:"exec_retry_count"`
 	ExecRetryTime  time.Duration `json:"exec_retry_time"`
 
-	KeyspaceName string `json:"keyspace_name"`
-	KeyspaceID   uint32 `json:"keyspace_id"`
+	KeyspaceName string `json:"keyspace_name,omitempty"`
+	KeyspaceID   uint32 `json:"keyspace_id,omitempty"`
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
