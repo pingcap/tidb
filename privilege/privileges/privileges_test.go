@@ -2158,7 +2158,6 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 	require.Equal(t, "privilege name is longer than 32 characters", privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error())
 	require.False(t, privileges.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"))
 
-	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER privassigntest")
 
 	// Check that all privileges registered are assignable to users,
