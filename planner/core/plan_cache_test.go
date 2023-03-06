@@ -657,7 +657,7 @@ func TestIssue41626(t *testing.T) {
 	tk.MustExec(`prepare st from 'select * from t where a<?'`)
 	tk.MustExec(`set @a=12`)
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '12' may be converted to INT"))
 }
 
 func TestIssue38269(t *testing.T) {
@@ -1162,5 +1162,91 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 		tk.MustExec("create binding for " + sql + " using " + bindSQL)
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
+func TestNonPreparedPlanExplainWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
+	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
+	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
+	tk.MustExec("analyze table t, t1, t2") // eliminate stats warnings
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
+
+	supported := []string{
+		"select * from t where a<10",
+		"select * from t where a<13 and b<15",
+		"select * from t where b=13",
+		"select * from t where c<8",
+		"select * from t where d>8",
+		"select * from t where c=8 and d>10",
+		"select * from t where a<12 and b<13 and c<12 and d>2",
+		"select * from t where a in (1, 2, 3)",
+		"select * from t where a<13 or b<15",
+		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
+	}
+
+	unsupported := []string{
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
+		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
+		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
+		"select * from t1 limit 1",                                                         // limit
+		"select * from t1 order by a",                                                      // order by
+		"select * from t1, t2",                                                             // join
+		"select * from (select * from t1) t",                                               // sub-query
+		"insert into t1 values(1, 1)",                                                      // insert
+		"insert into t1(a, b) select a, b from t1",                                         // insert into select
+		"update t1 set a = 1 where b = 2",                                                  // update
+		"delete from t1 where b = 1",                                                       // delete
+		"select * from t1 for update",                                                      // lock
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
+
+		"select * from t where a+b=13",      // '+'
+		"select * from t where mod(a, 3)=1", // mod
+		"select * from t where d>now()",     // now
+		// memtable
+	}
+
+	reasons := []string{
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that access multiple tables are not supported",
+		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
+		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
+		"skip non-prepared plan-cache: query has some unsupported binary operation",
+		"skip non-prepared plan-cache: query has some unsupported binary operation",
+		"skip non-prepared plan-cache: query has some unsupported Node",
+	}
+
+	for _, q := range supported {
+		tk.MustExec("explain " + q)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+
+	for idx, q := range unsupported {
+		tk.MustExec("explain " + q)
+		warn := tk.MustQuery("show warnings").Rows()[0]
+		require.Equal(t, reasons[idx], warn[2])
 	}
 }
