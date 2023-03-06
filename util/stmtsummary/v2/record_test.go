@@ -39,6 +39,8 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.Prepared, record1.Prepared)
 	require.Equal(t, info.StartTime, record1.FirstSeen)
 	require.Equal(t, info.StartTime, record1.LastSeen)
+	require.Equal(t, info.KeyspaceName, record1.KeyspaceName)
+	require.Equal(t, info.KeyspaceID, record1.KeyspaceID)
 	require.Empty(t, record1.AuthUsers)
 	require.Zero(t, record1.ExecCount)
 	require.Zero(t, record1.SumLatency)
