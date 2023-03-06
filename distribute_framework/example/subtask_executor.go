@@ -16,7 +16,6 @@ package example
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
 	"github.com/pingcap/tidb/util/logutil"
 
@@ -33,12 +32,14 @@ type ExampleStepTwoSubtaskExecutor struct {
 }
 
 func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
+	globalNumberCounter.Add(e.minimalTask.(int64))
 	logutil.BgLogger().Info("sub task executor run step one")
 	return nil
 }
 
 func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
-	logutil.BgLogger().Info("sub task executor run step one")
+	globalNumberCounter.Add(-2 * e.minimalTask.(int64))
+	logutil.BgLogger().Info("sub task executor run step two")
 	return nil
 }
 

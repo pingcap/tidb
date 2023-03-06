@@ -134,11 +134,14 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			continue
 		}
 		logutil.BgLogger().Info("detect new subtask", zap.Any("id", task.ID))
+		m.addHandlingTask(task.ID)
 		err = m.schedulerPool.Run(func() {
 			m.onRunnableTask(ctx, task.ID)
+			m.removeHandlingTask(task.ID)
 		})
 		// pool closed
 		if err != nil {
+			m.removeHandlingTask(task.ID)
 			m.onError(err)
 			return
 		}
@@ -149,7 +152,7 @@ func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range tasks {
-		if cancel, ok := m.mu.handlingTasks[task.ID]; ok {
+		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			cancel()
 		}
 	}
@@ -159,7 +162,9 @@ func (m *Manager) cancelAllRunningTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, cancel := range m.mu.handlingTasks {
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 	}
 }
 
@@ -179,15 +184,9 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks
-	runCtx, cancel := context.WithCancel(ctx)
-	m.addHandlingTask(taskID, cancel)
 	scheduler := NewScheduler(ctx, m.id, taskID, m.subtaskTable, m.subtaskExecutorPool)
 	scheduler.Start()
-	defer func() {
-		cancel()
-		scheduler.Stop()
-		m.removeHandlingTask(taskID)
-	}()
+	defer scheduler.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -211,7 +210,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 
 		switch task.State {
 		case proto.TaskStateRunning:
+			runCtx, runCancel := context.WithCancel(ctx)
+			m.registerCancelFunc(task.ID, runCancel)
 			err = scheduler.Run(runCtx, task)
+			runCancel()
 		case proto.TaskStateReverting:
 			err = scheduler.Rollback(ctx, task)
 		}
@@ -221,7 +223,13 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 	}
 }
 
-func (m *Manager) addHandlingTask(id int64, cancel context.CancelFunc) {
+func (m *Manager) addHandlingTask(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mu.handlingTasks[id] = nil
+}
+
+func (m *Manager) registerCancelFunc(id int64, cancel context.CancelFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mu.handlingTasks[id] = cancel
