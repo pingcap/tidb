@@ -178,7 +178,7 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 			units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(estimateSize)))
 	}
 	if !theResult.Passed {
-		theResult.Message += fmt.Sprintf(" Please expand the storage space in advance, otherwise the data import task may fail.")
+		theResult.Message += " Please expand the storage space in advance, otherwise the data import task may fail."
 	}
 	return theResult, nil
 }
