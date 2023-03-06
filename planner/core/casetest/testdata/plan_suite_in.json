@@ -73,6 +73,7 @@
       // Test MPP Hints with hash_join_build and hash_join_probe hints
       // TestMPPOuterJoinBuildSideForBroadcastJoin
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
       "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
