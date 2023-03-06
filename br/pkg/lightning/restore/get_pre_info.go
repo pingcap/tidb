@@ -54,6 +54,9 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// compressionRatio is the tikv/tiflash's compression ratio
+const compressionRatio = float64(1) / 3
+
 // EstimateSourceDataSizeResult is the object for estimated data size result.
 type EstimateSourceDataSizeResult struct {
 	// SizeWithIndex is the size with the index.
@@ -62,9 +65,9 @@ type EstimateSourceDataSizeResult struct {
 	SizeWithoutIndex int64
 	// HasUnsortedBigTables indicates whether the source data has unsorted big tables or not.
 	HasUnsortedBigTables bool
-	// TiFlashSizeWithIndex is the size of tiflash.
-	// note: TiFlashSizeWithIndex contains replica of tiflash
-	TiFlashSizeWithIndex int64
+	// TiFlashSize is the size of tiflash.
+	// note: TiFlashSize contains replica of tiflash
+	TiFlashSize int64
 }
 
 // PreRestoreInfoGetter defines the operations to get information from sources and target.
@@ -573,14 +576,15 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, o
 	}
 
 	if isLocalBackend(p.cfg) {
-		sizeWithIndex = sizeWithIndex / 3
+		sizeWithIndex = int64(float64(sizeWithIndex) / compressionRatio)
+		tiflashSize = int64(float64(tiflashSize) / compressionRatio)
 	}
 
 	result = &EstimateSourceDataSizeResult{
 		SizeWithIndex:        sizeWithIndex,
 		SizeWithoutIndex:     sourceTotalSize,
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
-		TiFlashSizeWithIndex: tiflashSize,
+		TiFlashSize:          tiflashSize,
 	}
 	p.estimatedSizeCache = result
 	return result, nil

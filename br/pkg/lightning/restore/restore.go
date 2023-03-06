@@ -2095,7 +2095,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
 	estimatedDataSizeWithIndex := estimatedSizeResult.SizeWithIndex
-	estimatedTiflashDataSize := estimatedSizeResult.TiFlashSizeWithIndex
+	estimatedTiflashDataSize := estimatedSizeResult.TiFlashSize
 
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if estimatedSizeResult.HasUnsortedBigTables {

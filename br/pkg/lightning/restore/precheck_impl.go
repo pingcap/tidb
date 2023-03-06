@@ -118,6 +118,7 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 			return nil, errors.Trace(err)
 		}
 		tikvSourceSize = uint64(estimatedDataSizeResult.SizeWithIndex)
+		tiflashSourceSize = uint64(estimatedDataSizeResult.TiFlashSize)
 		tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
