@@ -253,9 +253,9 @@ func main() {
 	terror.RegisterFinish()
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func(_ bool) {
+	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
-		cleanup(svr, storage, dom)
+		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
 		resourcemanager.InstanceResourceManager.Stop()
 		close(exited)
@@ -857,8 +857,20 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	dom.StopAutoAnalyze()
+
+	var drainClientWait time.Duration
+	if graceful {
+		drainClientWait = 1<<63 - 1
+	} else {
+		drainClientWait = gracefulCloseConnectionsTimeout
+	}
+	cancelClientWait := time.Second * 1
+	svr.DrainClients(drainClientWait, cancelClientWait)
+
 	// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()

@@ -555,12 +555,11 @@ func (s *Server) closeListener() {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
-	drainClientWait := time.Second * 15
-	cancelClientWait := time.Second * 1
-	s.drainClients(drainClientWait, cancelClientWait)
 }
 
 func (s *Server) registerConn(conn *clientConn) bool {
@@ -867,9 +866,9 @@ func (s *Server) KillAllConnections() {
 	s.KillSysProcesses()
 }
 
-// drainWait drain all connections in drainWait.
+// DrainClients drain all connections in drainWait.
 // After drainWait duration, we kill all connections still not quit explicitly and wait for cancelWait.
-func (s *Server) drainClients(drainWait time.Duration, cancelWait time.Duration) error {
+func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration) {
 	logger := logutil.BgLogger()
 	logger.Info("start drain clients")
 
@@ -912,7 +911,6 @@ func (s *Server) drainClients(drainWait time.Duration, cancelWait time.Duration)
 		logger.Warn("some sessions do not quit in cancel wait time")
 	}
 
-	return nil
 }
 
 // ServerID implements SessionManager interface.
