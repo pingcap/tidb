@@ -260,7 +260,6 @@ var tokenMap = map[string]int{
 	"CSV_TRIM_LAST_SEPARATORS": csvTrimLastSeparators,
 	"CURDATE":                  curDate,
 	"CURRENT_DATE":             currentDate,
-	"CURRENT_RESOURCE_GROUP":   currentResourceGroup,
 	"CURRENT_ROLE":             currentRole,
 	"CURRENT_TIME":             currentTime,
 	"CURRENT_TIMESTAMP":        currentTs,
