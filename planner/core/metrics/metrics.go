@@ -21,12 +21,16 @@ import (
 
 // planner core metrics vars
 var (
-	PseudoEstimationNotAvailable    prometheus.Counter
-	PseudoEstimationOutdate         prometheus.Counter
-	preparedPlanCacheHitCounter     prometheus.Counter
-	nonPreparedPlanCacheHitCounter  prometheus.Counter
-	preparedPlanCacheMissCounter    prometheus.Counter
-	nonPreparedPlanCacheMissCounter prometheus.Counter
+	PseudoEstimationNotAvailable               prometheus.Counter
+	PseudoEstimationOutdate                    prometheus.Counter
+	preparedPlanCacheHitCounter                prometheus.Counter
+	nonPreparedPlanCacheHitCounter             prometheus.Counter
+	preparedPlanCacheMissCounter               prometheus.Counter
+	nonPreparedPlanCacheMissCounter            prometheus.Counter
+	preparedPlanCacheInstancePlanNumCounter    prometheus.Gauge
+	nonPreparedPlanCacheInstancePlanNumCounter prometheus.Gauge
+	preparedPlanCacheInstanceMemoryUsage       prometheus.Gauge
+	nonPreparedPlanCacheInstanceMemoryUsage    prometheus.Gauge
 )
 
 func init() {
@@ -42,6 +46,11 @@ func InitMetricsVars() {
 	nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepared")
 	preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepared")
 	nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared")
+	preparedPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" prepared")
+	preparedPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" prepared")
+	nonPreparedPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" non-prepared")
+	preparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" prepared")
+	nonPreparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" non-prepared")
 }
 
 func GetPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
@@ -56,4 +65,18 @@ func GetPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
 		return nonPreparedPlanCacheMissCounter
 	}
 	return preparedPlanCacheMissCounter
+}
+
+func GetPlanCacheInstanceNumCounter(isNonPrepared bool) prometheus.Gauge {
+	if isNonPrepared {
+		return nonPreparedPlanCacheInstancePlanNumCounter
+	}
+	return preparedPlanCacheInstancePlanNumCounter
+}
+
+func GetPlanCacheInstanceMemoryUsage(isNonPrepared bool) prometheus.Gauge {
+	if isNonPrepared {
+		return nonPreparedPlanCacheInstanceMemoryUsage
+	}
+	return preparedPlanCacheInstanceMemoryUsage
 }

@@ -18,34 +18,14 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	utilpc "github.com/pingcap/tidb/util/plancache"
-	"github.com/prometheus/client_golang/prometheus"
 )
-
-var preparedPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" prepared")
-var nonPreparedPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" non-prepared")
-var preparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" prepared")
-var nonPreparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" non-prepared")
-
-func getPlanCacheInstanceNumCounter(isNonPrepared bool) prometheus.Gauge {
-	if isNonPrepared {
-		return nonPreparedPlanCacheInstancePlanNumCounter
-	}
-	return preparedPlanCacheInstancePlanNumCounter
-}
-
-func getPlanCacheInstanceMemoryUsage(isNonPrepared bool) prometheus.Gauge {
-	if isNonPrepared {
-		return nonPreparedPlanCacheInstanceMemoryUsage
-	}
-	return preparedPlanCacheInstanceMemoryUsage
-}
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
 type planCacheEntry struct {
@@ -224,9 +204,9 @@ func (l *LRUPlanCache) Close() {
 		return
 	}
 	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		getPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(l.memoryUsageTotal))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(l.memoryUsageTotal))
 	}
-	getPlanCacheInstanceNumCounter(l.isNonPrepared).Sub(float64(l.size))
+	core_metrics.GetPlanCacheInstanceNumCounter(l.isNonPrepared).Sub(float64(l.size))
 }
 
 // removeOldest removes the oldest element from the cache.
@@ -315,14 +295,14 @@ func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
 	}
 
 	if in != nil && out != nil { // replace plan
-		getPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
-		getPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage() - out.MemoryUsage()
 	} else if in != nil { // put plan
-		getPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage()
 	} else { // delete plan
-		getPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
 		l.memoryUsageTotal -= out.MemoryUsage()
 	}
 }
@@ -332,8 +312,8 @@ func updateInstancePlanNum(in, out *planCacheEntry, isNonPrepared bool) {
 	if in != nil && out != nil { // replace plan
 		return
 	} else if in != nil { // put plan
-		getPlanCacheInstanceNumCounter(isNonPrepared).Add(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(isNonPrepared).Add(1)
 	} else { // delete plan
-		getPlanCacheInstanceNumCounter(isNonPrepared).Sub(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(isNonPrepared).Sub(1)
 	}
 }
