@@ -38,6 +38,8 @@ const (
 	DefaultLogFormat = "text"
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
+	// DefaultSlowTxnThreshold is the default slow txn log threshold in ms.
+	DefaultSlowTxnThreshold = 0
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
 	DefaultQueryLogMaxLen = 4096
 	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
