@@ -133,8 +133,10 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
+		if added := m.addHandlingTask(task.ID); !added {
+			continue
+		}
 		logutil.BgLogger().Info("detect new subtask", zap.Any("id", task.ID))
-		m.addHandlingTask(task.ID)
 		err = m.schedulerPool.Run(func() {
 			m.onRunnableTask(ctx, task.ID)
 			m.removeHandlingTask(task.ID)
@@ -223,10 +225,14 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
 	}
 }
 
-func (m *Manager) addHandlingTask(id int64) {
+func (m *Manager) addHandlingTask(id int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.mu.handlingTasks[id]; ok {
+		return false
+	}
 	m.mu.handlingTasks[id] = nil
+	return true
 }
 
 func (m *Manager) registerCancelFunc(id int64, cancel context.CancelFunc) {
