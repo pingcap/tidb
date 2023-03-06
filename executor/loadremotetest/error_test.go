@@ -223,21 +223,47 @@ func (s *mockGCSSuite) TestDataError() {
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
 		"Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'c2' at row 1"))
 
-	// TODO: don't use batchCheckAndInsert, mimic (*InsertExec).exec()
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "t4.tsv",
+		},
+		Content: []byte("1\t2\n" +
+			"1\t2\n"),
+	})
 
-	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
-	//	INTO TABLE t;`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 'PRIMARY'")
+	s.tk.MustExec("CREATE TABLE t2 (c INT PRIMARY KEY, c2 INT NOT NULL);")
 
-	//s.server.CreateObject(fakestorage.Object{
-	//	ObjectAttrs: fakestorage.ObjectAttrs{
-	//		BucketName: "test-tsv",
-	//		Name:       "t2.tsv",
-	//	},
-	//	Content: []byte("null\t2\n" +
-	//		"3\t4\n"),
-	//})
-	//err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t2.tsv?endpoint=%s'
-	//	INTO TABLE t NULL DEFINED BY 'null';`, gcsEndpoint))
-	//checkClientErrorMessage(s.T(), err, "ERROR 8154 (HY000): LOAD DATA raises error(s): xxx")
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t4.tsv?endpoint=%s'
+		INTO TABLE t2;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '1' for key 't2.PRIMARY'")
+
+	s.tk.MustExec("CREATE TABLE t3 (c INT, c2 INT UNIQUE);")
+
+	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t4.tsv?endpoint=%s'
+		INTO TABLE t3;`, gcsEndpoint))
+	checkClientErrorMessage(s.T(), err, "ERROR 1062 (23000): Duplicate entry '2' for key 't3.c2'")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "t5.tsv",
+		},
+		Content: []byte("1\t100\n" +
+			"2\t100\n"),
+	})
+	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t5.tsv?endpoint=%s'
+		REPLACE INTO TABLE t3;`, gcsEndpoint))
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows())
+	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
+		"2 100"))
+
+	s.tk.MustExec("UPDATE t3 SET c = 3;")
+	s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t5.tsv?endpoint=%s'
+		IGNORE INTO TABLE t3;`, gcsEndpoint))
+	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
+		"Warning 1062 Duplicate entry '100' for key 't3.c2'",
+		"Warning 1062 Duplicate entry '100' for key 't3.c2'"))
+	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
+		"3 100"))
 }

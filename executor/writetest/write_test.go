@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -4016,15 +4015,6 @@ func TestIssue21232(t *testing.T) {
 	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
-}
-
-func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	re := new(executor.ReplaceExec)
-	sc.IgnoreTruncate = true
-	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
-	require.NoError(t, err)
-	require.Equal(t, same, res, "a: %v, b: %v", a, b)
 }
 
 func TestUpdate(t *testing.T) {
