@@ -1374,14 +1374,12 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
-
 	// SlowTxnThreshold is the threshold of slow transaction logs
 	SlowTxnThreshold uint64
 
 	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
 	// If exceeding the threshold, try other stores using replica read.
 	LoadBasedReplicaReadThreshold time.Duration
-
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
