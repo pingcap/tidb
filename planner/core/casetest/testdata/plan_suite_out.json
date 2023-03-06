@@ -1094,7 +1094,7 @@
         "Warn": null
       },
       {
-        "SQL": "select /*+ read_from_storage(tiflash[t1, t2@sel_2]), shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+        "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1107,12 +1107,11 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t1, t2]) */. Maybe you can use the table alias name",
           "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint"
         ]
       },
       {
-        "SQL": "select /*+ read_from_storage(tiflash[t1, t2@sel_2]), shuffle_join(t1, t2@sel_2), hash_join_build(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
+        "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1125,14 +1124,13 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t1, t2]) */. Maybe you can use the table alias name",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
           "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
         ]
       },
       {
-        "SQL": "select /*+ read_from_storage(tiflash[t1, t2@sel_2]), shuffle_join(t1, t2@sel_2), hash_join_probe(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+        "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1145,14 +1143,13 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t1, t2]) */. Maybe you can use the table alias name",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
           "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for left outer semi join, please check the hint",
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
         ]
       },
       {
-        "SQL": "select /*+ read_from_storage(tiflash[t1, t2@sel_2]), shuffle_join(t1, t2@sel_2), hash_join_probe(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
+        "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1165,7 +1162,6 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t2) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t1, t2]) */. Maybe you can use the table alias name",
           "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti left outer semi join, please check the hint"
         ]
       }
