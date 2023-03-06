@@ -95,19 +95,19 @@ func TestExplainFor(t *testing.T) {
 }
 
 func TestStmtCount(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = false
+	cfg.Performance.TCPKeepAlive = true
+	ts := createTidbTestSuiteWithCfg(t, cfg)
 
 	ts.runTestStmtCount(t)
 }
 
 func TestDBStmtCount(t *testing.T) {
-	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 0
-	cfg.Status.RecordDBLabel = true
-	cfg.Performance.TCPKeepAlive = true
-	ts := createTidbTestSuiteWithCfg(t, cfg)
+	ts := createTidbTestSuite(t)
 
 	ts.runTestDBStmtCount(t)
 }
