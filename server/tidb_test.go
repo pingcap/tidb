@@ -86,7 +86,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
-	cfg.Status.RecordDBLabel = false
+	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
