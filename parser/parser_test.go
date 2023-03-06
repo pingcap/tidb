@@ -1538,6 +1538,7 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT CURRENT_USER;", true, "SELECT CURRENT_USER()"},
 		{"SELECT CONNECTION_ID();", true, "SELECT CONNECTION_ID()"},
 		{"SELECT VERSION();", true, "SELECT VERSION()"},
+		{"SELECT CURRENT_RESOURCE_GROUP();", true, "SELECT CURRENT_RESOURCE_GROUP()"},
 		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(1000000, AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT BENCHMARK(AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT CHARSET('abc');", true, "SELECT CHARSET(_UTF8MB4'abc')"},
@@ -3676,6 +3677,9 @@ func TestDDL(t *testing.T) {
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},
 		{"drop resource group x,y", false, ""},
 		{"drop resource group if exists x,y", false, ""},
+
+		{"set resource group x;", true, "SET RESOURCE GROUP `x`"},
+		{"set resource group x y", false, ""},
 
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},
 		{"CREATE ROLE RESOURCE", false, ""},
