@@ -58,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -69,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
@@ -195,7 +195,9 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	registerMetrics()
+	err := metricsutil.RegisterMetrics()
+	terror.MustNil(err)
+
 	if variable.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -206,7 +208,7 @@ func main() {
 	setupExtensions()
 	setupStmtSummary()
 
-	err := cpuprofile.StartCPUProfiler()
+	err = cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
@@ -324,13 +326,6 @@ func registerStores() {
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
-}
-
-func registerMetrics() {
-	metrics.RegisterMetrics()
-	if config.GetGlobalConfig().Store == "unistore" {
-		uni_metrics.RegisterMetrics()
-	}
 }
 
 func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
