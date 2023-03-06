@@ -217,7 +217,7 @@ type commitTask struct {
 	cnt  uint64
 	rows [][]types.Datum
 
-	loadedRows      uint64
+	loadedRowCnt    uint64
 	scannedFileSize int64
 }
 
@@ -699,7 +699,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	progress := asyncloaddata.Progress{
 		SourceFileSize: -1,
 		LoadedFileSize: 0,
-		LoadedRows:     0,
+		LoadedRowCnt:   0,
 	}
 	// TODO try to read total file size from remote storage. gcs seems wrongly
 	// implement io.Seek
@@ -810,7 +810,7 @@ func (e *LoadDataWorker) processStream(
 		case e.commitTaskQueue <- commitTask{
 			cnt:             e.curBatchCnt,
 			rows:            e.rows,
-			loadedRows:      e.rowCount,
+			loadedRowCnt:    e.rowCount,
 			scannedFileSize: pos,
 		}:
 		}
@@ -858,7 +858,7 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 				newP := &asyncloaddata.Progress{
 					SourceFileSize: p.SourceFileSize,
 					LoadedFileSize: currScannedFileSize,
-					LoadedRows:     p.LoadedRows,
+					LoadedRowCnt:   p.LoadedRowCnt,
 				}
 				e.progress.Store(newP)
 				return nil
@@ -881,7 +881,7 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 			newP := &asyncloaddata.Progress{
 				SourceFileSize: p.SourceFileSize,
 				LoadedFileSize: lastScannedFileSize,
-				LoadedRows:     task.loadedRows,
+				LoadedRowCnt:   task.loadedRowCnt,
 			}
 			e.progress.Store(newP)
 			tasks++

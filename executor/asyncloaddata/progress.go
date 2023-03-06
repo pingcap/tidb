@@ -23,8 +23,8 @@ type Progress struct {
 	SourceFileSize int64
 	// LoadedFileSize is the size of the data that has been loaded in bytes.
 	LoadedFileSize int64
-	// LoadedRows is the number of rows that has been loaded.
-	LoadedRows uint64
+	// LoadedRowCnt is the number of rows that has been loaded.
+	LoadedRowCnt uint64
 }
 
 // String implements the fmt.Stringer interface.
