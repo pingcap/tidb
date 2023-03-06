@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -46,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -54,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -129,7 +126,7 @@ var (
 	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
-// DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
+// DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
 var DeliverPauser = common.NewPauser()
 
 // nolint:gochecknoinits // TODO: refactor
@@ -231,7 +228,7 @@ type Controller struct {
 	status         *LightningStatus
 	dupIndicator   *atomic.Bool
 
-	preInfoGetter       PreRestoreInfoGetter
+	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 
 	keyspaceName string
@@ -274,16 +271,16 @@ type ControllerParam struct {
 	KeyspaceName string
 }
 
-func NewRestoreController(
+func NewImportController(
 	ctx context.Context,
 	cfg *config.Config,
 	param *ControllerParam,
 ) (*Controller, error) {
 	param.Pauser = DeliverPauser
-	return NewRestoreControllerWithPauser(ctx, cfg, param)
+	return NewImportControllerWithPauser(ctx, cfg, param)
 }
 
-func NewRestoreControllerWithPauser(
+func NewImportControllerWithPauser(
 	ctx context.Context,
 	cfg *config.Config,
 	p *ControllerParam,
@@ -396,7 +393,7 @@ func NewRestoreControllerWithPauser(
 		tls:          tls,
 		backend:      backend,
 	}
-	preInfoGetter, err := NewPreRestoreInfoGetter(
+	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
 		p.DBMetas,
 		p.DumpFileStorage,
@@ -461,7 +458,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.restoreSchema,
 		rc.preCheckRequirements,
 		rc.initCheckpoint,
-		rc.restoreTables,
+		rc.importTables,
 		rc.fullCompact,
 		rc.cleanCheckpoints,
 	}
@@ -1426,7 +1423,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
-func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
+func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outpuErrorSummary()
 
@@ -1522,7 +1519,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	}
 
 	type task struct {
-		tr *TableRestore
+		tr *TableImporter
 		cp *checkpoints.TableCheckpoint
 	}
 
@@ -1579,7 +1576,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
-				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
+				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
@@ -1614,7 +1611,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
+			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1728,115 +1725,6 @@ func addExtendDataForCheckpoint(
 		}
 	}
 	return nil
-}
-
-func (tr *TableRestore) restoreTable(
-	ctx context.Context,
-	rc *Controller,
-	cp *checkpoints.TableCheckpoint,
-) (bool, error) {
-	// 1. Load the table info.
-	select {
-	case <-ctx.Done():
-		return false, ctx.Err()
-	default:
-	}
-
-	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
-	// no need to do anything if the chunks are already populated
-	if len(cp.Engines) > 0 {
-		tr.logger.Info("reusing engines and files info from checkpoint",
-			zap.Int("enginesCnt", len(cp.Engines)),
-			zap.Int("filesCnt", cp.CountChunks()),
-		)
-		err := addExtendDataForCheckpoint(ctx, rc.cfg, cp)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
-		if err := tr.populateChunks(ctx, rc, cp); err != nil {
-			return false, errors.Trace(err)
-		}
-
-		// fetch the max chunk row_id max value as the global max row_id
-		rowIDMax := int64(0)
-		for _, engine := range cp.Engines {
-			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
-				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
-			}
-		}
-		db, _ := rc.tidbGlue.GetDB()
-		versionStr, err := version.FetchVersion(ctx, db)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
-		versionInfo := version.ParseServerInfo(versionStr)
-
-		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
-			// first, insert a new-line into meta table
-			if err = metaMgr.InitTableMeta(ctx); err != nil {
-				return false, err
-			}
-
-			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
-			if err != nil {
-				return false, err
-			}
-			tr.RebaseChunkRowIDs(cp, rowIDBase)
-
-			if checksum != nil {
-				if cp.Checksum != *checksum {
-					cp.Checksum = *checksum
-					rc.saveCpCh <- saveCp{
-						tableName: tr.tableName,
-						merger: &checkpoints.TableChecksumMerger{
-							Checksum: cp.Checksum,
-						},
-					}
-				}
-				tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
-			}
-		}
-		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
-			return false, errors.Trace(err)
-		}
-		web.BroadcastTableCheckpoint(tr.tableName, cp)
-
-		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
-				return false, err
-			}
-		} else {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
-				return false, err
-			}
-		}
-		rc.saveCpCh <- saveCp{
-			tableName: tr.tableName,
-			merger: &checkpoints.RebaseCheckpointMerger{
-				AllocBase: cp.AllocBase,
-			},
-		}
-	}
-
-	// 2. Restore engines (if still needed)
-	err := tr.restoreEngines(ctx, rc, cp)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	err = metaMgr.UpdateTableStatus(ctx, metaStatusRestoreFinished)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
-	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
 func (rc *Controller) outpuErrorSummary() {
@@ -2200,105 +2088,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	return nil
 }
 
-type chunkRestore struct {
-	parser mydump.Parser
-	index  int
-	chunk  *checkpoints.ChunkCheckpoint
-}
-
-func newChunkRestore(
-	ctx context.Context,
-	index int,
-	cfg *config.Config,
-	chunk *checkpoints.ChunkCheckpoint,
-	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
-	tableInfo *checkpoints.TidbTableInfo,
-) (*chunkRestore, error) {
-	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-
-	reader, err := openReader(ctx, chunk.FileMeta, store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var parser mydump.Parser
-	switch chunk.FileMeta.Type {
-	case mydump.SourceTypeCSV:
-		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
-		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
-		if err != nil {
-			return nil, err
-		}
-		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
-	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	default:
-		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
-	}
-
-	if chunk.FileMeta.Compression == mydump.CompressionNone {
-		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
-		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
-	}
-	if len(chunk.ColumnPermutation) > 0 {
-		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
-	}
-
-	return &chunkRestore{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
-	}, nil
-}
-
-func (cr *chunkRestore) close() {
-	_ = cr.parser.Close()
-}
-
-func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
-	colIndexes := make([]int, 0, len(permutation))
-	for i := 0; i < len(permutation); i++ {
-		colIndexes = append(colIndexes, -1)
-	}
-	colCnt := 0
-	for i, p := range permutation {
-		if p >= 0 {
-			colIndexes[p] = i
-			colCnt++
-		}
-	}
-
-	names := make([]string, 0, colCnt)
-	for _, idx := range colIndexes {
-		// skip columns with index -1
-		if idx >= 0 {
-			// original fields contains _tidb_rowid field
-			if idx == len(tableInfo.Columns) {
-				names = append(names, model.ExtraHandleName.O)
-			} else {
-				names = append(names, tableInfo.Columns[idx].Name.O)
-			}
-		}
-	}
-	return names
-}
-
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
 	minDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
@@ -2318,203 +2107,7 @@ type deliverResult struct {
 	err      error
 }
 
-//nolint:nakedret // TODO: refactor
-func (cr *chunkRestore) deliverLoop(
-	ctx context.Context,
-	kvsCh <-chan []deliveredKVs,
-	t *TableRestore,
-	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
-	rc *Controller,
-) (deliverTotalDur time.Duration, err error) {
-	deliverLogger := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-		zap.String("task", "deliver"),
-	)
-	// Fetch enough KV pairs from the source.
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
-
-	dataSynced := true
-	hasMoreKVs := true
-	var startRealOffset, currRealOffset int64 // save to 0 at first
-
-	for hasMoreKVs {
-		c := keyspace.CodecV1
-		if t.kvStore != nil {
-			c = t.kvStore.GetCodec()
-		}
-		var (
-			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
-			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
-		)
-		var columns []string
-		var kvPacket []deliveredKVs
-		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
-		// chunk checkpoint should stay the same
-		startOffset := cr.chunk.Chunk.Offset
-		currOffset := startOffset
-		startRealOffset = cr.chunk.Chunk.RealOffset
-		currRealOffset = startRealOffset
-		rowID := cr.chunk.Chunk.PrevRowIDMax
-
-	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
-			select {
-			case kvPacket = <-kvsCh:
-				if len(kvPacket) == 0 {
-					hasMoreKVs = false
-					break populate
-				}
-				for _, p := range kvPacket {
-					if p.kvs == nil {
-						// This is the last message.
-						currOffset = p.offset
-						currRealOffset = p.realOffset
-						hasMoreKVs = false
-						break populate
-					}
-					p.kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
-					columns = p.columns
-					currOffset = p.offset
-					currRealOffset = p.realOffset
-					rowID = p.rowID
-				}
-			case <-ctx.Done():
-				err = ctx.Err()
-				return
-			}
-		}
-
-		err = func() error {
-			// We use `TryRLock` with sleep here to avoid blocking current goroutine during importing when disk-quota is
-			// triggered, so that we can save chunkCheckpoint as soon as possible after `FlushEngine` is called.
-			// This implementation may not be very elegant or even completely correct, but it is currently a relatively
-			// simple and effective solution.
-			for !rc.diskQuotaLock.TryRLock() {
-				// try to update chunk checkpoint, this can help save checkpoint after importing when disk-quota is triggered
-				if !dataSynced {
-					dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
-				}
-				time.Sleep(time.Millisecond)
-			}
-			defer rc.diskQuotaLock.RUnlock()
-
-			// Write KVs into the engine
-			start := time.Now()
-
-			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
-				if !common.IsContextCanceledError(err) {
-					deliverLogger.Error("write to data engine failed", log.ShortError(err))
-				}
-
-				return errors.Trace(err)
-			}
-			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
-				if !common.IsContextCanceledError(err) {
-					deliverLogger.Error("write to index engine failed", log.ShortError(err))
-				}
-				return errors.Trace(err)
-			}
-
-			if m, ok := metric.FromContext(ctx); ok {
-				deliverDur := time.Since(start)
-				deliverTotalDur += deliverDur
-				m.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
-				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
-				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
-				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
-			}
-			return nil
-		}()
-		if err != nil {
-			return
-		}
-		dataSynced = false
-
-		dataKVs = dataKVs.Clear()
-		indexKVs = indexKVs.Clear()
-
-		// Update the table, and save a checkpoint.
-		// (the write to the importer is effective immediately, thus update these here)
-		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
-		// In local mode, we should write these checkpoints after engine flushed.
-		lastOffset := cr.chunk.Chunk.Offset
-		cr.chunk.Checksum.Add(dataChecksum)
-		cr.chunk.Checksum.Add(indexChecksum)
-		cr.chunk.Chunk.Offset = currOffset
-		cr.chunk.Chunk.RealOffset = currRealOffset
-		cr.chunk.Chunk.PrevRowIDMax = rowID
-
-		if m, ok := metric.FromContext(ctx); ok {
-			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
-			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
-			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
-			// TODO: reproduce and find the root cause and fix it completely
-			var lowOffset, highOffset int64
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				lowOffset, highOffset = startRealOffset, currRealOffset
-			} else {
-				lowOffset, highOffset = startOffset, currOffset
-			}
-			delta := highOffset - lowOffset
-			if delta >= 0 {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
-				if rc.status != nil && rc.status.backend == config.BackendTiDB {
-					rc.status.FinishedFileSize.Add(delta)
-				}
-			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
-					zap.Int64("start", lowOffset))
-			}
-		}
-
-		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
-			// No need to save checkpoint if nothing was delivered.
-			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
-		}
-		failpoint.Inject("SlowDownWriteRows", func() {
-			deliverLogger.Warn("Slowed down write rows")
-			finished := rc.status.FinishedFileSize.Load()
-			total := rc.status.TotalFileSize.Load()
-			deliverLogger.Warn("PrintStatus Failpoint",
-				zap.Int64("finished", finished),
-				zap.Int64("total", total))
-		})
-		failpoint.Inject("FailAfterWriteRows", nil)
-		// TODO: for local backend, we may save checkpoint more frequently, e.g. after written
-		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
-		// can safely update current checkpoint.
-
-		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
-			if !isLocalBackend(rc.cfg) && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
-				// No need to save checkpoint if nothing was delivered.
-				saveCheckpoint(rc, t, engineID, cr.chunk)
-			}
-		})
-	}
-
-	return
-}
-
-func (cr *chunkRestore) maybeSaveCheckpoint(
-	rc *Controller,
-	t *TableRestore,
-	engineID int32,
-	chunk *checkpoints.ChunkCheckpoint,
-	data, index *backend.LocalEngineWriter,
-) bool {
-	if data.IsSynced() && index.IsSynced() {
-		saveCheckpoint(rc, t, engineID, chunk)
-		return true
-	}
-	return false
-}
-
-func saveCheckpoint(rc *Controller, t *TableRestore, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
+func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
@@ -2589,238 +2182,6 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
 	return filteredColumns, extendValueDatums
-}
-
-//nolint:nakedret // TODO: refactor
-func (cr *chunkRestore) encodeLoop(
-	ctx context.Context,
-	kvsCh chan<- []deliveredKVs,
-	t *TableRestore,
-	logger log.Logger,
-	kvEncoder kv.Encoder,
-	deliverCompleteCh <-chan deliverResult,
-	rc *Controller,
-) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
-	defer close(kvsCh)
-
-	send := func(kvs []deliveredKVs) error {
-		select {
-		case kvsCh <- kvs:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		case deliverResult, ok := <-deliverCompleteCh:
-			if deliverResult.err == nil && !ok {
-				deliverResult.err = ctx.Err()
-			}
-			if deliverResult.err == nil {
-				deliverResult.err = errors.New("unexpected premature fulfillment")
-				logger.DPanic("unexpected: deliverCompleteCh prematurely fulfilled with no error", zap.Bool("chIsOpen", ok))
-			}
-			return errors.Trace(deliverResult.err)
-		}
-	}
-
-	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
-	initializedColumns, reachEOF := false, false
-	// filteredColumns is column names that excluded ignored columns
-	// WARN: this might be not correct when different SQL statements contains different fields,
-	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
-	// so this should be ok.
-	var (
-		filteredColumns []string
-		extendVals      []types.Datum
-	)
-	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
-	if err1 != nil {
-		err = err1
-		return
-	}
-	for !reachEOF {
-		if err = pauser.Wait(ctx); err != nil {
-			return
-		}
-		offset, _ := cr.parser.Pos()
-		if offset >= cr.chunk.Chunk.EndOffset {
-			break
-		}
-
-		var readDur, encodeDur time.Duration
-		canDeliver := false
-		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
-		curOffset := offset
-		var newOffset, rowID, realOffset int64
-		var kvSize uint64
-		var realOffsetErr error
-	outLoop:
-		for !canDeliver {
-			readDurStart := time.Now()
-			err = cr.parser.ReadRow()
-			columnNames := cr.parser.Columns()
-			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				realOffset, realOffsetErr = cr.parser.RealPos()
-				if realOffsetErr != nil {
-					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
-						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
-				}
-			}
-
-			switch errors.Cause(err) {
-			case nil:
-				if !initializedColumns {
-					if len(cr.chunk.ColumnPermutation) == 0 {
-						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
-							return
-						}
-					}
-					filteredColumns = columnNames
-					ignoreColsMap := ignoreColumns.ColumnsMap()
-					if len(ignoreColsMap) > 0 || len(cr.chunk.FileMeta.ExtendData.Columns) > 0 {
-						filteredColumns, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
-					}
-					lastRow := cr.parser.LastRow()
-					lastRowLen := len(lastRow.Row)
-					extendColsMap := make(map[string]int)
-					for i, c := range cr.chunk.FileMeta.ExtendData.Columns {
-						extendColsMap[c] = lastRowLen + i
-					}
-					for i, col := range t.tableInfo.Core.Columns {
-						if p, ok := extendColsMap[col.Name.O]; ok {
-							cr.chunk.ColumnPermutation[i] = p
-						}
-					}
-					initializedColumns = true
-				}
-			case io.EOF:
-				reachEOF = true
-				break outLoop
-			default:
-				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
-				return
-			}
-			readDur += time.Since(readDurStart)
-			encodeDurStart := time.Now()
-			lastRow := cr.parser.LastRow()
-			lastRow.Row = append(lastRow.Row, extendVals...)
-			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
-			encodeDur += time.Since(encodeDurStart)
-
-			hasIgnoredEncodeErr := false
-			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
-				if encodeErr != nil {
-					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
-				}
-				hasIgnoredEncodeErr = true
-			}
-			cr.parser.RecycleRow(lastRow)
-			curOffset = newOffset
-
-			if err != nil {
-				return
-			}
-			if hasIgnoredEncodeErr {
-				continue
-			}
-
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
-				rowID: rowID, realOffset: realOffset})
-			kvSize += kvs.Size()
-			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
-				kvSize += uint64(val.(int))
-			})
-			// pebble cannot allow > 4.0G kv in one batch.
-			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
-			// so add this check.
-			if kvSize >= minDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
-				canDeliver = true
-				kvSize = 0
-			}
-		}
-		encodeTotalDur += encodeDur
-		readTotalDur += readDur
-		if m, ok := metric.FromContext(ctx); ok {
-			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
-		}
-
-		if len(kvPacket) != 0 {
-			deliverKvStart := time.Now()
-			if err = send(kvPacket); err != nil {
-				return
-			}
-			if m, ok := metric.FromContext(ctx); ok {
-				m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
-			}
-		}
-	}
-
-	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
-	return
-}
-
-func (cr *chunkRestore) restore(
-	ctx context.Context,
-	t *TableRestore,
-	engineID int32,
-	dataEngine, indexEngine *backend.LocalEngineWriter,
-	rc *Controller,
-) error {
-	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
-		SQLMode:   rc.cfg.TiDB.SQLMode,
-		Timestamp: cr.chunk.Timestamp,
-		SysVars:   rc.sysVars,
-		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
-	})
-	if err != nil {
-		return err
-	}
-	defer kvEncoder.Close()
-
-	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
-	deliverCompleteCh := make(chan deliverResult)
-
-	go func() {
-		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-		select {
-		case <-ctx.Done():
-		case deliverCompleteCh <- deliverResult{dur, err}:
-		}
-	}()
-
-	logTask := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "restore file")
-
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
-	var deliverErr error
-	select {
-	case deliverResult, ok := <-deliverCompleteCh:
-		if ok {
-			logTask.End(zap.ErrorLevel, deliverResult.err,
-				zap.Duration("readDur", readTotalDur),
-				zap.Duration("encodeDur", encodeTotalDur),
-				zap.Duration("deliverDur", deliverResult.totalDur),
-				zap.Object("checksum", &cr.chunk.Checksum),
-			)
-			deliverErr = deliverResult.err
-		} else {
-			// else, this must cause by ctx cancel
-			deliverErr = ctx.Err()
-		}
-	case <-ctx.Done():
-		deliverErr = ctx.Err()
-	}
-	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
 
 func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (

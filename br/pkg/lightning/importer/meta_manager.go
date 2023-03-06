@@ -1,6 +1,6 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -30,7 +30,7 @@ const (
 type metaMgrBuilder interface {
 	Init(ctx context.Context) error
 	TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr
-	TableMetaMgr(tr *TableRestore) tableMetaMgr
+	TableMetaMgr(tr *TableImporter) tableMetaMgr
 }
 
 type dbMetaMgrBuilder struct {
@@ -71,7 +71,7 @@ func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	}
 }
 
-func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
+func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 	return &dbTableMetaMgr{
 		session:      b.db,
 		taskID:       b.taskID,
@@ -94,7 +94,7 @@ type tableMetaMgr interface {
 type dbTableMetaMgr struct {
 	session      *sql.DB
 	taskID       int64
-	tr           *TableRestore
+	tr           *TableImporter
 	tableName    string
 	needChecksum bool
 }
@@ -1006,7 +1006,7 @@ func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	return noopTaskMetaMgr{}
 }
 
-func (b noopMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
+func (b noopMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 
@@ -1094,7 +1094,7 @@ func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	}
 }
 
-func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
+func (b singleMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 

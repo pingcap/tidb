@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	restoremock "github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	restoremock "github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
-	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -70,7 +70,7 @@ import (
 )
 
 type tableRestoreSuiteBase struct {
-	tr  *TableRestore
+	tr  *TableImporter
 	cfg *config.Config
 
 	tableInfo *checkpoints.TidbTableInfo
@@ -169,9 +169,9 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 }
 
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
-	// Collect into the test TableRestore structure
+	// Collect into the test TableImporter structure
 	var err error
-	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -197,9 +197,9 @@ func (s *tableRestoreSuite) SetupTest() {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints.TableCheckpoint{
@@ -381,7 +381,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 
 	// open the first engine meet error, should directly return the error
-	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
 	require.Equal(s.T(), "mock open index local writer failed", err.Error())
 
 	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
@@ -403,7 +403,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 
 	// open engine failed after write rows failed, should return write rows error
-	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
 	require.Equal(s.T(), "mock write rows failed", err.Error())
 }
 
@@ -446,9 +446,9 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints.TableCheckpoint{
@@ -464,7 +464,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -604,20 +604,6 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	}, cp.Engines)
 }
 
-func (s *tableRestoreSuite) TestGetColumnsNames() {
-	require.Equal(s.T(), []string{"a", "b", "c"}, getColumnNames(s.tableInfo.Core, []int{0, 1, 2, -1}))
-	require.Equal(s.T(), []string{"b", "a", "c"}, getColumnNames(s.tableInfo.Core, []int{1, 0, 2, -1}))
-	require.Equal(s.T(), []string{"b", "c"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, 1, -1}))
-	require.Equal(s.T(), []string{"a", "b"}, getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}))
-	require.Equal(s.T(), []string{"c", "a"}, getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}))
-	require.Equal(s.T(), []string{"b"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}))
-	require.Equal(s.T(), []string{"_tidb_rowid", "a", "b", "c"}, getColumnNames(s.tableInfo.Core, []int{1, 2, 3, 0}))
-	require.Equal(s.T(), []string{"b", "a", "c", "_tidb_rowid"}, getColumnNames(s.tableInfo.Core, []int{1, 0, 2, 3}))
-	require.Equal(s.T(), []string{"b", "_tidb_rowid", "c"}, getColumnNames(s.tableInfo.Core, []int{-1, 0, 2, 1}))
-	require.Equal(s.T(), []string{"c", "_tidb_rowid", "a"}, getColumnNames(s.tableInfo.Core, []int{2, -1, 0, 1}))
-	require.Equal(s.T(), []string{"_tidb_rowid", "b"}, getColumnNames(s.tableInfo.Core, []int{-1, 1, -1, 0}))
-}
-
 func (s *tableRestoreSuite) TestInitializeColumns() {
 	ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -729,7 +715,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -930,7 +916,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		cfg:          cfg,
 		targetDBGlue: g,
 	}
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,
 		dbMetas:          dbMetas,
 		targetInfoGetter: targetInfoGetter,
@@ -979,7 +965,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
-	err = rc.restoreTables(ctx)
+	err = rc.importTables(ctx)
 	require.NoError(s.T(), err)
 
 	chunkPending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
@@ -995,9 +981,9 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 }
 
 func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckpointUpdate", "sleep(100)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckpointUpdate")
 	}()
 
 	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
@@ -1127,7 +1113,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			cfg: cfg,
 			tls: tls,
 		}
-		preInfoGetter := &PreRestoreInfoGetterImpl{
+		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
@@ -1277,7 +1263,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			tls: tls,
 		}
 		dbMetas := []*mydump.MDDatabaseMeta{}
-		preInfoGetter := &PreRestoreInfoGetterImpl{
+		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
@@ -1424,7 +1410,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	mockTarget := restoremock.NewMockTargetInfo()
 
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              s.cfg,
 		srcStorage:       s.store,
 		encBuilder:       importer,
@@ -2157,7 +2143,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			},
 		}
 		ioWorkers := worker.NewPool(context.Background(), 1, "io")
-		preInfoGetter := &PreRestoreInfoGetterImpl{
+		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:        cfg,
 			srcStorage: mockStore,
 			ioWorkers:  ioWorkers,
@@ -2229,7 +2215,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		},
 	}
 	ioWorkers := worker.NewPool(ctx, 1, "io")
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:        cfg,
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,

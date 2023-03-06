@@ -1,6 +1,6 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -34,7 +34,7 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
+func newTableRestore(t *testing.T, kvStore kv.Storage) *TableImporter {
 	p := parser.New()
 	se := tmock.NewContext()
 
@@ -73,7 +73,7 @@ func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
 	tableName := common.UniqueTable(schema, tb)
 	logger := log.With(zap.String("table", tableName))
 
-	return &TableRestore{
+	return &TableImporter{
 		dbInfo:    dbInfo,
 		tableName: tableName,
 		tableInfo: ti,

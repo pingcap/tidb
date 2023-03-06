@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +29,7 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 
-	preInfoGetter, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	preInfoGetter, err := NewPreImportInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
 	require.NoError(t, err)
 	theCheckBuilder := NewPrecheckItemBuilder(cfg, mockSrc.GetAllDBFileMetas(), preInfoGetter, nil)
 	for _, checkItemID := range []CheckItemID{
