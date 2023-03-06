@@ -200,7 +200,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// try to get Plan from the NonPrepared Plan Cache
 	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
 		isStmtNode &&
-		!useBinding { // TODO: support binding
+		!useBinding && isSpecifiedExplain(stmtNode) { // TODO: support binding
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
@@ -320,6 +320,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	return bestPlan, names, nil
+}
+
+// only explain format = 'plan_cache' can hit non-prepared plan-cache
+func isSpecifiedExplain(stmtNode ast.StmtNode) bool {
+	explainNode, isExplain := stmtNode.(*ast.ExplainStmt)
+	if !isExplain || (isExplain && explainNode.Format == "plan cache") {
+		return true
+	}
+	return false
 }
 
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
