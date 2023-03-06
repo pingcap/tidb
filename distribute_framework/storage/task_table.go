@@ -216,11 +216,16 @@ type SubTaskManager struct {
 	mu  sync.Mutex
 }
 
-func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID string, meta []byte, tp string) error {
+func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID string, meta []byte, tp string, isRevert bool) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state, type) values (%?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, proto.TaskStatePending, tp)
+	st := proto.TaskStatePending
+	if isRevert {
+		st = proto.TaskStateRevertPending
+	}
+
+	_, err := ExecSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state, type) values (%?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, st, tp)
 	if err != nil {
 		return err
 	}
@@ -253,6 +258,20 @@ func (stm *SubTaskManager) GetSubtaskInStates(InstanceID string, taskID int64, s
 	t.StartTime, _ = rs[0].GetTime(5).GoTime(time.UTC)
 
 	return t, nil
+}
+
+func (stm *SubTaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	args := []interface{}{taskID}
+	args = append(args, states...)
+	rs, err := ExecSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_sub_task where task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return rs[0].GetInt64(0), nil
 }
 
 func (stm *SubTaskManager) HasSubtasksInStates(InstanceID string, taskID int64, states ...interface{}) (bool, error) {
@@ -313,27 +332,27 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID int64, state string, eq b
 	return rs[0].GetInt64(0), nil
 }
 
-func (stm *SubTaskManager) CheckTaskNonStates(globalTaskID int64, states ...interface{}) (cnt int64, err error) {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	if len(states) == 0 {
-		return 0, nil
-	}
-
-	query := "select count(*) from mysql.tidb_sub_task where task_id = %?"
-	for i := 0; i < len(states); i++ {
-		query += " and state != %?"
-	}
-	args := []interface{}{globalTaskID}
-	args = append(args, states...)
-	rs, err := ExecSQL(stm.ctx, stm.se, query, args...)
-	if err != nil {
-		return 0, err
-	}
-
-	return rs[0].GetInt64(0), nil
-}
+//func (stm *SubTaskManager) CheckTaskNonStates(globalTaskID int64, states ...interface{}) (cnt int64, err error) {
+//	stm.mu.Lock()
+//	defer stm.mu.Unlock()
+//
+//	if len(states) == 0 {
+//		return 0, nil
+//	}
+//
+//	query := "select count(*) from mysql.tidb_sub_task where task_id = %?"
+//	for i := 0; i < len(states); i++ {
+//		query += " and state != %?"
+//	}
+//	args := []interface{}{globalTaskID}
+//	args = append(args, states...)
+//	rs, err := ExecSQL(stm.ctx, stm.se, query, args...)
+//	if err != nil {
+//		return 0, err
+//	}
+//
+//	return rs[0].GetInt64(0), nil
+//}
 
 func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
 	stm.mu.Lock()

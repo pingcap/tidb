@@ -115,7 +115,7 @@ func (s *SchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 		}
 
 		minimalTasks := scheduler.SplitSubtask(subtask)
-		logutil.BgLogger().Info("splite subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("id", s.id))
+		logutil.BgLogger().Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("id", s.id), zap.Any("subTaskId", subtask.ID))
 		for _, minimalTask := range minimalTasks {
 			minimalTaskWg.Add(1)
 			j := minimalTask
@@ -137,7 +137,8 @@ func (s *SchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 		}
 	}
 
-	return s.getError()
+	s.clearError()
+	return nil
 }
 
 func (s *SchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
@@ -258,6 +259,12 @@ func (s *SchedulerImpl) getError() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.mu.err
+}
+
+func (s *SchedulerImpl) clearError() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.err = nil
 }
 
 func (s *SchedulerImpl) updateSubtaskState(id int64, state string) {

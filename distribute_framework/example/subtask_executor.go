@@ -16,6 +16,7 @@ package example
 
 import (
 	"context"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distribute_framework/scheduler"
 	"github.com/pingcap/tidb/util/logutil"
 
@@ -32,14 +33,26 @@ type ExampleStepTwoSubtaskExecutor struct {
 }
 
 func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
-	globalNumberCounter.Add(e.minimalTask.(int64))
 	logutil.BgLogger().Info("sub task executor run step one")
+
+	failpoint.Inject("mockStepOneError", func() {
+		if e.minimalTask.(int64) == 8 {
+			failpoint.Return(errors.New("mock step one run error"))
+		}
+	})
+	globalNumberCounter.Add(e.minimalTask.(int64))
 	return nil
 }
 
 func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
-	globalNumberCounter.Add(-2 * e.minimalTask.(int64))
 	logutil.BgLogger().Info("sub task executor run step two")
+
+	failpoint.Inject("mockStepTwoError", func() {
+		if e.minimalTask.(int64) == 8 {
+			failpoint.Return(errors.New("mock step two run error"))
+		}
+	})
+	globalNumberCounter.Add(-2 * e.minimalTask.(int64))
 	return nil
 }
 

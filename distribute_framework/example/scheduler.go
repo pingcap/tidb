@@ -16,6 +16,7 @@ package example
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -49,6 +50,7 @@ func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 }
 
 func (s *ExampleStepOneScheduler) Rollback(ctx context.Context) error {
+	logutil.BgLogger().Info("rollback step one")
 	return nil
 }
 
@@ -66,6 +68,7 @@ func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 }
 
 func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
+	logutil.BgLogger().Info("rollback step two")
 	return nil
 }
 

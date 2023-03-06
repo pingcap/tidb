@@ -36,7 +36,7 @@ func (h *Handle) checkGlobalTaskDone(id int64, ch chan struct{}) {
 	for {
 		select {
 		case <-tk:
-			r, err := storage.ExecSQL(h.ctx, h.se, "select count(*) from mysql.tidb_global_task where state = %? and id = %?", string(proto.TaskStateSucceed), id)
+			r, err := storage.ExecSQL(h.ctx, h.se, "select count(*) from mysql.tidb_global_task where state in (%?, %?)  and id = %?", proto.TaskStateSucceed, proto.TaskStateReverted, id)
 			if err != nil {
 				logutil.BgLogger().Error("check global task done failed", zap.Error(err))
 			}
