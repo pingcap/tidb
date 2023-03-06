@@ -1,4 +1,4 @@
-package restore
+package importer
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 )
 
 type CheckItemID string
@@ -53,7 +53,7 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	checkpointsDB checkpoints.DB
 }
 
@@ -81,7 +81,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
-	preInfoGetter, err := NewPreRestoreInfoGetter(
+	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
 		dbMetas,
 		srcStorage,
@@ -103,7 +103,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 func NewPrecheckItemBuilder(
 	cfg *config.Config,
 	dbMetas []*mydump.MDDatabaseMeta,
-	preInfoGetter PreRestoreInfoGetter,
+	preInfoGetter PreImportInfoGetter,
 	checkpointsDB checkpoints.DB,
 ) *PrecheckItemBuilder {
 	return &PrecheckItemBuilder{
@@ -148,6 +148,6 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 }
 
 // GetPreInfoGetter gets the pre restore info getter from the builder.
-func (b *PrecheckItemBuilder) GetPreInfoGetter() PreRestoreInfoGetter {
+func (b *PrecheckItemBuilder) GetPreInfoGetter() PreImportInfoGetter {
 	return b.preInfoGetter
 }

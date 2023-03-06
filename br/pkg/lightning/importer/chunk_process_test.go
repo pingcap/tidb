@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"compress/gzip"
@@ -55,7 +55,7 @@ import (
 type chunkRestoreSuite struct {
 	suite.Suite
 	tableRestoreSuiteBase
-	cr *chunkRestore
+	cr *chunkProcessor
 }
 
 func TestChunkRestoreSuite(t *testing.T) {
@@ -84,7 +84,7 @@ func (s *chunkRestoreSuite) SetupTest() {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(context.Background(), 1, s.cfg, &chunk, w, s.store, nil)
+	s.cr, err = newChunkProcessor(context.Background(), 1, s.cfg, &chunk, w, s.store, nil)
 	require.NoError(s.T(), err)
 }
 
@@ -410,8 +410,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	require.NoError(s.T(), failpoint.Enable(
-		"github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size", "return(110000000)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size")
+		"github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size", "return(110000000)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size")
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 
@@ -651,7 +651,7 @@ func (s *chunkRestoreSuite) TestRestore() {
 	require.NoError(s.T(), err)
 
 	saveCpCh := make(chan saveCp, 16)
-	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
+	err = s.cr.process(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
 		backend:  importer,
@@ -731,7 +731,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	cfg.App.TableConcurrency = 2
 	cfg.Mydumper.CSV.Header = false
 
-	cr, err := newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	cr, err := newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil)
 	require.NoError(t, err)
 	var (
 		id, lastID int
@@ -763,7 +763,7 @@ func TestCompressChunkRestore(t *testing.T) {
 			RowIDMax:     100,
 		},
 	}
-	cr, err = newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	cr, err = newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil)
 	require.NoError(t, err)
 	for id = lastID; id < 300; {
 		err = cr.parser.ReadRow()
@@ -779,4 +779,33 @@ func TestCompressChunkRestore(t *testing.T) {
 	require.Equal(t, int64(100), rowID)
 	err = cr.parser.ReadRow()
 	require.Equal(t, io.EOF, errors.Cause(err))
+}
+
+func TestGetColumnsNames(t *testing.T) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	se := tmock.NewContext()
+	node, err := p.ParseOneStmt(`
+	CREATE TABLE "table" (
+		a INT,
+		b INT,
+		c INT,
+		KEY (b)
+	)`, "", "")
+	require.NoError(t, err)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+	require.NoError(t, err)
+	tableInfo.State = model.StatePublic
+
+	require.Equal(t, []string{"a", "b", "c"}, getColumnNames(tableInfo, []int{0, 1, 2, -1}))
+	require.Equal(t, []string{"b", "a", "c"}, getColumnNames(tableInfo, []int{1, 0, 2, -1}))
+	require.Equal(t, []string{"b", "c"}, getColumnNames(tableInfo, []int{-1, 0, 1, -1}))
+	require.Equal(t, []string{"a", "b"}, getColumnNames(tableInfo, []int{0, 1, -1, -1}))
+	require.Equal(t, []string{"c", "a"}, getColumnNames(tableInfo, []int{1, -1, 0, -1}))
+	require.Equal(t, []string{"b"}, getColumnNames(tableInfo, []int{-1, 0, -1, -1}))
+	require.Equal(t, []string{"_tidb_rowid", "a", "b", "c"}, getColumnNames(tableInfo, []int{1, 2, 3, 0}))
+	require.Equal(t, []string{"b", "a", "c", "_tidb_rowid"}, getColumnNames(tableInfo, []int{1, 0, 2, 3}))
+	require.Equal(t, []string{"b", "_tidb_rowid", "c"}, getColumnNames(tableInfo, []int{-1, 0, 2, 1}))
+	require.Equal(t, []string{"c", "_tidb_rowid", "a"}, getColumnNames(tableInfo, []int{2, -1, 0, 1}))
+	require.Equal(t, []string{"_tidb_rowid", "b"}, getColumnNames(tableInfo, []int{-1, 1, -1, 0}))
 }

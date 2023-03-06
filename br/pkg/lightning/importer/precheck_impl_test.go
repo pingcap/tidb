@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -21,9 +21,9 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
-	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/suite"
@@ -36,7 +36,7 @@ type precheckImplSuite struct {
 	cfg           *config.Config
 	mockSrc       *mock.MockImportSource
 	mockTarget    *mock.MockTargetInfo
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 }
 
 func TestPrecheckImplSuite(t *testing.T) {
@@ -64,7 +64,7 @@ func (s *precheckImplSuite) setMockImportData(mockDataMap map[string]*mock.MockD
 	if err != nil {
 		return err
 	}
-	s.preInfoGetter, err = NewPreRestoreInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
+	s.preInfoGetter, err = NewPreImportInfoGetter(s.cfg, s.mockSrc.GetAllDBFileMetas(), s.mockSrc.GetStorage(), s.mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
 	if err != nil {
 		return err
 	}
