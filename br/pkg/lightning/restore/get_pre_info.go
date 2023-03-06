@@ -567,7 +567,7 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, o
 				}
 
 				sizeWithIndex += tableSize
-				if tableInfo.Core.TiFlashReplica.Available {
+				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
 					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
 				}
 				tableCount += 1
