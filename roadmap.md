@@ -50,6 +50,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
               online DDL
             </i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -87,6 +88,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b>Multi-model support</b>
           </li>
+          <br />
         </ul>
       </td>
     </tr>
@@ -128,6 +130,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>End-to-end data correctness check</b>
             <br /><i>Prevent data error or corruption through TiCDC</i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -149,6 +152,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>TiFlash spill to disk</b>
             <br /><i>Avoid TiFlash OOM</i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -160,6 +164,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b>Global table</b>
           </li>
+          <br />
         </ul>
       </td>
     </tr>
@@ -184,6 +189,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
               Support traveling a single table to a specific time via SQL
             </i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -192,6 +198,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>Materialized views</b>
             <br /><i>Support pre-calculation to boost query performance</i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -211,6 +218,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b>User-defined functions</b>
           </li>
+          <br />
         </ul>
       </td>
     </tr>
@@ -250,6 +258,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
               >Improve user-friendliness through operational enhancements</i
             >
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -276,6 +285,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b> Automatic pause/resume DDL during upgrade </b>
             <br /><i>Ensure a smooth upgrade experience</i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -316,6 +326,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <br />
             <i>Enhance logs with greater details</i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -338,6 +349,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
               components
             </i>
           </li>
+          <br />
         </ul>
       </td>
       <td>
@@ -353,6 +365,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
           <li>
             <b>Enhanced data lifecycle management</b>
           </li>
+          <br />
         </ul>
       </td>
     </tr>
