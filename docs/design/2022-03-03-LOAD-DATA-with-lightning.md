@@ -1,4 +1,5 @@
 # Integrate LOAD DATA with tidb-lightning
+
 - Author: [lance6716](https://github.com/lance6716), [D3Hunter](https://github.com/D3Hunter)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/40499
 
@@ -35,9 +36,9 @@ Reading the file through MySQL client's connection requires TiDB server to [writ
 ```golang
 // LoadDataWorker does a LOAD DATA job.
 type LoadDataWorker struct {
-	*InsertValues // executor package
+    *InsertValues // executor package
 
-	Ctx  sessionctx.Context
+    Ctx  sessionctx.Context
     ...
 }
 ```
@@ -56,17 +57,17 @@ TiDB lightning features many supported data file format, like CSV, parquet, etc.
 
 ```golang
 func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
-	var (
-		parser mydump.Parser
-		err    error
-	)
+    var (
+        parser mydump.Parser
+        err    error
+    )
 
-	switch strings.ToLower(e.format) {
-	case XXX:
-		parser, err = mydump.NewXXXParser(
-			ctx,
-			reader,
-			...
+    switch strings.ToLower(e.format) {
+    case XXX:
+        parser, err = mydump.NewXXXParser(
+            ctx,
+            reader,
+            ...
         )
     case YYY:
         ...
@@ -80,6 +81,8 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 The *data parser* output the data of one row in the type of `[]types.Datum`, the *load data worker* iterate the *data parser* to accumulate a batch to be further processed. An empty batch means the source file has been read totally.
 
 ### KV encoder
+
+The *load data worker* owns a `InsertValues`, which can be used to encode the data to KV pairs. `InsertValues` is also used by other INSERT-like statements, it has more maintenance that lightning's separated KV encoder. Reusing it rather than lightning's one can prevent bugs that caused by lightning's encoding behaviour is outdated, for example, [#41454](https://github.com/pingcap/tidb/issues/41454).
 
 ### KV writer
 
