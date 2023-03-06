@@ -200,8 +200,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// try to get Plan from the NonPrepared Plan Cache
 	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
-		isStmtNode && !useBinding {
-		// TODO: support binding
+		isStmtNode &&
+		!useBinding { // TODO: support binding
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
@@ -357,7 +357,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
