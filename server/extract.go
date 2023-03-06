@@ -127,15 +127,26 @@ func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 	beginStr := req.URL.Query().Get(pBegin)
 	endStr := req.URL.Query().Get(pEnd)
-	begin, err := time.Parse(types.TimeFormat, beginStr)
-	if err != nil {
-		logutil.BgLogger().Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
-		return nil, false, err
+	var begin time.Time
+	var err error
+	if len(beginStr) < 1 {
+		begin = time.Now().Add(30 * time.Minute)
+	} else {
+		begin, err = time.Parse(types.TimeFormat, beginStr)
+		if err != nil {
+			logutil.BgLogger().Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
+			return nil, false, err
+		}
 	}
-	end, err := time.Parse(types.TimeFormat, endStr)
-	if err != nil {
-		logutil.BgLogger().Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
-		return nil, false, err
+	var end time.Time
+	if len(endStr) < 1 {
+		end = time.Now()
+	} else {
+		end, err = time.Parse(types.TimeFormat, endStr)
+		if err != nil {
+			logutil.BgLogger().Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
+			return nil, false, err
+		}
 	}
 	isDumpStr := req.URL.Query().Get(pIsDump)
 	isDump, err := strconv.ParseBool(isDumpStr)
