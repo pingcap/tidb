@@ -216,7 +216,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		if len(group) != 1 {
 			continue
 		}
-		// For the sinlge-column group, its FMSketch is the same as that of the corresponding column. Hence, we don't
+		// For the single-column group, its FMSketch is the same as that of the corresponding column. Hence, we don't
 		// maintain its FMSketch in collectColumnGroups. We just copy the corresponding column's FMSketch after
 		// iterating all rows. Also, we can directly copy TotalSize and NullCount.
 		colIdx := group[0]
