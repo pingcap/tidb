@@ -1239,3 +1239,30 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
 }
+
+func TestNonPreparedPlanCacheExplain(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	formats := []string{
+		"row",
+		"brief",
+		"dot",
+		"tidb_json",
+		"verbose",
+		"cost_trace",
+	}
+
+	for _, format := range formats {
+		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t", format))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+
+	for _, format := range formats {
+		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t limit 1", format))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+}

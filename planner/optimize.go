@@ -199,8 +199,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// try to get Plan from the NonPrepared Plan Cache
 	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
-		isStmtNode &&
-		!useBinding && !sctx.GetSessionVars().StmtCtx.InExplainStmt { // TODO: support binding
+		isStmtNode && !useBinding && !sctx.GetSessionVars().StmtCtx.InExplainStmt {
+		// TODO: support binding
+		// TODO: only specified explain format can use non-prep plan cache
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
