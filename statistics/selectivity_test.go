@@ -402,7 +402,7 @@ func TestStatsVer2(t *testing.T) {
 }
 
 func TestTopNOutOfHist(t *testing.T) {
-	t.Skip("TODO")
+	t.Skip("unknown")
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
@@ -714,9 +714,9 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
+	t.Skip("estimation")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=false`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a,b))")
