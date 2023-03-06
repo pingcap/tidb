@@ -144,17 +144,17 @@ func TestSetResourceGroup(t *testing.T) {
 
 	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
 	tk.MustExec("ALTER USER `root` RESOURCE GROUP `rg1`")
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP").Check(testkit.Rows(""))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP").Check(testkit.Rows("rg1"))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 
 	tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 200")
 	tk.MustExec("SET RESOURCE GROUP `rg2`")
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP").Check(testkit.Rows("rg2"))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
 	tk.MustExec("SET RESOURCE GROUP ``")
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP").Check(testkit.Rows(""))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows(""))
 
 	tk.RefreshSession()
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP").Check(testkit.Rows("rg1"))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 }
