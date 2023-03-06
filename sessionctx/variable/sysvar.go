@@ -2384,6 +2384,14 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLoadBasedReplicaReadThreshold, Value: time.Duration(DefTiDBLoadBasedReplicaReadThreshold).String(), Type: TypeDuration, MaxValue: uint64(time.Hour), SetSession: func(s *SessionVars, val string) error {
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return err
+		}
+		s.LoadBasedReplicaReadThreshold = d
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBTTLRunningTasks, Value: strconv.Itoa(DefTiDBTTLRunningTasks), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {

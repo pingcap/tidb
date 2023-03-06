@@ -575,6 +575,8 @@ type Request struct {
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit
 	LimitSize uint64
+	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
+	StoreBusyThreshold time.Duration
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
