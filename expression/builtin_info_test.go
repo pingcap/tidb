@@ -96,6 +96,20 @@ func TestCurrentUser(t *testing.T) {
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
+func TestCurrentResourceGroup(t *testing.T) {
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ResourceGroupName = "rg1"
+
+	fc := funcs[ast.CurrentResourceGroup]
+	f, err := fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "rg1", d.GetString())
+	require.Equal(t, f.PbCode(), f.Clone().PbCode())
+}
+
 func TestCurrentRole(t *testing.T) {
 	ctx := mock.NewContext()
 	fc := funcs[ast.CurrentRole]

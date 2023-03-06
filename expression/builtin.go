@@ -746,10 +746,12 @@ var funcs = map[string]functionClass{
 	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
-	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
-	ast.CurrentUser:  &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
-	ast.CurrentRole:  &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
-	ast.Database:     &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
+	ast.ConnectionID:         &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
+	ast.CurrentUser:          &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
+	ast.CurrentRole:          &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
+	ast.Database:             &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
+	ast.CurrentResourceGroup: &currentResourceGroupFunctionClass{baseFunctionClass{ast.CurrentResourceGroup, 0, 0}},
+
 	// This function is a synonym for DATABASE().
 	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema
 	ast.Schema:       &databaseFunctionClass{baseFunctionClass{ast.Schema, 0, 0}},

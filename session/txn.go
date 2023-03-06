@@ -601,6 +601,8 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
+		// set resource group name for kv request such as lock pessimistic keys.
+		txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
 	}
 	return txn, nil
 }

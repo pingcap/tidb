@@ -257,6 +257,7 @@ var funcName2Alias = map[string]string{
 	"collation":                  ast.Collation,
 	"connection_id":              ast.ConnectionID,
 	"current_user":               ast.CurrentUser,
+	"current_resource_group":     ast.CurrentResourceGroup,
 	"current_role":               ast.CurrentRole,
 	"database":                   ast.Database,
 	"found_rows":                 ast.FoundRows,
