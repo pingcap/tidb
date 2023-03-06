@@ -569,7 +569,7 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		closeConn(conn, connections)
+		terror.Log(closeConn(conn, connections))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
@@ -909,7 +909,6 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	case <-time.After(cancelWait):
 		logger.Warn("some sessions do not quit in cancel wait time")
 	}
-
 }
 
 // ServerID implements SessionManager interface.
