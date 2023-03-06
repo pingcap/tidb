@@ -313,7 +313,7 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID int64, state string, eq b
 	return rs[0].GetInt64(0), nil
 }
 
-func (stm *SubTaskManager) CheckTaskStates(globalTaskID int64, eq bool, states ...interface{}) (cnt int64, err error) {
+func (stm *SubTaskManager) CheckTaskNonStates(globalTaskID int64, states ...interface{}) (cnt int64, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
@@ -323,11 +323,7 @@ func (stm *SubTaskManager) CheckTaskStates(globalTaskID int64, eq bool, states .
 
 	query := "select count(*) from mysql.tidb_sub_task where task_id = %?"
 	for i := 0; i < len(states); i++ {
-		if eq {
-			query += " and state = %?"
-		} else {
-			query += " and state != %?"
-		}
+		query += " and state != %?"
 	}
 	args := []interface{}{globalTaskID}
 	args = append(args, states...)
@@ -337,4 +333,25 @@ func (stm *SubTaskManager) CheckTaskStates(globalTaskID int64, eq bool, states .
 	}
 
 	return rs[0].GetInt64(0), nil
+}
+
+func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	rs, err := ExecSQL(stm.ctx, stm.se, "select distinct(designate_tidb_id) from mysql.tidb_sub_task where task_id = %?", taskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	instanceIDs := make([]string, 0, len(rs))
+	for _, r := range rs {
+		id := r.GetString(0)
+		instanceIDs = append(instanceIDs, id)
+	}
+
+	return instanceIDs, nil
 }

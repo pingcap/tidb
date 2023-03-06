@@ -93,17 +93,20 @@ func (d *dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskE
 		return false, ""
 	}
 	if cnt > 0 {
-		return false, "failed"
+		return false, proto.TaskStateFailed
 	}
 
 	// Suppose that the tasks are succeed or reverted  means that all subtask finish.
-	cnt, err = d.subTaskMgr.CheckTaskStates(gTask.ID, false, proto.TaskStateSucceed, proto.TaskStateReverted)
+	cnt, err = d.subTaskMgr.CheckTaskNonStates(gTask.ID, proto.TaskStateSucceed, proto.TaskStateReverted)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Error(err))
 		return false, ""
 	}
 	if cnt > 0 {
 		return false, ""
+	}
+	if gTask.State == proto.TaskStateReverting {
+		return true, proto.TaskStateReverted
 	}
 
 	return true, ""
@@ -123,30 +126,90 @@ func (d *dispatcher) DetectionTaskLoop() {
 			// TODO: Do we need to handle it asynchronously?
 			for _, gTask := range gTasks {
 				stepIsFinished, errStr := d.detectionTask(gTask)
-				if errStr != "" {
-					d.handleError(gTask, errStr)
-				} else if stepIsFinished {
-					logutil.BgLogger().Info("a step of task finished", zap.Int64("taskID", gTask.ID))
-					d.loadTaskAndProgress(gTask, false)
+				// The global task isn't finished and failed.
+				if !stepIsFinished && errStr == "" {
+					logutil.BgLogger().Debug("detection, this task keeps current state",
+						zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+					continue
+				}
+
+				var err error
+				if stepIsFinished {
+					logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
+					err = d.loadTaskAndProgress(gTask, false)
+				} else {
+					logutil.BgLogger().Info("detection, handle an error", zap.Int64("taskID", gTask.ID))
+					err = d.handleError(gTask, errStr)
+				}
+				if err == nil && (gTask.State == proto.TaskStateSucceed || gTask.State == proto.TaskStateReverted) {
+					logutil.BgLogger().Info("detection, task is finished", zap.Int64("taskID", gTask.ID))
+					d.delRunningGlobalTasks(gTask.ID)
 				}
 			}
 		}
 	}
 }
 
+func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) error {
+	gTask.State = proto.TaskStateReverted
+	// Write the global task meta into the storage.
+	err := d.gTaskMgr.UpdateTask(gTask)
+	if err != nil {
+		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) error {
-	finished, subtasks, err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
+	// All subtasks are reverted, update the global task.
+	if receiveErr == proto.TaskStateReverted {
+		return d.updateTaskRevertInfo(gTask)
+	}
+
+	meta, err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		// TODO: Consider retry
+		return err
 	}
 
-	if finished {
+	// TODO: Consider using a new context.
+	instanceIDs, err := d.getTaskAllInstances(d.ctx, gTask.ID)
+	if err != nil {
+		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
+		return err
+	}
+
+	if len(instanceIDs) == 0 {
 		gTask.State = proto.TaskStateReverted
 	} else {
 		gTask.State = proto.TaskStateReverting
 	}
-	return d.storageGlobalTaskAndSubtasks(finished, gTask, subtasks)
+	// Write the global task meta into the storage.
+	err = d.gTaskMgr.UpdateTask(gTask)
+	if err != nil {
+		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+		return err
+	}
+
+	// New rollback subtasks and write into the storage.
+	for _, id := range instanceIDs {
+		// TODO: Generate the subtask ID.
+		subtask := &proto.Subtask{
+			Type:        gTask.Type,
+			TaskID:      gTask.ID,
+			State:       gTask.State,
+			SchedulerID: id,
+			Meta:        *meta,
+		}
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, nil, gTask.Type)
+		if err != nil {
+			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
@@ -171,35 +234,37 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 	// Special handling for the new tasks.
 	// About TaskStateSucceed gTask, we consider keeping records first.
 	if gTask.State == proto.TaskStatePending {
+		// TODO: Consider time zone.
 		gTask.StartTime = time.Now()
 		gTask.State = proto.TaskStateRunning
 	}
 
-	return d.storageGlobalTaskAndSubtasks(finished, gTask, subtasks)
-}
-
-// TODO: Consider batch splitting
-// TODO: UpdateTask and addSubtasks in a txn.
-// TODO: Synchronization interruption problem, e.g. AddNewTask failed
-// TODO: batch insert
-// storageGlobalTaskAndSubtasks writes global task and subtasks into the storage.
-func (d *dispatcher) storageGlobalTaskAndSubtasks(finished bool, gTask *proto.Task, subtasks []*proto.Subtask) error {
+	// TODO: UpdateTask and addSubtasks in a txn.
 	// Write the global task meta into the storage.
-	err := d.gTaskMgr.UpdateTask(gTask)
+	err = d.gTaskMgr.UpdateTask(gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
 	}
 
 	if finished {
-		d.delRunningGlobalTasks(gTask.ID)
 		return nil
 	}
 
 	// Write subtasks into the storage.
 	for _, subtask := range subtasks {
-		// TODO: Get TiDB_Instance_ID
-		err := d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), gTask.Type)
+		// TODO: Using the following code.
+		// instanceID, err := d.GetEligibleInstance(d.ctx)
+		// if err != nil {
+		// 	logutil.BgLogger().Warn("get a eligible instance failed", zap.Stringer("subtask", subtask), zap.Error(err))
+		// 	return err
+		// }
+		// subtask.SchedulerID = instanceID
+
+		// TODO: Consider batch splitting
+		// TODO: Synchronization interruption problem, e.g. AddNewTask failed
+		// TODO: batch insert
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), gTask.Type)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
 			return err
@@ -234,6 +299,12 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if d.isRunningGlobalTask(gTask) {
 					break
 				}
+				if gTask.State == proto.TaskStateReverting {
+					d.setRunningGlobalTasks(gTask)
+					cnt++
+					continue
+				}
+
 				err = d.loadTaskAndProgress(gTask, true)
 				if err != nil {
 					d.delRunningGlobalTasks(gTask.ID)
@@ -293,4 +364,26 @@ func (d *dispatcher) GetEligibleInstance(ctx context.Context) (string, error) {
 		num--
 	}
 	return "", errors.New("not found instance")
+}
+
+func (d *dispatcher) getTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error) {
+	serverInfos, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(serverInfos) == 0 {
+		return nil, nil
+	}
+
+	schedulerIDs, err := d.subTaskMgr.GetSchedulerIDs(gTaskID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(schedulerIDs))
+	for _, id := range schedulerIDs {
+		if _, ok := serverInfos[id]; ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }

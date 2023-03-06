@@ -57,9 +57,9 @@ func (n NumberExampleHandle) Progress(d dispatcher.Dispatch, gTask *proto.Task, 
 	return false, subTasks, nil
 }
 
-func (n NumberExampleHandle) HandleError(d dispatcher.Dispatch, gTask *proto.Task, receive string) (finished bool, subtasks []*proto.Subtask, err error) {
+func (n NumberExampleHandle) HandleError(d dispatcher.Dispatch, gTask *proto.Task, receive string) (meta *proto.SubTaskMeta, err error) {
 	// Don't handle not.
-	return true, nil, nil
+	return nil, nil
 }
 
 func init() {
