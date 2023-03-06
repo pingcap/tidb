@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -39,27 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/prometheus/client_golang/prometheus"
 )
-
-var preparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("prepared")
-var nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepared")
-var preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepared")
-var nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared")
-
-func getPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
-	if isNonPrepared {
-		return nonPreparedPlanCacheHitCounter
-	}
-	return preparedPlanCacheHitCounter
-}
-
-func getPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
-	if isNonPrepared {
-		return nonPreparedPlanCacheMissCounter
-	}
-	return preparedPlanCacheMissCounter
-}
 
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
@@ -227,7 +208,7 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
 		// only for prepared plan cache
-		getPlanCacheHitCounter(false).Inc()
+		core_metrics.GetPlanCacheHitCounter(false).Inc()
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
@@ -268,7 +249,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 	} else {
-		getPlanCacheHitCounter(isNonPrepared).Inc()
+		core_metrics.GetPlanCacheHitCounter(isNonPrepared).Inc()
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
@@ -283,7 +264,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	getPlanCacheMissCounter(isNonPrepared).Inc()
+	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	p, names, err := OptimizeAstNode(ctx, sctx, stmtAst.Stmt, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false

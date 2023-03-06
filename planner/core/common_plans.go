@@ -560,8 +560,15 @@ type LoadData struct {
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+}
+
+// LoadDataOpt represents load data option.
+type LoadDataOpt struct {
+	Name  string
+	Value expression.Expression
 }
 
 // LoadStats represents a load stats plan.

@@ -1634,6 +1634,11 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	if w.writerCtx != nil {
+		// For the ingest mode, we use lightning local backend's local check and remote check
+		// to implement the duplicate key detection.
+		return nil
+	}
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
 		// non-unique key need not to check, just overwrite it,
@@ -1781,7 +1786,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = w.writerCtx.WriteRow(key, idxVal)
+					err = w.writerCtx.WriteRow(key, idxVal, idxRecord.handle)
 					if err != nil {
 						return errors.Trace(err)
 					}
