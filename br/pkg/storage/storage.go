@@ -176,7 +176,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		return NewS3Storage(backend.S3, opts)
+		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:

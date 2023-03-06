@@ -848,11 +848,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
+				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					if common.ErrFoundDuplicateKeys.Equal(err) {
-						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-					}
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
@@ -999,6 +999,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
+		}
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
@@ -1631,6 +1634,11 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	if w.writerCtx != nil {
+		// For the ingest mode, we use lightning local backend's local check and remote check
+		// to implement the duplicate key detection.
+		return nil
+	}
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
 		// non-unique key need not to check, just overwrite it,
@@ -1778,7 +1786,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = w.writerCtx.WriteRow(key, idxVal)
+					err = w.writerCtx.WriteRow(key, idxVal, idxRecord.handle)
 					if err != nil {
 						return errors.Trace(err)
 					}

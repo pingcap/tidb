@@ -68,11 +68,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
-	if v := ctx.Value("____GeneratePlanCacheStmtWithASTErr"); v != nil { // for testing
-		return nil, nil, 0, errors.New("____GeneratePlanCacheStmtWithASTErr")
-	}
-
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -124,11 +120,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		cacheable                   bool
 		reason                      string
 	)
-	if !vars.EnablePreparedPlanCache {
+	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
+		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
 		cacheable = false
 		reason = "plan cache is disabled"
 	} else {
-		cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+		if isPrepStmt {
+			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+		} else {
+			cacheable = true // it is already checked here
+		}
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}

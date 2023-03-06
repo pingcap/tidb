@@ -84,7 +84,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, rcCheckTS, ts)
 
 	// error will invalidate the rc check
-	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
+	nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	compareTS = getOracleTS(t, se)
@@ -103,7 +103,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, rcCheckTS, ts)
 
 	// other error also invalidate rc check but not retry
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, errors.New("err"))
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, errors.New("err"))
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
@@ -118,7 +118,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	compareTS = getOracleTS(t, se)
@@ -136,7 +136,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 }
@@ -220,7 +220,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.NoError(t, err)
 		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	}
@@ -232,7 +232,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
 	}
@@ -277,7 +277,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	require.Greater(t, readTS, compareTS)
 
 	// if we should retry, the ts should be updated
-	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+	nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	compareTS = getOracleTS(t, se)
