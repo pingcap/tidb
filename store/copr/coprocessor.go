@@ -121,16 +121,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			}
 		}
 	})
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
-		req.StoreBatchSize = 0
-	}
-	// TODO: support keep-order batch
-	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
-		// disable batch copr for follower read
-		req.StoreBatchSize = 0
-	}
-	// disable batch copr when paging is enabled.
-	if req.Paging.Enable {
+	if !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
 	}
 
@@ -1954,4 +1945,24 @@ func optRowHint(req *kv.Request) bool {
 		opt = false
 	})
 	return opt
+}
+
+func checkStoreBatchCopr(req *kv.Request) bool {
+	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+		return false
+	}
+	// TODO: support keep-order batch
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
+		// Disable batch copr for follower read
+		return false
+	}
+	// Disable batch copr when paging is enabled.
+	if req.Paging.Enable {
+		return false
+	}
+	// Disable it for internal requests to avoid regression.
+	if req.RequestSource.RequestSourceInternal {
+		return false
+	}
+	return true
 }
