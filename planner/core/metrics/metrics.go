@@ -53,6 +53,7 @@ func InitMetricsVars() {
 	nonPreparedPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" non-prepared")
 }
 
+// GetPlanCacheHitCounter get different plan cache hit counter
 func GetPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
 	if isNonPrepared {
 		return nonPreparedPlanCacheHitCounter
@@ -60,6 +61,7 @@ func GetPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
 	return preparedPlanCacheHitCounter
 }
 
+// GetPlanCacheMissCounter get different plan cache miss counter
 func GetPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
 	if isNonPrepared {
 		return nonPreparedPlanCacheMissCounter
@@ -67,6 +69,7 @@ func GetPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
 	return preparedPlanCacheMissCounter
 }
 
+// GetPlanCacheInstanceNumCounter get different plan counter of plan cache
 func GetPlanCacheInstanceNumCounter(isNonPrepared bool) prometheus.Gauge {
 	if isNonPrepared {
 		return nonPreparedPlanCacheInstancePlanNumCounter
@@ -74,6 +77,7 @@ func GetPlanCacheInstanceNumCounter(isNonPrepared bool) prometheus.Gauge {
 	return preparedPlanCacheInstancePlanNumCounter
 }
 
+// GetPlanCacheInstanceMemoryUsage get different plan memory usage counter of plan cache
 func GetPlanCacheInstanceMemoryUsage(isNonPrepared bool) prometheus.Gauge {
 	if isNonPrepared {
 		return nonPreparedPlanCacheInstanceMemoryUsage
