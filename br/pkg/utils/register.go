@@ -121,6 +121,7 @@ func (tr *TaskRegister) RegisterTask(c context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// KeepAlive interval equals to ttl/3
 	respCh, err := tr.client.Lease.KeepAlive(cctx, lease.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -132,9 +133,6 @@ func (tr *TaskRegister) RegisterTask(c context.Context) error {
 
 func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
 	defer tr.wg.Done()
-	defer func() {
-		tr.wg.Done()
-	}()
 	const minTimeLeftThreshold int64 = 20
 	var timeLeftThreshold int64 = tr.ttl / 4
 	if timeLeftThreshold < minTimeLeftThreshold {
