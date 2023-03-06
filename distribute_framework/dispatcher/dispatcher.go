@@ -134,20 +134,19 @@ func (d *dispatcher) DetectionTaskLoop() {
 	}
 }
 
-func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) {
-	defer d.delRunningGlobalTasks(gTask.ID)
-	err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
+func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) error {
+	finished, subtasks, err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		// TODO: Consider retry
 	}
 
-	gTask.State = proto.TaskStateReverted
-	err = d.gTaskMgr.UpdateTask(gTask)
-	if err != nil {
-		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-		// TODO: Consider retry
+	if finished {
+		gTask.State = proto.TaskStateReverted
+	} else {
+		gTask.State = proto.TaskStateReverting
 	}
+	return d.storageGlobalTaskAndSubtasks(finished, gTask, subtasks)
 }
 
 func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (err error) {
@@ -176,8 +175,17 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 		gTask.State = proto.TaskStateRunning
 	}
 
+	return d.storageGlobalTaskAndSubtasks(finished, gTask, subtasks)
+}
+
+// TODO: Consider batch splitting
+// TODO: UpdateTask and addSubtasks in a txn.
+// TODO: Synchronization interruption problem, e.g. AddNewTask failed
+// TODO: batch insert
+// storageGlobalTaskAndSubtasks writes global task and subtasks into the storage.
+func (d *dispatcher) storageGlobalTaskAndSubtasks(finished bool, gTask *proto.Task, subtasks []*proto.Subtask) error {
 	// Write the global task meta into the storage.
-	err = d.gTaskMgr.UpdateTask(gTask)
+	err := d.gTaskMgr.UpdateTask(gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 		return err
@@ -188,9 +196,6 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 		return nil
 	}
 
-	// TODO: Consider batch splitting
-	// TODO: Synchronization interruption problem, e.g. AddNewTask failed
-	// TODO: batch insert
 	// Write subtasks into the storage.
 	for _, subtask := range subtasks {
 		// TODO: Get TiDB_Instance_ID

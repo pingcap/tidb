@@ -2,8 +2,9 @@ package example
 
 import (
 	"errors"
-	"go.uber.org/zap"
 	"math/rand"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/distribute_framework/dispatcher"
 	"github.com/pingcap/tidb/distribute_framework/proto"
@@ -56,9 +57,9 @@ func (n NumberExampleHandle) Progress(d dispatcher.Dispatch, gTask *proto.Task, 
 	return false, subTasks, nil
 }
 
-func (n NumberExampleHandle) HandleError(d dispatcher.Dispatch, gTask *proto.Task, receive string) error {
+func (n NumberExampleHandle) HandleError(d dispatcher.Dispatch, gTask *proto.Task, receive string) (finished bool, subtasks []*proto.Subtask, err error) {
 	// Don't handle not.
-	return nil
+	return true, nil, nil
 }
 
 func init() {
