@@ -576,8 +576,8 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, o
 	}
 
 	if isLocalBackend(p.cfg) {
-		sizeWithIndex = int64(float64(sizeWithIndex) / compressionRatio)
-		tiflashSize = int64(float64(tiflashSize) / compressionRatio)
+		sizeWithIndex = int64(float64(sizeWithIndex) * compressionRatio)
+		tiflashSize = int64(float64(tiflashSize) * compressionRatio)
 	}
 
 	result = &EstimateSourceDataSizeResult{

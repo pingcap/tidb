@@ -94,7 +94,7 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
 		Passed:   true,
-		Message:  "Cluster resources are rich for this import task",
+		Message:  "",
 	}
 
 	var (

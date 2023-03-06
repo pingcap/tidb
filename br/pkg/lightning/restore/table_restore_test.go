@@ -99,6 +99,10 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 	require.NoError(t, err)
 	core.State = model.StatePublic
+	core.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
 
 	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
 	s.dbInfo = &checkpoints.TidbDBInfo{
@@ -1061,7 +1065,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster available is rich(.*)",
+			"(.*)The storage space is rich(.*)",
 			true,
 			0,
 		},
@@ -1082,7 +1086,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster doesn't have enough space(.*)",
+			"(.*)Please expand the storage(.*)",
 			true,
 			0,
 		},
@@ -1444,19 +1448,22 @@ func (s *tableRestoreSuite) TestEstimate() {
 	preInfoGetter.dbInfosCache = dbInfos
 	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
 	s.Require().NoError(err)
-	source := estimateResult.SizeWithIndex
+	tikvSource := estimateResult.SizeWithIndex
+	tiflashSource := estimateResult.TiFlashSize
 	// Because this file is small than region split size so we does not sample it.
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	s.Require().Equal(s.tableMeta.TotalSize/3, tikvSource)
+	s.Require().Equal(s.tableMeta.TotalSize/3, tiflashSource)
+
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Greater(source, s.tableMeta.TotalSize)
+	tikvSource = estimateResult.SizeWithIndex
+	s.Require().Greater(tikvSource, s.tableMeta.TotalSize/3)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	tikvSource = estimateResult.SizeWithIndex
+	s.Require().Equal(s.tableMeta.TotalSize, tikvSource)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid() {
