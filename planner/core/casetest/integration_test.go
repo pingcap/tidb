@@ -1114,15 +1114,18 @@ func TestJoinHintCompatibility(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash, tikv'")
-	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+	tk.MustExec("drop view if exists v, v1, v2")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8, t9;")
 	tk.MustExec("create table t(a int not null, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t1(a int not null, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t2(a int, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t3(a int, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t4(a int, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t5(a int, b int, index idx_a(a), index idx_b(b));")
-	tk.MustExec("create table t4(a int, b int, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t6(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t7(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t8(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t9(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -1138,6 +1141,10 @@ func TestJoinHintCompatibility(t *testing.T) {
 			}
 		}
 	}
+
+	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t3), merge_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
 
 	var input []string
 	var output []struct {
