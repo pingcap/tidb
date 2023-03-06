@@ -134,12 +134,12 @@ func (d *dispatcher) DetectionTaskLoop() {
 				}
 
 				var err error
-				if stepIsFinished {
-					logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
-					err = d.loadTaskAndProgress(gTask, false)
-				} else {
+				if errStr != "" {
 					logutil.BgLogger().Info("detection, handle an error", zap.Int64("taskID", gTask.ID))
 					err = d.handleError(gTask, errStr)
+				} else {
+					logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
+					err = d.loadTaskAndProgress(gTask, false)
 				}
 				if err == nil && (gTask.State == proto.TaskStateSucceed || gTask.State == proto.TaskStateReverted) {
 					logutil.BgLogger().Info("detection, task is finished", zap.Int64("taskID", gTask.ID))
