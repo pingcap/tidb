@@ -89,11 +89,11 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.6-0.20230227032358-40a82457ebaa
-	github.com/tikv/pd/client v0.0.0-20230209034200-6d23a31c24be
+	github.com/tikv/client-go/v2 v2.0.6-0.20230302054057-3f7860f10959
+	github.com/tikv/pd/client v0.0.0-20230301094509-c82b237672a0
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
