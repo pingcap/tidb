@@ -52,7 +52,7 @@ import (
 const copReadBatchFactor = 10
 
 // copReadConcurrencyFactor is the factor of concurrency of coprocessor read.
-const copReadConcurrencyFactor = 1
+const copReadConcurrencyFactor = 10
 
 func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, *chunk.Chunk, kv.Key, bool, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
