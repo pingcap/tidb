@@ -89,7 +89,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             >
             <br /><i>
               Reliably and efficiently manage workloads and applications
-              sharing the same cluster
+              that share the same cluster
             </i>
           </li><br />
           <li>
@@ -103,7 +103,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>TiProxy</b>
             <br /><i>
               Keep database connections during cluster upgrade and scale
-              in/out and avoid impact on applications
+              in/out, and avoid impact on applications
             </i>
           </li><br />
           <li>
@@ -157,7 +157,6 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
             <b>Table level flashback</b>
             <br /><i>
               Support traveling a single table to a specific time via SQL
-              point
             </i>
           </li>
         </ul>
