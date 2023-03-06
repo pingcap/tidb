@@ -825,6 +825,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// ByItems only for partition table with pushed limit
+	ByItems []*util.ByItems
 
 	isChildOfIndexLookUp bool
 

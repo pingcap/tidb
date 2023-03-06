@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
@@ -72,6 +74,89 @@ type SelectResult interface {
 	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
+}
+
+// NewSortedSelectResults is only for partition table
+func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems) SelectResult {
+	cur := make([]int, len(selectResult))
+	s := &sortedSelectResults{
+		selectResult: selectResult,
+		cur:          cur,
+		byItems:      byitems,
+	}
+	s.initCompareFuncs()
+	s.buildKeyColumns()
+	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
+	return s
+}
+
+type sortedSelectResults struct {
+	selectResult []SelectResult
+	cur          []int
+	compareFuncs []chunk.CompareFunc
+	byItems      []*util.ByItems
+	keyColumns   []int
+
+	cachedChunks   []*chunk.Chunk
+	cachedChunkIdx []int
+}
+
+func (ssr *sortedSelectResults) initCompareFuncs() {
+	ssr.compareFuncs = make([]chunk.CompareFunc, len(ssr.byItems))
+	for i, item := range ssr.byItems {
+		keyType := item.Expr.GetType()
+		ssr.compareFuncs[i] = chunk.GetCompareFunc(keyType)
+	}
+}
+
+func (ssr *sortedSelectResults) buildKeyColumns() {
+	ssr.keyColumns = make([]int, 0, len(ssr.byItems))
+	for _, by := range ssr.byItems {
+		col := by.Expr.(*expression.Column)
+		ssr.keyColumns = append(ssr.keyColumns, col.Index)
+	}
+}
+
+func (ssr *sortedSelectResults) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range ssr.keyColumns {
+		cmpFunc := ssr.compareFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if ssr.byItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (ssr *sortedSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+	panic("Not support NextRaw for sortedSelectResults")
+}
+
+func (ssr *sortedSelectResults) Next(ctx context.Context, chunk *chunk.Chunk) (err error) {
+	chunk.Reset()
+	for i, c := range ssr.cachedChunks {
+		if c == nil {
+			if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return ssr.selectResult[1].Next(ctx, chunk)
+}
+
+func (ssr *sortedSelectResults) Close() (err error) {
+	for _, sr := range ssr.selectResult {
+		err = sr.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.

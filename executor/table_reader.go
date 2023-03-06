@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
@@ -105,6 +106,7 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
@@ -287,9 +289,6 @@ func (e *TableReaderExecutor) Close() error {
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
-	if e.table.Meta().Name.O == "t1" {
-		time.Sleep(time.Millisecond)
-	}
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
@@ -319,12 +318,22 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
-	if e.table.Meta().Name.O == "t" {
-		time.Sleep(time.Millisecond)
+	// use sortedSelectResults here when pushDown limit for partition table.
+	if e.byItems != nil {
+		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		var results []distsql.SelectResult
+		for _, kvReq := range kvReqs {
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+		}
+		return distsql.NewSortedSelectResults(results, e.byItems), nil
 	}
-
-	// add a sortedSelectResults when partition table with keepOrder = true
-	// sortedSelect should have a function to compare two chunks.
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {
@@ -333,7 +342,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	// order by partitions, if we have 4 partitions, it only has 4 ranges.
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
