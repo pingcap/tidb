@@ -2329,19 +2329,25 @@ func doDDLWorks(s Session) {
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
-func doBootstrapSQLFile(s Session) {
+func doBootstrapSQLFile(s Session) error {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
-		return
+		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
 	}
 	for _, stmt := range stmts {
@@ -2357,6 +2363,7 @@ func doBootstrapSQLFile(s Session) {
 			}
 		}
 	}
+	return nil
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

@@ -3312,7 +3312,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	//  Rebuild sysvar cache in a loop
+	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
 	if err != nil {
 		return nil, err
@@ -3360,12 +3360,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[9])
 	dom.StartHistoricalStatsWorker()
+	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		doBootstrapSQLFile(ses[9])
+		if err := doBootstrapSQLFile(ses[9]); err != nil {
+			failToLoadOrParseSQLFile = true
+		}
 	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
@@ -3403,6 +3406,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	// This only happens in testing, since the failure of loading or parsing sql file
+	// would panic the bootstrapping.
+	if failToLoadOrParseSQLFile {
+		dom.Close()
+		return nil, err
+	}
 	return dom, err
 }
 
