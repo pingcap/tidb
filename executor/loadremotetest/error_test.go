@@ -169,29 +169,33 @@ func (s *mockGCSSuite) TestEvalError() {
 	s.tk.MustExec("CREATE DATABASE load_csv;")
 	s.tk.MustExec("USE load_csv;")
 
-	s.tk.MustExec("CREATE TABLE t (c INT);")
+	s.tk.MustExec("CREATE TABLE t (c INT, c2 INT UNIQUE);")
 	s.tk.MustExec("SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 	err := s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+		INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
 
 	// REPLACE does not help
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		REPLACE INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+		REPLACE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
 		"ERROR 1292 (22007): Truncated incorrect DOUBLE value: 'asd'")
 
 	// IGNORE helps
 
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t3.tsv?endpoint=%s'
-		IGNORE INTO TABLE t (@v1, @) SET c=@v1+'asd';`, gcsEndpoint))
+		IGNORE INTO TABLE t (@v1, c2) SET c=@v1+'asd';`, gcsEndpoint))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().LastMessage())
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
 		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'",
 		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'"))
+	// TODO: When constant folding for c=@v1+'asd', currently we can't pass IgnoreErr flag to CastStringAsReal
+	//s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
+	//	"1 2",
+	//	"1 4"))
 }
 
 func (s *mockGCSSuite) TestDataError() {
