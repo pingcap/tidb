@@ -196,7 +196,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	// we need either lightning process alive or engine map persistent.
 	// both of them seems unnecessary if we only need to do is cleanup specify engine directory.
 	// so we didn't choose to use common API.
-	if cfg.TikvImporter.Backend == "local" {
+	if cfg.TikvImporter.Backend == config.BackendLocal {
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
