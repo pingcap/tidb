@@ -573,12 +573,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	keyspaceName, err := getKeyspaceName(g)
-	if err != nil {
-		o.logger.Error("fail to get keyspace name", zap.Error(err))
-		return errors.Trace(err)
+	var keyspaceName string
+	if taskCfg.TikvImporter.Backend == config.BackendLocal {
+		if taskCfg.TikvImporter.KeyspaceName == "" {
+			keyspaceName, err = getKeyspaceName(g)
+			if err != nil {
+				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
+			}
+		}
+		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 	}
-	o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
