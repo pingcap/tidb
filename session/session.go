@@ -2120,6 +2120,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
 	s.txn.onStmtStart(digest.String())
+	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()
 
 	if err := s.onTxnManagerStmtStartOrRetry(ctx, stmtNode); err != nil {
@@ -2135,6 +2136,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
+
+	// Backup the original resource group name since sql hint might change it during optimization
+	originalResourceGroup := s.GetSessionVars().ResourceGroupName
+
+	defer func() {
+		// Restore the resource group for the session
+		s.GetSessionVars().ResourceGroupName = originalResourceGroup
+	}()
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -3300,7 +3309,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	//  Rebuild sysvar cache in a loop
+	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
 	if err != nil {
 		return nil, err
@@ -3365,12 +3374,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[8])
 	dom.StartHistoricalStatsWorker()
+	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		doBootstrapSQLFile(ses[9])
+		if err := doBootstrapSQLFile(ses[9]); err != nil {
+			failToLoadOrParseSQLFile = true
+		}
 	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
@@ -3438,6 +3450,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	// This only happens in testing, since the failure of loading or parsing sql file
+	// would panic the bootstrapping.
+	if failToLoadOrParseSQLFile {
+		dom.Close()
+		return nil, err
+	}
 	return dom, err
 }
 
