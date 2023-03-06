@@ -559,6 +559,10 @@ var gracefulCloseConnectionsTimeout = 15 * time.Second
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
+	s.rwlock.Lock() // // prevent new connections
+	defer s.rwlock.Unlock()
+	s.inShutdownMode.Store(true)
+	s.closeListener()
 }
 
 func (s *Server) registerConn(conn *clientConn) bool {
@@ -874,8 +878,6 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	conns := make(map[uint64]*clientConn)
 
 	s.rwlock.Lock()
-	s.inShutdownMode.Store(true)
-	s.closeListener()
 	for k, v := range s.clients {
 		conns[k] = v
 	}
