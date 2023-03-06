@@ -249,7 +249,7 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
 		if len(group) == 1 {
-			// For the sinlge-column group, its FMSketch is the same as that of the corresponding column. Hence, we
+			// For the single-column group, its FMSketch is the same as that of the corresponding column. Hence, we
 			// don't need to maintain its FMSketch. We just copy the corresponding column's FMSketch after iterating
 			// all rows. Also, we can directly copy TotalSize and NullCount.
 			continue
