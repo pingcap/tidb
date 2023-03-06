@@ -455,6 +455,7 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 					}
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
+					checker.cacheable = false
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
 					return in, !checker.cacheable
 				}
@@ -466,6 +467,7 @@ func (checker *matchOptsExtractor) Enter(in ast.Node) (out ast.Node, skipChildre
 				if typeExpected {
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
+					checker.cacheable = false
 					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
 					return in, !checker.cacheable
 				}
