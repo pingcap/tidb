@@ -52,7 +52,7 @@ import (
 const copReadBatchFactor = 10
 
 // copReadConcurrencyFactor is the factor of concurrency of coprocessor read.
-const copReadConcurrencyFactor = 10
+const copReadConcurrencyFactor = 1
 
 func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, *chunk.Chunk, kv.Key, bool, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -166,8 +166,8 @@ func (c *copReqSender) run() {
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
-	poolSize := int(variable.GetDDLReorgWorkerCounter() * copReadConcurrencyFactor)
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage, workerCnt int) *copReqSenderPool {
+	poolSize := workerCnt * copReadConcurrencyFactor
 	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
