@@ -783,7 +783,7 @@ func setGlobalVars() {
 
 func setupLog() {
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
 	terror.MustNil(err)
 
 	// trigger internal http(s) client init.

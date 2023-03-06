@@ -51,7 +51,29 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	key := "ctxKey"
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
-	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPattern)
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPatternByCtx)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+}
+
+func TestZapLoggerWithCore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Skip this test on windows for two reason:
+		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
+		// 2. Remove file doesn't work as long as the log instance hold the file.
+		t.Skip("skip on windows")
+	}
+
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+
+	opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		return core.With([]zap.Field{zap.String("coreKey", "coreValue")})
+	})
+
+	err := InitLogger(conf, opt)
+	require.NoError(t, err)
+	testZapLogger(context.Background(), t, fileCfg.Filename, zapLogWithKeyValPatternByCore)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 }
