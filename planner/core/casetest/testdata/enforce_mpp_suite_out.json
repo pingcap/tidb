@@ -447,11 +447,11 @@
       {
         "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
         "Plan": [
-          "MergeJoin_8 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
-          "├─TableReader_18(Build) 10000.00 root  data:TableFullScan_17",
-          "│ └─TableFullScan_17 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
-          "└─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
-          "  └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+          "MergeJoin_9 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+          "│ └─TableFullScan_18 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -461,7 +461,21 @@
       {
         "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
         "Plan": [
-          "IndexJoin_15 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_33(Build) 10000.00 root  data:TableFullScan_32",
+          "│ └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableRangeScan_12",
+          "  └─TableRangeScan_12 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+        "Plan": [
+          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
           "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
           "│ └─TableFullScan_31 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader_12(Probe) 10000.00 root  data:TableRangeScan_11",
@@ -473,32 +487,18 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+        "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
         "Plan": [
-          "IndexHashJoin_16 12500.00 root  inner join, inner:TableReader_11, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
-          "├─TableReader_31(Build) 10000.00 root  data:TableFullScan_30",
-          "│ └─TableFullScan_30 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_11(Probe) 10000.00 root  data:TableRangeScan_10",
-          "  └─TableRangeScan_10 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "HashJoin_29 12500.00 root  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "├─TableReader_38(Build) 10000.00 root  data:TableFullScan_37",
+          "│ └─TableFullScan_37 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 10000.00 root  data:TableFullScan_33",
+          "  └─TableFullScan_33 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
-      },
-      {
-        "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
-        "Plan": [
-          "TableReader_44 12500.00 root  MppVersion: 1, data:ExchangeSender_43",
-          "└─ExchangeSender_43 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_6 12500.00 mpp[tiflash]  test.t.a",
-          "    └─HashJoin_38 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "      ├─ExchangeReceiver_41(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_40 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "      │   └─TableFullScan_39 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan_42(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
-        ],
-        "Warn": null
       },
       {
         "SQL": "set @@tidb_opt_broadcast_cartesian_join = 0",

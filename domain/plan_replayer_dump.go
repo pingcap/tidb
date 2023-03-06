@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -151,11 +151,6 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	return true, nil
 }
 
-var (
-	planReplayerDumpTaskSuccess = metrics.PlanReplayerTaskCounter.WithLabelValues("dump", "success")
-	planReplayerDumpTaskFailed  = metrics.PlanReplayerTaskCounter.WithLabelValues("dump", "fail")
-)
-
 // DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
 /*
@@ -224,9 +219,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 					zap.Strings("sqls", sqls))
 			}
 			errMsg = err.Error()
-			planReplayerDumpTaskFailed.Inc()
+			domain_metrics.PlanReplayerDumpTaskFailed.Inc()
 		} else {
-			planReplayerDumpTaskSuccess.Inc()
+			domain_metrics.PlanReplayerDumpTaskSuccess.Inc()
 		}
 		err1 := zw.Close()
 		if err1 != nil {
