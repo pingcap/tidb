@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -52,10 +52,10 @@ import (
 )
 
 type clusterResourceCheckItem struct {
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 }
 
-func NewClusterResourceCheckItem(preInfoGetter PreRestoreInfoGetter) PrecheckItem {
+func NewClusterResourceCheckItem(preInfoGetter PreImportInfoGetter) PrecheckItem {
 	return &clusterResourceCheckItem{
 		preInfoGetter: preInfoGetter,
 	}
@@ -165,11 +165,11 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 }
 
 type clusterVersionCheckItem struct {
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewClusterVersionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &clusterVersionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -197,11 +197,11 @@ func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, err
 }
 
 type emptyRegionCheckItem struct {
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewEmptyRegionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &emptyRegionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -291,11 +291,11 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error)
 }
 
 type regionDistributionCheckItem struct {
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewRegionDistributionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &regionDistributionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -483,11 +483,11 @@ func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult,
 
 type localTempKVDirCheckItem struct {
 	cfg           *config.Config
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -560,12 +560,12 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, err
 
 type checkpointCheckItem struct {
 	cfg           *config.Config
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 	checkpointsDB checkpoints.DB
 }
 
-func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) PrecheckItem {
+func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) PrecheckItem {
 	return &checkpointCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -824,12 +824,12 @@ func isActiveCDCChangefeed(jsonBytes []byte) bool {
 
 type schemaCheckItem struct {
 	cfg           *config.Config
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 	checkpointsDB checkpoints.DB
 }
 
-func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
+func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &schemaCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1061,11 +1061,11 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 type csvHeaderCheckItem struct {
 	cfg           *config.Config
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
+func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &csvHeaderCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1275,12 +1275,12 @@ func checkFieldCompatibility(
 
 type tableEmptyCheckItem struct {
 	cfg           *config.Config
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter PreImportInfoGetter
 	dbMetas       []*mydump.MDDatabaseMeta
 	checkpointsDB checkpoints.DB
 }
 
-func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
+func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) PrecheckItem {
 	return &tableEmptyCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
