@@ -30,15 +30,54 @@ Currently, TiDB's LOAD DATA only supports to read the data file through MySQL cl
 
 ### Load data worker
 
-Reading the file through MySQL client's connection requires TiDB server to [writes extra data to the connection](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html) before the OK packet which represent the ending of the command, but in the normal executor routine we can't directly modify the client connection. In order to keep a clear boundary between the protocol layer and executor layer, we use a *load data worker* to encapsulate the real processing logic. The load data worker can run after the *data source reader* is ready, no matter it's invoked in protocol layer or executor layer.
+Reading the file through MySQL client's connection requires TiDB server to [writes extra data to the connection](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html) before the OK packet which represent the ending of the command, but in the normal executor routine we can't directly modify the client connection. In order to keep a clear boundary between the protocol layer and executor layer, we use a *load data worker* to encapsulate the real processing logic. The *load data worker* holds all needed members.
 
+```golang
+// LoadDataWorker does a LOAD DATA job.
+type LoadDataWorker struct {
+	*InsertValues // executor package
+
+	Ctx  sessionctx.Context
+    ...
+}
 ```
-(*LoadDataWorker).Load(context.Context, io.ReadSeekCloser) error
+
+Then *load data worker* can start the main logic with the *data source reader* which is a `io.ReadSeekCloser`, no matter it's invoked in protocol layer or executor layer.
+
+```golang
+func (*LoadDataWorker) Load(context.Context, io.ReadSeekCloser) error {
+    ...
+}
 ```
 
 ### Data parser
 
-TiDB lightning
+TiDB lightning features many supported data file format, like CSV, parquet, etc. And it also supports reading the compressed file like gzip, zstd, etc. To combine this ability with LOAD DATA, we let *load data worker* create the *data parser* with *data source reader* and its configuration like FIELDS TERMINATED BY, and then drive the *data parser* to get the data.
+
+```golang
+func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
+	var (
+		parser mydump.Parser
+		err    error
+	)
+
+	switch strings.ToLower(e.format) {
+	case XXX:
+		parser, err = mydump.NewXXXParser(
+			ctx,
+			reader,
+			...
+        )
+    case YYY:
+        ...
+    }
+
+    go e.processStream(..., parser)
+    ...
+}
+```
+
+The *data parser* output the data of one row in the type of `[]types.Datum`, the *load data worker* iterate the *data parser* to accumulate a batch to be further processed. An empty batch means the source file has been read totally.
 
 ### KV encoder
 
