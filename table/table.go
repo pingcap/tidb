@@ -67,6 +67,9 @@ var (
 	ErrUnknownColumn   = dbterror.ClassTable.NewStd(mysql.ErrBadField)
 	errDuplicateColumn = dbterror.ClassTable.NewStd(mysql.ErrFieldSpecifiedTwice)
 
+	// ErrWarnNullToNotnull is like ErrColumnCantNull but it's used in LOAD DATA
+	ErrWarnNullToNotnull = dbterror.ClassExecutor.NewStd(mysql.ErrWarnNullToNotnull)
+
 	errGetDefaultFailed = dbterror.ClassTable.NewStd(mysql.ErrFieldGetDefaultFailed)
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
