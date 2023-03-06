@@ -1055,7 +1055,7 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
-	
+
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	EnableINLJoinInnerMultiPattern bool
 }
