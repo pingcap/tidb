@@ -851,6 +851,36 @@
     ]
   },
   {
+    "name": "TestJoinHintCompatibility",
+    "cases": [
+      // different join method hints
+      "explain format = 'brief' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), inl_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), inl_join(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_build(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_build(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_probe(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t6), shuffle_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t5), shuffle_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t6), broadcast_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+      "explain format = 'brief' select /*+ leading(t5), broadcast_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
+
+      // different join type
+      "explain format = 'brief' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 left join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join(t2) */ * from t1 join t2 left join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 right join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 right join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), inl_join(t1) */ * from t1 join t2 straight_join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), inl_join(t2) */ * from t1 join t2 straight_join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t3), hash_join_build(t1) */ * from t1 cross join t2 join t3 where t1.a = t2.a and t2.b = t3.b;",
+      "explain format = 'brief' select /*+ leading(t2), hash_join_probe(t2) */ * from t1 cross join t2 join t3 where t1.a = t2.a and t2.b = t3.b;"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHintAndIsolationRead",
     "cases": [
       "desc format = 'brief' select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
