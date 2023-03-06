@@ -122,7 +122,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 }
 
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
-	m.filterAlreadyHandlingTasks(tasks)
+	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
 		logutil.BgLogger().Info("onRunnableTasks", zap.Any("id", task.ID))
 		exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending)
@@ -168,7 +168,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	}
 }
 
-func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
+func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -179,7 +179,7 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) {
 			i++
 		}
 	}
-	tasks = tasks[:i]
+	return tasks[:i]
 }
 
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64) {
