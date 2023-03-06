@@ -71,17 +71,20 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err = b.args[2].VecEvalInt(b.ctx, input, bufEscape); err != nil {
 		return err
 	}
-	escapes := bufEscape.Int64s()
 
 	// Must not use b.pattern to avoid data race
 	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 
 	tmpValCol := bufVal.CopyConstruct(nil)
 	tmpPatternCol := bufPattern.CopyConstruct(nil)
+	tmpEscape := bufEscape.CopyConstruct(nil)
+	escapes := tmpEscape.Int64s()
+
 	LowerAlphaAscii(tmpValCol, rowNum)
 	LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escapes)
 	bufVal = tmpValCol
 	bufPattern = tmpPatternCol
+	bufEscape = tmpEscape
 
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
