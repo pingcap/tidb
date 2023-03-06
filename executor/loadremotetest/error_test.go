@@ -192,10 +192,9 @@ func (s *mockGCSSuite) TestEvalError() {
 	s.tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows(
 		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'",
 		"Warning 1292 Truncated incorrect DOUBLE value: 'asd'"))
-	// TODO: When constant folding for c=@v1+'asd', currently we can't pass IgnoreErr flag to CastStringAsReal
-	//s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
-	//	"1 2",
-	//	"1 4"))
+	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
+		"1 2",
+		"1 4"))
 }
 
 func (s *mockGCSSuite) TestDataError() {

@@ -300,6 +300,8 @@ func NewLoadDataWorker(
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
 		sctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		sctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+		sctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	}
 
 	if err := loadDataWorker.initOptions(plan.Options); err != nil {
