@@ -558,7 +558,7 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, o
 
 					// if sample data failed due to max-error, fallback to use source size
 					if tbl.IndexRatio > 0 {
-						tableSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+						tableSize = int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 					}
 
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
