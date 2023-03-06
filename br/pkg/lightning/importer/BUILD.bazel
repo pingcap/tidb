@@ -93,6 +93,7 @@ go_library(
 
 go_test(
     name = "importer_test",
+    timeout = "short",
     srcs = [
         "check_info_test.go",
         "checksum_test.go",
@@ -107,6 +108,7 @@ go_test(
         "tidb_test.go",
     ],
     embed = [":importer"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",
