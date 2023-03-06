@@ -142,7 +142,7 @@ func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 		timeLeftThreshold = tr.ttl
 	})
 	var lastUpdateTime time.Time = time.Now()
-	var err error = nil
+	var err error
 	for {
 	CONSUMERESP:
 		for {
