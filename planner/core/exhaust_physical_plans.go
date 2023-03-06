@@ -2217,7 +2217,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		// 3. or there are otherConditions for this join
 		if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
 			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
-				// The hint has high priority than variable.
+				// The hint has higher priority than variable.
 				fixedBuildSide = true
 			}
 			if p.JoinType == LeftOuterJoin {
