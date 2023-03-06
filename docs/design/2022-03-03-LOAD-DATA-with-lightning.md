@@ -26,7 +26,19 @@ In short, we will decouple LOAD DATA statement and TiDB lightning into many comp
 
 ### Data source reader
 
+Currently, TiDB's LOAD DATA only supports to read the data file through MySQL client's connection, which is LOAD DATA LOCAL mode. TiDB lightning can use a [library](https://github.com/pingcap/tidb/tree/master/br/pkg/storage) to read cloud storages like s3. We choose `io.ReadSeekCloser` to provide an abstraction for them. Reading from MySQL client's connection can not implement seek invocation other than `seek(0, current)`. Currently we return an error for this case, and in future we can stash the file to some storage to better support seek.
+
+### Load data worker
+
+Reading the file through MySQL client's connection requires TiDB server to [writes extra data to the connection](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html) before the OK packet which represent the ending of the command, but in the normal executor routine we can't directly modify the client connection. In order to keep a clear boundary between the protocol layer and executor layer, we use a *load data worker* to encapsulate the real processing logic. The load data worker can run after the *data source reader* is ready, no matter it's invoked in protocol layer or executor layer.
+
+```
+(*LoadDataWorker).Load(context.Context, io.ReadSeekCloser) error
+```
+
 ### Data parser
+
+TiDB lightning
 
 ### KV encoder
 
