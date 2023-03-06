@@ -164,11 +164,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	// Override the resource group if necessary
 	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
-	if originStmtHints.HasResourceGroup && variable.EnableResourceControl.Load() {
-		sessVars.ResourceGroupName = originStmtHints.ResourceGroup
-	} else if originStmtHints.HasResourceGroup {
-		err := infoschema.ErrResourceGroupSupportDisabled
-		sessVars.StmtCtx.AppendWarning(err)
+	if originStmtHints.HasResourceGroup {
+		if variable.EnableResourceControl.Load() {
+			sessVars.ResourceGroupName = originStmtHints.ResourceGroup
+		} else {
+			err := infoschema.ErrResourceGroupSupportDisabled
+			sessVars.StmtCtx.AppendWarning(err)
+		}
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
