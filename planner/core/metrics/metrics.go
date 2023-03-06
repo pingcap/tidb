@@ -21,11 +21,12 @@ import (
 
 // planner core metrics vars
 var (
-	PlanCacheCounter     prometheus.Counter
-	PlanCacheMissCounter prometheus.Counter
-
-	PseudoEstimationNotAvailable prometheus.Counter
-	PseudoEstimationOutdate      prometheus.Counter
+	PseudoEstimationNotAvailable    prometheus.Counter
+	PseudoEstimationOutdate         prometheus.Counter
+	preparedPlanCacheHitCounter     prometheus.Counter
+	nonPreparedPlanCacheHitCounter  prometheus.Counter
+	preparedPlanCacheMissCounter    prometheus.Counter
+	nonPreparedPlanCacheMissCounter prometheus.Counter
 )
 
 func init() {
@@ -34,8 +35,25 @@ func init() {
 
 // InitMetricsVars init planner core metrics vars.
 func InitMetricsVars() {
-	PlanCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-	PlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 	PseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
 	PseudoEstimationOutdate = metrics.PseudoEstimation.WithLabelValues("outdate")
+	// plan cache metrics
+	preparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("prepared")
+	nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepared")
+	preparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("prepared")
+	nonPreparedPlanCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared")
+}
+
+func GetPlanCacheHitCounter(isNonPrepared bool) prometheus.Counter {
+	if isNonPrepared {
+		return nonPreparedPlanCacheHitCounter
+	}
+	return preparedPlanCacheHitCounter
+}
+
+func GetPlanCacheMissCounter(isNonPrepared bool) prometheus.Counter {
+	if isNonPrepared {
+		return nonPreparedPlanCacheMissCounter
+	}
+	return preparedPlanCacheMissCounter
 }
