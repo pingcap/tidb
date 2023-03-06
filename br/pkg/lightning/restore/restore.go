@@ -2095,6 +2095,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
 	estimatedDataSizeWithIndex := estimatedSizeResult.SizeWithIndex
+	estimatedTiflashDataSize := estimatedSizeResult.TiFlashSizeWithIndex
 
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if estimatedSizeResult.HasUnsortedBigTables {
@@ -2119,7 +2120,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 		}
 		if !taskExist {
-			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex); err != nil {
+			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex, estimatedTiflashDataSize); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
 		}

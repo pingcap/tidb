@@ -98,11 +98,12 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 	}
 
 	var (
-		err           error
-		tikvAvail     uint64
-		tiflashAvail  uint64
-		clusterSource uint64
-		taskMgr       taskMetaMgr
+		err               error
+		tikvAvail         uint64
+		tiflashAvail      uint64
+		tikvSourceSize    uint64
+		tiflashSourceSize uint64
+		taskMgr           taskMetaMgr
 	)
 	taskMgrVal := ctx.Value(taskManagerKey)
 	if taskMgrVal != nil {
@@ -116,7 +117,7 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		clusterSource = uint64(estimatedDataSizeResult.SizeWithIndex)
+		tikvSourceSize = uint64(estimatedDataSizeResult.SizeWithIndex)
 		tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -124,13 +125,16 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 	} else {
 		if err := taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			tikvAvail = 0
-			clusterSource = 0
+			tiflashAvail = 0
+			tikvSourceSize = 0
+			tiflashSourceSize = 0
 			restoreStarted := false
 			for _, task := range tasks {
 				if task.status > taskMetaStatusInitial {
 					restoreStarted = true
 				}
-				clusterSource += task.sourceBytes
+				tikvSourceSize += task.tikvSourceBytes
+				tiflashSourceSize += task.tiflashSourceBytes
 				if task.tikvAvail > 0 {
 					tikvAvail = task.tikvAvail
 				}
@@ -161,21 +165,23 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	estimateSize := clusterSource * replicaCount
-	if estimateSize <= tikvAvail && estimateSize <= tiflashAvail {
-		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV is %s and TiFlash is %s. The estimated storage space is %s.",
-			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(estimateSize)))
+	estimateTikvSize := tikvSourceSize * replicaCount
+	// note: tiflashSourceSize contains replicaCount
+	estimateTifalshSize := tiflashSourceSize
+	if estimateTikvSize <= tikvAvail && estimateTifalshSize <= tiflashAvail {
+		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
+			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(estimateTikvSize)), units.BytesSize(float64(estimateTifalshSize)))
 	}
 
-	if estimateSize > tikvAvail {
+	if estimateTikvSize > tikvAvail {
 		theResult.Passed = false
 		theResult.Message += fmt.Sprintf("The estimated storage space required by the TiKV cluster is %s but the actual storage space is %s.",
-			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(estimateSize)))
+			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(estimateTikvSize)))
 	}
-	if estimateSize > tiflashAvail {
+	if tiflashAvail > 0 && estimateTifalshSize > tiflashAvail {
 		theResult.Passed = false
 		theResult.Message += fmt.Sprintf(" The estimated storage space required for the Tiflash cluster is %s, but the actual storage space is %s.",
-			units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(estimateSize)))
+			units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(estimateTifalshSize)))
 	}
 	if !theResult.Passed {
 		theResult.Message += " Please expand the storage space in advance, otherwise the data import task may fail."
