@@ -1193,9 +1193,10 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int, e enum('1', '2', '3'), s set('1', '2', '3'), j json, bt bit(8), first_name varchar(50), last_name varchar(50), full_name varchar(101) generated always as (concat(first_name,' ',last_name)), key(b), key(c, d))`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e enum('1', '2', '3'), s set('1', '2', '3'), j json, bt bit(8), key(b), key(c, d))`)
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
+	tk.MustExec("create table t3(a int, first_name varchar(50), last_name varchar(50), full_name varchar(101) generated always as (concat(first_name,' ',last_name)))")
 	tk.MustExec("create view v as select * from t")
 	tk.MustExec("analyze table t, t1, t2") // eliminate stats warnings
 	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
@@ -1247,9 +1248,15 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		// "select * from t where bt > 0" // bit,
 		// "select * from t where a > 1 and bt > 0",
 		// "select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
-		// "select * from t where full_name = "a b", // generated column
-		// "select * from t where a > 1 and full_name = 'a b'",
+		// "select * from t3 where full_name = "a b", // generated column
+		// "select * from t3 where a > 1 and full_name = 'a b'",
 		// "select * from v", // view
+		// "select * from t where a = null", // null
+		//"select * from t where a = 1 or a = 2 or a = 3 or a = 4 or a = 5 or a = 6 or a = 7 or a = 8 or a = 9 or a = 10 or " +
+		//	"a = 11 or a = 12 or a = 13 or a = 14 or a = 15 or a = 16 or a = 17 or a = 18 or a = 19 or a = 20" +
+		//	"a = 21 or a = 22 or a = 23 or a = 24 or a = 25 or a = 26 or a = 27 or a = 28 or a = 29 or a = 30" +
+		//	"a = 31 or a = 32 or a = 33 or a = 34 or a = 35 or a = 36 or a = 37 or a = 38 or a = 39 or a = 40" +
+		//	"a = 41 or a = 42 or a = 43 or a = 44 or a = 45 or a = 46 or a = 47 or a = 48 or a = 49 or a = 50 or a = 51",
 	}
 
 	reasons := []string{
@@ -1283,6 +1290,8 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		//"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		//"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		//"skip non-prepared plan-cache: queries that access views are not supported",
+		//"skip non-prepared plan-cache: query has null constants",
+		//"skip non-prepared plan-cache: query has more than 50 constants",
 	}
 
 	for _, q := range supported {
