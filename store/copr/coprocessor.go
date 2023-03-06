@@ -1951,14 +1951,14 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 	}
 	// TODO: support keep-order batch
 	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
-		// disable batch copr for follower read
+		// Disable batch copr for follower read
 		return false
 	}
-	// disable batch copr when paging is enabled.
+	// Disable batch copr when paging is enabled.
 	if req.Paging.Enable {
 		return false
 	}
-	// disable it for internal requests to avoid regression.
+	// Disable it for internal requests to avoid regression.
 	if req.RequestSource.RequestSourceInternal {
 		return false
 	}
