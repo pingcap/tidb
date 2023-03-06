@@ -136,6 +136,48 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
 }
 
+func TestNonPreparedPlanCacheJSONFilter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, b json)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a<1`)
+	tk.MustExec(`select * from t where a<2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// queries with filters with JSON columns are not supported
+	tk.MustExec(`select * from t where b<1`)
+	tk.MustExec(`select * from t where b<2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`select b from t where a<1`)
+	tk.MustExec(`select b from t where a<2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheEnumFilter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t(a int, b enum('1', '2', '3'))")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select * from t where a<1`)
+	tk.MustExec(`select * from t where a<2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// queries with filters with JSON columns are not supported
+	tk.MustExec(`select * from t where b='1'`)
+	tk.MustExec(`select * from t where b='2'`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`select b from t where a<1`)
+	tk.MustExec(`select b from t where a<2`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestNonPreparedPlanCacheNullValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -169,6 +211,17 @@ func TestNonPreparedPlanCacheInListChange(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec(`select * from t where a in (1, 2, 3, 4)`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCacheMemoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	tk.MustExec(`select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'`)
+	tk.MustExec(`select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheTooManyConsts(t *testing.T) {

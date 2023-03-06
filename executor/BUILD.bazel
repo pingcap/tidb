@@ -114,6 +114,7 @@ go_library(
         "//domain/infosync",
         "//errno",
         "//executor/aggfuncs",
+        "//executor/metrics",
         "//expression",
         "//expression/aggregation",
         "//infoschema",
@@ -303,6 +304,7 @@ go_test(
         "join_pkg_test.go",
         "join_test.go",
         "joiner_test.go",
+        "load_data_test.go",
         "main_test.go",
         "memory_test.go",
         "memtable_reader_test.go",
@@ -348,6 +350,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/errors",
+        "//br/pkg/lightning/config",
         "//config",
         "//ddl",
         "//ddl/placement",

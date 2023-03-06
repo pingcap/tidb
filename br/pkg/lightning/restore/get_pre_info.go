@@ -398,6 +398,7 @@ get_struct_from_src:
 			return nil, errors.Annotatef(err, "get create table statement from schema file error: %s", tableFileMeta.Name)
 		}
 		theTableInfo, err := newTableInfo(createTblSQL, 0)
+		log.L().Info("generate table info from SQL", zap.Error(err), zap.String("sql", createTblSQL), zap.String("table_name", tableFileMeta.Name), zap.String("db_name", dbSrcFileMeta.Name))
 		if err != nil {
 			errMsg := "generate table info from SQL error"
 			log.L().Error(errMsg, zap.Error(err), zap.String("sql", createTblSQL), zap.String("table_name", tableFileMeta.Name))
