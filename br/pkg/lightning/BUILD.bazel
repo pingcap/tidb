@@ -16,7 +16,7 @@ go_library(
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/glue",
-        "//br/pkg/lightning/importer:restore",
+        "//br/pkg/lightning/importer",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",

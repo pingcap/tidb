@@ -26,7 +26,7 @@ go_test(
     embed = [":mock"],
     flaky = True,
     deps = [
-        "//br/pkg/lightning/importer:restore",
+        "//br/pkg/lightning/importer",
         "//parser/model",
         "@com_github_stretchr_testify//require",
     ],
