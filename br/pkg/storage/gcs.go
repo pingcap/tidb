@@ -398,6 +398,9 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset + r.totalSize
+		if realOffset < 0 {
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range when length is '%v'", offset, r.totalSize)
+		}
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}

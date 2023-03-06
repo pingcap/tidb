@@ -226,6 +226,11 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, 5, n)
 	require.Equal(t, "97222", string(p))
 
+	_, err = efr.Seek(int64(0), io.SeekEnd)
+	require.Error(t, err)
+	_, err = efr.Seek(int64(-10000), io.SeekEnd)
+	require.Error(t, err)
+
 	err = efr.Close()
 	require.NoError(t, err)
 
