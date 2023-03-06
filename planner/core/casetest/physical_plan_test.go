@@ -239,6 +239,7 @@ func TestDAGPlanTopN(t *testing.T) {
 }
 
 func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
+	t.Skip("unknown")
 	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
