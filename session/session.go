@@ -2140,14 +2140,17 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Backup the original resource group name since sql hint might change it during optimization
 	originalResourceGroup := s.GetSessionVars().ResourceGroupName
 
-	defer func() {
-		// Restore the resource group for the session
-		s.GetSessionVars().ResourceGroupName = originalResourceGroup
-	}()
-
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// the execution finished.
+	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+		defer func() {
+			// Restore the resource group for the session
+			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+		}()
+	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 
