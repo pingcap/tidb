@@ -1078,9 +1078,9 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		if testCase.cacheAble == "0" {
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			if testCase.isDecorrelated {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has uncorrelated sub-queries is un-cacheable"))
 			} else {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 			}
 		}
 	}
@@ -1088,7 +1088,7 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 0")
 	for _, testCase := range testCases {
 		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has sub-queries is un-cacheable"))
 		var using []string
 		for i, p := range testCase.params {
 			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
@@ -1193,9 +1193,10 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e enum('1', '2', '3'), s set('1', '2', '3'), j json, bt bit(8), first_name varchar(50), last_name varchar(50), full_name varchar(101) generated always as (concat(first_name,' ',last_name)), key(b), key(c, d))`)
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
+	tk.MustExec("create view v as select * from t")
 	tk.MustExec("analyze table t, t1, t2") // eliminate stats warnings
 	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
 
@@ -1237,7 +1238,18 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where a+b=13",      // '+'
 		"select * from t where mod(a, 3)=1", // mod
 		"select * from t where d>now()",     // now
-		// memtable
+		// "select * from t where j < 1" // json,
+		// "select * from t where a > 1 and j < 1",
+		// "select * from t where e < '1'" // enum,
+		// "select * from t where a > 1 and e < '1'",
+		// "select * from t where s < '1'" // set,
+		// "select * from t where a > 1 and s < '1'",
+		// "select * from t where bt > 0" // bit,
+		// "select * from t where a > 1 and bt > 0",
+		// "select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
+		// "select * from t where full_name = "a b", // generated column
+		// "select * from t where a > 1 and full_name = 'a b'",
+		// "select * from v", // view
 	}
 
 	reasons := []string{
@@ -1259,6 +1271,18 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some unsupported binary operation",
 		"skip non-prepared plan-cache: query has some unsupported binary operation",
 		"skip non-prepared plan-cache: query has some unsupported Node",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		//"skip non-prepared plan-cache: queries that access in-memory tables",
+		//"skip non-prepared plan-cache: queries that have generated columns are not supported",
+		//"skip non-prepared plan-cache: queries that have generated columns are not supported",
+		//"skip non-prepared plan-cache: queries that access views are not supported",
 	}
 
 	for _, q := range supported {
