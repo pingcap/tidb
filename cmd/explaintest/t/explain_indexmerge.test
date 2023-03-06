@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 create table t (a int primary key, b int, c int, d int, e int, f int);
 create index tb on t (b);

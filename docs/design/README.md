@@ -16,7 +16,7 @@ A hastily-proposed design document can hurt its chances of acceptance. Low-quali
 
 Although there is no single way to prepare for submitting a design document, it is generally a good idea to pursue feedback from other project developers beforehand, to ascertain that the design document may be desirable; having a consistent impact on the project requires concerted effort toward consensus-building.
 
-The most common preparations for writing and submitting an design document for now is [creating a disucss issue](https://github.com/pingcap/tidb/issues/new/choose), which is going to be converted into a tracking issue of the design implementation.
+The most common preparations for writing and submitting a design document for now is [creating an issue for discussion](https://github.com/pingcap/tidb/issues/new/choose), which is going to be converted into a tracking issue of the design implementation.
 
 ## What is the process?
 

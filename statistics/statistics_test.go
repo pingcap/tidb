@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -200,7 +199,7 @@ func TestPseudoTable(t *testing.T) {
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
-	require.Equal(t, len(tbl.Columns), 1)
+	require.Len(t, tbl.Columns, 1)
 	require.Greater(t, tbl.Count, int64(0))
 	sctx := mock.NewContext()
 	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
@@ -250,7 +249,12 @@ func SubTestColumnRange() func(*testing.T) {
 		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
-		col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
+		col := &Column{
+			Histogram:         *hg,
+			CMSketch:          buildCMSketch(s.rc.(*recordSet).data),
+			Info:              &model.ColumnInfo{},
+			StatsLoadedStatus: NewStatsFullLoadStatus(),
+		}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),
@@ -322,7 +326,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
-		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
+		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),
@@ -563,7 +567,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.lessRowCount(types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
@@ -641,7 +645,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 99999, int(count))
 
 		datum := types.Datum{}
-		datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+		datum.SetMysqlJSON(types.BinaryJSON{TypeCode: types.JSONTypeCodeLiteral})
 		item := &SampleItem{Value: datum}
 		collector = &SampleCollector{
 			Count:     1,
@@ -669,4 +673,44 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 		h := HistogramFromProto(p)
 		require.True(t, HistogramEqual(col, h, true))
 	}
+}
+
+func TestPruneTopN(t *testing.T) {
+	var topnIn, topnOut []TopNMeta
+	var totalNDV, nullCnt, sampleRows, totalRows int64
+
+	// case 1
+	topnIn = []TopNMeta{{[]byte{1}, 100_000}, {[]byte{2}, 10}}
+	totalNDV = 2
+	nullCnt = 0
+	sampleRows = 100_010
+	totalRows = 500_050
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+
+	// case 2
+	topnIn = []TopNMeta{
+		{[]byte{1}, 30_000},
+		{[]byte{2}, 30_000},
+		{[]byte{3}, 20_000},
+		{[]byte{4}, 20_000},
+	}
+	totalNDV = 5
+	nullCnt = 0
+	sampleRows = 100_000
+	totalRows = 10_000_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+
+	// case 3
+	topnIn = nil
+	for i := 0; i < 100; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1_000})
+	}
+	totalNDV = 100
+	nullCnt = 0
+	sampleRows = 100_000
+	totalRows = 10_000_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
 }

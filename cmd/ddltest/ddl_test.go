@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"database/sql"
 	"database/sql/driver"
 	"flag"
@@ -23,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +33,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store"
 	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -116,7 +116,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	// Stop current DDL worker, so that we can't be the owner now.
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
-	ddl.RunWorker = false
+	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())
@@ -180,9 +180,7 @@ func (s *ddlSuite) teardown(t *testing.T) {
 	go func() {
 		select {
 		case <-time.After(100 * time.Second):
-			buf := make([]byte, 2<<20)
-			size := runtime.Stack(buf, true)
-			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
+			log.Error("testing timeout", zap.Stack("stack"))
 		case <-quitCh:
 		}
 	}()
@@ -657,7 +655,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -735,7 +733,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_inc")
@@ -797,7 +795,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_insert")
@@ -853,7 +851,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -918,7 +916,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -997,7 +995,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1034,7 +1032,6 @@ func TestSimpleDelete(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-
 				workerNum := 10
 				rowCount := 1000
 				batch := rowCount / workerNum
@@ -1060,7 +1057,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1085,7 +1082,6 @@ func TestSimpleDelete(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-
 				var mu sync.Mutex
 				keysMap := make(map[int64]int64)
 
@@ -1137,7 +1133,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)

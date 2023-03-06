@@ -39,7 +39,7 @@ type Interceptor interface {
 type BaseInterceptor struct{}
 
 // OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
-func (bi *BaseInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+func (*BaseInterceptor) OnGetInfoSchema(_ sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	return is
 }
 
@@ -48,13 +48,19 @@ type Callback interface {
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
-	OnSchemaStateChanged()
+	OnSchemaStateChanged(schemaVer int64)
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
+	// OnJobRunAfter is called after running job.
+	OnJobRunAfter(job *model.Job)
 	// OnJobUpdated is called after the running job is updated.
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
+	// OnGetJobBefore is called before getting job.
+	OnGetJobBefore(jobType string)
+	// OnGetJobAfter is called after getting job.
+	OnGetJobAfter(jobType string, job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -62,27 +68,42 @@ type BaseCallback struct {
 }
 
 // OnChanged implements Callback interface.
-func (c *BaseCallback) OnChanged(err error) error {
+func (*BaseCallback) OnChanged(err error) error {
 	return err
 }
 
 // OnSchemaStateChanged implements Callback interface.
-func (c *BaseCallback) OnSchemaStateChanged() {
+func (*BaseCallback) OnSchemaStateChanged(schemaVer int64) {
 	// Nothing to do.
 }
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
-func (c *BaseCallback) OnJobRunBefore(job *model.Job) {
+func (*BaseCallback) OnJobRunBefore(_ *model.Job) {
+	// Nothing to do.
+}
+
+// OnJobRunAfter implements Callback.OnJobRunAfter interface.
+func (*BaseCallback) OnJobRunAfter(_ *model.Job) {
 	// Nothing to do.
 }
 
 // OnJobUpdated implements Callback.OnJobUpdated interface.
-func (c *BaseCallback) OnJobUpdated(job *model.Job) {
+func (*BaseCallback) OnJobUpdated(job *model.Job) {
 	// Nothing to do.
 }
 
 // OnWatched implements Callback.OnWatched interface.
-func (c *BaseCallback) OnWatched(ctx context.Context) {
+func (*BaseCallback) OnWatched(ctx context.Context) {
+	// Nothing to do.
+}
+
+// OnGetJobBefore implements Callback.OnGetJobBefore interface.
+func (c *BaseCallback) OnGetJobBefore(jobType string) {
+	// Nothing to do.
+}
+
+// OnGetJobAfter implements Callback.OnGetJobAfter interface.
+func (c *BaseCallback) OnGetJobAfter(jobType string, job *model.Job) {
 	// Nothing to do.
 }
 
@@ -115,7 +136,7 @@ func (c *DefaultCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *DefaultCallback) OnSchemaStateChanged() {
+func (c *DefaultCallback) OnSchemaStateChanged(schemaVer int64) {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
@@ -152,7 +173,7 @@ func (c *ctcCallback) OnChanged(err error) error {
 }
 
 // OnSchemaStateChanged overrides the ddl Callback interface.
-func (c *ctcCallback) OnSchemaStateChanged() {
+func (c *ctcCallback) OnSchemaStateChanged(retVer int64) {
 	err := c.do.Reload()
 	if err != nil {
 		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
@@ -160,7 +181,7 @@ func (c *ctcCallback) OnSchemaStateChanged() {
 }
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
-func (c *ctcCallback) OnJobRunBefore(job *model.Job) {
+func (*ctcCallback) OnJobRunBefore(job *model.Job) {
 	log.Info("on job run before", zap.String("job", job.String()))
 	// Only block the ctc type ddl here.
 	if job.Type != model.ActionModifyColumn {

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -49,7 +49,7 @@ tiflash_replica_ready() {
   done
 }
 
-for BACKEND in importer tidb local; do
+for BACKEND in tidb local; do
   run_sql "DROP DATABASE IF EXISTS $DB"
   run_sql "CREATE DATABASE $DB"
   run_sql "CREATE TABLE $DB.t1 (i INT, j INT, s varchar(32), PRIMARY KEY(s, i));"

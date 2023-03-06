@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "resourcemanager",
+    srcs = [
+        "rm.go",
+        "schedule.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanager/scheduler",
+        "//resourcemanager/util",
+        "//util",
+        "//util/cpu",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

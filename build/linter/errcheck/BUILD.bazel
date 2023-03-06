@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "errcheck",
+    srcs = ["analyzer.go"],
+    embedsrcs = ["errcheck_excludes.txt"],
+    importpath = "github.com/pingcap/tidb/build/linter/errcheck",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_kisielk_errcheck//errcheck",
+    ],
+)

@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "regexpr-router",
+    srcs = ["regexpr_router.go"],
+    importpath = "github.com/pingcap/tidb/util/regexpr-router",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/filter",
+        "//util/table-router",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "regexpr-router_test",
+    timeout = "short",
+    srcs = ["regexpr_router_test.go"],
+    embed = [":regexpr-router"],
+    flaky = True,
+    deps = [
+        "//util/filter",
+        "//util/table-router",
+        "@com_github_stretchr_testify//require",
+    ],
+)

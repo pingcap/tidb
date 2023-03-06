@@ -47,7 +47,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -111,7 +111,7 @@ func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.D
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
@@ -134,14 +134,14 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(t, job); err != nil {
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaDefaultPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 		job.State = model.JobStateCancelled
@@ -170,7 +170,7 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(t, job); err != nil {
+	if ver, err = updateSchemaVersion(d, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -182,8 +182,14 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if dbInfo.State == model.StatePublic {
+		err = checkDatabaseHasForeignKeyReferredInOwner(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -211,9 +217,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
@@ -221,8 +224,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
@@ -246,9 +247,98 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.
-		err = errors.Errorf("invalid db state %v", dbInfo.State)
+		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))
 	}
+	job.SchemaState = dbInfo.State
+	return ver, errors.Trace(err)
+}
 
+func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var (
+		recoverSchemaInfo      *RecoverSchemaInfo
+		recoverSchemaCheckFlag int64
+	)
+	if err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	schemaInfo := recoverSchemaInfo.DBInfo
+	// check GC and safe point
+	gcEnable, err := checkGCEnable(w)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	switch schemaInfo.State {
+	case model.StateNone:
+		// none -> write only
+		// check GC enable and update flag.
+		if gcEnable {
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
+		} else {
+			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
+		}
+		// Clear all placement when recover
+		for _, recoverTabInfo := range recoverSchemaInfo.RecoverTabsInfo {
+			err = clearTablePlacementAndBundles(recoverTabInfo.TableInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+			}
+		}
+		schemaInfo.State = model.StateWriteOnly
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		// write only -> public
+		// do recover schema and tables.
+		if gcEnable {
+			err = disableGC(w)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
+			}
+		}
+		dbInfo := schemaInfo.Clone()
+		dbInfo.State = model.StatePublic
+		err = t.CreateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// check GC safe point
+		err = checkSafePoint(w, recoverSchemaInfo.SnapshotTS)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+			if recoverInfo.TableInfo.TTLInfo != nil {
+				// force disable TTL job schedule for recovered table
+				recoverInfo.TableInfo.TTLInfo.Enable = false
+			}
+			ver, err = w.recoverTable(t, job, recoverInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		schemaInfo.State = model.StatePublic
+		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+			recoverInfo.TableInfo.State = model.StatePublic
+			recoverInfo.TableInfo.UpdateTS = t.StartTS
+		}
+		// use to update InfoSchema
+		job.SchemaID = schemaInfo.ID
+		ver, err = updateSchemaVersion(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, schemaInfo)
+		return ver, nil
+	default:
+		// We can't enter here.
+		return ver, errors.Errorf("invalid db state %v", schemaInfo.State)
+	}
 	return ver, errors.Trace(err)
 }
 

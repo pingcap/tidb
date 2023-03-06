@@ -35,7 +35,7 @@ func TestExternalFileWriter(t *testing.T) {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
 			require.Nil(t, err2)
-			require.Equal(t, len(p), written)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
 		require.NoError(t, err)
@@ -102,15 +102,16 @@ func TestCompressReaderWriter(t *testing.T) {
 		ctx := context.Background()
 		storage, err := Create(ctx, backend, true)
 		require.NoError(t, err)
-		storage = WithCompression(storage, Gzip)
-		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt.gz"
+		storage = WithCompression(storage, test.compressType)
+		suffix := createSuffixString(test.compressType)
+		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
 		writer, err := storage.Create(ctx, fileName)
 		require.NoError(t, err)
 		for _, str := range test.content {
 			p := []byte(str)
 			written, err2 := writer.Write(ctx, p)
 			require.Nil(t, err2)
-			require.Equal(t, len(p), written)
+			require.Len(t, p, written)
 		}
 		err = writer.Close(ctx)
 		require.NoError(t, err)
@@ -124,7 +125,6 @@ func TestCompressReaderWriter(t *testing.T) {
 		_, err = bf.ReadFrom(r)
 		require.NoError(t, err)
 		require.Equal(t, strings.Join(test.content, ""), bf.String())
-		require.Nil(t, r.Close())
 
 		// test withCompression Open
 		r, err = storage.Open(ctx, fileName)
@@ -135,7 +135,8 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []CompressType{Gzip}
+	compressTypeArr := []CompressType{Gzip, Snappy, Zstd}
+
 	tests := []testcase{
 		{
 			name: "long text medium chunks",

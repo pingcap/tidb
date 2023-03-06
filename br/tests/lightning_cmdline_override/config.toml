@@ -4,7 +4,7 @@ file = "/tmp/xyzxyzxyz"
 level = "xyzxyzxyz"
 
 [tikv-importer]
-addr = "xyzxyzxyz"
+backend = "local"
 
 [mydumper]
 data-source-dir = "xyzxyzxyz"

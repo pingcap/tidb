@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -86,7 +86,7 @@ type MetaIR interface {
 	MetaSQL() string
 }
 
-func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
+func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableMeta, error) {
 	tps, err := rows.ColumnTypes()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -102,6 +102,6 @@ func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
 		colTypes:      tps,
 		selectedField: strings.Join(nms, ","),
 		selectedLen:   len(nms),
-		specCmts:      []string{"/*!40101 SET NAMES binary*/;"},
+		specCmts:      getSpecialComments(serverType),
 	}, nil
 }

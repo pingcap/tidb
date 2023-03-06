@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql2 "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -117,7 +117,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte // nolint: prealloc
+	var values []byte //nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {
@@ -146,9 +146,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	if _, ok := table.uniqIndices[column.name]; ok {
 		incremental = true
 	}
-	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeTiny:
 		var data int64
 		if incremental {
@@ -216,9 +216,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
 		if incremental {
-			data = append(data, []byte(column.data.nextString(tp.Flen))...)
+			data = append(data, []byte(column.data.nextString(tp.GetFlen()))...)
 		} else {
-			data = append(data, []byte(randStringValue(column, tp.Flen))...)
+			data = append(data, []byte(randStringValue(column, tp.GetFlen()))...)
 		}
 
 		data = append(data, '\'')
@@ -280,7 +280,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	case mysql.TypeNewDecimal:
-		var limit = int64(math.Pow10(tp.Flen))
+		var limit = int64(math.Pow10(tp.GetFlen()))
 		var intVal int64
 		if limit < 0 {
 			limit = math.MaxInt64
@@ -298,7 +298,7 @@ func genColumnData(table *table, column *column) (string, error) {
 				intVal = randInt64Value(column, (-limit+1)/2, (limit-1)/2)
 			}
 		}
-		return intToDecimalString(intVal, tp.Decimal), nil
+		return intToDecimalString(intVal, tp.GetDecimal()), nil
 	default:
 		return "", errors.Errorf("unsupported column type - %v", column)
 	}
@@ -318,13 +318,18 @@ func execSQL(db *sql.DB, sql string) error {
 }
 
 func createDB(cfg DBConfig) (*sql.DB, error) {
-	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
-	db, err := sql.Open("mysql", dbDSN)
+	driverCfg := mysql2.NewConfig()
+	driverCfg.User = cfg.User
+	driverCfg.Passwd = cfg.Password
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = cfg.Host + ":" + strconv.Itoa(cfg.Port)
+	driverCfg.DBName = cfg.Name
+
+	c, err := mysql2.NewConnector(driverCfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	return db, nil
+	return sql.OpenDB(c), nil
 }
 
 func closeDB(db *sql.DB) error {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -51,7 +52,8 @@ type TopSQLReporter interface {
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 
 	// RegisterPlan like RegisterSQL, but for normalized plan strings.
-	RegisterPlan(planDigest []byte, normalizedPlan string)
+	// isLarge indicates the size of normalizedPlan is big.
+	RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool)
 
 	// Close uses to close and release the reporter resource.
 	Close()
@@ -63,29 +65,27 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 // RemoteTopSQLReporter implements TopSQLReporter that sends data to a remote agent.
 // This should be called periodically to collect TopSQL resource usage metrics.
 type RemoteTopSQLReporter struct {
-	DefaultDataSinkRegisterer
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
+	ctx                     context.Context
+	reportCollectedDataChan chan collectedData
+	cancel                  context.CancelFunc
 	sqlCPUCollector         *collector.SQLCPUCollector
 	collectCPUTimeChan      chan []collector.SQLCPUTimeRecord
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
-	reportCollectedDataChan chan collectedData
-
-	collecting        *collecting
-	normalizedSQLMap  *normalizedSQLMap
-	normalizedPlanMap *normalizedPlanMap
-	stmtStatsBuffer   map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
-
+	collecting              *collecting
+	normalizedSQLMap        *normalizedSQLMap
+	normalizedPlanMap       *normalizedPlanMap
+	stmtStatsBuffer         map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
 	// calling decodePlan this can take a while, so should not block critical paths.
 	decodePlan planBinaryDecodeFunc
+	// Instead of dropping large plans, we compress it into encoded format and report
+	compressPlan planBinaryCompressFunc
+	DefaultDataSinkRegisterer
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
 //
 // decodePlan is a decoding function which will be called asynchronously to decode the plan binary to string.
-func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		DefaultDataSinkRegisterer: NewDefaultDataSinkRegisterer(ctx),
@@ -99,6 +99,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		normalizedPlanMap:         newNormalizedPlanMap(),
 		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
 		decodePlan:                decodePlan,
+		compressPlan:              compressPlan,
 	}
 	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
 	return tsr
@@ -123,7 +124,7 @@ func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 	case tsr.collectCPUTimeChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -139,7 +140,7 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 	case tsr.collectStmtStatsChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectStmtChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectStmtChannelFullCounter.Inc()
 	}
 }
 
@@ -153,8 +154,8 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // RegisterPlan implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
-	tsr.normalizedPlanMap.register(planDigest, normalizedPlan)
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool) {
+	tsr.normalizedPlanMap.register(planDigest, normalizedPlan, isLarge)
 }
 
 // Close implements TopSQLReporter.
@@ -249,7 +250,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
 	}:
 	default:
 		// ignore if chan blocked
-		ignoreReportChannelFullCounter.Inc()
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 
@@ -270,7 +271,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),
 				SQLMetas:    data.normalizedSQLMap.toProto(),
-				PlanMetas:   data.normalizedPlanMap.toProto(tsr.decodePlan),
+				PlanMetas:   data.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan),
 			})
 		case <-tsr.ctx.Done():
 			return

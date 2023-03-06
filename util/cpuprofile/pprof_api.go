@@ -65,17 +65,14 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 // Collector is a cpu profile collector, it collect cpu profile data from globalCPUProfiler.
 type Collector struct {
 	ctx       context.Context
+	writer    io.Writer
+	err       error // fields uses to store the result data of collected.
 	cancel    context.CancelFunc
-	started   bool
 	firstRead chan struct{}
+	dataCh    ProfileConsumer
+	result    *profile.Profile // fields uses to store the result data of collected.
 	wg        sync.WaitGroup
-
-	dataCh ProfileConsumer
-	writer io.Writer
-
-	// Following fields uses to store the result data of collected.
-	result *profile.Profile
-	err    error
+	started   bool
 }
 
 // NewCollector returns a new NewCollector.
@@ -184,7 +181,7 @@ const labelSQL = "sql"
 
 // removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
 // Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
-func (pc *Collector) removeLabel(profileData *profile.Profile) {
+func (*Collector) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
 			if k != labelSQL {

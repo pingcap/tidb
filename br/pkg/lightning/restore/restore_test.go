@@ -19,9 +19,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
@@ -31,13 +29,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,6 +65,7 @@ func TestNewTableRestore(t *testing.T) {
 
 		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
 			Name: tc.name,
+			DB:   dbInfo.Name,
 			Core: tableInfo,
 		}
 	}
@@ -71,7 +73,7 @@ func TestNewTableRestore(t *testing.T) {
 	for _, tc := range testCases {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
-		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NotNil(t, tr)
 		require.NoError(t, err)
 	}
@@ -80,6 +82,7 @@ func TestNewTableRestore(t *testing.T) {
 func TestNewTableRestoreFailure(t *testing.T) {
 	tableInfo := &checkpoints.TidbTableInfo{
 		Name: "failure",
+		DB:   "mockdb",
 		Core: &model.TableInfo{},
 	}
 	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{
@@ -87,7 +90,7 @@ func TestNewTableRestoreFailure(t *testing.T) {
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
 
-	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
@@ -110,11 +113,10 @@ func TestErrorSummaries(t *testing.T) {
 
 func TestVerifyCheckpoint(t *testing.T) {
 	dir := t.TempDir()
-
-	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
-	defer cpdb.Close()
 	ctx := context.Background()
-
+	cpdb, err := checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	require.NoError(t, err)
+	defer cpdb.Close()
 	actualReleaseVersion := build.ReleaseVersion
 	defer func() {
 		build.ReleaseVersion = actualReleaseVersion
@@ -130,8 +132,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg.TaskID = 123
 		cfg.TiDB.Port = 4000
 		cfg.TiDB.PdAddr = "127.0.0.1:2379"
-		cfg.TikvImporter.Backend = config.BackendImporter
-		cfg.TikvImporter.Addr = "127.0.0.1:8287"
+		cfg.TikvImporter.Backend = config.BackendTiDB
 		cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
 
 		return cfg
@@ -143,9 +144,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 	adjustFuncs := map[string]func(cfg *config.Config){
 		"tikv-importer.backend": func(cfg *config.Config) {
 			cfg.TikvImporter.Backend = config.BackendLocal
-		},
-		"tikv-importer.addr": func(cfg *config.Config) {
-			cfg.TikvImporter.Addr = "128.0.0.1:8287"
 		},
 		"mydumper.data-source-dir": func(cfg *config.Config) {
 			cfg.Mydumper.SourceDir = "/tmp/test"
@@ -171,6 +169,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg := newCfg()
 		fn(cfg)
 		err := verifyCheckpoint(cfg, taskCp)
+		require.Error(t, err)
 		if conf == "version" {
 			build.ReleaseVersion = actualReleaseVersion
 			require.Regexp(t, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*", err.Error())
@@ -188,85 +187,6 @@ func TestVerifyCheckpoint(t *testing.T) {
 		fn(cfg)
 		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
 		require.NoError(t, err)
-	}
-}
-
-func TestDiskQuotaLock(t *testing.T) {
-	lock := newDiskQuotaLock()
-
-	lock.Lock()
-	require.False(t, lock.TryRLock())
-	lock.Unlock()
-	require.True(t, lock.TryRLock())
-	require.True(t, lock.TryRLock())
-
-	rLocked := 2
-	lockHeld := make(chan struct{})
-	go func() {
-		lock.Lock()
-		lockHeld <- struct{}{}
-	}()
-	for lock.TryRLock() {
-		rLocked++
-		time.Sleep(time.Millisecond)
-	}
-	select {
-	case <-lockHeld:
-		t.Fatal("write lock is held before all read locks are released")
-	case <-time.NewTimer(10 * time.Millisecond).C:
-	}
-	for ; rLocked > 0; rLocked-- {
-		lock.RUnlock()
-	}
-	<-lockHeld
-	lock.Unlock()
-
-	done := make(chan struct{})
-	count := int32(0)
-	reader := func() {
-		for i := 0; i < 1000; i++ {
-			if lock.TryRLock() {
-				n := atomic.AddInt32(&count, 1)
-				if n < 1 || n >= 10000 {
-					lock.RUnlock()
-					panic(fmt.Sprintf("unexpected count(%d)", n))
-				}
-				for i := 0; i < 100; i++ {
-				}
-				atomic.AddInt32(&count, -1)
-				lock.RUnlock()
-			}
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	writer := func() {
-		for i := 0; i < 1000; i++ {
-			lock.Lock()
-			n := atomic.AddInt32(&count, 10000)
-			if n != 10000 {
-				lock.RUnlock()
-				panic(fmt.Sprintf("unexpected count(%d)", n))
-			}
-			for i := 0; i < 100; i++ {
-			}
-			atomic.AddInt32(&count, -10000)
-			lock.Unlock()
-			time.Sleep(time.Microsecond)
-		}
-		done <- struct{}{}
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 2; i++ {
-		go writer()
-	}
-	for i := 0; i < 5; i++ {
-		go reader()
-	}
-	for i := 0; i < 12; i++ {
-		<-done
 	}
 }
 
@@ -296,14 +216,27 @@ func TestPreCheckFailed(t *testing.T) {
 	require.NoError(t, err)
 	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: g,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		targetInfoGetter: targetInfoGetter,
+		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
+	}
+	cpdb := panicCheckpointDB{}
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb)
 	ctl := &Controller{
-		cfg:            cfg,
-		saveCpCh:       make(chan saveCp),
-		checkpointsDB:  panicCheckpointDB{},
-		metaMgrBuilder: failMetaMgrBuilder{},
-		checkTemplate:  NewSimpleTemplate(),
-		tidbGlue:       g,
-		errorMgr:       errormanager.New(nil, cfg),
+		cfg:                 cfg,
+		saveCpCh:            make(chan saveCp),
+		checkpointsDB:       cpdb,
+		metaMgrBuilder:      failMetaMgrBuilder{},
+		checkTemplate:       NewSimpleTemplate(),
+		tidbGlue:            g,
+		errorMgr:            errormanager.New(nil, cfg, log.L()),
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	mock.ExpectBegin()
@@ -316,6 +249,8 @@ func TestPreCheckFailed(t *testing.T) {
 	require.Regexp(t, ".*mock init meta failure", err.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// clear the sys variable cache
+	preInfoGetter.sysVarsCache = nil
 	mock.ExpectBegin()
 	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
 		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
@@ -326,4 +261,164 @@ func TestPreCheckFailed(t *testing.T) {
 	err1 := ctl.Run(context.Background())
 	require.Equal(t, err.Error(), err1.Error())
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAddExtendDataForCheckpoint(t *testing.T) {
+	cfg := config.NewConfig()
+
+	cfg.Mydumper.SourceID = "mysql-01"
+	cfg.Routes = []*router.TableRule{
+		{
+			TableExtractor: &router.TableExtractor{
+				TargetColumn: "c_table",
+				TableRegexp:  "t(.*)",
+			},
+			SchemaExtractor: &router.SchemaExtractor{
+				TargetColumn: "c_schema",
+				SchemaRegexp: "test_(.*)",
+			},
+			SourceExtractor: &router.SourceExtractor{
+				TargetColumn: "c_source",
+				SourceRegexp: "mysql-(.*)",
+			},
+			SchemaPattern: "test_*",
+			TablePattern:  "t*",
+			TargetSchema:  "test",
+			TargetTable:   "t",
+		},
+	}
+
+	cp := &checkpoints.TableCheckpoint{
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
+			},
+			0: {
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					FileMeta: mydump.SourceFileMeta{
+						Path: "tmp/test_1.t1.000000000.sql",
+					},
+				}, {
+					FileMeta: mydump.SourceFileMeta{
+						Path: "./test/tmp/test_1.t2.000000000.sql",
+					},
+				}, {
+					FileMeta: mydump.SourceFileMeta{
+						Path: "test_2.t3.000000000.sql",
+					},
+				}},
+			},
+		},
+	}
+	require.NoError(t, addExtendDataForCheckpoint(context.Background(), cfg, cp))
+	expectExtendCols := []string{"c_table", "c_schema", "c_source"}
+	expectedExtendVals := [][]string{
+		{"1", "1", "01"},
+		{"2", "1", "01"},
+		{"3", "2", "01"},
+	}
+	chunks := cp.Engines[0].Chunks
+	require.Len(t, chunks, 3)
+	for i, chunk := range chunks {
+		require.Equal(t, expectExtendCols, chunk.FileMeta.ExtendData.Columns)
+		require.Equal(t, expectedExtendVals[i], chunk.FileMeta.ExtendData.Values)
+	}
+}
+
+func TestFilterColumns(t *testing.T) {
+	p := parser.New()
+	se := tmock.NewContext()
+
+	testCases := []struct {
+		columnNames    []string
+		extendData     mydump.ExtendColumnData
+		ignoreColsMap  map[string]struct{}
+		createTableSql string
+
+		expectedFilteredColumns []string
+		expectedExtendValues    []string
+	}{
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{},
+			nil,
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"a", "b"},
+			[]string{},
+		},
+		{
+			[]string{},
+			mydump.ExtendColumnData{},
+			nil,
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{},
+			[]string{},
+		},
+		{
+			columnNames: []string{"a", "b"},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
+			},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
+		},
+		{
+			columnNames: []string{},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
+			},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"a", "b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
+		},
+		{
+			[]string{"a", "b"},
+			mydump.ExtendColumnData{},
+			map[string]struct{}{"a": {}},
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"b"},
+			[]string{},
+		},
+		{
+			[]string{},
+			mydump.ExtendColumnData{},
+			map[string]struct{}{"a": {}},
+			"CREATE TABLE t (a int primary key, b int)",
+			[]string{"b"},
+			[]string{},
+		},
+		{
+			columnNames: []string{"a", "b"},
+			extendData: mydump.ExtendColumnData{
+				Columns: []string{"c_source", "c_schema", "c_table"},
+				Values:  []string{"01", "1", "1"},
+			},
+			ignoreColsMap:           map[string]struct{}{"a": {}},
+			createTableSql:          "CREATE TABLE t (a int primary key, b int, c_source varchar(11), c_schema varchar(11), c_table varchar(11))",
+			expectedFilteredColumns: []string{"b", "c_source", "c_schema", "c_table"},
+			expectedExtendValues:    []string{"01", "1", "1"},
+		},
+	}
+	for i, tc := range testCases {
+		t.Logf("test case #%d", i)
+		node, err := p.ParseOneStmt(tc.createTableSql, "utf8mb4", "utf8mb4_bin")
+		require.NoError(t, err)
+		tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(i+1))
+		require.NoError(t, err)
+		tableInfo.State = model.StatePublic
+
+		expectedDatums := make([]types.Datum, 0, len(tc.expectedExtendValues))
+		for _, expectedValue := range tc.expectedExtendValues {
+			expectedDatums = append(expectedDatums, types.NewStringDatum(expectedValue))
+		}
+
+		filteredColumns, extendDatums := filterColumns(tc.columnNames, tc.extendData, tc.ignoreColsMap, tableInfo)
+		require.Equal(t, tc.expectedFilteredColumns, filteredColumns)
+		require.Equal(t, expectedDatums, extendDatums)
+	}
 }

@@ -241,11 +241,12 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	}
 
 	var builder distsql.RequestBuilder
-	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
 }
 
@@ -258,11 +259,12 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
-	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
 }
 
@@ -272,7 +274,7 @@ func (c *checksumContext) HandleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}

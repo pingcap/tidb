@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "exportloopref",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/exportloopref",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_kyoh86_exportloopref//:exportloopref"],
+)

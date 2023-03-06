@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !windows
-// +build !windows
 
 // TODO: Deduplicate this implementation with DM!
 
@@ -57,7 +56,7 @@ func GetStorageSize(dir string) (size StorageSize, err error) {
 	}
 
 	// Available blocks * size per block = available space in bytes
-	size.Available = stat.Bavail * bSize
+	size.Available = uint64(stat.Bavail) * bSize
 	size.Capacity = stat.Blocks * bSize
 
 	return

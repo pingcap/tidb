@@ -48,7 +48,7 @@ type SetConfigExec struct {
 func (s *SetConfigExec) Open(ctx context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
-		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" {
+		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" {
 			return errors.Errorf("unknown type %v", s.p.Type)
 		}
 		if s.p.Type == "tidb" {
@@ -62,6 +62,14 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 		}
 	}
 	s.p.Name = strings.ToLower(s.p.Name)
+
+	if s.p.Type == "tiflash" {
+		if !strings.HasPrefix(s.p.Name, "raftstore-proxy.") {
+			errorBody := "This command can only change config items begin with 'raftstore-proxy'. For other TiFlash config items, please update the config file directly. Your change to the config file will take effect immediately without a restart."
+			return errors.Errorf(errorBody)
+		}
+		s.p.Name = strings.TrimPrefix(s.p.Name, "raftstore-proxy.")
+	}
 
 	body, err := ConvertConfigItem2JSON(s.ctx, s.p.Name, s.p.Value)
 	s.jsonBody = body
@@ -94,7 +102,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if s.p.Instance != "" {
 		nodeAddrs.Insert(s.p.Instance)
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 	if s.p.Instance != "" && len(serversInfo) == 0 {
 		return errors.Errorf("instance %v is not found in this cluster", s.p.Instance)
 	}
@@ -105,6 +113,8 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		case "pd":
 			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
 		case "tikv":
+			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
+		case "tiflash":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
 		case "tidb":
 			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
@@ -167,8 +177,9 @@ func isValidInstance(instance string) bool {
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.
 // For example:
-// 	set config x key="val" ==> {"key":"val"}
-// 	set config x key=233 ==> {"key":233}
+//
+//	set config x key="val" ==> {"key":"val"}
+//	set config x key=233 ==> {"key":233}
 func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.Expression) (body string, err error) {
 	if val == nil {
 		return "", errors.Errorf("cannot set config to null")
@@ -186,7 +197,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			if mysql.HasIsBooleanFlag(val.GetType().Flag) {
+			if mysql.HasIsBooleanFlag(val.GetType().GetFlag()) {
 				str = "true"
 				if i == 0 {
 					str = "false"

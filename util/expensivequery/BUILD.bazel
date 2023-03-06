@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "expensivequery",
+    srcs = ["expensivequery.go"],
+    importpath = "github.com/pingcap/tidb/util/expensivequery",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//sessionctx/variable",
+        "//util",
+        "//util/logutil",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "expensivequery_test",
+    timeout = "short",
+    srcs = ["expensivequerey_test.go"],
+    embed = [":expensivequery"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

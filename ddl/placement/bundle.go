@@ -25,10 +25,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
+	"gopkg.in/yaml.v2"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -63,68 +64,74 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 
 	constraints := options.Constraints
-	leaderConstraints := options.LeaderConstraints
+	leaderConst := options.LeaderConstraints
 	learnerConstraints := options.LearnerConstraints
 	followerConstraints := options.FollowerConstraints
 	followerCount := options.Followers
 	learnerCount := options.Learners
 
-	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
+	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
 	}
 
-	Rules := []*Rule{}
+	rules := []*Rule{}
 
-	LeaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConstraints))
+	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
 	}
-	for _, cnst := range CommonConstraints {
-		if err := LeaderConstraints.Add(cnst); err != nil {
+	for _, cnst := range commonConstraints {
+		if err := leaderConstraints.Add(cnst); err != nil {
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+	rules = append(rules, NewRule(Leader, 1, leaderConstraints))
 
-	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
+	followerRules, err := NewRules(Voter, followerCount, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 	}
-	for _, rule := range FollowerRules {
+	for _, rule := range followerRules {
 		// give a default of 2 followers
 		if rule.Count == 0 {
 			rule.Count = 2
 		}
-		for _, cnst := range CommonConstraints {
+		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
 			}
 		}
 	}
-	Rules = append(Rules, FollowerRules...)
+	rules = append(rules, followerRules...)
 
-	LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
-	for _, rule := range LearnerRules {
+	for _, rule := range learnerRules {
 		if rule.Count == 0 {
 			if len(rule.Constraints) > 0 {
 				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 			}
 		}
-		for _, cnst := range CommonConstraints {
+		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
 		if rule.Count > 0 {
-			Rules = append(Rules, rule)
+			rules = append(rules, rule)
 		}
 	}
-
-	return &Bundle{Rules: Rules}, nil
+	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range rules {
+		rule.LocationLabels = labels
+	}
+	return &Bundle{Rules: rules}, nil
 }
 
 // NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
@@ -153,16 +160,24 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 	schedule := options.Schedule
 
-	var Rules []*Rule
+	var rules []*Rule
+
+	locationLabels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
+	}
 
 	// in case empty primaryRegion and regions, just return an empty bundle
 	if primaryRegion == "" && len(regions) == 0 {
-		Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
-		return &Bundle{Rules: Rules}, nil
+		rules = append(rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		for _, rule := range rules {
+			rule.LocationLabels = locationLabels
+		}
+		return &Bundle{Rules: rules}, nil
 	}
 
 	// regions must include the primary
-	sort.Strings(regions)
+	slices.Sort(regions)
 	primaryIndex := sort.SearchStrings(regions, primaryRegion)
 	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
 		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
@@ -181,19 +196,26 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
-	Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
-	if followers+1 > primaryCount {
+	rules = append(rules, NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	if primaryCount > 1 {
+		rules = append(rules, NewRule(Voter, primaryCount-1, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	}
+	if cnt := followers + 1 - primaryCount; cnt > 0 {
 		// delete primary from regions
 		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
-
 		if len(regions) > 0 {
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		} else {
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
+			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect()))
 		}
 	}
 
-	return &Bundle{Rules: Rules}, nil
+	// set location labels
+	for _, rule := range rules {
+		rule.LocationLabels = locationLabels
+	}
+
+	return &Bundle{Rules: rules}, nil
 }
 
 // Non-Exported functionality function, do not use it directly but NewBundleFromOptions
@@ -219,6 +241,19 @@ func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 		bundle, err = NewBundleFromConstraintsOptions(options)
 	}
 	return bundle, err
+}
+
+// newLocationLabelsFromSurvivalPreferences will parse the survival preferences into location labels.
+func newLocationLabelsFromSurvivalPreferences(survivalPreferenceStr string) ([]string, error) {
+	if len(survivalPreferenceStr) > 0 {
+		labels := []string{}
+		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
+		if err != nil {
+			return nil, ErrInvalidSurvivalPreferenceFormat
+		}
+		return labels, nil
+	}
+	return nil, nil
 }
 
 // NewBundleFromOptions will transform options into the bundle.
@@ -255,6 +290,15 @@ func (b *Bundle) String() string {
 func (b *Bundle) Tidy() error {
 	extraCnt := map[PeerRoleType]int{}
 	newRules := b.Rules[:0]
+
+	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
+	var locationLabels []string
+	for _, rule := range b.Rules {
+		if len(rule.LocationLabels) > 0 {
+			locationLabels = rule.LocationLabels
+			break
+		}
+	}
 	for i, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
@@ -298,6 +342,8 @@ func (b *Bundle) Tidy() error {
 				Key:    EngineLabelKey,
 				Values: []string{EngineLabelTiFlash},
 			}},
+			// the merged rule should have the same location labels with the original rules.
+			LocationLabels: locationLabels,
 		})
 	}
 	b.Rules = newRules
@@ -415,11 +461,16 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 	return "", false
 }
 
+// PolicyGetter is the interface to get the policy
+type PolicyGetter interface {
+	GetPolicy(policyID int64) (*model.PolicyInfo, error)
+}
+
 // NewTableBundle creates a bundle for table key range.
 // If table is a partitioned table, it also contains the rules that inherited from table for every partition.
 // The bundle does not contain the rules specified independently by each partition
-func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
-	bundle, err := newBundleFromPolicy(t, tbInfo.PlacementPolicyRef)
+func NewTableBundle(getter PolicyGetter, tbInfo *model.TableInfo) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(getter, tbInfo.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -441,8 +492,8 @@ func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
 // NewPartitionBundle creates a bundle for partition key range.
 // It only contains the rules specified independently by the partition.
 // That is to say the inherited rules from table is not included.
-func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
-	bundle, err := newBundleFromPolicy(t, def.PlacementPolicyRef)
+func NewPartitionBundle(getter PolicyGetter, def model.PartitionDefinition) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(getter, def.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -455,11 +506,11 @@ func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, e
 }
 
 // NewPartitionListBundles creates a bundle list for a partition list
-func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]*Bundle, error) {
+func NewPartitionListBundles(getter PolicyGetter, defs []model.PartitionDefinition) ([]*Bundle, error) {
 	bundles := make([]*Bundle, 0, len(defs))
 	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
 	for _, def := range defs {
-		bundle, err := NewPartitionBundle(t, def)
+		bundle, err := NewPartitionBundle(getter, def)
 		if err != nil {
 			return nil, err
 		}
@@ -472,9 +523,9 @@ func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]
 }
 
 // NewFullTableBundles returns a bundle list with both table bundle and partition bundles
-func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, error) {
+func NewFullTableBundles(getter PolicyGetter, tbInfo *model.TableInfo) ([]*Bundle, error) {
 	var bundles []*Bundle
-	tableBundle, err := NewTableBundle(t, tbInfo)
+	tableBundle, err := NewTableBundle(getter, tbInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +535,7 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	}
 
 	if tbInfo.Partition != nil {
-		partitionBundles, err := NewPartitionListBundles(t, tbInfo.Partition.Definitions)
+		partitionBundles, err := NewPartitionListBundles(getter, tbInfo.Partition.Definitions)
 		if err != nil {
 			return nil, err
 		}
@@ -494,9 +545,9 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	return bundles, nil
 }
 
-func newBundleFromPolicy(t *meta.Meta, ref *model.PolicyRefInfo) (*Bundle, error) {
+func newBundleFromPolicy(getter PolicyGetter, ref *model.PolicyRefInfo) (*Bundle, error) {
 	if ref != nil {
-		policy, err := t.GetPolicy(ref.ID)
+		policy, err := getter.GetPolicy(ref.ID)
 		if err != nil {
 			return nil, err
 		}

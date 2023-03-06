@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -82,13 +81,13 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 }
 
 func zeroValForType(tp *types.FieldType) interface{} {
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeFloat:
 		return float32(0)
 	case mysql.TypeDouble:
 		return float64(0)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			return uint64(0)
 		}
 		return int64(0)
@@ -113,7 +112,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 	case mysql.TypeEnum:
 		return types.Enum{}
 	case mysql.TypeJSON:
-		return json.CreateBinary(nil)
+		return types.CreateBinaryJSON(nil)
 	default:
 		return nil
 	}
@@ -151,7 +150,7 @@ func makeMutRowColumn(in interface{}) *Column {
 		col := newMutRowFixedLenColumn(sizeTime)
 		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 		return col
-	case json.BinaryJSON:
+	case types.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
 		col.data[0] = x.TypeCode
 		copy(col.data[1:], x.Value)
@@ -277,7 +276,7 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
 		setMutRowNameValue(col, x.Name, x.Value)
-	case json.BinaryJSON:
+	case types.BinaryJSON:
 		setMutRowJSON(col, x)
 	}
 	col.nullBitmap[0] = 1
@@ -350,7 +349,7 @@ func setMutRowNameValue(col *Column, name string, val uint64) {
 	col.offsets[1] = int64(dataLen)
 }
 
-func setMutRowJSON(col *Column, j json.BinaryJSON) {
+func setMutRowJSON(col *Column, j types.BinaryJSON) {
 	dataLen := len(j.Value) + 1
 	if len(col.data) >= dataLen {
 		col.data = col.data[:dataLen]

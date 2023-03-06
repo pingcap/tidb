@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stringutil",
+    srcs = ["string_util.go"],
+    importpath = "github.com/pingcap/tidb/util/stringutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/mysql",
+        "//util/hack",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "stringutil_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "string_util_test.go",
+    ],
+    embed = [":stringutil"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -15,10 +15,8 @@
 package expression
 
 import (
-	"regexp"
 	"sync"
 
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -28,13 +26,10 @@ import (
 
 var (
 	_ functionClass = &likeFunctionClass{}
-	_ functionClass = &regexpFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinLikeSig{}
-	_ builtinFunc = &builtinRegexpSig{}
-	_ builtinFunc = &builtinRegexpUTF8Sig{}
 )
 
 type likeFunctionClass struct {
@@ -50,7 +45,7 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinLikeSig{bf, nil, false, sync.Once{}}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
@@ -107,102 +102,4 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}
 	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
-}
-
-type regexpFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	bf.tp.Flen = 1
-	var sig builtinFunc
-	if bf.collation == charset.CollationBin {
-		sig = newBuiltinRegexpSig(bf)
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
-	} else {
-		sig = newBuiltinRegexpUTF8Sig(bf)
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpUTF8Sig)
-	}
-	return sig, nil
-}
-
-type builtinRegexpSharedSig struct {
-	baseBuiltinFunc
-	compile         func(string) (*regexp.Regexp, error)
-	memorizedRegexp *regexp.Regexp
-	memorizedErr    error
-}
-
-func (b *builtinRegexpSharedSig) clone(from *builtinRegexpSharedSig) {
-	b.cloneFrom(&from.baseBuiltinFunc)
-	b.compile = from.compile
-	if from.memorizedRegexp != nil {
-		b.memorizedRegexp = from.memorizedRegexp.Copy()
-	}
-	b.memorizedErr = from.memorizedErr
-}
-
-// evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
-// See https://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func (b *builtinRegexpSharedSig) evalInt(row chunk.Row) (int64, bool, error) {
-	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return 0, true, err
-	}
-
-	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return 0, true, err
-	}
-
-	re, err := b.compile(pat)
-	if err != nil {
-		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
-	}
-	return boolToInt64(re.MatchString(expr)), false, nil
-}
-
-type builtinRegexpSig struct {
-	builtinRegexpSharedSig
-}
-
-func newBuiltinRegexpSig(bf baseBuiltinFunc) *builtinRegexpSig {
-	shared := builtinRegexpSharedSig{baseBuiltinFunc: bf}
-	shared.compile = regexp.Compile
-	return &builtinRegexpSig{builtinRegexpSharedSig: shared}
-}
-
-func (b *builtinRegexpSig) Clone() builtinFunc {
-	newSig := &builtinRegexpSig{}
-	newSig.clone(&b.builtinRegexpSharedSig)
-	return newSig
-}
-
-type builtinRegexpUTF8Sig struct {
-	builtinRegexpSharedSig
-}
-
-func newBuiltinRegexpUTF8Sig(bf baseBuiltinFunc) *builtinRegexpUTF8Sig {
-	shared := builtinRegexpSharedSig{baseBuiltinFunc: bf}
-	if collate.IsCICollation(bf.collation) {
-		shared.compile = func(pat string) (*regexp.Regexp, error) {
-			return regexp.Compile("(?i)" + pat)
-		}
-	} else {
-		shared.compile = regexp.Compile
-	}
-	return &builtinRegexpUTF8Sig{builtinRegexpSharedSig: shared}
-}
-
-func (b *builtinRegexpUTF8Sig) Clone() builtinFunc {
-	newSig := &builtinRegexpUTF8Sig{}
-	newSig.clone(&b.builtinRegexpSharedSig)
-	return newSig
 }

@@ -37,13 +37,15 @@ start_s3() {
     bin/minio server --address $S3_ENDPOINT "$TEST_DIR/$DB" &
     s3_pid=$!
     i=0
-    while ! curl -o /dev/null -v -s "http://$S3_ENDPOINT/"; do
+    status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
+    while ! { [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; } ; do
         i=$(($i+1))
         if [ $i -gt 30 ]; then
             echo 'Failed to start minio'
             exit 1
         fi
         sleep 2
+        status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
     done
 }
 
@@ -98,6 +100,12 @@ for p in $(seq 2); do
 
   if grep -i $MINIO_SECRET_KEY $BACKUP_LOG; then
       echo "Secret key logged in log. Please remove them."
+      exit 1
+  fi
+
+  target_log="get new_collations_enabled_on_first_bootstrap config from system table"
+  if ! grep -i "$target_log" $BACKUP_LOG; then
+      echo "${target_log} not found in log"
       exit 1
   fi
 

@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "funcdep",
+    srcs = [
+        "doc.go",
+        "fast_int_set.go",
+        "fd_graph.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/funcdep",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/logutil",
+        "@org_golang_x_tools//container/intsets",
+    ],
+)
+
+go_test(
+    name = "funcdep_test",
+    timeout = "short",
+    srcs = [
+        "extract_fd_test.go",
+        "fast_int_set_bench_test.go",
+        "fast_int_set_test.go",
+        "fd_graph_test.go",
+        "main_test.go",
+        "only_full_group_by_test.go",
+    ],
+    embed = [":funcdep"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//domain",
+        "//infoschema",
+        "//parser",
+        "//planner/core",
+        "//sessionctx",
+        "//sessiontxn",
+        "//testkit",
+        "//testkit/testsetup",
+        "//util/hint",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//slices",
+        "@org_golang_x_tools//container/intsets",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

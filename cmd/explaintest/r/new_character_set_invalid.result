@@ -1,13 +1,14 @@
+set tidb_cost_model_version=1;
 set @@sql_mode = 'strict_trans_tables';
 drop table if exists t;
 create table t (a varchar(255) charset gbk, b varchar(255) charset ascii, c varchar(255) charset utf8);
 insert into t values ('中文', 'asdf', '字符集');
 insert into t values ('À', 'ø', '😂');
-Error 1366: Incorrect string value '\xC3\x80' for column 'a'
+Error 1366 (HY000): Incorrect string value '\xC3\x80' for column 'a'
 insert into t values ('中文À中文', 'asdføfdsa', '字符集😂字符集');
-Error 1366: Incorrect string value '\xC3\x80' for column 'a'
+Error 1366 (HY000): Incorrect string value '\xC3\x80' for column 'a'
 insert into t values (0x4040ffff, 0x4040ffff, 0x4040ffff);
-Error 1366: Incorrect string value '\xFF\xFF' for column 'a'
+Error 1366 (HY000): Incorrect string value '\xFF\xFF' for column 'a'
 select * from t;
 a	b	c
 中文	asdf	字符集
@@ -21,3 +22,35 @@ a	b	c
 ?	?	?
 中文?中文	asdf?fdsa	字符集?字符集
 @@	@@	@@
+set @@sql_mode = default;
+drop table t;
+create table t(f set(0xD2BB, 0xC8FD), e enum(0xBAEC,0x6A59));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `f` set('һ','??') DEFAULT NULL,
+  `e` enum('??','jY') DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t( e enum(0xBAEC,0x6A59));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `e` enum('??','jY') DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(f set(0xD2BB, 0xC8FD), e enum(0xBAEC,0x6A59)) collate gbk_bin;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `f` set('一','三') COLLATE gbk_bin DEFAULT NULL,
+  `e` enum('红','jY') COLLATE gbk_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
+drop table t;
+create table t( e enum(0xBAEC,0x6A59)) collate gbk_bin;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `e` enum('红','jY') COLLATE gbk_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
+set @@sql_mode = '';

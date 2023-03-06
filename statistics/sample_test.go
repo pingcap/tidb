@@ -180,9 +180,9 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true)
+	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true, nil)
 	require.Nilf(t, err, "%+v", err)
-	topNStr, err := topN.DecodedString(ctx, []byte{tp.Tp})
+	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
 	require.NoError(t, err)
 	require.Equal(t, "TopN{length: 4, [(2, 10), (4, 7), (7, 5), (11, 3)]}", topNStr)
 	require.Equal(t, "column:1 ndv:1000 totColSize:8168\n"+

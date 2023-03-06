@@ -332,7 +332,7 @@ func newResultEncoder(chs string) *resultEncoder {
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 		buffer:   &bytes.Buffer{},
-		isBinary: chs == charset.CharsetBinary,
+		isBinary: chs == charset.CharsetBin,
 		isNull:   len(chs) == 0,
 	}
 }

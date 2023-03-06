@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 type inGener struct {
@@ -63,7 +62,7 @@ func (g inGener) gen() interface{} {
 	case types.ETDuration:
 		return types.Duration{Duration: time.Duration(randNum)}
 	case types.ETJson:
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		jsonStr := fmt.Sprintf("{\"key\":%v}", randNum)
 		if err := j.UnmarshalJSON([]byte(jsonStr)); err != nil {
 			panic(err)
@@ -276,8 +275,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(types.CreateBinaryJSON("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(types.CreateBinaryJSON("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 			},
 		},
 	},

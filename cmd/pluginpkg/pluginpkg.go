@@ -126,7 +126,7 @@ func main() {
 	}
 
 	genFileName := filepath.Join(pkgDir, filepath.Base(pkgDir)+".gen.go")
-	genFile, err := os.OpenFile(genFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0700) // # nosec G302
+	genFile, err := os.OpenFile(genFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0700) // #nosec G302
 	if err != nil {
 		log.Printf("generate code failure during prepare output file, %+v\n", err)
 		os.Exit(1)

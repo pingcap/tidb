@@ -17,19 +17,15 @@ package domain
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"sync"
-	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	storekv "github.com/tikv/client-go/v2/kv"
-	pd "github.com/tikv/pd/client"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
@@ -40,10 +36,10 @@ import (
 
 // sysVarCache represents the cache of system variables broken up into session and global scope.
 type sysVarCache struct {
-	sync.RWMutex // protects global and session maps
-	global       map[string]string
-	session      map[string]string
-	rebuildLock  sync.Mutex // protects concurrent rebuild
+	syncutil.RWMutex // protects global and session maps
+	global           map[string]string
+	session          map[string]string
+	rebuildLock      syncutil.Mutex // protects concurrent rebuild
 }
 
 func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
@@ -70,9 +66,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
 	newMap := make(map[string]string, len(do.sysVarCache.session))
-	for k, v := range do.sysVarCache.session {
-		newMap[k] = v
-	}
+	maps.Copy(newMap, do.sysVarCache.session)
 	return newMap, nil
 }
 
@@ -91,11 +85,12 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, error) {
+func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,9 +137,19 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		}
 		if sv.HasGlobalScope() {
 			newGlobalCache[sv.Name] = sVal
+
+			// Call the SetGlobal func for this sysvar if it exists.
+			// SET GLOBAL only calls the SetGlobal func on the calling instances.
+			// This ensures it is run on all tidb servers.
+			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
+			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
+				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
+				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
+				if err != nil {
+					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
+				}
+			}
 		}
-		// Propagate any changes to the server scoped variables
-		do.checkEnableServerGlobalVar(sv.Name, sVal)
 	}
 
 	logutil.BgLogger().Debug("rebuilding sysvar cache")
@@ -154,108 +159,4 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	do.sysVarCache.session = newSessionCache
 	do.sysVarCache.global = newGlobalCache
 	return nil
-}
-
-// checkEnableServerGlobalVar processes variables that acts in server and global level.
-// This is required because the SetGlobal function on the sysvar struct only executes on
-// the initiating tidb-server. There is no current method to say "run this function on all
-// tidb servers when the value of this variable changes". If you do not require changes to
-// be applied on all servers, use a getter/setter instead! You don't need to add to this list.
-func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
-	var err error
-	switch name {
-	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val float64
-		val, err = strconv.ParseFloat(sVal, 64)
-		if err != nil {
-			break
-		}
-		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
-		if err != nil {
-			break
-		}
-		variable.MaxTSOBatchWaitInterval.Store(val)
-	case variable.TiDBEnableTSOFollowerProxy:
-		val := variable.TiDBOptOn(sVal)
-		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
-		if err != nil {
-			break
-		}
-		variable.EnableTSOFollowerProxy.Store(val)
-	case variable.TiDBEnableLocalTxn:
-		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBEnableStmtSummary:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(variable.TiDBOptOn(sVal))
-	case variable.TiDBStmtSummaryInternalQuery:
-		err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(variable.TiDBOptOn(sVal))
-	case variable.TiDBStmtSummaryRefreshInterval:
-		err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(variable.TidbOptInt64(sVal, variable.DefTiDBStmtSummaryRefreshInterval))
-	case variable.TiDBStmtSummaryHistorySize:
-		err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryHistorySize))
-	case variable.TiDBStmtSummaryMaxStmtCount:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxStmtCount)))
-	case variable.TiDBStmtSummaryMaxSQLLength:
-		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxSQLLength))
-	case variable.TiDBTopSQLMaxTimeSeriesCount:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.MaxStatementCount.Store(val)
-	case variable.TiDBTopSQLMaxMetaCount:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		topsqlstate.GlobalState.MaxCollect.Store(val)
-	case variable.TiDBRestrictedReadOnly:
-		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBSuperReadOnly:
-		variable.VarTiDBSuperReadOnly.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBStoreLimit:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		storekv.StoreLimit.Store(val)
-	case variable.TiDBTableCacheLease:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		variable.TableCacheLease.Store(val)
-	case variable.TiDBPersistAnalyzeOptions:
-		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBEnableColumnTracking:
-		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
-	case variable.TiDBStatsLoadSyncWait:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			break
-		}
-		variable.StatsLoadSyncWait.Store(val)
-	case variable.TiDBStatsLoadPseudoTimeout:
-		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
-	}
-	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
-	}
-}
-
-// SetPDClientDynamicOption is used to set the dynamic option into the PD client.
-func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
-	store, ok := do.store.(interface{ GetPDClient() pd.Client })
-	if !ok {
-		return nil
-	}
-	pdClient := store.GetPDClient()
-	if pdClient == nil {
-		return nil
-	}
-	return pdClient.UpdateOption(option, val)
 }

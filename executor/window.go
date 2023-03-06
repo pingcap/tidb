@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // WindowExec is the executor for window functions.
@@ -151,7 +151,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 }
 
 func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
-	childResult := newFirstChunk(e.children[0])
+	childResult := tryNewCacheChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -162,7 +162,7 @@ func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 		return true, nil
 	}
 
-	resultChk := chunk.New(e.retFieldTypes, 0, numRows)
+	resultChk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.retFieldTypes, 0, numRows, e.AllocPool)
 	err = e.copyChk(childResult, resultChk)
 	if err != nil {
 		return false, err

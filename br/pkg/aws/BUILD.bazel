@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "aws",
+    srcs = ["ebs.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/aws",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/config",
+        "//br/pkg/glue",
+        "//br/pkg/utils",
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//aws/session",
+        "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_aws_aws_sdk_go//service/ec2/ec2iface",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "aws_test",
+    timeout = "short",
+    srcs = ["ebs_test.go"],
+    embed = [":aws"],
+    flaky = True,
+    deps = [
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_stretchr_testify//require",
+    ],
+)

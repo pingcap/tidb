@@ -47,7 +47,7 @@ func TestScalarFunction(t *testing.T) {
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, "values", newSf.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, newSf.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetType())
 	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
@@ -59,14 +59,15 @@ func TestIssue23309(t *testing.T) {
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	a.RetType.Flag |= mysql.NotNullFlag
+
+	a.RetType.SetFlag(a.RetType.GetFlag() | mysql.NotNullFlag)
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
 	sf, _ := newFunction(ast.NE, a, null).(*ScalarFunction)
 	v, err := sf.GetArgs()[1].Eval(chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
-	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().Flag))
+	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().GetFlag()))
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {

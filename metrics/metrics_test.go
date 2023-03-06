@@ -22,12 +22,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMetrics(t *testing.T) {
+func TestMetrics(_ *testing.T) {
 	// Make sure it doesn't panic.
 	PanicCounter.WithLabelValues(LabelDomain).Inc()
 }
 
-func TestRegisterMetrics(t *testing.T) {
+func TestRegisterMetrics(_ *testing.T) {
 	// Make sure it doesn't panic.
 	RegisterMetrics()
 }

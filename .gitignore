@@ -29,3 +29,10 @@ export-20*/
 *-junit-report.xml
 # Files generated when testing
 out
+/_bazel
+bazel-bin
+bazel-out
+bazel-testlogs
+bazel-tidb
+.ijwb/
+/oom_record/

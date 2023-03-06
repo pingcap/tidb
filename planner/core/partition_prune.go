@@ -29,17 +29,11 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	s := partitionProcessor{}
 	pi := tbl.Meta().Partition
-	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
-	// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
-	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range conds {
-		conds[i] = expression.PushDownNot(ctx, cond)
-	}
 	switch pi.Type {
-	case model.PartitionTypeHash:
-		return s.pruneHashPartition(ctx, tbl, partitionNames, conds, columns, names)
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		return s.pruneHashOrKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
 	case model.PartitionTypeRange:
-		rangeOr, _, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names, nil)
+		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
 		if err != nil {
 			return nil, err
 		}

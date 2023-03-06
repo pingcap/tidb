@@ -26,6 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDomapHandleNil(t *testing.T) {
+	// this is required for enterprise plugins
+	// ref: https://github.com/pingcap/tidb/issues/37319
+	require.NotPanics(t, func() {
+		_, _ = domap.Get(nil)
+	})
+}
+
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -47,7 +55,8 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	for i := 0; i < count; i++ {
 		s := stmts[i]
 		wg.Run(func() {
-			_, _, err := se.ExecRestrictedStmt(context.Background(), s)
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+			_, _, err := se.ExecRestrictedStmt(ctx, s)
 			require.NoError(t, err)
 		})
 	}
@@ -68,7 +77,8 @@ func TestParseErrorWarn(t *testing.T) {
 
 func TestKeysNeedLock(t *testing.T) {
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
-	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	uniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	nonUniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{1})
 	uniqueValue := make([]byte, 8)
 	uniqueUntouched := append(uniqueValue, '1')
 	nonUniqueVal := []byte{'0'}
@@ -82,18 +92,20 @@ func TestKeysNeedLock(t *testing.T) {
 	}{
 		{rowKey, rowVal, true},
 		{rowKey, deleteVal, true},
-		{indexKey, nonUniqueVal, false},
-		{indexKey, nonUniqueUntouched, false},
-		{indexKey, uniqueValue, true},
-		{indexKey, uniqueUntouched, false},
-		{indexKey, deleteVal, false},
+		{nonUniqueIndexKey, nonUniqueVal, false},
+		{nonUniqueIndexKey, nonUniqueUntouched, false},
+		{uniqueIndexKey, uniqueValue, true},
+		{uniqueIndexKey, uniqueUntouched, false},
+		{uniqueIndexKey, deleteVal, false},
 	}
 
 	for _, test := range tests {
-		require.Equal(t, test.need, keyNeedToLock(test.key, test.val, 0))
-	}
+		need := keyNeedToLock(test.key, test.val, 0)
+		require.Equal(t, test.need, need)
 
-	flag := kv.KeyFlags(1)
-	require.True(t, flag.HasPresumeKeyNotExists())
-	require.True(t, keyNeedToLock(indexKey, deleteVal, flag))
+		flag := kv.KeyFlags(1)
+		need = keyNeedToLock(test.key, test.val, flag)
+		require.True(t, flag.HasPresumeKeyNotExists())
+		require.True(t, need)
+	}
 }

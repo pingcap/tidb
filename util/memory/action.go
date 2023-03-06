@@ -17,6 +17,7 @@ package memory
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -30,9 +31,6 @@ type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
 	Action(t *Tracker)
-	// SetLogHook binds a log hook which will be triggered and log an detailed
-	// message for the out-of-memory sql.
-	SetLogHook(hook func(uint64))
 	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
@@ -40,11 +38,16 @@ type ActionOnExceed interface {
 	GetFallback() ActionOnExceed
 	// GetPriority get the priority of the Action.
 	GetPriority() int64
+	// SetFinished sets the finished state of the Action.
+	SetFinished()
+	// IsFinished returns the finished state of the Action.
+	IsFinished() bool
 }
 
 // BaseOOMAction manages the fallback action for all Action.
 type BaseOOMAction struct {
 	fallbackAction ActionOnExceed
+	finished       int32
 }
 
 // SetFallback sets a fallback action which will be triggered if itself has
@@ -53,8 +56,21 @@ func (b *BaseOOMAction) SetFallback(a ActionOnExceed) {
 	b.fallbackAction = a
 }
 
-// GetFallback get the fallback action of the Action.
+// SetFinished sets the finished state of the Action.
+func (b *BaseOOMAction) SetFinished() {
+	atomic.StoreInt32(&b.finished, 1)
+}
+
+// IsFinished returns the finished state of the Action.
+func (b *BaseOOMAction) IsFinished() bool {
+	return atomic.LoadInt32(&b.finished) == 1
+}
+
+// GetFallback get the fallback action and remove finished fallback.
 func (b *BaseOOMAction) GetFallback() ActionOnExceed {
+	for b.fallbackAction != nil && b.fallbackAction.IsFinished() {
+		b.SetFallback(b.fallbackAction.GetFallback())
+	}
 	return b.fallbackAction
 }
 
@@ -68,11 +84,11 @@ const (
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for LogOnExceed.
@@ -88,7 +104,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 		a.acted = true
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesHardLimit, t.String())))
+				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
 			return
 		}
 		a.logHook(a.ConnID)
@@ -96,17 +112,17 @@ func (a *LogOnExceed) Action(t *Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *LogOnExceed) GetPriority() int64 {
+func (*LogOnExceed) GetPriority() int64 {
 	return DefLogPriority
 }
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
-	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
+	BaseOOMAction
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -117,20 +133,23 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 // Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
-	if a.acted {
+	defer func() {
 		a.mutex.Unlock()
-		return
+	}()
+	if !a.acted {
+		if a.logHook == nil {
+			logutil.BgLogger().Warn("memory exceeds quota",
+				zap.Uint64("conn", t.SessionID), zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.GetBytesLimit(), t.String())))
+		} else {
+			a.logHook(a.ConnID)
+		}
 	}
 	a.acted = true
-	a.mutex.Unlock()
-	if a.logHook != nil {
-		a.logHook(a.ConnID)
-	}
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(PanicMemoryExceed + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action
-func (a *PanicOnExceed) GetPriority() int64 {
+func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 

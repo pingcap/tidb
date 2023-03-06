@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -128,7 +127,7 @@ func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
-	return json.CreateBinary(d.String())
+	return types.CreateBinaryJSON(d)
 }
 
 type datetimeJSONGener struct{}
@@ -146,7 +145,7 @@ func (g *datetimeJSONGener) gen() interface{} {
 		0,
 		3,
 	)
-	return json.CreateBinary(d.String())
+	return types.CreateBinaryJSON(d)
 }
 
 func TestVectorizedBuiltinCastEvalOneVec(t *testing.T) {
@@ -159,14 +158,15 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)
 	}
 	cast := &builtinCastRealAsTimeSig{baseFunc}
 
+	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{
-		genCastRealAsTime(),
+		inputChunk,
 	}
 
 	for _, input := range inputs {
@@ -175,41 +175,84 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalTime(input.GetRow(i))
 			require.NoError(t, err)
-			if isNull {
+			if expect[i] == nil {
 				require.True(t, result.IsNull(i))
+				require.True(t, isNull)
 				continue
 			}
-			require.False(t, result.IsNull(i))
-			require.Zero(t, result.GetTime(i).Compare(res))
+			require.Equal(t, result.GetTime(i), *expect[i])
+			require.Equal(t, res, *expect[i])
 		}
 	}
 }
 
-func genCastRealAsTime() *chunk.Chunk {
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
-	gen := newDefaultRandGen()
-	for i := 0; i < 10; i++ {
-		if i < 5 {
-			input.AppendFloat64(0, 0)
-		} else {
-			input.AppendFloat64(0, gen.Float64()*100000)
-		}
-	}
-	return input
+func getTime(year int, month int, day int, hour int, minute int, second int) *types.Time {
+	retTime := types.NewTime(types.FromDate(year, month, day, hour, minute, second, 0), mysql.TypeDatetime, types.DefaultFsp)
+	return &retTime
+}
+
+func genCastRealAsTime() (*chunk.Chunk, []*types.Time) {
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 20)
+	expect := make([]*types.Time, 0, 20)
+
+	// valid
+	input.AppendFloat64(0, 0)
+	input.AppendFloat64(0, 101.1)
+	input.AppendFloat64(0, 111.1)
+	input.AppendFloat64(0, 1122.1)
+	input.AppendFloat64(0, 31212.111)
+	input.AppendFloat64(0, 121212.1111)
+	input.AppendFloat64(0, 1121212.111111)
+	input.AppendFloat64(0, 11121212.111111)
+	input.AppendFloat64(0, 99991111.1111111)
+	input.AppendFloat64(0, 201212121212.1111111)
+	input.AppendFloat64(0, 20121212121212.1111111)
+	// invalid
+	input.AppendFloat64(0, 1.1)
+	input.AppendFloat64(0, 48.1)
+	input.AppendFloat64(0, 100.1)
+	input.AppendFloat64(0, 1301.11)
+	input.AppendFloat64(0, 1131.111)
+	input.AppendFloat64(0, 100001111.111)
+	input.AppendFloat64(0, 20121212121260.1111111)
+	input.AppendFloat64(0, 20121212126012.1111111)
+	input.AppendFloat64(0, 20121212241212.1111111)
+
+	expect = append(expect, getTime(0, 0, 0, 0, 0, 0))
+	expect = append(expect, getTime(2000, 1, 1, 0, 0, 0))
+	expect = append(expect, getTime(2000, 1, 11, 0, 0, 0))
+	expect = append(expect, getTime(2000, 11, 22, 0, 0, 0))
+	expect = append(expect, getTime(2003, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(2012, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(112, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(1112, 12, 12, 0, 0, 0))
+	expect = append(expect, getTime(9999, 11, 11, 0, 0, 0))
+	expect = append(expect, getTime(2020, 12, 12, 12, 12, 12))
+	expect = append(expect, getTime(2012, 12, 12, 12, 12, 12))
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+	expect = append(expect, nil)
+
+	return input, expect
 }
 
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	if err != nil {
 		panic(err)
 	}
 	// set `inUnion` to `true`
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
-	baseCast.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
-	baseCast.tp.Flag |= mysql.UnsignedFlag
+	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}
 
 	inputs := []*chunk.Chunk{

@@ -37,10 +37,6 @@ func TestFilter(t *testing.T) {
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Len(t, buffer.Stripped(), 0)
 
-	// Fields won't trigger filter.
-	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/check/").With([]zap.Field{zap.String("a", "b")})
-	}), zap.AddCaller())
 	logger.Warn("the message", zap.String("stack", "github.com/pingcap/tidb/br/"))
 	require.Len(t, buffer.Stripped(), 0)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
@@ -121,6 +122,7 @@ func (mock *Cluster) Stop() {
 	if mock.HttpServer != nil {
 		_ = mock.HttpServer.Close()
 	}
+	view.Stop()
 }
 
 type configOverrider func(*mysql.Config)
@@ -164,6 +166,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
+		// #nosec G107
 		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
 			// Ignore errors.

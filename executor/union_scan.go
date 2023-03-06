@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -61,10 +62,18 @@ type UnionScanExec struct {
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
 	collators  []collate.Collator
+
+	// If partitioned table and the physical table id is encoded in the chuck at this column index
+	// used with dynamic prune mode
+	// < 0 if not used.
+	physTblIDIdx int
 }
 
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
+	r, ctx := tracing.StartRegionEx(ctx, "UnionScanExec.Open")
+	defer r.End()
+
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -87,6 +96,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 
+	us.physTblIDIdx = -1
+	for i := len(us.columns) - 1; i >= 0; i-- {
+		if us.columns[i].ID == model.ExtraPhysTblID {
+			us.physTblIDIdx = i
+			break
+		}
+	}
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -98,20 +114,20 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReader(ctx, us, x).getMemRows(ctx)
 	case *IndexReaderExecutor:
-		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexReader(ctx, us, x).getMemRows(ctx)
 	case *IndexLookUpExecutor:
-		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(ctx, us, x).getMemRows(ctx)
 	case *IndexMergeReaderExecutor:
-		us.addedRows, err = buildMemIndexMergeReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexMergeReader(ctx, us, x).getMemRows(ctx)
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
 	if err != nil {
 		return err
 	}
-	us.snapshotChunkBuffer = newFirstChunk(us)
+	us.snapshotChunkBuffer = tryNewCacheChunk(us)
 	return nil
 }
 
@@ -119,9 +135,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	us.memBuf.RLock()
 	defer us.memBuf.RUnlock()
+
+	// Assume req.Capacity() > 0 after GrowAndReset(), if this assumption fail,
+	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.maxChunkSize)
+
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return err
@@ -144,7 +164,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(us.columns[idx].Flag) || mysql.HasPreventNullInsertFlag(us.columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
 			mutableRow.SetDatum(idx, castDatum)
@@ -231,7 +251,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			var checkKey kv.Key
+			if us.physTblIDIdx >= 0 {
+				tblID := row.GetInt64(us.physTblIDIdx)
+				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
+			} else {
+				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			}
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.

@@ -15,51 +15,83 @@
 package handle
 
 import (
-	"runtime"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
+type statsWrapper struct {
+	col *statistics.Column
+	idx *statistics.Index
+}
+
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
 	sync.Mutex
-	SubCtxs          []sessionctx.Context
-	NeededColumnsCh  chan *NeededColumnTask
-	TimeoutColumnsCh chan *NeededColumnTask
-	WorkingColMap    map[model.TableColumnID][]chan model.TableColumnID
+	SubCtxs        []sessionctx.Context
+	NeededItemsCh  chan *NeededItemTask
+	TimeoutItemsCh chan *NeededItemTask
+	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
 }
 
-// NeededColumnTask represents one needed column with expire time.
-type NeededColumnTask struct {
-	TableColumnID model.TableColumnID
-	ToTimeout     time.Time
-	ResultCh      chan model.TableColumnID
+// NeededItemTask represents one needed column/indices with expire time.
+type NeededItemTask struct {
+	TableItemID model.TableItemID
+	ToTimeout   time.Time
+	ResultCh    chan stmtctx.StatsLoadResult
 }
 
 // SendLoadRequests send neededColumns requests
-func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) error {
-	missingColumns := h.genHistMissingColumns(neededColumns)
-	if len(missingColumns) <= 0 {
+func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
+	remainedItems := h.removeHistLoadedColumns(neededHistItems)
+
+	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
+		if sc.OptimizeTracer != nil {
+			count := val.(int)
+			if len(remainedItems) != count {
+				panic("remained items count wrong")
+			}
+		}
+	})
+
+	if len(remainedItems) <= 0 {
 		return nil
 	}
 	sc.StatsLoad.Timeout = timeout
-	sc.StatsLoad.NeededColumns = missingColumns
-	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(missingColumns))
-	for _, col := range missingColumns {
-		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
-		if err != nil {
-			return err
+	sc.StatsLoad.NeededItems = remainedItems
+	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
+	tasks := make([]*NeededItemTask, 0)
+	for _, item := range remainedItems {
+		task := &NeededItemTask{
+			TableItemID: item,
+			ToTimeout:   time.Now().Local().Add(timeout),
+			ResultCh:    sc.StatsLoad.ResultCh,
+		}
+		tasks = append(tasks, task)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, task := range tasks {
+		select {
+		case h.StatsLoad.NeededItemsCh <- task:
+			continue
+		case <-timer.C:
+			return errors.New("sync load stats channel is full and timeout sending task to channel")
 		}
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
@@ -67,15 +99,20 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
-	if len(sc.StatsLoad.NeededColumns) <= 0 {
-		return true
+func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
+	if len(sc.StatsLoad.NeededItems) <= 0 {
+		return nil
 	}
+	var errorMsgs []string
 	defer func() {
-		sc.StatsLoad.NeededColumns = nil
+		if len(errorMsgs) > 0 {
+			logutil.BgLogger().Warn("SyncWaitStatsLoad meets error",
+				zap.Strings("errors", errorMsgs))
+		}
+		sc.StatsLoad.NeededItems = nil
 	}()
-	resultCheckMap := map[model.TableColumnID]struct{}{}
-	for _, col := range sc.StatsLoad.NeededColumns {
+	resultCheckMap := map[model.TableItemID]struct{}{}
+	for _, col := range sc.StatsLoad.NeededItems {
 		resultCheckMap[col] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
@@ -85,71 +122,80 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 		select {
 		case result, ok := <-sc.StatsLoad.ResultCh:
 			if ok {
-				delete(resultCheckMap, result)
+				if result.HasError() {
+					errorMsgs = append(errorMsgs, result.ErrorMsg())
+				}
+				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return true
+					return nil
 				}
 			} else {
-				return false
+				return errors.New("sync load stats channel closed unexpectedly")
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			return false
+			return errors.New("sync load stats timeout")
 		}
 	}
 }
 
-// genHistMissingColumns generates hist-missing columns based on neededColumns and statsCache.
-func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []model.TableColumnID {
+// removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
+func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []model.TableItemID {
 	statsCache := h.statsCache.Load().(statsCache)
-	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
-	for _, col := range neededColumns {
-		tbl, ok := statsCache.tables[col.TableID]
+	remainedItems := make([]model.TableItemID, 0, len(neededItems))
+	for _, item := range neededItems {
+		tbl, ok := statsCache.Get(item.TableID)
 		if !ok {
 			continue
 		}
-		colHist, ok := tbl.Columns[col.ColumnID]
-		if !ok {
+		if item.IsIndex {
+			remainedItems = append(remainedItems, item)
 			continue
 		}
-		if colHist.IsHistNeeded(tbl.Pseudo) {
-			missingColumns = append(missingColumns, col)
+		colHist, ok := tbl.Columns[item.ID]
+		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
+			remainedItems = append(remainedItems, item)
 		}
 	}
-	return missingColumns
+	return remainedItems
 }
 
-// AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
-func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, timeout time.Duration) error {
-	toTimout := time.Now().Local().Add(timeout)
-	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, ResultCh: resultCh}
-	return h.writeToChanWithTimeout(h.StatsLoad.NeededColumnsCh, colTask, timeout)
+// AppendNeededItem appends needed columns/indices to ch, it is only used for test
+func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case h.StatsLoad.NeededItemsCh <- task:
+	case <-timer.C:
+		return errors.New("Channel is full and timeout writing to channel")
+	}
+	return nil
 }
 
 var errExit = errors.New("Stop loading since domain is closed")
 
 // StatsReaderContext exported for testing
 type StatsReaderContext struct {
-	reader      *statsReader
+	reader      *statistics.StatsReader
 	createdTime time.Time
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx.(sqlexec.RestrictedSQLExecutor))
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
 			}
 		}
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
-	var lastTask *NeededColumnTask
+	var lastTask *NeededItemTask
 	for {
 		task, err := h.HandleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
 		lastTask = task
@@ -166,14 +212,11 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
-func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededColumnTask, err error) {
+func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
@@ -188,48 +231,77 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	} else {
 		task = lastTask
 	}
-	col := task.TableColumnID
+	return h.handleOneItemTask(task, readerCtx, ctx)
+}
+
+func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	item := result.Item
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
-		h.writeToResultChan(task.ResultCh, col)
+		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
-	c, ok := tbl.Columns[col.ColumnID]
-	if !ok || c.Len() > 0 {
-		h.writeToResultChan(task.ResultCh, col)
-		return nil, nil
+	var err error
+	wrapper := &statsWrapper{}
+	if item.IsIndex {
+		index, ok := tbl.Indices[item.ID]
+		if !ok || index.IsFullLoad() {
+			h.writeToResultChan(task.ResultCh, result)
+			return nil, nil
+		}
+		wrapper.idx = index
+	} else {
+		col, ok := tbl.Columns[item.ID]
+		if !ok || col.IsFullLoad() {
+			h.writeToResultChan(task.ResultCh, result)
+			return nil, nil
+		}
+		wrapper.col = col
 	}
 	// to avoid duplicated handling in concurrent scenario
-	working := h.setWorking(task.TableColumnID, task.ResultCh)
+	working := h.setWorking(result.Item, task.ResultCh)
 	if !working {
+		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
 	// refresh statsReader to get latest stats
-	h.getFreshStatsReader(readerCtx, ctx)
+	h.loadFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
-	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
+	needUpdate := false
+	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
 	if err != nil {
+		result.Error = err
 		return task, err
 	}
-	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if hist != nil && h.updateCachedColumn(col, hist) {
-		h.writeToResultChan(task.ResultCh, col)
+	if item.IsIndex {
+		if wrapper.idx != nil {
+			needUpdate = true
+		}
+	} else {
+		if wrapper.col != nil {
+			needUpdate = true
+		}
 	}
-	h.finishWorking(col)
+	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
+	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
+		h.writeToResultChan(task.ResultCh, result)
+	}
+	h.finishWorking(result)
 	return nil, nil
 }
 
-func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
+func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx)
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
 			}
 		}
 		for {
-			newReader, err := h.getStatsReader(0, ctx)
+			newReader, err := statistics.GetStatsReader(0, ctx)
 			if err != nil {
 				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
 				time.Sleep(h.Lease() / 10)
@@ -244,76 +316,125 @@ func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.
 	}
 }
 
-// readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
+// readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
-	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+	c := w.col
+	index := w.idx
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
+	var hg *statistics.Histogram
+	var err error
+	isIndexFlag := int64(0)
+	if item.IsIndex {
+		isIndexFlag = 1
+	}
+	if item.IsIndex {
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	cms, topN, err = statistics.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var fms *statistics.FMSketch
+	if loadFMSketch {
+		fms, err = statistics.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
+	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
-	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       c.Info,
-		CMSketch:   cms,
-		TopN:       topN,
-		FMSketch:   fms,
-		IsHandle:   c.IsHandle,
-		StatsVer:   rows[0].GetInt64(0),
+	statsVer := rows[0].GetInt64(0)
+	if item.IsIndex {
+		idxHist := &statistics.Index{
+			Histogram:  *hg,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			Info:       index.Info,
+			ErrorRate:  index.ErrorRate,
+			StatsVer:   statsVer,
+			Flag:       index.Flag,
+			PhysicalID: index.PhysicalID,
+		}
+		if statsVer != statistics.Version0 {
+			idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		}
+		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+		w.idx = idxHist
+	} else {
+		colHist := &statistics.Column{
+			PhysicalID: item.TableID,
+			Histogram:  *hg,
+			Info:       c.Info,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			IsHandle:   c.IsHandle,
+			StatsVer:   statsVer,
+		}
+		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
+		colHist.Count = int64(colHist.TotalRowCount())
+		// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+		// So we need add colHist.Count > 0 here.
+		if statsVer != statistics.Version0 || colHist.Count > 0 {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		}
+		w.col = colHist
 	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
-	return colHist, nil
+	return w, nil
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
+func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
 		case <-exit:
 			return nil, errExit
-		case task, ok := <-h.StatsLoad.NeededColumnsCh:
+		case task, ok := <-h.StatsLoad.NeededItemsCh:
 			if !ok {
 				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 			}
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				h.writeToTimeoutChan(h.StatsLoad.TimeoutColumnsCh, task)
+				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
 			return task, nil
-		case task, ok := <-h.StatsLoad.TimeoutColumnsCh:
+		case task, ok := <-h.StatsLoad.TimeoutItemsCh:
 			select {
 			case <-exit:
 				return nil, errExit
-			case task0, ok0 := <-h.StatsLoad.NeededColumnsCh:
+			case task0, ok0 := <-h.StatsLoad.NeededItemsCh:
 				if !ok0 {
 					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
-				h.writeToTimeoutChan(h.StatsLoad.TimeoutColumnsCh, task)
+				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				return task0, nil
 			default:
 				if !ok {
@@ -327,7 +448,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 }
 
 // writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (h *Handle) writeToTimeoutChan(taskCh chan *NeededColumnTask, task *NeededColumnTask) {
+func (h *Handle) writeToTimeoutChan(taskCh chan *NeededItemTask, task *NeededItemTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -335,7 +456,7 @@ func (h *Handle) writeToTimeoutChan(taskCh chan *NeededColumnTask, task *NeededC
 }
 
 // writeToChanWithTimeout writes a task to a channel and blocks until timeout.
-func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *NeededColumnTask, timeout time.Duration) error {
+func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededItemTask, task *NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -347,13 +468,10 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 }
 
 // writeToResultChan safe-writes with panic-recover so one write-fail will not have big impact.
-func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.TableColumnID) {
+func (h *Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
 	select {
@@ -362,52 +480,60 @@ func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.T
 	}
 }
 
-// updateCachedColumn updates the column hist to global statsCache.
-func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics.Column) (updated bool) {
+// updateCachedItem updates the column/index hist to global statsCache.
+func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index) (updated bool) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
 		return true
 	}
-	c, ok := tbl.Columns[col.ColumnID]
-	if !ok || c.Len() > 0 {
-		return true
+	if !item.IsIndex && colHist != nil {
+		c, ok := tbl.Columns[item.ID]
+		if !ok || c.IsFullLoad() {
+			return true
+		}
+		tbl = tbl.Copy()
+		tbl.Columns[c.ID] = colHist
+	} else if item.IsIndex && idxHist != nil {
+		index, ok := tbl.Indices[item.ID]
+		if !ok || index.IsFullLoad() {
+			return true
+		}
+		tbl = tbl.Copy()
+		tbl.Indices[item.ID] = idxHist
 	}
-	tbl = tbl.Copy()
-	tbl.Columns[c.ID] = colHist
-	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
+	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version, WithTableStatsByQuery()))
 }
 
-func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {
+func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	chList, ok := h.StatsLoad.WorkingColMap[col]
+	chList, ok := h.StatsLoad.WorkingColMap[item]
 	if ok {
 		if chList[0] == resultCh {
 			return true // just return for duplicate setWorking
 		}
-		h.StatsLoad.WorkingColMap[col] = append(chList, resultCh)
+		h.StatsLoad.WorkingColMap[item] = append(chList, resultCh)
 		return false
 	}
-	chList = []chan model.TableColumnID{}
+	chList = []chan stmtctx.StatsLoadResult{}
 	chList = append(chList, resultCh)
-	h.StatsLoad.WorkingColMap[col] = chList
+	h.StatsLoad.WorkingColMap[item] = chList
 	return true
 }
 
-func (h *Handle) finishWorking(col model.TableColumnID) {
+func (h *Handle) finishWorking(result stmtctx.StatsLoadResult) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	failpoint.Inject("mockFinishWorkingPanic", nil)
-	if chList, ok := h.StatsLoad.WorkingColMap[col]; ok {
+	if chList, ok := h.StatsLoad.WorkingColMap[result.Item]; ok {
 		list := chList[1:]
 		for _, ch := range list {
-			h.writeToResultChan(ch, col)
+			h.writeToResultChan(ch, result)
 		}
 	}
-	delete(h.StatsLoad.WorkingColMap, col)
+	delete(h.StatsLoad.WorkingColMap, result.Item)
 }

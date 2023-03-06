@@ -15,6 +15,7 @@
 package mydump_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"testing"
@@ -30,7 +31,7 @@ import (
 
 func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers)
+		parser := mydump.NewChunkParser(context.Background(), mode, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers)
 		for i, row := range tc.expected {
 			e := parser.ReadRow()
 			comment := fmt.Sprintf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
@@ -44,7 +45,7 @@ func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []
 
 func runFailingTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc), blockBufSize, ioWorkers)
+		parser := mydump.NewChunkParser(context.Background(), mode, mydump.NewStringReader(tc), blockBufSize, ioWorkers)
 		assert.Regexpf(t, "syntax error.*", parser.ReadRow().Error(), "input = %q", tc)
 	}
 }
@@ -57,7 +58,7 @@ func TestReadRow(t *testing.T) {
 			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 
 	require.NoError(t, parser.ReadRow())
 	require.Equal(t, mydump.Row{
@@ -133,7 +134,7 @@ func TestReadChunks(t *testing.T) {
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 
 	chunks, err := mydump.ReadChunks(parser, 32)
 	require.NoError(t, err)
@@ -179,7 +180,7 @@ func TestNestedRow(t *testing.T) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 	chunks, err := mydump.ReadChunks(parser, 96)
 
 	require.NoError(t, err)
@@ -412,7 +413,7 @@ func TestPseudoKeywords(t *testing.T) {
 		) VALUES ();
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 	require.NoError(t, parser.ReadRow())
 	require.Equal(t, []string{
 		"c", "c",

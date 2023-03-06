@@ -13,18 +13,17 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 // Result is the result returned by MustQuery.
@@ -50,6 +49,21 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// AddComment adds the extra comment for the Result's output.
+func (res *Result) AddComment(c string) {
+	res.comment += "\n" + c
+}
+
+// CheckWithFunc asserts the result match the expected results in the way `f` specifies.
+func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
+	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
+
+	for i, resRow := range res.rows {
+		expectedRow := expected[i]
+		res.require.Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
+	}
+}
+
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)
@@ -57,9 +71,7 @@ func Rows(args ...string) [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	sort.Slice(res.rows, func(i, j int) bool {
-		a := res.rows[i]
-		b := res.rows[j]
+	slices.SortFunc(res.rows, func(a, b []string) bool {
 		for i := range a {
 			if a[i] < b[i] {
 				return true
@@ -98,4 +110,62 @@ func (res *Result) Rows() [][]interface{} {
 		ifacesSlice[i] = ifaces
 	}
 	return ifacesSlice
+}
+
+// CheckAt asserts the result of selected columns equals the expected results.
+func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	for _, e := range expected {
+		res.require.Equal(len(e), len(cols))
+	}
+
+	rows := make([][]string, 0, len(expected))
+	for i := range res.rows {
+		row := make([]string, 0, len(cols))
+		for _, r := range cols {
+			row = append(row, res.rows[i][r])
+		}
+		rows = append(rows, row)
+	}
+	got := fmt.Sprintf("%s", rows)
+	need := fmt.Sprintf("%s", expected)
+	res.require.Equal(need, got, res.comment)
+}
+
+// CheckContain checks whether the result contains the expected string
+func (res *Result) CheckContain(expected string) {
+	for _, row := range res.rows {
+		for _, colValue := range row {
+			if strings.Contains(colValue, expected) {
+				return
+			}
+		}
+	}
+	comment := fmt.Sprintf("the result doesn't contain the exepected %s", expected)
+	res.require.Equal(true, false, comment)
+}
+
+// MultiCheckContain checks whether the result contains strings in `expecteds`
+func (res *Result) MultiCheckContain(expecteds []string) {
+	for _, expected := range expecteds {
+		res.CheckContain(expected)
+	}
+}
+
+// CheckNotContain checks whether the result doesn't contain the expected string
+func (res *Result) CheckNotContain(unexpected string) {
+	for _, row := range res.rows {
+		for _, colValue := range row {
+			if strings.Contains(colValue, unexpected) {
+				comment := fmt.Sprintf("the result contain the unexepected %s", unexpected)
+				res.require.Equal(true, false, comment)
+			}
+		}
+	}
+}
+
+// MultiCheckNotContain checks whether the result doesn't contain the strings in `expected`
+func (res *Result) MultiCheckNotContain(unexpecteds []string) {
+	for _, unexpected := range unexpecteds {
+		res.CheckNotContain(unexpected)
+	}
 }

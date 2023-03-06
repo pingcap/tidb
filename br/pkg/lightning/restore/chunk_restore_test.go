@@ -15,27 +15,39 @@
 package restore
 
 import (
+	"compress/gzip"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -81,8 +93,12 @@ func (s *chunkRestoreSuite) TearDownTest() {
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
-	rc := &Controller{backend: importer.NewMockImporter(nil, "")}
+	controller := gomock.NewController(s.T())
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
+	rc := &Controller{backend: backend.MakeBackend(mockBackend)}
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	go cancel()
@@ -107,6 +123,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
+	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
@@ -120,12 +137,26 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	// Deliver nothing.
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	saveCpCh := make(chan saveCp, 16)
+	rc := &Controller{cfg: cfg, backend: importer, saveCpCh: saveCpCh}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for scp := range saveCpCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
+		}
+	}()
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
+	close(saveCpCh)
+	wg.Wait()
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoop() {
@@ -211,17 +242,17 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 				rowID:   76,
 			},
 		}
-		kvsCh <- []deliveredKVs{}
+		kvsCh <- []deliveredKVs{{offset: 37}}
 		close(kvsCh)
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
-	require.Equal(s.T(), int64(12), s.cr.chunk.Chunk.Offset)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, s.cr.chunk.Chunk.Offset)
 	require.Equal(s.T(), int64(76), s.cr.chunk.Chunk.PrevRowIDMax)
 	require.Equal(s.T(), uint64(3), s.cr.chunk.Checksum.SumKVS())
 }
@@ -233,7 +264,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567895,
-	})
+	}, nil, log.L())
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
@@ -248,7 +279,68 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.Equal(s.T(), []string(nil), kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
+	ctx := context.Background()
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+
+	p := parser.New()
+	se := tmock.NewContext()
+
+	lastTi := s.tr.tableInfo
+	defer func() {
+		s.tr.tableInfo = lastTi
+	}()
+
+	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_bin")
+	require.NoError(s.T(), err)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	require.NoError(s.T(), err)
+	tableInfo.State = model.StatePublic
+
+	schema := "test_1"
+	tb := "t1"
+	ti := &checkpoints.TidbTableInfo{
+		ID:   tableInfo.ID,
+		DB:   schema,
+		Name: tb,
+		Core: tableInfo,
+	}
+	s.tr.tableInfo = ti
+	s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
+		Columns: []string{"c_table", "c_schema", "c_source"},
+		Values:  []string{"1", "1", "01"},
+	}
+	defer func() {
+		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
+	}()
+
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
+	}, nil, log.L())
+	require.NoError(s.T(), err)
+	cfg := config.NewConfig()
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), kvsCh, 2)
+
+	kvs := <-kvsCh
+	require.Len(s.T(), kvs, 1)
+	require.Equal(s.T(), int64(19), kvs[0].rowID)
+	require.Equal(s.T(), int64(36), kvs[0].offset)
+	require.Equal(s.T(), []string{"c1", "c_table", "c_schema", "c_source"}, kvs[0].columns)
+
+	kvs = <-kvsCh
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
@@ -258,7 +350,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567896,
-	})
+	}, nil, log.L())
 	require.NoError(s.T(), err)
 
 	go cancel()
@@ -276,7 +368,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567897,
-	})
+	}, nil, log.L())
 	require.NoError(s.T(), err)
 
 	// close the chunk so reading it will result in the "file already closed" error.
@@ -296,7 +388,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567898,
-	})
+	}, nil, log.L())
 	require.NoError(s.T(), err)
 
 	dir := s.T().TempDir()
@@ -312,7 +404,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 	s.cr.parser = p
 
@@ -331,14 +423,16 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 		if !ok {
 			break
 		}
-		count += 1
+		count++
 		if count <= 3 {
 			require.Len(s.T(), kvs, 1)
 		}
 		if count == 4 {
 			// we will send empty kvs before encodeLoop exists
 			// so, we can receive 4 batch and 1 is empty
-			require.Len(s.T(), kvs, 0)
+			require.Len(s.T(), kvs, 1)
+			require.Nil(s.T(), kvs[0].kvs)
+			require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 			break
 		}
 	}
@@ -351,7 +445,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored() {
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567898,
-	})
+	}, nil, log.L())
 	require.NoError(s.T(), err)
 
 	go func() {
@@ -378,13 +472,14 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 
 	ctx := context.Background()
 	cfg := config.NewConfig()
-	errorMgr := errormanager.New(nil, cfg)
+	logger := log.L()
+	errorMgr := errormanager.New(nil, cfg, logger)
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -393,7 +488,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errorMgr).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(ctx, nil, config.ReplaceOnDup, errorMgr).NewEncoder(
+		ctx,
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
@@ -403,7 +499,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	require.Equal(s.T(), "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
+	require.Equal(s.T(), "[Lightning:Restore:ErrEncodeKV]encode kv error in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
 
@@ -478,7 +574,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -487,7 +583,13 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(
+		ctx,
+		nil,
+		config.ReplaceOnDup,
+		errormanager.New(nil, config.NewConfig(), log.L()),
+	).NewEncoder(
+		ctx,
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
@@ -507,62 +609,174 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	require.Equal(s.T(), deliverKV.columns, kvs[0].columns)
 
 	kvs = <-kvsCh
-	require.Equal(s.T(), 0, len(kvs))
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
 }
+
+type mockEncoder struct{}
+
+func (mockEncoder) Encode(_ log.Logger, _ []types.Datum, rowID int64, _ []int, _ string, _ int64) (kv.Row, error) {
+	return &kv.KvPairs{}, nil
+}
+
+func (mockEncoder) Close() {}
 
 func (s *chunkRestoreSuite) TestRestore() {
 	ctx := context.Background()
 
-	// Open two mock engines
-
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	mockDataWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	mockIndexWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	importer := importer.NewMockImporter(mockClient, "127.0.0.1:2379")
+	mockBackend := mock.NewMockBackend(controller)
+	importer := backend.MakeBackend(mockBackend)
 
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
+	// avoid return the same object at each call
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
+	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
+	mockWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, 0)
 	require.NoError(s.T(), err)
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
+
 	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
 
-	// Expected API sequence
-	// (we don't care about the actual content, this would be checked in the integrated tests)
-
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockDataWriter, nil)
-	mockDataWriter.EXPECT().Send(gomock.Any()).Return(nil)
-	mockDataWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		require.Len(s.T(), req.GetBatch().GetMutations(), 1)
-		return nil
-	})
-	mockDataWriter.EXPECT().CloseAndRecv().Return(nil, nil)
-
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockIndexWriter, nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).Return(nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		require.Len(s.T(), req.GetBatch().GetMutations(), 1)
-		return nil
-	})
-	mockIndexWriter.EXPECT().CloseAndRecv().Return(nil, nil)
-
-	// Now actually start the restore loop.
-
-	saveCpCh := make(chan saveCp, 2)
+	saveCpCh := make(chan saveCp, 16)
 	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
-		cfg:           s.cfg,
-		saveCpCh:      saveCpCh,
-		backend:       importer,
-		pauser:        DeliverPauser,
-		diskQuotaLock: newDiskQuotaLock(),
+		cfg:      s.cfg,
+		saveCpCh: saveCpCh,
+		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
+}
+
+func TestCompressChunkRestore(t *testing.T) {
+	// Produce a mock table info
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	node, err := p.ParseOneStmt(`
+	CREATE TABLE "table" (
+		a INT,
+		b INT,
+		c INT,
+		KEY (b)
+	)
+`, "", "")
+	require.NoError(t, err)
+	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+	core.State = model.StatePublic
+
+	// Write some sample CSV dump
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	fakeDataFiles := make([]mydump.FileInfo, 0)
+
+	csvName := "db.table.1.csv.gz"
+	file, err := os.Create(filepath.Join(fakeDataDir, csvName))
+	require.NoError(t, err)
+	gzWriter := gzip.NewWriter(file)
+
+	var totalBytes int64
+	for i := 0; i < 300; i += 3 {
+		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		require.NoError(t, err)
+		totalBytes += int64(n)
+	}
+
+	err = gzWriter.Close()
+	require.NoError(t, err)
+	err = file.Close()
+	require.NoError(t, err)
+
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        csvName,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
+			SortKey:     "99",
+			FileSize:    totalBytes,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := worker.NewPool(ctx, 5, "io")
+	cfg := config.NewConfig()
+	cfg.Mydumper.BatchSize = 111
+	cfg.App.TableConcurrency = 2
+	cfg.Mydumper.CSV.Header = false
+
+	cr, err := newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	var (
+		id, lastID int
+		offset     int64 = 0
+		rowID      int64 = 0
+	)
+	for id < 100 {
+		offset, rowID = cr.parser.Pos()
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		lastID = id
+		for i := 0; id < 100 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	require.Equal(t, int64(33), rowID)
+
+	// test read starting from compress files' middle
+	chunk = checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: offset},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       offset,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: rowID,
+			RowIDMax:     100,
+		},
+	}
+	cr, err = newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	for id = lastID; id < 300; {
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		for i := 0; id < 300 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	_, rowID = cr.parser.Pos()
+	require.Equal(t, int64(100), rowID)
+	err = cr.parser.ReadRow()
+	require.Equal(t, io.EOF, errors.Cause(err))
 }

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -107,24 +107,24 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
-	basic := &execdetails.BasicRuntimeStats{}
+	stmtStats := execdetails.NewRuntimeStatsColl(nil)
+	basic := stmtStats.GetBasicRuntimeStats(1)
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
-		copRespTime:      []time.Duration{time.Second, time.Millisecond},
-		procKeys:         []int64{100, 200},
-		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
-		totalProcessTime: time.Second,
-		totalWaitTime:    time.Second,
-		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+		copRespTime:        []time.Duration{time.Second, time.Millisecond},
+		procKeys:           []int64{100, 200},
+		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime:   time.Second,
+		totalWaitTime:      time.Second,
+		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+		distSQLConcurrency: 15,
 	}
 
 	s2 := *s1
-	stmtStats := execdetails.NewRuntimeStatsColl(nil)
-	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -135,7 +135,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	}
 	stmtStats.RegisterStats(2, s1)
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -152,41 +152,11 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	require.Equal(t, expect, s1.String())
 }
 
-func TestSelectStreaming(t *testing.T) {
-	response, colTypes := createSelectStreaming(t, 1, 2)
-	// Test Next.
-	chk := chunk.New(colTypes, 32, 32)
-	numAllRows := 0
-	for {
-		err := response.Next(context.TODO(), chk)
-		require.NoError(t, err)
-		numAllRows += chk.NumRows()
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	require.Equal(t, 2, numAllRows)
-	require.NoError(t, response.Close())
-}
-
-func TestSelectStreamingWithNextRaw(t *testing.T) {
-	response, _ := createSelectStreaming(t, 1, 2)
-	data, err := response.NextRaw(context.TODO())
-	require.NoError(t, err)
-	require.Len(t, data, 16)
-}
-
-func TestSelectStreamingChunkSize(t *testing.T) {
-	response, colTypes := createSelectStreaming(t, 100, 1000000)
-	testChunkSize(t, response, colTypes)
-	require.NoError(t, response.Close())
-}
-
 func TestAnalyze(t *testing.T) {
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
+		SetAnalyzeRequest(&tipb.AnalyzeReq{}, kv.RC).
 		SetKeepOrder(true).
 		Build()
 	require.NoError(t, err)
@@ -279,7 +249,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 
 			colTypes := make([]*types.FieldType, 4)
 			for i := 0; i < 4; i++ {
-				colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+				colTypes[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 
@@ -350,20 +320,15 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
 	// 4 int64 types.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
+		ftb.BuildP(),
 	}
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
@@ -424,21 +389,16 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
+		SetFromSessionVars(variable.NewSessionVars(nil)).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	require.NoError(t, err)
 
 	// 4 int64 types.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
+		ftb.BuildP(),
 	}
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
@@ -462,7 +422,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	require.True(t, ok)
 	require.Equal(t, "general", result.sqlType)
 	require.Equal(t, "dag", result.label)
-	require.Equal(t, len(colTypes), result.rowLen)
+	require.Len(t, colTypes, result.rowLen)
 
 	resp, ok := result.resp.(*mockResponse)
 	require.True(t, ok)
@@ -470,46 +430,5 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	resp.total = totalRows
 	resp.batch = batch
 
-	return result, colTypes
-}
-
-func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldType) {
-	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetDAGRequest(&tipb.DAGRequest{}).
-		SetDesc(false).
-		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
-		SetStreaming(true).
-		Build()
-	require.NoError(t, err)
-
-	// 4 int64 types.
-	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
-	}
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-
-	sctx := newMockSessionContext()
-	sctx.GetSessionVars().EnableStreaming = true
-
-	response, err := Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
-	require.NoError(t, err)
-	result, ok := response.(*streamResult)
-	require.True(t, ok)
-	require.Equal(t, len(colTypes), result.rowLen)
-
-	resp, ok := result.resp.(*mockResponse)
-	require.True(t, ok)
-	resp.total = totalRows
-	resp.batch = batch
 	return result, colTypes
 }

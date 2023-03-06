@@ -19,6 +19,8 @@ import (
 )
 
 const (
+	// TiFlashRuleGroupID is the rule group id of tiflash
+	TiFlashRuleGroupID = "tiflash"
 	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
@@ -52,4 +54,8 @@ const (
 	// EngineLabelTiKV is the label value used in some tests. And possibly TiKV will
 	// set the engine label with a value of EngineLabelTiKV.
 	EngineLabelTiKV = "tikv"
+
+	// EngineLabelTiFlashCompute is for disaggregated tiflash mode,
+	// it's the lable of tiflash_compute nodes.
+	EngineLabelTiFlashCompute = "tiflash_compute"
 )

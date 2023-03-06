@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,8 +39,7 @@ func createTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func TestClusteredUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
@@ -63,10 +61,10 @@ func TestClusteredUnionScan(t *testing.T) {
 }
 
 func TestClusteredPrefixColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
 	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
@@ -86,7 +84,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 		Res  []string
 	}
 	testData := session.GetClusteredIndexSuiteData()
-	testData.GetTestCases(t, &input, &output)
+	testData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -136,8 +134,7 @@ func TestClusteredPrefixColumn(t *testing.T) {
 }
 
 func TestClusteredUnionScanIndexLookup(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -155,8 +152,7 @@ func TestClusteredUnionScanIndexLookup(t *testing.T) {
 }
 
 func TestClusteredIndexLookUp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
@@ -167,8 +163,7 @@ func TestClusteredIndexLookUp(t *testing.T) {
 }
 
 func TestClusteredIndexLookUp2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists c3")
@@ -193,8 +188,7 @@ SELECT c_balance, c_first, c_middle, c_id FROM c3 use index (idx) WHERE c_w_id =
 }
 
 func TestClusteredTopN(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists o3")
@@ -213,8 +207,7 @@ func TestClusteredTopN(t *testing.T) {
 }
 
 func TestClusteredHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists ht")
@@ -223,8 +216,7 @@ func TestClusteredHint(t *testing.T) {
 }
 
 func TestClusteredBatchPointGet(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
@@ -239,8 +231,7 @@ type SnapCacheSizeGetter interface {
 }
 
 func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
@@ -258,8 +249,7 @@ func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
 }
 
 func TestClusteredPrefixingPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -296,7 +286,7 @@ func TestClusteredPrefixingPrimaryKey(t *testing.T) {
 
 	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 't.PRIMARY'"))
 	tk.MustExec("admin check table t;")
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -336,8 +326,7 @@ func TestClusteredPrefixingPrimaryKey(t *testing.T) {
 }
 
 func TestClusteredWithOldRowFormat(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.Session().GetSessionVars().RowEncoder.Enable = false
@@ -389,8 +378,7 @@ func TestClusteredWithOldRowFormat(t *testing.T) {
 }
 
 func TestIssue20002(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -405,8 +393,7 @@ func TestIssue20002(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/20727
 func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -419,8 +406,7 @@ func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
 }
 
 func TestClusteredIndexSelectWhereInNull(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -429,8 +415,7 @@ func TestClusteredIndexSelectWhereInNull(t *testing.T) {
 }
 
 func TestCreateClusteredTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only';")
@@ -520,8 +505,7 @@ func TestClusteredUnionScanOnPrefixingPrimaryKey(t *testing.T) {
 	originCollate := collate.NewCollationEnabled()
 	collate.SetNewCollationEnabledForTest(false)
 	defer collate.SetNewCollationEnabledForTest(originCollate)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));")
@@ -540,8 +524,7 @@ func TestClusteredUnionScanOnPrefixingPrimaryKey(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/22453
 func TestClusteredIndexSplitAndAddIndex2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
@@ -555,8 +538,7 @@ func TestClusteredIndexSplitAndAddIndex2(t *testing.T) {
 }
 
 func TestClusteredIndexSyntax(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -607,8 +589,7 @@ func TestClusteredIndexSyntax(t *testing.T) {
 }
 
 func TestPrefixClusteredIndexAddIndexAndRecover(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test;")
@@ -628,12 +609,7 @@ func TestPrefixClusteredIndexAddIndexAndRecover(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_view")
@@ -676,11 +652,7 @@ func TestPartitionTable(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/23106
 func TestClusteredIndexDecodeRestoredDataV5(t *testing.T) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -702,11 +674,7 @@ func TestClusteredIndexDecodeRestoredDataV5(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/23178
 func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -724,11 +692,7 @@ func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
 func TestClusteredIndexNewCollationWithOldRowFormat(t *testing.T) {
 	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
 	// but unistore doesn't support old row format.
-	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetNewCollationEnabledForTest(true)
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

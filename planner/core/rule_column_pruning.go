@@ -31,7 +31,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns, opt)
 	return lp, err
 }
@@ -115,6 +115,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
+	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -180,10 +181,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	return nil
 }
 
-func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (new []*util.ByItems,
+func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
-	new = make([]*util.ByItems, 0, len(old))
+	byItems = make([]*util.ByItems, 0, len(old))
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
@@ -191,19 +192,17 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (n
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if hashMatch {
-			// do nothing, should be filtered
-		} else if len(cols) == 0 {
-			if !expression.IsRuntimeConstExpr(byItem.Expr) {
+		if !hashMatch {
+			if len(cols) == 0 {
+				if !expression.IsRuntimeConstExpr(byItem.Expr) {
+					pruned = false
+					byItems = append(byItems, byItem)
+				}
+			} else if byItem.Expr.GetType().GetType() != mysql.TypeNull {
 				pruned = false
-				new = append(new, byItem)
+				parentUsedCols = append(parentUsedCols, cols...)
+				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
-			// do nothing, should be filtered
-		} else {
-			pruned = false
-			parentUsedCols = append(parentUsedCols, cols...)
-			new = append(new, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)
@@ -293,6 +292,11 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	for _, col := range p.Schema().Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			parentUsedCols = append(parentUsedCols, col)
+		}
+	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols, opt)
@@ -308,8 +312,22 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
+
+	ds.colsRequiringFullLen = make([]*expression.Column, 0, len(used))
+	for i, col := range ds.schema.Columns {
+		if used[i] || (ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, col)
+		}
+	}
+
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
+			// If ds has a shard index, and the column is generated column by `tidb_shard()`
+			// it can't prune the generated column of shard index
+			if ds.containExprPrefixUk &&
+				expression.GcColumnExprIsTidbShard(ds.schema.Columns[i].VirtualExpr) {
+				continue
+			}
 			prunedColumns = append(prunedColumns, ds.schema.Columns[i])
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -321,19 +339,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.schema.Len() == 0 {
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
-		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
-			// use the first line.
-			handleCol = originSchemaColumns[0]
-			handleColInfo = originColumns[0]
-		} else {
-			if ds.handleCols != nil {
-				handleCol = ds.handleCols.GetCol(0)
-				handleColInfo = handleCol.ToInfo()
-			} else {
-				handleCol = ds.newExtraHandleSchemaCol()
-				handleColInfo = model.NewExtraHandleColInfo()
-			}
-		}
+		handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
@@ -400,6 +406,9 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 	}
 	for _, otherCond := range p.OtherConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
+	}
+	for _, naeqCond := range p.NAEQConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
 	lChild := p.children[0]
 	rChild := p.children[1]
@@ -473,16 +482,15 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
 	}
 
-	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
-	}
-
-	for _, cols := range p.tblID2Handle {
+	for tblID, cols := range p.tblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
+		}
+		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+			// If the children include partitioned tables, there is an extra partition ID column.
+			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)
@@ -637,4 +645,24 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fm
 		return ""
 	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
+	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
+		// use the first column.
+		resultColumnInfo = originSchemaColumns[0]
+		resultColumn = originColumns[0]
+	} else {
+		if dataSource.handleCols != nil {
+			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else {
+			resultColumn = dataSource.newExtraHandleSchemaCol()
+			resultColumnInfo = model.NewExtraHandleColInfo()
+		}
+	}
+	return resultColumn, resultColumnInfo
 }

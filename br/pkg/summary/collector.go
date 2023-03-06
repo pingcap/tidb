@@ -46,7 +46,13 @@ type LogCollector interface {
 
 	SetSuccessStatus(success bool)
 
+	NowDureTime() time.Duration
+
+	AdjustStartTimeToEarlierTime(t time.Duration)
+
 	Summary(name string)
+
+	Log(msg string, fields ...zap.Field)
 }
 
 type logFunc func(msg string, fields ...zap.Field)
@@ -90,7 +96,7 @@ type logCollector struct {
 }
 
 // NewLogCollector returns a new LogCollector.
-func NewLogCollector(log logFunc) LogCollector {
+func NewLogCollector(logf logFunc) LogCollector {
 	return &logCollector{
 		successUnitCount: 0,
 		failureUnitCount: 0,
@@ -100,7 +106,7 @@ func NewLogCollector(log logFunc) LogCollector {
 		durations:        make(map[string]time.Duration),
 		ints:             make(map[string]int),
 		uints:            make(map[string]uint64),
-		log:              log,
+		log:              logf,
 		startTime:        time.Now(),
 	}
 }
@@ -159,6 +165,18 @@ func (tc *logCollector) SetSuccessStatus(success bool) {
 
 func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
+}
+
+func (tc *logCollector) NowDureTime() time.Duration {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return time.Since(tc.startTime)
+}
+
+func (tc *logCollector) AdjustStartTimeToEarlierTime(t time.Duration) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.startTime = tc.startTime.Add(-t)
 }
 
 func (tc *logCollector) Summary(name string) {
@@ -235,6 +253,10 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	tc.log(name+" success summary", logFields...)
+}
+
+func (tc *logCollector) Log(msg string, fields ...zap.Field) {
+	tc.log(msg, fields...)
 }
 
 // SetLogCollector allow pass LogCollector outside.

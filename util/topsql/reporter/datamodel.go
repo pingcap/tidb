@@ -20,8 +20,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -66,9 +68,9 @@ const (
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
 type tsItem struct {
+	stmtStats stmtstats.StatementStatsItem
 	timestamp uint64
 	cpuTimeMs uint32
-	stmtStats stmtstats.StatementStatsItem
 }
 
 func zeroTsItem() tsItem {
@@ -139,13 +141,12 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
+	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
+	tsIndex        map[uint64]int
 	sqlDigest      []byte
 	planDigest     []byte
-	totalCPUTimeMs uint64
 	tsItems        tsItems
-
-	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
-	tsIndex map[uint64]int // timestamp => index of tsItems
+	totalCPUTimeMs uint64
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
@@ -594,6 +595,13 @@ type sqlMeta struct {
 	isInternal    bool
 }
 
+// planMeta contains a binaryNormalizedPlan and a bool field isLarge to indicate
+// whether that binaryNormalizedPlan is too large to decode quickly
+type planMeta struct {
+	binaryNormalizedPlan string
+	isLarge              bool
+}
+
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
 	data   atomic.Value // *sync.Map
@@ -610,7 +618,7 @@ func newNormalizedSQLMap() *normalizedSQLMap {
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		ignoreExceedSQLCounter.Inc()
+		reporter_metrics.IgnoreExceedSQLCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
@@ -654,6 +662,10 @@ func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 // normalizedPlanMap to protobuf representation.
 type planBinaryDecodeFunc func(string) (string, error)
 
+// planBinaryCompressFunc is used to compress large normalized plan
+// into encoded format
+type planBinaryCompressFunc func([]byte) string
+
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
 	data   atomic.Value // *sync.Map
@@ -668,13 +680,16 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
-func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
+func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		ignoreExceedPlanCounter.Inc()
+		reporter_metrics.IgnoreExceedPlanCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(string(planDigest), normalizedPlan)
+	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
+		binaryNormalizedPlan: normalizedPlan,
+		isLarge:              isLarge,
+	})
 	if !loaded {
 		m.length.Add(1)
 	}
@@ -693,18 +708,26 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().(*sync.Map).Range(func(k, v interface{}) bool {
-		planDecoded, errDecode := decodePlan(v.(string))
-		if errDecode != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+		originalMeta := v.(planMeta)
+		protoMeta := tipb.PlanMeta{
+			PlanDigest: hack.Slice(k.(string)),
+		}
+
+		var err error
+		if originalMeta.isLarge {
+			protoMeta.EncodedNormalizedPlan = compressPlan(hack.Slice(originalMeta.binaryNormalizedPlan))
+		} else {
+			protoMeta.NormalizedPlan, err = decodePlan(originalMeta.binaryNormalizedPlan)
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
 			return true
 		}
-		metas = append(metas, tipb.PlanMeta{
-			PlanDigest:     []byte(k.(string)),
-			NormalizedPlan: planDecoded,
-		})
+
+		metas = append(metas, protoMeta)
 		return true
 	})
 	return metas

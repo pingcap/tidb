@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,7 +100,7 @@ Loop:
 	for i, alm := range tc.supportedAlgorithm {
 		algorithm, err = ddl.ResolveAlterAlgorithm(&tc.alterSpec, alm)
 		if err != nil {
-			require.True(t, ddl.ErrAlterOperationNotSupported.Equal(err))
+			require.True(t, dbterror.ErrAlterOperationNotSupported.Equal(err))
 		}
 		require.Equal(t, tc.expectedAlgorithm[i], algorithm)
 	}
@@ -109,6 +110,6 @@ Loop:
 		algorithm, err = ddl.ResolveAlterAlgorithm(&tc.alterSpec, alm)
 		require.Equal(t, ast.AlgorithmTypeDefault, algorithm)
 		require.Error(t, err)
-		require.True(t, ddl.ErrAlterOperationNotSupported.Equal(err))
+		require.True(t, dbterror.ErrAlterOperationNotSupported.Equal(err))
 	}
 }

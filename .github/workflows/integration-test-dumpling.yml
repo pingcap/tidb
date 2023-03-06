@@ -1,0 +1,93 @@
+name: Dumpling
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        type: boolean
+        description: "Run the build with tmate debugging enabled"
+        required: false
+        default: false
+  push:
+    branches:
+      - master
+      - release-*
+    paths:
+      - "dumpling/**"
+      - "br/pkg/storage/**"
+      - "br/pkg/utils/**"
+      - "br/pkg/summary/**"
+      - 'br/pkg/version/**'
+      - "store/helper/**"
+      - "tablecodec/**"
+      - "util/codec/**"
+      - "parser/model/**"
+  pull_request:
+    branches:
+      - master
+      - release-*
+    paths:
+      - 'dumpling/**'
+      - 'br/pkg/storage/**'
+      - 'br/pkg/utils/**'
+      - 'br/pkg/summary/**'
+      - 'br/pkg/version/**'
+      - 'store/helper/**'
+      - 'tablecodec/**'
+      - 'util/codec/**'
+      - 'parser/model/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+
+jobs:
+  integration-test:
+    strategy:
+      fail-fast: true
+      matrix:
+        mysql_version:
+          - 5.7.35
+          - 8.0.22
+          - 8.0.26
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql_version }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    steps:
+      - name: "checkout repository"
+        uses: actions/checkout@v3
+      - name: "set up golang"
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+      - name: "try to use build cache"
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/Library/Caches/go-build
+            ~\AppData\Local\go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: "download binary dependencies"
+        run: sh dumpling/install.sh
+      - name: "build tidb"
+        run: make server
+      - name: "build lightning"
+        run: make build_lightning
+      - name: "integration test"
+        run: make dumpling_integration_test VERBOSE="true"
+      - name: "set up tmate session if necessary"
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
+        uses: mxschmitt/action-tmate@v3

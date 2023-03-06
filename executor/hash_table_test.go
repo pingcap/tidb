@@ -18,12 +18,13 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -32,12 +33,12 @@ import (
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 6
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -47,7 +48,7 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 		oldChk.AppendString(2, str)
 		oldChk.AppendString(3, str)
 		oldChk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		oldChk.AppendJSON(5, json.CreateBinary(str))
+		oldChk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	return oldChk, colTypes
 }
@@ -55,9 +56,9 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 3
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -119,14 +120,14 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	chk1, _ := initBuildChunk(numRows)
 
 	hCtx := &hashContext{
-		allTypes:  colTypes,
+		allTypes:  colTypes[1:3],
 		keyColIdx: []int{1, 2},
 	}
 	hCtx.hasNull = make([]bool, numRows)
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx, hCtx.allTypes)
+	rowContainer := newHashRowContainer(sctx, hCtx, colTypes)
 	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
@@ -140,8 +141,9 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	require.NoError(t, err)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
 	require.Equal(t, spill, rowContainer.alreadySpilledSafeForTest())
-	require.Equal(t, spill, rowContainer.GetMemTracker().BytesConsumed() == 0)
-	require.Equal(t, !spill, rowContainer.GetMemTracker().BytesConsumed() > 0)
+	require.Equal(t, spill, rowContainer.rowContainer.GetMemTracker().BytesConsumed() == 0)
+	require.Equal(t, !spill, rowContainer.rowContainer.GetMemTracker().BytesConsumed() > 0)
+	require.True(t, rowContainer.GetMemTracker().BytesConsumed() > 0) // hashtable need memory
 	if rowContainer.alreadySpilledSafeForTest() {
 		require.NotNil(t, rowContainer.GetDiskTracker())
 		require.True(t, rowContainer.GetDiskTracker().BytesConsumed() > 0)
@@ -150,15 +152,31 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	probeChk, probeColType := initProbeChunk(2)
 	probeRow := probeChk.GetRow(1)
 	probeCtx := &hashContext{
-		allTypes:  probeColType,
+		allTypes:  probeColType[1:3],
 		keyColIdx: []int{1, 2},
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx, nil, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matched))
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))
 	require.Equal(t, chk1.GetRow(1).GetDatumRow(colTypes), matched[1].GetDatumRow(colTypes))
 	return rowContainer, copiedRC
+}
+
+func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
+	m := newConcurrentMapHashTable()
+	const iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.
+	for i := 0; i < iterations; i++ {
+		// Add entry to map.
+		m.Put(uint64(i*ShardCount), chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)})
+	}
+	mapMemoryExpected := int64(1024) * hack.DefBucketMemoryUsageForMapIntToPtr
+	entryMemoryExpected := 16 * int64(64+128+256+512+1024+2048+4096)
+	require.Equal(t, mapMemoryExpected+entryMemoryExpected, m.GetAndCleanMemoryDelta())
+	require.Equal(t, int64(0), m.GetAndCleanMemoryDelta())
 }

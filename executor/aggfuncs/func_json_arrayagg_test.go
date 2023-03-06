@@ -22,12 +22,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration}
 
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
@@ -36,18 +35,19 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries2 := make([]interface{}, 0)
 		entries3 := make([]interface{}, 0)
 
-		genFunc := getDataGenFunc(types.NewFieldType(argType))
+		argFieldType := types.NewFieldType(argType)
+		genFunc := getDataGenFunc(argFieldType)
 
 		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)
-			entries1 = append(entries1, arg.GetValue())
+			entries1 = append(entries1, getJSONValue(arg, argFieldType))
 		}
 		// to adapt the `genSrcChk` Chunk format
 		entries1 = append(entries1, nil)
 
 		for m := 2; m < numRows; m++ {
 			arg := genFunc(m)
-			entries2 = append(entries2, arg.GetValue())
+			entries2 = append(entries2, getJSONValue(arg, argFieldType))
 		}
 		// to adapt the `genSrcChk` Chunk format
 		entries2 = append(entries2, nil)
@@ -55,7 +55,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries3 = append(entries3, entries1...)
 		entries3 = append(entries3, entries2...)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, json.CreateBinary(entries1), json.CreateBinary(entries2), json.CreateBinary(entries3)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
 	}
 
 	for _, test := range tests {
@@ -64,7 +64,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestJsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration}
 
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
@@ -72,16 +72,17 @@ func TestJsonArrayagg(t *testing.T) {
 	for _, argType := range typeList {
 		entries := make([]interface{}, 0)
 
-		genFunc := getDataGenFunc(types.NewFieldType(argType))
+		argFieldType := types.NewFieldType(argType)
+		genFunc := getDataGenFunc(argFieldType)
 
 		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)
-			entries = append(entries, arg.GetValue())
+			entries = append(entries, getJSONValue(arg, argFieldType))
 		}
 		// to adapt the `genSrcChk` Chunk format
 		entries = append(entries, nil)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, json.CreateBinary(entries)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	for _, test := range tests {
@@ -100,9 +101,11 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 
 		memDelta := int64(0)
 		memDelta += aggfuncs.DefInterfaceSize
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
+		case mysql.TypeFloat:
+			memDelta += aggfuncs.DefFloat64Size
 		case mysql.TypeDouble:
 			memDelta += aggfuncs.DefFloat64Size
 		case mysql.TypeString:
@@ -110,16 +113,16 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 			memDelta += int64(len(val))
 		case mysql.TypeJSON:
 			val := row.GetJSON(0)
-			// +1 for the memory usage of the TypeCode of json
+			// +1 for the memory usage of the JSONTypeCode of json
 			memDelta += int64(len(val.Value) + 1)
 		case mysql.TypeDuration:
 			memDelta += aggfuncs.DefDurationSize
-		case mysql.TypeDate:
+		case mysql.TypeDate, mysql.TypeDatetime:
 			memDelta += aggfuncs.DefTimeSize
 		case mysql.TypeNewDecimal:
-			memDelta += aggfuncs.DefMyDecimalSize
+			memDelta += aggfuncs.DefFloat64Size
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -127,7 +130,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 }
 
 func TestMemJsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 
 	tests := make([]aggMemTest, 0, len(typeList))
 	numRows := 5

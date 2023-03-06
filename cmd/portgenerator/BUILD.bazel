@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "portgenerator_lib",
+    srcs = ["portgenerator.go"],
+    importpath = "github.com/pingcap/tidb/cmd/portgenerator",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_phayes_freeport//:freeport",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "portgenerator",
+    embed = [":portgenerator_lib"],
+    visibility = ["//visibility:public"],
+)

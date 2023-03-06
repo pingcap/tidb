@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestMergePartialResult4Sum(t *testing.T) {
@@ -57,9 +57,9 @@ func TestMemSum(t *testing.T) {
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4SumDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4SumDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4SumDistinctDecimalSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4SumDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
 	}
 
 	for i, test := range tests {

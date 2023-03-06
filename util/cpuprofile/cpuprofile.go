@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // DefProfileDuration exports for testing.
@@ -57,6 +58,7 @@ func StopCPUProfiler() {
 // Normally, the registered ProfileConsumer will receive the cpu profile data per second.
 // If the ProfileConsumer (channel) is full, the latest cpu profile data will not be sent to it.
 // This function is thread-safe.
+// WARN: ProfileConsumer should not be closed before unregister.
 func Register(ch ProfileConsumer) {
 	globalCPUProfiler.register(ch)
 }
@@ -72,17 +74,15 @@ func Unregister(ch ProfileConsumer) {
 // With parallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
 // WARN: Only one running parallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
 type parallelCPUProfiler struct {
-	sync.Mutex
+	ctx            context.Context
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
-
-	profileData  *ProfileData
-	lastDataSize int
-
+	profileData    *ProfileData
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	lastDataSize   int
+	sync.Mutex
 	started bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
 }
 
 // newParallelCPUProfiler crate a new parallelCPUProfiler.
@@ -208,6 +208,13 @@ func (p *parallelCPUProfiler) consumersCount() int {
 
 func (p *parallelCPUProfiler) sendToConsumers() {
 	p.Lock()
+	defer func() {
+		p.Unlock()
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
+		}
+	}()
+
 	for c := range p.cs {
 		select {
 		case c <- p.profileData:
@@ -216,5 +223,4 @@ func (p *parallelCPUProfiler) sendToConsumers() {
 		}
 	}
 	p.profileData = nil
-	p.Unlock()
 }

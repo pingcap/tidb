@@ -36,17 +36,25 @@ const (
 	Learner PeerRoleType = "learner"
 )
 
+// RuleGroupConfig defines basic config of rule group
+type RuleGroupConfig struct {
+	ID       string `json:"id"`
+	Index    int    `json:"index"`
+	Override bool   `json:"override"`
+}
+
 // Rule is the core placement rule struct. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID     string       `json:"group_id"`
-	ID          string       `json:"id"`
-	Index       int          `json:"index,omitempty"`
-	Override    bool         `json:"override,omitempty"`
-	StartKeyHex string       `json:"start_key"`
-	EndKeyHex   string       `json:"end_key"`
-	Role        PeerRoleType `json:"role"`
-	Count       int          `json:"count"`
-	Constraints Constraints  `json:"label_constraints,omitempty"`
+	GroupID        string       `json:"group_id"`
+	ID             string       `json:"id"`
+	Index          int          `json:"index,omitempty"`
+	Override       bool         `json:"override,omitempty"`
+	StartKeyHex    string       `json:"start_key"`
+	EndKeyHex      string       `json:"end_key"`
+	Role           PeerRoleType `json:"role"`
+	Count          int          `json:"count"`
+	Constraints    Constraints  `json:"label_constraints,omitempty"`
+	LocationLabels []string     `json:"location_labels,omitempty"`
 }
 
 // TiFlashRule extends Rule with other necessary fields.

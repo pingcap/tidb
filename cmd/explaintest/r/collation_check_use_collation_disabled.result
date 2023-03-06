@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_check_use_collation;
 use collation_check_use_collation;
 CREATE TABLE `t` (
@@ -31,7 +32,7 @@ drop table if exists t;
 create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 insert into t values ("B", "b");
-Error 1265: Data truncated for column 'a' at row 1
+Error 1265 (01000): Data truncated for column 'a' at row 1
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a);
@@ -81,7 +82,7 @@ drop table if exists t;
 create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 insert into t values ("B", "b");
-Error 1265: Data truncated for column 'a' at row 1
+Error 1265 (01000): Data truncated for column 'a' at row 1
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a);
@@ -128,4 +129,53 @@ select col_25 from tbl_2 where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 
 col_25
 select col_25 from tbl_2 use index(primary) where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
 col_25
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a char(20));
+create table t2(b binary(20), c binary(20));
+insert into t1 value('-1');
+insert into t2 value(0x2D31, 0x67);
+insert into t2 value(0x2D31, 0x73);
+select a from t1, t2 where t1.a between t2.b and t2.c;
+a
+select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;
+a
+-1
+-1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a char(20)) collate utf8mb4_general_ci;
+create table t2(b binary(20), c char(20)) collate utf8mb4_general_ci;
+insert into t1 values ('a');
+insert into t2 values (0x0, 'A');
+select * from t1, t2 where t1.a between t2.b and t2.c;
+a	b	c
+insert into t1 values ('-1');
+insert into t2 values (0x2d31, '');
+select * from t1, t2 where t1.a in (t2.b, 3);
+a	b	c
+drop table if exists t0;
+drop table if exists t1;
+CREATE TABLE t0(c0 BOOL, c1 INT);
+CREATE TABLE t1 LIKE t0;
+CREATE VIEW v0(c0) AS SELECT IS_IPV4(t0.c1) FROM t0, t1;
+INSERT INTO t0(c0, c1) VALUES (true, 0);
+INSERT INTO t1(c0, c1) VALUES (true, 2);
+SELECT v0.c0 FROM v0;
+c0
+0
+SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
+(v0.c0)NOT LIKE(BINARY v0.c0)
+0
+SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+c0
+desc format='brief' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+id	estRows	task	access object	operator info
+Projection	80000000.00	root		is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20)))->Column#7
+└─HashJoin	80000000.00	root		CARTESIAN inner join
+  ├─Selection(Build)	8000.00	root		not(like(cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), var_string(20)), cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), binary(1)), 92))
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 use test

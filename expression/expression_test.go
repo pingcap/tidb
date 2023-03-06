@@ -31,7 +31,7 @@ func TestNewValuesFunc(t *testing.T) {
 	ctx := createContext(t)
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, res.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, res.RetType.GetType())
 	_, ok := res.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }
@@ -75,8 +75,33 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
-	_, isScalarFunc := res.(*ScalarFunction)
-	require.True(t, isScalarFunc) // the expression with parameters is not evaluated
+	_, isConst := res.(*Constant)
+	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
+}
+
+func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
+	ctx := createContext(t)
+	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
+	schema := tableInfoToSchemaForTest(tblInfo)
+
+	castStrAsJSON := BuildCastFunction(ctx, schema.Columns[0], types.NewFieldType(mysql.TypeJSON))
+	jsonConstant := &Constant{Value: types.NewDatum("123"), RetType: types.NewFieldType(mysql.TypeJSON)}
+
+	// initially has ParseToJSONFlag
+	flagInCast := castStrAsJSON.(*ScalarFunction).RetType.GetFlag()
+	require.True(t, mysql.HasParseToJSONFlag(flagInCast))
+
+	// cast's ParseToJSONFlag removed by `DisableParseJSONFlag4Expr`
+	eq, err := newFunctionForTest(ctx, ast.EQ, jsonConstant, castStrAsJSON)
+	require.NoError(t, err)
+	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
+	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
+
+	// after EvaluateExprWithNull, this flag should be still false
+	EvaluateExprWithNull(ctx, schema, eq)
+	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
+	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 }
 
 func TestConstant(t *testing.T) {
@@ -95,11 +120,11 @@ func TestConstant(t *testing.T) {
 func TestIsBinaryLiteral(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeSet
+	col.RetType.SetType(mysql.TypeSet)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeBit
+	col.RetType.SetType(mysql.TypeBit)
 	require.False(t, IsBinaryLiteral(col))
-	col.RetType.Tp = mysql.TypeDuration
+	col.RetType.SetType(mysql.TypeDuration)
 	require.False(t, IsBinaryLiteral(col))
 
 	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
@@ -192,9 +217,13 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 	for i, colName := range builder.columnNames {
 		tp := builder.tps[i]
 		fieldType := types.NewFieldType(tp)
-		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
-		fieldType.Flag = builder.flags[i]
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.SetFlen(flen)
+		fieldType.SetDecimal(decimal)
+		charset, collate := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(charset)
+		fieldType.SetCollate(collate)
+		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
 			Name:      model.NewCIStr(colName),
@@ -248,4 +277,16 @@ func TestEvalExpr(t *testing.T) {
 			require.Equal(t, string(colBuf2.GetRaw(j)), string(colBuf.GetRaw(j)))
 		}
 	}
+}
+
+func TestExpressionMemeoryUsage(t *testing.T) {
+	c1 := &Column{OrigName: "Origin"}
+	c2 := Column{OrigName: "OriginName"}
+	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+	c1 = nil
+	require.Equal(t, c1.MemoryUsage(), int64(0))
+
+	c3 := Constant{Value: types.NewIntDatum(1)}
+	c4 := Constant{Value: types.NewStringDatum("11")}
+	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
 }

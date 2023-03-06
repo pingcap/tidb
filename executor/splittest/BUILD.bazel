@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "splittest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "split_table_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 5,
+    deps = [
+        "//ddl",
+        "//domain/infosync",
+        "//errno",
+        "//kv",
+        "//parser/mysql",
+        "//parser/terror",
+        "//planner/core",
+        "//sessionctx/variable",
+        "//store/copr",
+        "//store/driver/backoff",
+        "//store/helper",
+        "//table",
+        "//testkit",
+        "//testkit/external",
+        "//util/benchdaily",
+        "//util/dbterror",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

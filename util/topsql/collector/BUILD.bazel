@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "collector",
+    srcs = ["cpu.go"],
+    importpath = "github.com/pingcap/tidb/util/topsql/collector",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util",
+        "//util/cpuprofile",
+        "//util/hack",
+        "//util/logutil",
+        "//util/topsql/state",
+        "@com_github_google_pprof//profile",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "collector_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":collector"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "//util/cpuprofile",
+        "//util/cpuprofile/testutil",
+        "//util/topsql/state",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

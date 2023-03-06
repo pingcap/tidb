@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
@@ -510,6 +512,8 @@ func (ts *basicHTTPHandlerTestSuite) prepareData(t *testing.T) {
 	err = txn1.Commit()
 	require.NoError(t, err)
 	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
+	dbt.MustExec("alter table tidb.test drop index idx1;")
+	dbt.MustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.MustExec("alter table tidb.test add unique index idx2 (a, b);")
 
 	dbt.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
@@ -535,16 +539,16 @@ partition by range (a)
 
 func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data helper.MvccKV
+	var data []helper.MvccKV
 	err := decoder.Decode(&data)
 	require.NoError(t, err)
 	if valid {
-		require.NotNil(t, data.Value.Info)
-		require.Greater(t, len(data.Value.Info.Writes), 0)
+		require.NotNil(t, data[0].Value.Info)
+		require.Greater(t, len(data[0].Value.Info.Writes), 0)
 	} else {
-		require.Nil(t, data.Value.Info.Lock)
-		require.Nil(t, data.Value.Info.Writes)
-		require.Nil(t, data.Value.Info.Values)
+		require.Nil(t, data[0].Value.Info.Lock)
+		require.Nil(t, data[0].Value.Info.Writes)
+		require.Nil(t, data[0].Value.Info.Values)
 	}
 }
 
@@ -699,7 +703,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
@@ -847,8 +851,11 @@ func TestGetSchema(t *testing.T) {
 	}
 	sort.Strings(names)
 	require.Equal(t, expects, names)
+	store := testkit.CreateMockStore(t)
 
-	resp, err = ts.fetchStatus("/schema?table_id=5")
+	tk := testkit.NewTestKit(t, store)
+	userTbl := external.GetTableByName(t, tk, "mysql", "user")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -894,7 +901,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/db-table/5")
+	resp, err = ts.fetchStatus(fmt.Sprintf("/db-table/%d", userTbl.Meta().ID))
 	require.NoError(t, err)
 	var dbtbl *dbTableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -941,6 +948,15 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "t1", dbtbl.TableInfo.Name.L)
 	require.Equal(t, "test", dbtbl.DBInfo.Name.L)
 	require.Equal(t, ti, dbtbl.TableInfo)
+
+	resp, err = ts.fetchStatus(fmt.Sprintf("/schema?table_id=%v", ti.GetPartitionInfo().Definitions[0].ID))
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "t1", ti.Name.L)
+	require.Equal(t, ti, ti)
 }
 
 func TestAllHistory(t *testing.T) {
@@ -965,14 +981,55 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	_, err = txnMeta.GetAllHistoryDDLJobs()
+	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
-	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, data, jobs)
+	require.Equal(t, len(data), len(jobs))
+	for i := range data {
+		// For the jobs that have arguments(job.Args) for GC delete range,
+		// the RawArgs should be the same after filtering the spaces.
+		data[i].RawArgs = filterSpaces(data[i].RawArgs)
+		jobs[i].RawArgs = filterSpaces(jobs[i].RawArgs)
+		require.Equal(t, data[i], jobs[i], i)
+	}
+
+	// Cover the start_job_id parameter.
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	resp, err = ts.fetchStatus("/ddl/history?start_job_id=41&limit=3")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+
+	// The result is in descending order
+	lastID := int64(42)
+	for _, job := range jobs {
+		require.Less(t, job.ID, lastID)
+		lastID = job.ID
+	}
+	require.NoError(t, resp.Body.Close())
+}
+
+func filterSpaces(bs []byte) []byte {
+	if len(bs) == 0 {
+		return nil
+	}
+	tmp := bs[:0]
+	for _, b := range bs {
+		// 0xa is the line feed character.
+		// 0xd is the carriage return character.
+		// 0x20 is the space character.
+		if b != 0xa && b != 0xd && b != 0x20 {
+			tmp = append(tmp, b)
+		}
+	}
+	return tmp
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -1103,4 +1160,40 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+}
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.GetGlobalConfig().Labels = map[string]string{}
 }

@@ -20,6 +20,21 @@ type KeyFlags uint8
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
 	flagNeedLocked
+
+	// The following are assertion related flags.
+	// There are four choices of the two bits:
+	// * 0: Assertion is not set and can be set later.
+	// * flagAssertExists: We assert the key exists.
+	// * flagAssertNotExists: We assert the key doesn't exist.
+	// * flagAssertExists | flagAssertNotExists: Assertion cannot be made on this key (unknown).
+	// Once either (or both) of the two flags is set, we say assertion is set (`HasAssertionFlags` becomes true), and
+	// it's expected to be unchangeable within the current transaction.
+	flagAssertExists
+	flagAssertNotExists
+	// the flag indicates the conflict and constraint check of the key should be postponed
+	// to the next pessimistic lock or prewrite request.
+	flagNeedConstraintCheckInPrewrite
+	flagPreviousPresumeKNE
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -32,6 +47,31 @@ func (f KeyFlags) HasNeedLocked() bool {
 	return f&flagNeedLocked != 0
 }
 
+// HasAssertExists returns whether the key is asserted to already exist before the current transaction.
+func (f KeyFlags) HasAssertExists() bool {
+	return f&flagAssertExists != 0 && f&flagAssertNotExists == 0
+}
+
+// HasAssertNotExists returns whether the key is asserted not to exist before the current transaction.
+func (f KeyFlags) HasAssertNotExists() bool {
+	return f&flagAssertNotExists != 0 && f&flagAssertExists == 0
+}
+
+// HasAssertUnknown returns whether the key is unable to do any assertion.
+func (f KeyFlags) HasAssertUnknown() bool {
+	return f&flagAssertExists != 0 && f&flagAssertNotExists != 0
+}
+
+// HasAssertionFlags returns whether assertion is set on this key.
+func (f KeyFlags) HasAssertionFlags() bool {
+	return f&flagAssertExists != 0 || f&flagAssertNotExists != 0
+}
+
+// HasNeedConstraintCheckInPrewrite returns whether the key needs to do constraint and conflict check in prewrite.
+func (f KeyFlags) HasNeedConstraintCheckInPrewrite() bool {
+	return f&flagNeedConstraintCheckInPrewrite != 0
+}
+
 // FlagsOp describes KeyFlags modify operation.
 type FlagsOp uint16
 
@@ -40,6 +80,19 @@ const (
 	SetPresumeKeyNotExists FlagsOp = iota
 	// SetNeedLocked marks the associated key need to be acquired lock.
 	SetNeedLocked
+	// SetAssertExist marks the associated key must exist.
+	SetAssertExist
+	// SetAssertNotExist marks the associated key must not exists.
+	SetAssertNotExist
+	// SetAssertUnknown marks the associated key is unknown and can not apply other assertion.
+	SetAssertUnknown
+	// SetAssertNone marks the associated key without any assert.
+	SetAssertNone
+	// SetNeedConstraintCheckInPrewrite sets the flag flagNeedConstraintCheckInPrewrite
+	SetNeedConstraintCheckInPrewrite
+	// SetPreviousPresumeKeyNotExists marks the PNE flag is set in previous statements, thus it cannot be unset when
+	// retrying or rolling back a statement.
+	SetPreviousPresumeKeyNotExists
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -50,6 +103,19 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagPresumeKNE
 		case SetNeedLocked:
 			origin |= flagNeedLocked
+		case SetAssertExist:
+			origin |= flagAssertExists
+			origin &= ^flagAssertNotExists
+		case SetAssertNotExist:
+			origin |= flagAssertNotExists
+			origin &= ^flagAssertExists
+		case SetAssertUnknown:
+			origin |= flagAssertExists
+			origin |= flagAssertNotExists
+		case SetNeedConstraintCheckInPrewrite:
+			origin |= flagNeedConstraintCheckInPrewrite
+		case SetPreviousPresumeKeyNotExists:
+			origin |= flagPreviousPresumeKNE
 		}
 	}
 	return origin

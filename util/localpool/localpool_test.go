@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !race
-// +build !race
 
 package localpool
 
@@ -57,15 +56,4 @@ func TestPool(t *testing.T) {
 	}
 	require.Greater(t, getHit, getMiss)
 	require.Greater(t, putHit, putMiss)
-}
-
-func GetAndPut(pool *LocalPool) {
-	objs := make([]interface{}, rand.Intn(4)+1)
-	for i := 0; i < len(objs); i++ {
-		objs[i] = pool.Get()
-	}
-	runtime.Gosched()
-	for _, obj := range objs {
-		pool.Put(obj)
-	}
 }

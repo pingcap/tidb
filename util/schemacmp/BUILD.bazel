@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "schemacmp",
+    srcs = [
+        "lattice.go",
+        "table.go",
+        "type.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/schemacmp",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/charset",
+        "//parser/format",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/types",
+        "//types",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "schemacmp_test",
+    timeout = "short",
+    srcs = [
+        "lattice_test.go",
+        "table_test.go",
+        "type_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":schemacmp",
+        "//ddl",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//planner",
+        "//sessionctx",
+        "//types",
+        "//util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

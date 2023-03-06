@@ -92,7 +92,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			defer evictedElement.Unlock()
 			// no record in ssbde.history, direct insert
 			if ssbde.history.Len() == 0 && historySize != 0 {
-
 				eBeginTime := evictedElement.beginTime
 				eEndTime := evictedElement.endTime
 				record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
@@ -102,7 +101,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				h = ssbde.history.Back()
 				return
 			}
-
 			// look for matching history interval
 		MATCHING:
 			for ; h != nil; h = h.Prev() {

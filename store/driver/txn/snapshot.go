@@ -16,6 +16,7 @@ package txn
 
 import (
 	"context"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 )
@@ -110,7 +112,7 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 			s.KVSnapshot.SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
 	case kv.IsStalenessReadOnly:
-		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
+		s.KVSnapshot.SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
@@ -123,6 +125,21 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.interceptor = val.(kv.SnapshotInterceptor)
 	case kv.RPCInterceptor:
 		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+	case kv.RequestSourceInternal:
+		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		s.KVSnapshot.SetRequestSourceType(val.(string))
+	case kv.ReplicaReadAdjuster:
+		s.KVSnapshot.SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
+	case kv.ScanBatchSize:
+		size := val.(int)
+		if size > 0 {
+			s.KVSnapshot.SetScanBatchSize(size)
+		}
+	case kv.ResourceGroupName:
+		s.KVSnapshot.SetResourceGroupName(val.(string))
+	case kv.LoadBasedReplicaReadThreshold:
+		s.KVSnapshot.SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	}
 }
 
@@ -137,6 +154,8 @@ func getTiKVIsolationLevel(level kv.IsoLevel) txnsnapshot.IsoLevel {
 		return txnsnapshot.SI
 	case kv.RC:
 		return txnsnapshot.RC
+	case kv.RCCheckTS:
+		return txnsnapshot.RCCheckTS
 	default:
 		return txnsnapshot.SI
 	}

@@ -17,10 +17,9 @@ package chunk
 import (
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
@@ -57,17 +56,18 @@ const (
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
-func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
-	return New(fields, cap, cap)
+func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
+	return New(fields, capacity, capacity)
 }
 
 // New creates a new chunk.
-//  cap: the limit for the max number of rows.
-//  maxChunkSize: the max limit for the number of rows.
-func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+//
+//	cap: the limit for the max number of rows.
+//	maxChunkSize: the max limit for the number of rows.
+func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 	chk := &Chunk{
 		columns:  make([]*Column, 0, len(fields)),
-		capacity: mathutil.Min(cap, maxChunkSize),
+		capacity: mathutil.Min(capacity, maxChunkSize),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
 		// "chk.NumRows() < maxChunkSize"
@@ -83,14 +83,14 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 
 // renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
-func renewWithCapacity(chk *Chunk, cap, requiredRows int) *Chunk {
+func renewWithCapacity(chk *Chunk, capacity, requiredRows int) *Chunk {
 	if chk.columns == nil {
 		return &Chunk{}
 	}
 	return &Chunk{
-		columns:        renewColumns(chk.columns, cap),
+		columns:        renewColumns(chk.columns, capacity),
 		numVirtualRows: 0,
-		capacity:       cap,
+		capacity:       capacity,
 		requiredRows:   requiredRows,
 	}
 }
@@ -98,8 +98,9 @@ func renewWithCapacity(chk *Chunk, cap, requiredRows int) *Chunk {
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
 // has the same data schema with the old Chunk. The capacity of the new Chunk
 // might be doubled based on the capacity of the old Chunk and the maxChunkSize.
-//  chk: old chunk(often used in previous call).
-//  maxChunkSize: the limit for the max number of rows.
+//
+//	chk: old chunk(often used in previous call).
+//	maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	newCap := reCalcCapacity(chk, maxChunkSize)
 	return renewWithCapacity(chk, newCap, maxChunkSize)
@@ -107,10 +108,10 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
 // created columns is equal to cap.
-func renewColumns(oldCol []*Column, cap int) []*Column {
+func renewColumns(oldCol []*Column, capacity int) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
-		columns = append(columns, newColumn(col.typeSize(), cap))
+		columns = append(columns, newColumn(col.typeSize(), capacity))
 	}
 	return columns
 }
@@ -144,6 +145,9 @@ func (c *Chunk) resetForReuse() {
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
+	if c == nil {
+		return 0
+	}
 	for _, col := range c.columns {
 		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
@@ -317,11 +321,18 @@ func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 	if c.NumRows() < c.capacity {
 		return c.capacity
 	}
-	return mathutil.Min(c.capacity*2, maxChunkSize)
+	newCapacity := c.capacity * 2
+	if newCapacity == 0 {
+		newCapacity = InitialCapacity
+	}
+	return mathutil.Min(newCapacity, maxChunkSize)
 }
 
 // Capacity returns the capacity of the Chunk.
 func (c *Chunk) Capacity() int {
+	if c == nil {
+		return 0
+	}
 	return c.capacity
 }
 
@@ -540,7 +551,7 @@ func (c *Chunk) AppendSet(colIdx int, set types.Set) {
 }
 
 // AppendJSON appends a JSON value to the chunk.
-func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendJSON(j)
 }

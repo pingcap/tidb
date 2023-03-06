@@ -18,7 +18,7 @@ set -eux
 
 # Make sure we won't run out of table concurrency by destroying checkpoints
 
-for i in $(seq 8); do
+for _ in $(seq 8); do
     ARGS="--enable-checkpoint=1 --config tests/$TEST_NAME/mysql.toml -d tests/$TEST_NAME/bad-data"
     set +e
     run_lightning $ARGS
@@ -34,18 +34,14 @@ check_contains 'x: 1999-09-09 09:09:09'
 
 run_sql 'DROP DATABASE cped'
 
-CHECK_POINT_FILE="/tmp/cp_error_destroy.pb"
-
 # clean up possible old files
-rm -rf CHECK_POINT_FILE
-for i in $(seq 8); do
+rm -rf '/tmp/cp_error_destroy.pb'
+for _ in $(seq 8); do
     ARGS="--enable-checkpoint=1 --config tests/$TEST_NAME/file.toml -d tests/$TEST_NAME/bad-data"
     set +e
     run_lightning $ARGS
     set -e
-    ls -la /tmp/backup_restore_test/importer/.temp/
     run_lightning_ctl $ARGS -checkpoint-error-destroy=all
-    ls -la /tmp/backup_restore_test/importer/.temp/
 done
 
 run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/good-data"

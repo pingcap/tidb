@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -88,7 +87,7 @@ func TestCompare(t *testing.T) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
-	jsonVal := json.CreateBinary("123")
+	jsonVal := types.CreateBinaryJSON("123")
 	// test cases for generating function signatures.
 	tests := []struct {
 		arg0     interface{}
@@ -142,8 +141,8 @@ func TestCompare(t *testing.T) {
 		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
-		require.Equal(t, test.tp, args[0].GetType().Tp)
-		require.Equal(t, test.tp, args[1].GetType().Tp)
+		require.Equal(t, test.tp, args[0].GetType().GetType())
+		require.Equal(t, test.tp, args[1].GetType().GetType())
 		res, isNil, err := bf.evalInt(chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, isNil)
@@ -155,16 +154,24 @@ func TestCompare(t *testing.T) {
 	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
-	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().GetType())
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeDatetime, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeDatetime, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
+
+	// test <json column> <cmp> <const int expression>
+	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
+	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
+	require.NoError(t, err)
+	args = bf.getArgs()
+	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {
@@ -185,7 +192,13 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
+		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
+		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
+		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
+		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
@@ -203,7 +216,11 @@ func TestCoalesce(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				require.Equal(t, test.expected, d.GetValue())
+				if f.GetType().EvalType() == types.ETDuration {
+					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
+				} else {
+					require.Equal(t, test.expected, d.GetValue())
+				}
 			}
 		}
 	}
@@ -388,4 +405,18 @@ func TestGreatestLeastFunc(t *testing.T) {
 	require.NoError(t, err)
 	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
+}
+
+func TestRefineArgsWithCastEnum(t *testing.T) {
+	ctx := createContext(t)
+	zeroUintConst := primitiveValsToConstants(ctx, []interface{}{uint64(0)})[0]
+	enumType := types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"1", "2", "3"}).AddFlag(mysql.EnumSetAsIntFlag).Build()
+	enumCol := &Column{RetType: &enumType}
+
+	f := funcs[ast.EQ].(*compareFunctionClass)
+	require.NotNil(t, f)
+
+	args := f.refineArgsByUnsignedFlag(ctx, []Expression{zeroUintConst, enumCol})
+	require.Equal(t, zeroUintConst, args[0])
+	require.Equal(t, enumCol, args[1])
 }

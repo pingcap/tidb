@@ -89,10 +89,10 @@ func formatENUS(number string, precision string) (string, error) {
 	return buffer.String(), nil
 }
 
-func formatZHCN(number string, precision string) (string, error) {
+func formatZHCN(_ string, _ string) (string, error) {
 	return "", errors.New("not implemented")
 }
 
-func formatNotSupport(number string, precision string) (string, error) {
+func formatNotSupport(_ string, _ string) (string, error) {
 	return "", errors.New("not support for the specific locale")
 }

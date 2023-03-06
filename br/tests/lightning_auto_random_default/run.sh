@@ -19,7 +19,7 @@ set -eu
 # FIXME: auto-random is only stable on master currently.
 check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
 
-for backend in tidb importer local; do
+for backend in tidb local; do
     if [ "$backend" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -59,4 +59,31 @@ for backend in tidb importer local; do
     run_sql "INSERT INTO auto_random.t VALUES ();"
     run_sql "SELECT max(id & b'000001111111111111111111111111111111111111111111111111111111111') >= $NEXT_AUTO_RAND_VAL as ge FROM auto_random.t"
     check_contains 'ge: 1'
+done
+
+function run_for_auro_random_data2() {
+    create_table=$1
+    run_sql 'DROP DATABASE IF EXISTS auto_random;'
+    run_sql 'CREATE DATABASE IF NOT EXISTS auto_random;'
+    run_sql "$create_table"
+    run_lightning --backend $backend -d "tests/$TEST_NAME/data2"
+    run_sql 'select count(*) as count from auto_random.t where c > 0'
+    check_contains "count: 2"
+    run_sql 'select count(*) as count from auto_random.t where a=1 and b=11'
+    check_contains "count: 1"
+    run_sql 'select count(*) as count from auto_random.t where a=2 and b=22'
+    check_contains "count: 1"
+}
+
+for backend in tidb local; do
+    if [ "$backend" = 'local' ]; then
+        check_cluster_version 4 0 0 'local backend' || continue
+    fi
+
+    run_for_auro_random_data2 'create table auto_random.t(c bigint auto_random primary key, a int, b int)'
+    run_for_auro_random_data2 'create table auto_random.t(a int, b int, c bigint auto_random primary key)'
+    # composite key and auto_random is the first column
+    run_for_auro_random_data2 'create table auto_random.t(c bigint auto_random, a int, b int, primary key(c, a))'
+    # composite key and auto_random is not the first column
+    run_for_auro_random_data2 'create table auto_random.t(a int, b int, c bigint auto_random, primary key(c, a))'
 done

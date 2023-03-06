@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"runtime/pprof"
@@ -27,14 +26,14 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util/cpuprofile/testutil"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	// To speed up testing
 	DefProfileDuration = time.Millisecond * 200
 	goleak.VerifyTestMain(m)
@@ -177,13 +176,13 @@ func TestGetCPUProfile(t *testing.T) {
 	defer cancel()
 	testutil.MockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
 	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			var err error
 			buf := bytes.NewBuffer(nil)
-			err = getCPUProfile(time.Millisecond*400, buf)
+			err = getCPUProfile(time.Millisecond*1000, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)
@@ -237,7 +236,7 @@ func TestProfileHTTPHandler(t *testing.T) {
 	resp, err = http.Get("http://" + address + "/debug/pprof/profile?seconds=100000")
 	require.NoError(t, err)
 	require.Equal(t, 400, resp.StatusCode)
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "profile duration exceeds server's WriteTimeout\n", string(body))
 	require.NoError(t, resp.Body.Close())

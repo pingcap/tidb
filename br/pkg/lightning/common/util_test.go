@@ -16,7 +16,9 @@ package common_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,9 +26,13 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,20 +82,29 @@ func TestGetJSON(t *testing.T) {
 	require.Regexp(t, ".*http status code != 200.*", err.Error())
 }
 
-func TestToDSN(t *testing.T) {
+func TestConnect(t *testing.T) {
+	plainPsw := "dQAUoDiyb1ucWZk7"
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword",
+		fmt.Sprintf("return(\"%s\")", plainPsw)))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword"))
+	}()
+
 	param := common.MySQLConnectParam{
 		Host:             "127.0.0.1",
 		Port:             4000,
 		User:             "root",
-		Password:         "123456",
+		Password:         plainPsw,
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
-		TLS:              "cluster",
-		Vars: map[string]string{
-			"tidb_distsql_scan_concurrency": "1",
-		},
 	}
-	require.Equal(t, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
+	_, err := param.Connect()
+	require.NoError(t, err)
+	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
+	_, err = param.Connect()
+	require.NoError(t, err)
 }
 
 func TestIsContextCanceledError(t *testing.T) {
@@ -118,7 +133,7 @@ func TestSQLWithRetry(t *testing.T) {
 
 	// retry defaultMaxRetry times and still failed
 	for i := 0; i < 3; i++ {
-		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.New("mock error"))
+		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.Annotate(mysql.ErrInvalidConn, "mock error"))
 	}
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
 	require.Regexp(t, ".*mock error", err.Error())
@@ -165,4 +180,29 @@ func TestInterpolateMySQLString(t *testing.T) {
 	assert.Equal(t, "'123'", common.InterpolateMySQLString("123"))
 	assert.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))
 	assert.Equal(t, "'1''2''''3'", common.InterpolateMySQLString("1'2''3"))
+}
+
+func TestGetAutoRandomColumn(t *testing.T) {
+	tests := []struct {
+		ddl     string
+		colName string
+	}{
+		{"create table t(c int)", ""},
+		{"create table t(c int auto_increment)", ""},
+		{"create table t(c bigint auto_random primary key)", "c"},
+		{"create table t(a int, c bigint auto_random primary key)", "c"},
+		{"create table t(c bigint auto_random, a int, primary key(c,a))", "c"},
+		{"create table t(a int, c bigint auto_random, primary key(c,a))", "c"},
+	}
+	p := parser.New()
+	for _, tt := range tests {
+		tableInfo, err := dbutil.GetTableInfoBySQL(tt.ddl, p)
+		require.NoError(t, err)
+		col := common.GetAutoRandomColumn(tableInfo)
+		if tt.colName == "" {
+			require.Nil(t, col, tt.ddl)
+		} else {
+			require.Equal(t, tt.colName, col.Name.L, tt.ddl)
+		}
+	}
 }

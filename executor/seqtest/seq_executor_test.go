@@ -33,15 +33,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -50,9 +49,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -61,11 +59,10 @@ import (
 
 func TestEarlyClose(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -129,8 +126,7 @@ func (s stats) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
 }
 
 func TestShow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -170,7 +166,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -272,7 +268,7 @@ func TestShow(t *testing.T) {
 	tk.MustExec(`create index idx9 on show_index (id) invisible;`)
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
 		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
 		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
@@ -284,7 +280,7 @@ func TestShow(t *testing.T) {
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
@@ -302,8 +298,8 @@ func TestShow(t *testing.T) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
-	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -325,12 +321,12 @@ func TestShow(t *testing.T) {
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
 		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	testSQL = "show create database if not exists show_test_DB;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE IF NOT EXISTS `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -341,7 +337,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/4224
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
-	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show full columns from show_test_comment`).Check(testkit.RowsWithSep("|",
 		"id|int(11)|<nil>|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
@@ -349,7 +345,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -360,7 +356,7 @@ func TestShow(t *testing.T) {
 	autoIDStep := autoid.GetStep()
 	tk.MustExec("insert into show_auto_increment values(20)")
 	autoID := autoIDStep + 21
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -369,7 +365,7 @@ func TestShow(t *testing.T) {
 	))
 	tk.MustExec(`drop table show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -378,7 +374,7 @@ func TestShow(t *testing.T) {
 	))
 	tk.MustExec("insert into show_auto_increment values(10)")
 	autoID = autoIDStep + 11
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -390,7 +386,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/4411
 	tk.MustExec(`drop table if exists show_escape_character`)
 	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
-	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_escape_character`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
 			"  `id` int(11) DEFAULT NULL COMMENT 'a\\rb\\nc	d\\0ef'\n"+
@@ -480,7 +476,7 @@ func TestShow(t *testing.T) {
 	// Test get default collate for a specified charset.
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int) default charset=utf8mb4`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -492,39 +488,43 @@ func TestShow(t *testing.T) {
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+	tk.MustExecToErr(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	require.Error(t, err)
 
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
+	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(25), d int) PARTITION BY RANGE COLUMNS(a,d,c) (
  	PARTITION p0 VALUES LESS THAN (5,10,'ggg'),
  	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
  	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
         PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
-			"  `c` char(1) DEFAULT NULL,\n"+
+			"  `c` varchar(25) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY RANGE COLUMNS(`a`,`d`,`c`)\n"+
+			"(PARTITION `p0` VALUES LESS THAN (5,10,'ggg'),\n"+
+			" PARTITION `p1` VALUES LESS THAN (10,20,'mmm'),\n"+
+			" PARTITION `p2` VALUES LESS THAN (15,30,'sss'),\n"+
+			" PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE))"))
 
 	// Test hash partition
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (a int) PARTITION BY HASH(a) PARTITIONS 4`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
@@ -533,7 +533,7 @@ func TestShow(t *testing.T) {
 	// Test show create table compression type.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`CREATE TABLE t1 (c1 INT) COMPRESSION="zlib";`)
-	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|",
 		"t1 CREATE TABLE `t1` (\n"+
 			"  `c1` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMPRESSION='zlib'",
@@ -541,8 +541,8 @@ func TestShow(t *testing.T) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y) nonclustered);`)
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
@@ -552,7 +552,7 @@ func TestShow(t *testing.T) {
 	// Test show create table with zerofill flag
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id int primary key, val tinyint(10) zerofill);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
 			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
@@ -574,7 +574,7 @@ func TestShow(t *testing.T) {
 		c9 year default '2014',
 		c10 enum('2', '3', '4') default 2
 	);`)
-	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show columns from t`).Check(testkit.RowsWithSep("|",
 		"c0|int(11)|YES||1|",
 		"c1|int(11)|YES||2|",
 		"c2|bigint(20)|YES||167|",
@@ -604,8 +604,7 @@ func TestShow(t *testing.T) {
 }
 
 func TestShowStatsHealthy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -625,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
@@ -639,8 +638,7 @@ func TestShowStatsHealthy(t *testing.T) {
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func TestIndexDoubleReadClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -676,8 +674,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 // TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
 // leak.
 func TestIndexMergeReaderClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -695,8 +692,7 @@ func TestIndexMergeReaderClose(t *testing.T) {
 }
 
 func TestParallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -723,8 +719,7 @@ func TestParallelHashAggClose(t *testing.T) {
 }
 
 func TestUnparallelHashAggClose(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -757,8 +752,7 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
 	HelperTestAdminShowNextID(t, store, `show table `)
@@ -779,39 +773,45 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 _TIDB_ROWID"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 _TIDB_ROWID"))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 41 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
+	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows(
+		"test1 t _tidb_rowid 1 _TIDB_ROWID",
+		"test1 t _tidb_rowid 1 AUTO_INCREMENT"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -832,25 +832,26 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	// Test for a sequence.
 	tk.MustExec("create sequence seq1 start 15 cache 57")
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  15 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("15"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("16"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select setval(seq1, 96)")
 	r.Check(testkit.Rows("96"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  97 SEQUENCE"))
 }
 
 func TestNoHistoryWhenDisableRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history")
@@ -888,8 +889,7 @@ func TestNoHistoryWhenDisableRetry(t *testing.T) {
 }
 
 func TestPrepareMaxParamCountCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -900,7 +900,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	_, err = tk.Exec(bigSQL, bigParams...)
+	err = tk.ExecToErr(bigSQL, bigParams...)
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
@@ -916,8 +916,7 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 }
 
 func TestCartesianProduct(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -934,15 +933,14 @@ func TestCartesianProduct(t *testing.T) {
 }
 
 func TestBatchInsertDelete(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	defer func() {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -989,25 +987,19 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("set @@session.tidb_batch_insert=0;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.Error(t, err)
-	require.Truef(t, kv.ErrTxnTooLarge.Equal(err), "%v", err)
+	tk.MustGetErrCode(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`, errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableBatchDML = true
-	})
+	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 1")
+	defer tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 0")
 
-	// Change to batch inset mode and batch size to 50.
+	// Change to batch insert mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
@@ -1026,17 +1018,14 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+	tk.MustExec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.NoError(t, err)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
 	r.Check(testkit.Rows("320"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
@@ -1054,9 +1043,7 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test case for batch delete.
 	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("delete from batch_insert;", errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
 	// Enable batch delete and set batch size to 50.
@@ -1094,8 +1081,10 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 	if c.mu.checkPrio {
 		switch req.Type {
 		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
+			if ctx.Value(c) != nil {
+				if c.getCheckPriority() != req.Priority {
+					return nil, errors.New("fail to set priority")
+				}
 			}
 		}
 	}
@@ -1104,11 +1093,12 @@ func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tik
 
 func TestCoprocessorPriority(t *testing.T) {
 	cli := &checkPrioClient{}
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}))
-	defer clean()
+
+	ctx := context.WithValue(context.Background(), cli, 42)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1128,18 +1118,18 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "update t set id = 3")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t select * from t limit 2")
+	tk.MustExecWithContext(ctx, "delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExecWithContext(ctx, "insert into t values (1), (2)")
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -1147,57 +1137,53 @@ func TestCoprocessorPriority(t *testing.T) {
 	})
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-	tk.MustExec("delete from t where id = 2")
-	tk.MustExec("update t set id = 2 where id = 1")
+	tk.MustQueryWithContext(ctx, "select id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select * from t1 where id = 1")
+	tk.MustExecWithContext(ctx, "delete from t where id = 2")
+	tk.MustExecWithContext(ctx, "update t set id = 2 where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
+	tk.MustQueryWithContext(ctx, "select count(*) from t")
+	tk.MustExecWithContext(ctx, "delete from t")
+	tk.MustExecWithContext(ctx, "insert into t values (3)")
 
 	// Test priority specified by SQL statement.
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
+	tk.MustQueryWithContext(ctx, "select HIGH_PRIORITY * from t")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+	tk.MustQueryWithContext(ctx, "select LOW_PRIORITY id from t where id = 1")
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_High)
-	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("3"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("4"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
-	tk.MustExec("set tidb_force_priority = 'DELAYED'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'DELAYED'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("5"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
-	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
-	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
-	tk.MustExec("update t set id = id + 1")
-	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
-
+	tk.MustExecWithContext(ctx, "set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("6"))
+	tk.MustExecWithContext(ctx, "update t set id = id + 1")
+	tk.MustQueryWithContext(ctx, "select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	expectRows := testkit.Rows(
@@ -1218,11 +1204,7 @@ func TestShowForNewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1241,9 +1223,10 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestAutoIncIDInRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1264,8 +1247,7 @@ func TestAutoIncIDInRetry(t *testing.T) {
 }
 
 func TestPessimisticConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1301,8 +1283,7 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 }
 
 func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1353,9 +1334,10 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 }
 
 func TestAutoRandIDRetry(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database if not exists auto_random_retry")
@@ -1399,8 +1381,7 @@ func TestAutoRandIDRetry(t *testing.T) {
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
@@ -1408,15 +1389,15 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover_auto_rand")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// Disable emulator GC.
 	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -1451,8 +1432,7 @@ func TestAutoRandRecoverTable(t *testing.T) {
 }
 
 func TestMaxDeltaSchemaCount(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1469,8 +1449,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 	tk.RefreshSession()
 	tk.MustExec("use test")
 	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
-	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
 	tk.RefreshSession()
@@ -1480,26 +1459,24 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 }
 
 func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
-	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test;`)
@@ -1548,8 +1525,7 @@ func TestIssue18744(t *testing.T) {
 }
 
 func TestIssue19410(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1573,8 +1549,7 @@ func TestIssue19410(t *testing.T) {
 }
 
 func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1583,6 +1558,8 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
-	err := tk.ExecToErr("analyze table t1")
-	require.EqualError(t, err, "mockNextRawError")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/distsql/mockNextRawError"))
+	}()
+	tk.MustGetErrMsg("analyze table t1", "mockNextRawError")
 }

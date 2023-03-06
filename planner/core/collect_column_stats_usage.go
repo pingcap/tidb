@@ -32,31 +32,40 @@ type columnStatsUsageCollector struct {
 	// collectMode indicates whether to collect predicate columns and/or histogram-needed columns
 	collectMode uint64
 	// predicateCols records predicate columns.
-	predicateCols map[model.TableColumnID]struct{}
+	predicateCols map[model.TableItemID]struct{}
 	// colMap maps expression.Column.UniqueID to the table columns whose statistics may be utilized to calculate statistics of the column.
 	// It is used for collecting predicate columns.
 	// For example, in `select count(distinct a, b) as e from t`, the count of column `e` is calculated as `max(ndv(t.a), ndv(t.b))` if
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
-	colMap map[int64]map[model.TableColumnID]struct{}
+	colMap map[int64]map[model.TableItemID]struct{}
 	// histNeededCols records histogram-needed columns
-	histNeededCols map[model.TableColumnID]struct{}
+	histNeededCols map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
+
+	// collectVisitedTable indicates whether to collect visited table
+	collectVisitedTable bool
+	// visitedtbls indicates the visited table
+	visitedtbls map[int64]struct{}
 }
 
-func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
 	collector := &columnStatsUsageCollector{
 		collectMode: collectMode,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 		cols: make([]*expression.Column, 0, 8),
 	}
 	if collectMode&collectPredicateColumns != 0 {
-		collector.predicateCols = make(map[model.TableColumnID]struct{})
-		collector.colMap = make(map[int64]map[model.TableColumnID]struct{})
+		collector.predicateCols = make(map[model.TableItemID]struct{})
+		collector.colMap = make(map[int64]map[model.TableItemID]struct{})
 	}
 	if collectMode&collectHistNeededColumns != 0 {
-		collector.histNeededCols = make(map[model.TableColumnID]struct{})
+		collector.histNeededCols = make(map[model.TableItemID]struct{})
+	}
+	if enabledPlanCapture {
+		collector.collectVisitedTable = true
+		collector.visitedtbls = map[int64]struct{}{}
 	}
 	return collector
 }
@@ -81,7 +90,7 @@ func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []ex
 
 func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, relatedCols []*expression.Column) {
 	if _, ok := c.colMap[col.UniqueID]; !ok {
-		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{}
+		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{}
 	}
 	for _, relatedCol := range relatedCols {
 		tblColIDs, ok := c.colMap[relatedCol.UniqueID]
@@ -103,9 +112,12 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo().ID
+	if c.collectVisitedTable {
+		c.visitedtbls[tblID] = struct{}{}
+	}
 	for _, col := range ds.Schema().Columns {
-		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
-		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
+		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
+		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 	}
 	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.pushedDownConds)
@@ -147,9 +159,13 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 }
 
 func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+	if c.collectVisitedTable {
+		tblID := ds.TableInfo().ID
+		c.visitedtbls[tblID] = struct{}{}
+	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
-		tblColID := model.TableColumnID{TableID: ds.physicalTableID, ColumnID: col.ID}
+		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 		c.histNeededCols[tblColID] = struct{}{}
 	}
 }
@@ -275,7 +291,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
-func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableColumnID, []model.TableColumnID) {
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, []model.TableItemID) {
 	var mode uint64
 	if predicate {
 		mode |= collectPredicateColumns
@@ -283,16 +299,19 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
-	collector := newColumnStatsUsageCollector(mode)
+	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(lp)
-	set2slice := func(set map[model.TableColumnID]struct{}) []model.TableColumnID {
-		ret := make([]model.TableColumnID, 0, len(set))
+	if collector.collectVisitedTable {
+		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
+	}
+	set2slice := func(set map[model.TableItemID]struct{}) []model.TableItemID {
+		ret := make([]model.TableItemID, 0, len(set))
 		for tblColID := range set {
 			ret = append(ret, tblColID)
 		}
 		return ret
 	}
-	var predicateCols, histNeededCols []model.TableColumnID
+	var predicateCols, histNeededCols []model.TableItemID
 	if predicate {
 		predicateCols = set2slice(collector.predicateCols)
 	}

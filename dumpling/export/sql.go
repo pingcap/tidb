@@ -10,26 +10,26 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
+	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (
 	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+	snapshotVar      = "tidb_snapshot"
 )
 
 type listTableType int
@@ -101,7 +101,7 @@ func ShowCreateTable(tctx *tcontext.Context, db *BaseConn, database, table strin
 }
 
 // ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
-// returns (createPoilicySQL, error)
+// returns (createPolicySQL, error)
 func ShowCreatePlacementPolicy(tctx *tcontext.Context, db *BaseConn, policy string) (string, error) {
 	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {
@@ -172,6 +172,60 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 	RestoreCharset(&createViewSQL)
 
 	return createTableSQL.String(), createViewSQL.String(), nil
+}
+
+// ShowCreateSequence constructs the create sequence SQL for a specified sequence
+// returns (createSequenceSQL, error)
+func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string, conf *Config) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	var (
+		createSequenceSQL  strings.Builder
+		nextNotCachedValue int64
+	)
+	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`.`%s`", escapeString(database), escapeString(sequence))
+	err := db.QuerySQL(tctx, handleOneRow, func() {
+		oneRow[0], oneRow[1] = "", ""
+	}, query)
+	if err != nil {
+		return "", err
+	}
+	createSequenceSQL.WriteString(oneRow[1])
+	createSequenceSQL.WriteString(";\n")
+
+	switch conf.ServerInfo.ServerType {
+	case version.ServerTypeTiDB:
+		// Get next not allocated auto increment id of the whole cluster
+		query := fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
+		results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
+		if err != nil {
+			return "", err
+		}
+		for _, oneRow := range results {
+			nextGlobalRowID, idType := oneRow[0], oneRow[1]
+			if idType == "SEQUENCE" {
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowID, 10, 64)
+			}
+		}
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	case version.ServerTypeMariaDB:
+		var oneRow1 string
+		handleOneRow1 := func(rows *sql.Rows) error {
+			return rows.Scan(&oneRow1)
+		}
+		query := fmt.Sprintf("SELECT NEXT_NOT_CACHED_VALUE FROM `%s`.`%s`", escapeString(database), escapeString(sequence))
+		err := db.QuerySQL(tctx, handleOneRow1, func() {
+			oneRow1 = ""
+		}, query)
+		if err != nil {
+			return "", err
+		}
+		nextNotCachedValue, _ = strconv.ParseInt(oneRow1, 10, 64)
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	}
+	return createSequenceSQL.String(), nil
 }
 
 // SetCharset builds the set charset SQLs
@@ -307,6 +361,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+// ListAllPlacementPolicyNames returns all placement policy names.
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string
@@ -608,14 +663,13 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 		return []string{}, nil
 	}
 	defer rows.Close()
-	columnName = strings.ToUpper(columnName)
 	var strs []string
 	columns, _ := rows.Columns()
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
 	for i, col := range columns {
-		if strings.ToUpper(col) == columnName {
+		if strings.EqualFold(col, columnName) {
 			fieldIndex = i
 		}
 		addr[i] = &oneRow[i]
@@ -652,7 +706,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	for i, col := range columns {
 		addr[i] = &oneRow[i]
 		for j, name := range columnName {
-			if strings.ToUpper(col) == name {
+			if strings.EqualFold(col, name) {
 				fieldIndexMp[i] = j
 			}
 		}
@@ -724,7 +778,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil
@@ -778,7 +834,7 @@ func isUnknownSystemVariableErr(err error) bool {
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]interface{}) (*sql.DB, error) {
 	support := make(map[string]interface{})
 	for k, v := range params {
 		var pv interface{}
@@ -796,7 +852,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
 		_, err := db.ExecContext(tctx, s, pv)
 		if err != nil {
-			if isUnknownSystemVariableErr(err) {
+			if k == snapshotVar {
+				err = errors.Annotate(err, "fail to set snapshot for tidb, please set --consistency=none/--consistency=lock or fix snapshot problem")
+			} else if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
@@ -804,6 +862,10 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		}
 
 		support[k] = pv
+	}
+
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
 	}
 
 	for k, v := range support {
@@ -815,14 +877,24 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		} else {
 			s = fmt.Sprintf("%v", v)
 		}
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
+		cfg.Params[k] = s
 	}
+	failpoint.Inject("SkipResetDB", func(_ failpoint.Value) {
+		failpoint.Return(db, nil)
+	})
 
-	newDB, err := sql.Open("mysql", dsn)
-	if err == nil {
-		db.Close()
+	db.Close()
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return newDB, errors.Trace(err)
+	newDB := sql.OpenDB(c)
+	// ping to make sure all session parameters are set correctly
+	err = newDB.PingContext(tctx)
+	if err != nil {
+		newDB.Close()
+	}
+	return newDB, nil
 }
 
 func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead bool) (*sql.Conn, error) {
@@ -1452,7 +1524,7 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
-	if rows.Err() != nil {
+	if err = rows.Err(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err

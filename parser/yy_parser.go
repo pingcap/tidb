@@ -52,6 +52,8 @@ var (
 	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)
 	// ErrWrongValue returns for wrong value
 	ErrWrongValue = terror.ClassParser.NewStd(mysql.ErrWrongValue)
+	// ErrWarnDeprecatedSyntax return when the syntax was deprecated
+	ErrWarnDeprecatedSyntax = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntax)
 	// ErrWarnDeprecatedSyntaxNoReplacement return when the syntax was deprecated and there is no replacement.
 	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
 	// ErrWarnDeprecatedIntegerDisplayWidth share the same code 1681, and it will be returned when length is specified in integer.
@@ -70,11 +72,16 @@ func TrimComment(txt string) string {
 	return specCodeEnd.ReplaceAllString(txt, "")
 }
 
+//revive:disable:exported
+
+// ParserConfig is the parser config.
 type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
 	SkipPositionRecording       bool
 }
+
+//revive:enable:exported
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
 type Parser struct {
@@ -126,10 +133,12 @@ func New() *Parser {
 	return p
 }
 
+// SetStrictDoubleTypeCheck enables/disables strict double type check.
 func (parser *Parser) SetStrictDoubleTypeCheck(val bool) {
 	parser.strictDoubleFieldType = val
 }
 
+// SetParserConfig sets the parser config.
 func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
@@ -148,8 +157,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	var l yyLexer
-	l = &parser.lexer
+	var l yyLexer = &parser.lexer
 	yyParse(l, parser)
 
 	warns, errs := l.Errors()
@@ -222,7 +230,7 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
-func (parser *Parser) startOffset(v *yySymType) int {
+func (*Parser) startOffset(v *yySymType) int {
 	return v.offset
 }
 
@@ -335,8 +343,9 @@ func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
 	switch v := num.(type) {
 	case int64:
 		return v, ""
+	default:
+		return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
 	}
-	return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
 }
 
 func isRevokeAllGrant(roleOrPrivList []*ast.RoleOrPriv) bool {

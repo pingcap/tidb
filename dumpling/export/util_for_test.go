@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"github.com/DATA-DOG/go-sqlmock"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 

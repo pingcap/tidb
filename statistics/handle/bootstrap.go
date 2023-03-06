@@ -18,9 +18,10 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -54,22 +56,23 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.tables[physicalID] = tbl
+		cache.Put(physicalID, tbl)
 	}
 }
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return statsCache{}, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables := statsCache{tables: make(map[int64]*statistics.Table)}
+	tables := newStatsCache()
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc.Next(context.TODO(), req)
+		err := rc.Next(ctx, req)
 		if err != nil {
 			return statsCache{}, errors.Trace(err)
 		}
@@ -84,7 +87,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.tables[tblID]
+		table, ok := cache.Get(tblID)
 		if !ok {
 			continue
 		}
@@ -109,12 +112,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
-				Histogram: *hist,
-				CMSketch:  cms,
-				TopN:      topN,
-				Info:      idxInfo,
-				StatsVer:  statsVer,
-				Flag:      row.GetInt64(10),
+				Histogram:  *hist,
+				CMSketch:   cms,
+				TopN:       topN,
+				Info:       idxInfo,
+				StatsVer:   statsVer,
+				Flag:       row.GetInt64(10),
+				PhysicalID: tblID,
+			}
+			if statsVer != statistics.Version0 {
+				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
@@ -146,19 +153,21 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				Count:      nullCount + topnCount,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
+		cache.Put(tblID, table)
 	}
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -166,7 +175,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc.Next(context.TODO(), req)
+		err := rc.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,9 +188,9 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 }
 
 func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
-	affectedIndexes := make(map[int64]*statistics.Index)
+	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -192,19 +201,20 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 		if idx.TopN == nil {
 			idx.TopN = statistics.NewTopN(32)
 		}
-		affectedIndexes[row.GetInt64(1)] = idx
+		affectedIndexes[idx] = struct{}{}
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
 	}
-	for _, idx := range affectedIndexes {
+	for idx := range affectedIndexes {
 		idx.TopN.Sort()
 	}
 }
 
 func (h *Handle) initStatsTopN(cache *statsCache) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -212,7 +222,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc.Next(context.TODO(), req)
+		err := rc.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -226,7 +236,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 
 func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -251,8 +261,9 @@ func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator
 }
 
 func (h *Handle) initStatsFMSketch(cache *statsCache) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -260,7 +271,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc.Next(context.TODO(), req)
+		err := rc.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -275,7 +286,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.tables[tableID]
+		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
 		}
@@ -294,7 +305,7 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 				continue
 			}
 			column.Count += row.GetInt64(3)
-			if !mysql.HasPriKeyFlag(column.Info.Flag) {
+			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 				continue
 			}
 			hist = &column.Histogram
@@ -322,8 +333,9 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	// Before stats ver 2, histogram represents all data in this column.
 	// In stats ver 2, histogram + TopN represent all data in this column.
 	// So we need to add TopN total count here.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), selSQL, tableID, colID)
+	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -332,7 +344,7 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	}
 	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
-	err = rs.Next(context.TODO(), req)
+	err = rs.Next(ctx, req)
 	if err != nil {
 		return 0, err
 	}
@@ -343,8 +355,9 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -352,7 +365,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc.Next(context.TODO(), req)
+		err := rc.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -362,8 +375,8 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
 	lastVersion := uint64(0)
-	for _, table := range cache.tables {
-		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
+	for _, table := range cache.Values() {
+		lastVersion = mathutil.Max(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
@@ -383,15 +396,15 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 
 // InitStats will init the stats cache using full load strategy.
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
-	h.mu.Lock()
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
-		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
+		_, err1 := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
-		h.mu.Unlock()
 	}()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
+	_, err = h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return err
 	}
@@ -407,15 +420,29 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	err = h.initStatsFMSketch(&cache)
-	if err != nil {
-		return err
+	if loadFMSketch {
+		err = h.initStatsFMSketch(&cache)
+		if err != nil {
+			return err
+		}
 	}
 	err = h.initStatsBuckets(&cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.initMemoryUsage()
+	// Set columns' stats status.
+	for _, table := range cache.Values() {
+		for _, col := range table.Columns {
+			if col.StatsVer != statistics.Version0 || col.Count > 0 {
+				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
+					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				} else {
+					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				}
+			}
+		}
+	}
+	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
 	return nil
 }

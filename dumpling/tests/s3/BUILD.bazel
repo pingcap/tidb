@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "s3_lib",
+    srcs = ["import.go"],
+    importpath = "github.com/pingcap/tidb/dumpling/tests/s3",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_spf13_cobra//:cobra",
+        "@org_golang_x_sync//errgroup",
+    ],
+)
+
+go_binary(
+    name = "s3",
+    embed = [":s3_lib"],
+    visibility = ["//visibility:public"],
+)

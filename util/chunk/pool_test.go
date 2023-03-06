@@ -37,19 +37,19 @@ func TestPoolGetChunk(t *testing.T) {
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		// {Tp: mysql.TypeTimestamp},
-		// {Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		// types.NewFieldType(mysql.TypeTimestamp),
+		// types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	chk := pool.GetChunk(fieldTypes)
 	require.NotNil(t, chk)
-	require.Equal(t, len(fieldTypes), chk.NumCols())
+	require.Len(t, fieldTypes, chk.NumCols())
 	require.Nil(t, chk.columns[0].elemBuf)
 	require.Nil(t, chk.columns[1].elemBuf)
 	require.Equal(t, getFixedLen(fieldTypes[2]), len(chk.columns[2].elemBuf))
@@ -72,14 +72,14 @@ func TestPoolPutChunk(t *testing.T) {
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	chk := pool.GetChunk(fieldTypes)
@@ -91,14 +91,14 @@ func BenchmarkPoolChunkOperation(b *testing.B) {
 	pool := NewPool(1024)
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	b.ResetTimer()

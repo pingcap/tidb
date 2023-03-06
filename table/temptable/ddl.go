@@ -161,7 +161,8 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	// Local temporary table uses a real table ID.
 	// We could mock a table ID, but the mocked ID might be identical to an existing
 	// real table, and then we'll get into trouble.
-	err := kv.RunInNewTxn(context.Background(), sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err := kv.RunInNewTxn(ctx, sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		tblID, err := m.GenGlobalID()
 		if err != nil {
@@ -181,7 +182,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	if alloc != nil {
 		allocs = append(allocs, alloc)
 	}
-	return tables.TableFromMeta(allocs, tbInfo)
+	return tables.TableFromMeta(autoid.NewAllocators(false, allocs...), tbInfo)
 }
 
 // GetTemporaryTableDDL gets the temptable.TemporaryTableDDL from session context

@@ -1,0 +1,933 @@
+{
+  "all_revive": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
+  "asciicheck": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
+    }
+  },
+  "asmdecl": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "assign": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "atomic": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "atomicalign": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "bodyclose": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "bools": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "buildtag": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "printf": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unreachable": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "composites": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/glue/console_glue_test.go": "ignore code",
+      "br/pkg/restore/db_test.go": "ignore code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
+  "copylocks": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code"
+    }
+  },
+  "ctrlflow": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "deadcode": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "deepequalerrors": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "durationcheck": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "errorsas": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "errcheck": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
+      "util/logutil": "ignore util/logutil code",
+      "tools/": "ignore tools code",
+      "/src/net/conf.go": "ignore code",
+      "/rules_go_work-*": "ignore generated code",
+      "GOROOT/": "ignore code",
+      "/parser/": "ignore code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
+  "exportloopref": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "filepermission": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code"
+    }
+  },
+  "fieldalignment": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code",
+      ".*_test\\.go$": "ignore test code"
+    },
+    "only_files": {
+      "util/checksum": "util/checksum code",
+      "util/processinfo.go": "util/processinfo.go code",
+      "util/cpuprofile/": "util/cpuprofile/ code",
+      "util/cteutil/": "util/cteutil/ code",
+      "util/dbutil/": "util/dbutil/ code",
+      "util/deadlockhistory/": "util/deadlockhistory/ code",
+      "util/domainutil/": "util/domainutil/ code",
+      "util/encrypt/": "util/encrypt/ code",
+      "util/etcd/": "util/etcd/ code",
+      "util/expensivequery/": "util/expensivequery/ code",
+      "util/filter/": "util/filter/ code",
+      "util/importer/": "util/importer/ code",
+      "util/keydecoder/": "util/keydecoder/ code",
+      "util/kvcache/": "util/kvcache/ code",
+      "util/localpool/": "util/localpool/ code",
+      "util/mathutil/": "util/mathutil/ code",
+      "util/memory/": "util/memory/ code",
+      "util/mock/": "util/mock/ code",
+      "util/mvmap/": "util/mvmap/ code",
+      "util/profile/": "util/profile/ code",
+      "util/ranger/": "util/ranger/ code",
+      "util/regexpr-router/": "util/regexpr-router/ code",
+      "util/schemacmp/": "util/schemacmp/ code",
+      "util/sqlexec/": "util/sqlexec/ code",
+      "util/stringutil/": "util/stringutil/ code",
+      "util/table-router/": "util/table-router/ code",
+      "util/timeutil/": "util/timeutil/ code",
+      "util/topsql/": "util/topsql/ code",
+      "util/tracing/": "util/tracing/ code",
+      "util/trxevents/": "util/trxevents/ code",
+      "util/watcher/": "util/watcher/ code",
+      "util/gctuner": "util/gctuner",
+      "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
+      "ddl/util/": "ddl/util code"
+    }
+  },
+  "findcall": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "forcetypeassert": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "util/gctuner": "only for util/gctuner",
+      "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "only for br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "only for executor/aggregate.go",
+      "types/json_binary_functions.go": "only for types/json_binary_functions.go",
+      "types/json_binary_test.go": "only for types/json_binary_test.go",
+      "ddl/backfilling.go": "only for ddl/backfilling.go",
+      "ddl/column.go": "only for ddl/column.go",
+      "ddl/index.go": "only for ddl/index.go",
+      "ddl/ingest/": "only for ddl/ingest/",
+      "util/cgroup": "only for util/cgroup code",
+      "server/conn.go": "only for server/conn.go",
+      "server/conn_stmt.go": "only for server/conn_stmt.go",
+      "server/conn_test.go": "only for server/conn_test.go",
+      "planner/core/plan.go": "only for planner/core/plan.go",
+      "errno/": "only for errno/",
+      "extension/": "extension code"
+    }
+  },
+  "gofmt": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code"
+    }
+  },
+  "gci": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      ".*\\.pb\\.go$": "generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/printer/printer.go": "ignore util/printer code",
+      "parser/parser.go": "ignore parser code",
+      "parser/hintparser.go": "ignore parser/hintparser code"
+    }
+  },
+  "gosec": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "parser/goyacc/": "ignore goyacc code",
+      ".*_test\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      "tools/check/ut.go": "ignore tools/check code",
+      "tools/check/xprog.go": "ignore tools/check code",
+      "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
+      "tools/check/xprog.go:": "ignore tools/check code",
+      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "GOROOT/": "ignore code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "httpresponse": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "ifaceassert": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "ineffassign": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "no need to vet cgo code"
+    }
+  },
+  "inspect": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "loopclosure": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "lostcancel": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "makezero": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
+      ".*_test\\.go$": "ignore generated code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "misspell": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "nilfunc": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "nilness": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo"
+    }
+  },
+  "noloopclosure": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "kv/": "kv code",
+      "util/memory": "util/memory",
+      "ddl/": "ddl",
+      "planner/": "planner",
+      "extension/": "extension code"
+    }
+  },
+  "pkgfact": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "revive": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "GOROOT/": "ignore code",
+      "/cgo/": "ignore cgo",
+      "tools/": "ignore tool code",
+      "parser/goyacc/": "ignore goyacc code",
+      "parser/ast/": "ignore parser/ast code",
+      "parser/test_driver/": "ignore parser/test_driver code",
+      "dumpling/export/sql_type.go": "please fix it",
+      ".*_test\\.go$": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "executor/aggregate.go": "executor/aggregate.go",
+      "types/json_binary_functions.go": "types/json_binary_functions.go",
+      "types/json_binary_test.go": "types/json_binary_test.go",
+      "ddl/backfilling.go": "ddl/backfilling.go",
+      "ddl/column.go": "ddl/column.go",
+      "ddl/index.go": "ddl/index.go",
+      "ddl/ttl.go": "ddl/ttl.go",
+      "ddl/ttl_test.go": "ddl/ttl_test.go",
+      "ddl/ingest/": "ddl/ingest/",
+      "expression/builtin_cast.go": "expression/builtin_cast code",
+      "server/conn.go": "server/conn.go",
+      "server/conn_stmt.go": "server/conn_stmt.go",
+      "server/conn_test.go": "server/conn_test.go",
+      "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
+      "distsql/": "ignore distsql code",
+      "dumpling/export": "dumpling/export code",
+      "lock/": "lock file",
+      "errno/": "errno code",
+      "structure/": "structure code",
+      "telemetry/": "telemetry code",
+      "planner/memo": "planner code",
+      "planner/funcdep": "planner code",
+      "planner/util": "planner code",
+      "planner/implementation": "planner code",
+      "planner/cascades": "planner code",
+      "planner/core/explain.go": "planner/core/explain.go",
+      "planner/core/handle_cols.go": "planner/core/handle_cols.go",
+      "planner/core/hints.go": "planner/core/hints.go",
+      "planner/core/logical_plan_builder.go": "planner/core/logical_plan_builder.go",
+      "planner/core/memtable_predicate_extractor.go": "planner/core/memtable_predicate_extractor.go",
+      "planner/core/pb_to_plan.go": "planner/core/pb_to_plan.go",
+      "planner/core/plan_stats.go": "planner/core/plan_stats.go",
+      "planner/core/plan_cache.go": "planner code",
+      "planner/core/plan.go": "planner/core/plan.go",
+      "planner/core/point_get_plan.go": "planner/core/point_get_plan.go",
+      "planner/core/property_cols_prune.go": "planner/core/property_cols_prune.go",
+      "planner/core/rule_aggregation_elimination.go": "planner/core/rule_aggregation_elimination.go",
+      "planner/core/rule_build_key_info.go": "planner/core/rule_build_key_info.go",
+      "planner/core/rule_column_pruning.go": "planner/core/rule_column_pruning.go",
+      "planner/core/rule_join_elimination.go": "planner/core/rule_join_elimination.go",
+      "planner/core/rule_semi_join_rewrite.go": "planner/core/rule_semi_join_rewrite.go",
+      "planner/core/util.go": "planner/core/util.go",
+      "util/": "util code",
+      "parser/": "parser code",
+      "meta/": "parser code",
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace": "keyspace code"
+    }
+  },
+  "shift": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "sortslice": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "stdmethods": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "stringintconv": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "structtag": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "testinggoroutine": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "tests": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unconvert": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*\\.pb\\.go$": "generated code",
+      "parser/parser.go": "generated code",
+      "/cgo/": "no need to vet third party code for cgo",
+      "br/pkg/lightning/common/conn.go": "ignore: to fix it",
+      "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
+      "br/pkg/task/common.go": "ignore: to fix it",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unmarshal": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unsafeptr": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/digester.go": "ignore code"
+    }
+  },
+  "unusedresult": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/digester_test.go": "ignore code"
+    }
+  },
+  "rowserrcheck": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "server/tidb_test.go": "ignore test code",
+      "server/tidb_serial_test.go": "ignore test code",
+      "server/statistics_handler_test.go": "ignore test code",
+      "server/server_test.go": "ignore test code",
+      "server/optimize_trace_test.go": "ignore test code",
+      "server/plan_replayer_test.go": "ignore test code"
+    }
+  },
+  "S1000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1001": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1002": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1003": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1004": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1005": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1006": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1007": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1008": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1009": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1010": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1011": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1012": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1013": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1014": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1015": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1016": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1017": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1018": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1019": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/parser.go": "ignore code"
+    }
+  },
+  "S1020": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1021": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "tools/check/ut.go": "ignore code"
+    }
+  },
+  "S1022": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1023": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/parser.go": "ignore code"
+    }
+  },
+  "S1024": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1025": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1026": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1027": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1028": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1029": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1030": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1031": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1032": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1033": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1034": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1035": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1036": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1037": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1038": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1039": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "S1040": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/parser.go": "ignore generated code"
+    }
+  },
+  "SA1019": {
+    "exclude_files": {
+      "/build/": "no need to linter code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code",
+      "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
+      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated"
+    },
+    "only_files": {
+      "util/gctuner": "util/gctuner",
+      "util/cgroup": "util/cgroup code",
+      "util/watcher": "util/watcher",
+      "br/pkg/": "br/pkg",
+      "executor/aggregate.go": "executor/aggregate.go",
+      "types/": "types",
+      "ddl/": "enable to ddl",
+      "expression/builtin_cast.go": "enable expression/builtin_cast.go",
+      "planner/core/plan.go": "planner/core/plan.go",
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace/": "keyspace code",
+      "server/": "server code",
+      "meta": "meta code"
+    }
+  },
+  "SA1029": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
+    }
+  },
+  "SA2000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA2001": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA2003": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA3000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA3001": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA4009": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5001": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5002": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5003": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5004": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5005": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5007": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5008": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5009": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5010": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5011": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA5012": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA6000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA6001": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "SA6005": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "prealloc": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/yy_parser.go": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "predeclared": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/yy_parser.go": "ignore generated code",
+      "parser/parser.go": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "U1000": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  }
+}

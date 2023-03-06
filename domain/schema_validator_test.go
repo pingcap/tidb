@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"math/rand"
 	"testing"
 	"time"
 
@@ -36,17 +35,14 @@ func TestSchemaValidator(t *testing.T) {
 func subTestSchemaValidatorGeneral(t *testing.T) {
 	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
-	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
 	var wg util.WaitGroupWrapper
-	wg.Run(func() { serverFunc(lease, leaseGrantCh, oracleCh, exit) })
+	wg.Run(func() { serverFunc(leaseGrantCh, exit) })
 
 	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
 	require.True(t, validator.IsStarted())
 
-	for i := 0; i < 10; i++ {
-		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
-		time.Sleep(delay)
+	for i := 0; i < 3; i++ {
 		// Reload can run arbitrarily, at any time.
 		item := <-leaseGrantCh
 		validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, nil)
@@ -59,53 +55,54 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 		item.oldVer,
 		item.schemaVer,
 		&transaction.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
-	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultSucc, valid)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
 	require.False(t, validator.IsStarted())
-	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	require.True(t, isTablesChanged)
-	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultUnknown, valid)
 	validator.Restart()
 
 	// Increase the current time by 2 leases, check schema is invalid.
-	ts := uint64(time.Now().Add(2 * lease).UnixNano()) // Make sure that ts has timed out a lease.
-	_, valid = validator.Check(ts, item.schemaVer, []int64{10})
+	after2LeaseTime := time.Now().Add(2 * lease)
+	ts := uint64(after2LeaseTime.UnixNano()) // Make sure that ts has timed out a lease.
+	_, valid = validator.Check(ts, item.schemaVer, []int64{10}, true)
 	require.Equalf(t, ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
 
 	// Make sure newItem's version is greater than item.schema.
-	newItem := getGreaterVersionItem(t, lease, leaseGrantCh, item.schemaVer)
+	newItem := getGreaterVersionItem(t, leaseGrantCh, item.schemaVer)
 	currVer := newItem.schemaVer
 	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
-	_, valid = validator.Check(ts, item.schemaVer, nil)
+	_, valid = validator.Check(ts, item.schemaVer, nil, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
-	_, valid = validator.Check(ts, item.schemaVer, []int64{0})
+	_, valid = validator.Check(ts, item.schemaVer, []int64{0}, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
 
 	// Check the latest schema version must changed.
 	require.Less(t, item.schemaVer, validator.latestSchemaVer)
 
 	// Make sure newItem's version is greater than currVer.
-	newItem = getGreaterVersionItem(t, lease, leaseGrantCh, currVer)
+	newItem = getGreaterVersionItem(t, leaseGrantCh, currVer)
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, newItem.schemaVer, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	require.False(t, isTablesChanged)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 	// The current schema version is older than the oldest schema version.
-	_, isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 
 	// All schema versions is expired.
-	ts = uint64(time.Now().Add(2 * lease).UnixNano())
-	_, valid = validator.Check(ts, newItem.schemaVer, nil)
-	require.Equal(t, ResultUnknown, valid)
+	ts = uint64(after2LeaseTime.Add(2 * lease).UnixNano())
+	_, valid = validator.Check(ts, newItem.schemaVer, nil, true)
+	require.Equal(t, ResultUnknown, valid, "schemaVer %v, validator %#v", newItem.schemaVer, validator)
 
 	close(exit)
 	wg.Wait()
@@ -217,10 +214,8 @@ func subTestEnqueueActionType(t *testing.T) {
 
 	// Check the flag set by schema diff, note tableID = 3 has been set flag 0x3 in schema version 9, and flag 0x4
 	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7.
-	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
+	isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	require.True(t, isTablesChanged)
-	require.Equal(t, []int64{1, 2, 3, 4}, relatedChanges.PhyTblIDS)
-	require.Equal(t, []uint64{15, 2, 7, 4}, relatedChanges.ActionTypes)
 }
 
 type leaseGrantItem struct {
@@ -229,15 +224,8 @@ type leaseGrantItem struct {
 	schemaVer    int64
 }
 
-func getGreaterVersionItem(t *testing.T, lease time.Duration, leaseGrantCh chan leaseGrantItem, currVer int64) leaseGrantItem {
-	var newItem leaseGrantItem
-	for i := 0; i < 10; i++ {
-		time.Sleep(lease / 2)
-		newItem = <-leaseGrantCh
-		if newItem.schemaVer > currVer {
-			break
-		}
-	}
+func getGreaterVersionItem(t *testing.T, leaseGrantCh chan leaseGrantItem, currVer int64) leaseGrantItem {
+	newItem := <-leaseGrantCh
 	require.Greaterf(t, newItem.schemaVer, currVer, "currVer %d, newItem %v", currVer, newItem)
 	return newItem
 }
@@ -245,22 +233,18 @@ func getGreaterVersionItem(t *testing.T, lease time.Duration, leaseGrantCh chan 
 // serverFunc plays the role as a remote server, runs in a separate goroutine.
 // It can grant lease and provide timestamp oracle.
 // Caller should communicate with it through channel to mock network.
-func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {
+func serverFunc(requireLease chan leaseGrantItem, exit chan struct{}) {
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
-	ticker := time.NewTicker(lease)
-	defer ticker.Stop()
 	for {
 		select {
-		case now := <-ticker.C:
-			version++
-			leaseTS = uint64(now.UnixNano())
 		case requireLease <- leaseGrantItem{
 			leaseGrantTS: leaseTS,
 			oldVer:       version - 1,
 			schemaVer:    version,
 		}:
-		case oracleCh <- uint64(time.Now().UnixNano()):
+			version++
+			leaseTS = uint64(time.Now().UnixNano())
 		case <-exit:
 			return
 		}

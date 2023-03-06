@@ -24,9 +24,9 @@ import (
 )
 
 type mockPubSubServer struct {
-	addr       string
 	listen     net.Listener
 	grpcServer *grpc.Server
+	addr       string
 }
 
 // NewMockPubSubServer creates a mock publisher server.

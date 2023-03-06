@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -27,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +43,7 @@ type tidbSuite struct {
 	tiGlue glue.Glue
 }
 
-func newTiDBSuite(t *testing.T) (*tidbSuite, func()) {
+func newTiDBSuite(t *testing.T) *tidbSuite {
 	var s tidbSuite
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -51,15 +54,15 @@ func newTiDBSuite(t *testing.T) (*tidbSuite, func()) {
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
 	s.tiGlue = glue.NewExternalTiDBGlue(db, defaultSQLMode)
-	return &s, func() {
+	t.Cleanup(func() {
 		s.timgr.Close()
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
-	}
+	})
+	return &s
 }
 
 func TestCreateTableIfNotExistsStmt(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 
 	dbName := "testdb"
 	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
@@ -162,104 +165,8 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 		`, "m"))
 }
 
-func TestInitSchema(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
-		WillReturnResult(sqlmock.NewResult(2, 1))
-	s.mockDB.
-		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;\\E").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mockDB.
-		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
-		WillReturnResult(sqlmock.NewResult(2, 1))
-	s.mockDB.
-		ExpectClose()
-
-	s.mockDB.MatchExpectationsInOrder(false) // maps are unordered.
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
-		"t1": "create table t1 (a int primary key, b varchar(200));",
-		"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
-	})
-	s.mockDB.MatchExpectationsInOrder(true)
-	require.NoError(t, err)
-}
-
-func TestInitSchemaSyntaxError(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectClose()
-
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
-		"t1": "create table `t1` with invalid syntax;",
-	})
-	require.Error(t, err)
-}
-
-func TestInitSchemaErrorLost(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	s.mockDB.
-		ExpectExec("CREATE TABLE IF NOT EXISTS.*").
-		WillReturnError(&mysql.MySQLError{
-			Number:  tmysql.ErrTooBigFieldlength,
-			Message: "Column length too big",
-		})
-
-	s.mockDB.
-		ExpectClose()
-
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
-		"t1": "create table `t1` (a int);",
-		"t2": "create table t2 (a int primary key, b varchar(200));",
-	})
-	require.Regexp(t, ".*Column length too big.*", err.Error())
-}
-
-func TestInitSchemaUnsupportedSchemaError(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
-	ctx := context.Background()
-
-	s.mockDB.
-		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `db`.`t1`.*").
-		WillReturnError(&mysql.MySQLError{
-			Number:  tmysql.ErrTooBigFieldlength,
-			Message: "Column length too big",
-		})
-	s.mockDB.
-		ExpectClose()
-
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
-		"t1": "create table `t1` (a VARCHAR(999999999));",
-	})
-	require.Regexp(t, ".*Column length too big.*", err.Error())
-}
-
 func TestDropTable(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -273,18 +180,20 @@ func TestDropTable(t *testing.T) {
 }
 
 func TestLoadSchemaInfo(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
-	ctx := context.Background()
+	s := newTiDBSuite(t)
 
-	tableCntBefore := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	ctx := metric.NewContext(context.Background(), metrics)
+
+	tableCntBefore := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
 	// Prepare the mock reply.
 	nodes, _, err := s.timgr.parser.Parse(
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
 			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
-			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
+			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);"+
+			"CREATE TABLE `T4` (`f` BIGINT PRIMARY KEY);",
 		"", "")
 	require.NoError(t, err)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
@@ -308,6 +217,10 @@ func TestLoadSchemaInfo(t *testing.T) {
 				{
 					DB:   "db",
 					Name: "t2",
+				},
+				{
+					DB:   "db",
+					Name: "t4",
 				},
 			},
 		},
@@ -334,13 +247,19 @@ func TestLoadSchemaInfo(t *testing.T) {
 					Name: "t2",
 					Core: tableInfos[1],
 				},
+				"t4": {
+					ID:   103,
+					DB:   "db",
+					Name: "t4",
+					Core: tableInfos[3],
+				},
 			},
 		},
 	}, loaded)
 
-	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+	tableCntAfter := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-	require.Equal(t, 2.0, tableCntAfter-tableCntBefore)
+	require.Equal(t, 3.0, tableCntAfter-tableCntBefore)
 }
 
 func TestLoadSchemaInfoMissing(t *testing.T) {
@@ -353,8 +272,7 @@ func TestLoadSchemaInfoMissing(t *testing.T) {
 }
 
 func TestGetGCLifetime(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -369,8 +287,7 @@ func TestGetGCLifetime(t *testing.T) {
 }
 
 func TestSetGCLifetime(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -385,38 +302,51 @@ func TestSetGCLifetime(t *testing.T) {
 }
 
 func TestAlterAutoInc(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` FORCE AUTO_INCREMENT=9223372036854775807\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	require.NoError(t, err)
+
+	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
+	require.NoError(t, err)
 }
 
 func TestAlterAutoRandom(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=288230376151711743\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
+	require.NoError(t, err)
+
+	// insert 288230376151711743 and try rebase to 288230376151711744
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 288230376151711744, 288230376151711743)
+	require.NoError(t, err)
+
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
 func TestObtainRowFormatVersionSucceed(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -451,8 +381,7 @@ func TestObtainRowFormatVersionSucceed(t *testing.T) {
 }
 
 func TestObtainRowFormatVersionFailure(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
 	s.mockDB.
@@ -479,22 +408,21 @@ func TestObtainRowFormatVersionFailure(t *testing.T) {
 }
 
 func TestObtainNewCollationEnabled(t *testing.T) {
-	s, clean := newTiDBSuite(t)
-	defer clean()
+	s := newTiDBSuite(t)
 	ctx := context.Background()
 
+	// cannot retry on this err
+	permErr := &mysql.MySQLError{Number: errno.ErrAccessDenied}
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
+		WillReturnError(permErr)
 	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	require.Equal(t, "obtain new collation enabled failed: mock permission deny", err.Error())
+	require.Equal(t, permErr, errors.Cause(err))
 
+	// this error can retry
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(&mysql.MySQLError{Number: errno.ErrTiKVServerBusy})
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))

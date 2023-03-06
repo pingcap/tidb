@@ -5,16 +5,16 @@ package export
 import (
 	"context"
 	"database/sql/driver"
-	"io/ioutil"
 	"os"
 	"path"
 	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteDatabaseMeta(t *testing.T) {
@@ -22,8 +22,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	err := writer.WriteDatabaseMeta("test", "CREATE DATABASE `test`")
 	require.NoError(t, err)
@@ -32,9 +31,9 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
 }
 
 func TestWritePolicyMeta(t *testing.T) {
@@ -42,8 +41,7 @@ func TestWritePolicyMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	err := writer.WritePolicyMeta("testpolicy", "create placement policy `y` followers=2")
 	require.NoError(t, err)
@@ -52,9 +50,9 @@ func TestWritePolicyMeta(t *testing.T) {
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
 }
 
 func TestWriteTableMeta(t *testing.T) {
@@ -63,17 +61,16 @@ func TestWriteTableMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	err := writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
 	require.NoError(t, err)
 	p := path.Join(dir, "test.t-schema.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 }
 
 func TestWriteViewMeta(t *testing.T) {
@@ -81,10 +78,9 @@ func TestWriteViewMeta(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
-	specCmt := "/*!40101 SET NAMES binary*/;\n"
+	specCmt := "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\n"
 	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
 	createViewSQL := "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n"
 	err := writer.WriteViewMeta("test", "v", createTableSQL, createViewSQL)
@@ -93,14 +89,14 @@ func TestWriteViewMeta(t *testing.T) {
 	p := path.Join(dir, "test.v-schema.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, specCmt+createTableSQL, string(bytes))
 
 	p = path.Join(dir, "test.v-schema-view.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err = ioutil.ReadFile(p)
+	bytes, err = os.ReadFile(p)
 	require.NoError(t, err)
 	require.Equal(t, specCmt+createViewSQL, string(bytes))
 }
@@ -110,8 +106,7 @@ func TestWriteTableData(t *testing.T) {
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -131,7 +126,7 @@ func TestWriteTableData(t *testing.T) {
 	p := path.Join(dir, "test.employee.000000000.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
-	bytes, err := ioutil.ReadFile(p)
+	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
 
 	expected := "/*!40101 SET NAMES binary*/;\n" +
@@ -157,8 +152,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -188,7 +182,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		p = path.Join(dir, p)
 		_, err := os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -208,8 +202,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -239,7 +232,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 		p = path.Join(dir, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -255,8 +248,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("specified-name")
 	require.NoError(t, err)
 
-	writer, clean := createTestWriter(config, t)
-	defer clean()
+	writer := createTestWriter(config, t)
 
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
@@ -289,7 +281,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err1 := ioutil.ReadFile(p)
+		bytes, err1 := os.ReadFile(p)
 		require.NoError(t, err1)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -305,10 +297,9 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	require.NoError(t, err)
 	err = os.RemoveAll(config.OutputDirPath)
 	require.NoError(t, err)
-	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
+	config.OutputDirPath, err = os.MkdirTemp("", "dumpling")
 
-	writer, clean = createTestWriter(config, t)
-	defer clean()
+	writer = createTestWriter(config, t)
 
 	cases = map[string]string{
 		"000000000-employee-te%25%2Fst.sql": "/*!40101 SET NAMES binary*/;\n" +
@@ -331,7 +322,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		require.NoError(t, err)
-		bytes, err := ioutil.ReadFile(p)
+		bytes, err := os.ReadFile(p)
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
@@ -339,7 +330,10 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 
 var mu sync.Mutex
 
-func createTestWriter(conf *Config, t *testing.T) (w *Writer, clean func()) {
+func createTestWriter(conf *Config, t *testing.T) *Writer {
+	t.Helper()
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+
 	mu.Lock()
 	extStore, err := conf.createExternalStorage(context.Background())
 	mu.Unlock()
@@ -350,10 +344,10 @@ func createTestWriter(conf *Config, t *testing.T) (w *Writer, clean func()) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	w = NewWriter(tcontext.Background(), 0, conf, conn, extStore)
-	clean = func() {
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
+	w := NewWriter(tcontext.Background(), 0, conf, conn, extStore, metrics)
+	t.Cleanup(func() {
 		require.NoError(t, db.Close())
-	}
-
-	return
+	})
+	return w
 }

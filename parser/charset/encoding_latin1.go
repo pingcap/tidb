@@ -33,12 +33,12 @@ type encodingLatin1 struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingLatin1) Name() string {
+func (*encodingLatin1) Name() string {
 	return CharsetLatin1
 }
 
 // Peek implements Encoding interface.
-func (e *encodingLatin1) Peek(src []byte) []byte {
+func (*encodingLatin1) Peek(src []byte) []byte {
 	if len(src) == 0 {
 		return src
 	}
@@ -46,15 +46,15 @@ func (e *encodingLatin1) Peek(src []byte) []byte {
 }
 
 // IsValid implements Encoding interface.
-func (e *encodingLatin1) IsValid(src []byte) bool {
+func (*encodingLatin1) IsValid(_ []byte) bool {
 	return true
 }
 
 // Tp implements Encoding interface.
-func (e *encodingLatin1) Tp() EncodingTp {
+func (*encodingLatin1) Tp() EncodingTp {
 	return EncodingTpLatin1
 }
 
-func (e *encodingLatin1) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
+func (*encodingLatin1) Transform(_ *bytes.Buffer, src []byte, _ Op) ([]byte, error) {
 	return src, nil
 }

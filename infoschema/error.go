@@ -32,7 +32,11 @@ var (
 	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
 	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
 	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
-	// ErrReservedSyntax  for internal syntax.
+	// ErrResourceGroupExists return for resource group already exists.
+	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
+	// ErrResourceGroupNotExists return for resource group not exists.
+	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
 	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
@@ -64,6 +68,8 @@ var (
 	ErrKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrKeyDoesNotExist)
 	// ErrCannotAddForeign returns for foreign key exists.
 	ErrCannotAddForeign = dbterror.ClassSchema.NewStd(mysql.ErrCannotAddForeign)
+	// ErrForeignKeyOnPartitioned returns for foreign key on partition table.
+	ErrForeignKeyOnPartitioned = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyOnPartitioned)
 	// ErrForeignKeyNotMatch returns for foreign key not match.
 	ErrForeignKeyNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrWrongFkDef)
 	// ErrIndexExists returns for index already exists.
@@ -78,4 +84,22 @@ var (
 	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
 	// ErrAdminCheckTable returns when the check table in temporary mode.
 	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
+	// ErrEmptyDatabase returns when the database is unexpectedly empty.
+	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	// ErrForbidSchemaChange returns when the schema change is illegal
+	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(mysql.ErrForbidSchemaChange)
+	// ErrTableWithoutPrimaryKey returns when there is no primary key on a table and sql_require_primary_key is set
+	ErrTableWithoutPrimaryKey = dbterror.ClassSchema.NewStd(mysql.ErrTableWithoutPrimaryKey)
+	// ErrForeignKeyCannotUseVirtualColumn returns when foreign key refer virtual generated column.
+	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotUseVirtualColumn)
+	// ErrForeignKeyCannotOpenParent returns when foreign key refer table not exists.
+	ErrForeignKeyCannotOpenParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotOpenParent)
+	// ErrForeignKeyNoColumnInParent returns when foreign key refer columns don't exist in parent table.
+	ErrForeignKeyNoColumnInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoColumnInParent)
+	// ErrForeignKeyNoIndexInParent returns when foreign key refer columns don't have related index in parent table.
+	ErrForeignKeyNoIndexInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoIndexInParent)
+	// ErrForeignKeyColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.
+	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
+	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
+	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 )

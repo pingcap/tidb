@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +54,7 @@ func TestAbs(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestCeil(t *testing.T) {
 				if test.isNil {
 					require.Equal(t, types.KindNull, result.Kind())
 				} else {
-					trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+					testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 				}
 			}
 		}
@@ -224,7 +224,7 @@ func TestFloor(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+				testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 			}
 		}
 	}
@@ -376,7 +376,7 @@ func TestRand(t *testing.T) {
 	// issue 3211
 	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
-	randGen := utilMath.NewWithSeed(20160101)
+	randGen := mathutil.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		require.NoError(t, err)
@@ -404,7 +404,7 @@ func TestPow(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	errTbl := []struct {
@@ -481,7 +481,7 @@ func TestRound(t *testing.T) {
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -525,7 +525,7 @@ func TestTruncate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -592,10 +592,10 @@ func TestConv(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeVarString, tp.Tp)
-		require.Equal(t, charset.CharsetUTF8MB4, tp.Charset)
-		require.Equal(t, charset.CollationUTF8MB4, tp.Collate)
-		require.Equal(t, uint(0), tp.Flag)
+		require.Equal(t, mysql.TypeVarString, tp.GetType())
+		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
+		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
+		require.Equal(t, uint(0), tp.GetFlag())
 
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
@@ -659,7 +659,7 @@ func TestSign(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
 }
 
@@ -726,7 +726,7 @@ func TestSqrt(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.Ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
 }
 
@@ -737,7 +737,7 @@ func TestPi(t *testing.T) {
 
 	pi, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(math.Pi), pi)
+	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
 
 func TestRadians(t *testing.T) {
@@ -761,7 +761,7 @@ func TestRadians(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	invalidArg := "notNum"

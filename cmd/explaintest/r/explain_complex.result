@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE TABLE `dt` (
 `id` int(11) unsigned NOT NULL AUTO_INCREMENT ,
 `aid` varchar(32) NOT NULL,
@@ -138,9 +139,9 @@ Projection	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.d
     │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
     │   └─TableRowIDScan	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	0.00	root		
-      ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	0.03	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false, stats:pseudo
       └─Selection(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan	10000.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+        └─TableRowIDScan	0.03	cop[tikv]	table:sdk	keep order:false, stats:pseudo
 explain format = 'brief' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -157,11 +158,11 @@ Projection	0.01	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.
     ├─TableReader(Build)	3.33	root		data:Selection
     │ └─Selection	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
     │   └─TableFullScan	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
-    └─IndexLookUp(Probe)	0.00	root		
-      ├─Selection(Build)	1.00	cop[tikv]		not(isnull(test.dt.dic))
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:false, stats:pseudo
-      └─Selection(Probe)	0.00	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
-        └─TableRowIDScan	1.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
+    └─IndexLookUp(Probe)	0.01	root		
+      ├─Selection(Build)	3.33	cop[tikv]		not(isnull(test.dt.dic))
+      │ └─IndexRangeScan	3.33	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:false, stats:pseudo
+      └─Selection(Probe)	0.01	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
+        └─TableRowIDScan	3.33	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain format = 'brief' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection	1.00	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
@@ -242,6 +243,7 @@ created_on datetime DEFAULT NULL,
 updated_on datetime DEFAULT NULL,
 UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+set tidb_cost_model_version=2;
 explain format = 'brief' SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
 id	estRows	task	access object	operator info
 Sort	1.00	root		test.org_department.left_value
@@ -253,11 +255,37 @@ Sort	1.00	root		test.org_department.left_value
       │ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
       │ │ └─Selection(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
       │ │   └─TableRowIDScan	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp(Probe)	1.25	root		
-      │   ├─Selection(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
-      │   │ └─IndexRangeScan	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:false, stats:pseudo
-      │   └─Selection(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
-      │     └─TableRowIDScan	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      │ └─IndexLookUp(Probe)	0.01	root		
+      │   ├─Selection(Build)	12.50	cop[tikv]		not(isnull(test.org_position.department_id))
+      │   │ └─IndexRangeScan	12.51	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:false, stats:pseudo
+      │   └─Selection(Probe)	0.01	cop[tikv]		eq(test.org_position.status, 1000)
+      │     └─TableRowIDScan	12.50	cop[tikv]	table:p	keep order:false, stats:pseudo
       └─TableReader(Probe)	9.99	root		data:Selection
         └─Selection	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
           └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+set tidb_cost_model_version=1;
+create table test.Tab_A (id int primary key,bid int,cid int,name varchar(20),type varchar(20),num int,amt decimal(11,2));
+create table test.Tab_B (id int primary key,name varchar(20));
+create table test.Tab_C (id int primary key,name varchar(20),amt decimal(11,2));
+insert into test.Tab_A values(2,2,2,'A01','01',112,111);
+insert into test.Tab_A values(4,4,4,'A02','02',112,111);
+insert into test.Tab_B values(2,'B01');
+insert into test.Tab_B values(4,'B02');
+insert into test.Tab_C values(2,'C01',22);
+insert into test.Tab_C values(4,'C01',5);
+explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
+id	estRows	task	access object	operator info
+Projection_8	15.62	root		test.tab_a.name, test.tab_b.name, test.tab_a.amt, test.tab_c.amt, ifnull(test.tab_c.amt, 0)->Column#13
+└─IndexJoin_13	15.62	root		left outer join, inner:TableReader_10, outer key:test.tab_a.cid, inner key:test.tab_c.id, equal cond:eq(test.tab_a.cid, test.tab_c.id), left cond:eq(test.tab_a.type, "01")
+  ├─IndexJoin_24(Build)	12.50	root		left outer join, inner:TableReader_21, outer key:test.tab_a.bid, inner key:test.tab_b.id, equal cond:eq(test.tab_a.bid, test.tab_b.id)
+  │ ├─TableReader_33(Build)	10.00	root		data:Selection_32
+  │ │ └─Selection_32	10.00	cop[tikv]		eq(test.tab_a.num, 112)
+  │ │   └─TableFullScan_31	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo
+  │ └─TableReader_21(Probe)	10.00	root		data:TableRangeScan_20
+  │   └─TableRangeScan_20	10.00	cop[tikv]	table:Tab_B	range: decided by [test.tab_a.bid], keep order:false, stats:pseudo
+  └─TableReader_10(Probe)	12.50	root		data:TableRangeScan_9
+    └─TableRangeScan_9	12.50	cop[tikv]	table:Tab_C	range: decided by [test.tab_a.cid], keep order:false, stats:pseudo
+select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
+AAA	BBB	Aamt	Bamt	IFNULL(Tab_C.amt, 0)
+A01	B01	111.00	22.00	22.00
+A02	B02	111.00	NULL	0

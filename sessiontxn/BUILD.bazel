@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessiontxn",
+    srcs = [
+        "failpoint.go",
+        "future.go",
+        "interface.go",
+    ],
+    importpath = "github.com/pingcap/tidb/sessiontxn",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//kv",
+        "//parser/ast",
+        "//sessionctx",
+        "//util/stringutil",
+    ],
+)
+
+go_test(
+    name = "sessiontxn_test",
+    timeout = "short",
+    srcs = [
+        "txn_context_test.go",
+        "txn_manager_test.go",
+        "txn_rc_tso_optimize_test.go",
+    ],
+    flaky = True,
+    shard_count = 50,
+    deps = [
+        ":sessiontxn",
+        "//domain",
+        "//errno",
+        "//expression",
+        "//infoschema",
+        "//kv",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//sessiontxn/internal",
+        "//sessiontxn/isolation",
+        "//sessiontxn/staleread",
+        "//table/temptable",
+        "//tablecodec",
+        "//testkit",
+        "//testkit/testfork",
+        "//testkit/testsetup",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

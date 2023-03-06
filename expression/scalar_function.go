@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -90,7 +90,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // SupportReverseEval returns if this expression supports reversed evaluation.
 func (sf *ScalarFunction) SupportReverseEval() bool {
-	switch sf.RetType.Tp {
+	switch sf.RetType.GetType() {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
@@ -144,7 +144,7 @@ func typeInferForNull(args []Expression) {
 	}
 	var isNull = func(expr Expression) bool {
 		cons, ok := expr.(*Constant)
-		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
+		return ok && cons.RetType.GetType() == mysql.TypeNull && cons.Value.IsNull()
 	}
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
@@ -166,7 +166,7 @@ func typeInferForNull(args []Expression) {
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
-			arg.GetType().Flag &= ^mysql.NotNullFlag // Remove NotNullFlag of NullConst
+			arg.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -176,7 +176,7 @@ func typeInferForNull(args []Expression) {
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
-		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
 	switch funcName {
 	case ast.Cast:
@@ -187,8 +187,19 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildFromBinaryFunction(ctx, args[0], retType), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
+	case ast.Sysdate:
+		if ctx.GetSessionVars().SysdateIsNow {
+			funcName = ast.Now
+		}
 	}
 	fc, ok := funcs[funcName]
+	if !ok {
+		if extFunc, exist := extensionFuncs.Load(funcName); exist {
+			fc = extFunc.(functionClass)
+			ok = true
+		}
+	}
+
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
@@ -220,7 +231,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
@@ -349,7 +360,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(sf.GetCtx(), row)
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
@@ -367,14 +378,11 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
-		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
-			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
+		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
+			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if ctx := sf.GetCtx(); ctx != nil {
 				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					if sc.TruncateAsWarning {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						err = nil
-					}
+					err = sc.HandleTruncate(err)
 				}
 			}
 		} else {
@@ -424,7 +432,7 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (t
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
@@ -485,6 +493,24 @@ func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 		}
 	}
 	return true
+}
+
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
+	newSf, ok := sf.Clone().(*ScalarFunction)
+	if !ok {
+		return nil, errors.New("failed to cast to scalar function")
+	}
+	for i, arg := range sf.GetArgs() {
+		newArg, err := arg.RemapColumn(m)
+		if err != nil {
+			return nil, err
+		}
+		newSf.GetArgs()[i] = newArg
+	}
+	// clear hash code
+	newSf.hashcode = nil
+	return newSf, nil
 }
 
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
@@ -556,7 +582,7 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 // Coercibility returns the coercibility value which is used to check collations.
 func (sf *ScalarFunction) Coercibility() Coercibility {
 	if !sf.Function.HasCoercibility() {
-		sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
+		sf.SetCoercibility(deriveCoercibilityForScalarFunc(sf))
 	}
 	return sf.Function.Coercibility()
 }
@@ -589,4 +615,22 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
+
+// MemoryUsage return the memory usage of ScalarFunction
+func (sf *ScalarFunction) MemoryUsage() (sum int64) {
+	if sf == nil {
+		return
+	}
+
+	sum = emptyScalarFunctionSize + int64(len(sf.FuncName.L)+len(sf.FuncName.O)) + int64(cap(sf.hashcode))
+	if sf.RetType != nil {
+		sum += sf.RetType.MemoryUsage()
+	}
+	if sf.Function != nil {
+		sum += sf.Function.MemoryUsage()
+	}
+	return sum
 }

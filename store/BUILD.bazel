@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "store",
+    srcs = ["store.go"],
+    importpath = "github.com/pingcap/tidb/store",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//util",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "store_test",
+    timeout = "short",
+    srcs = [
+        "batch_coprocessor_test.go",
+        "main_test.go",
+        "store_test.go",
+    ],
+    embed = [":store"],
+    flaky = True,
+    shard_count = 23,
+    deps = [
+        "//domain",
+        "//kv",
+        "//store/mockstore",
+        "//store/mockstore/unistore",
+        "//testkit",
+        "//testkit/external",
+        "//testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

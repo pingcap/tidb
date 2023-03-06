@@ -15,15 +15,21 @@
 package copr
 
 import (
+	"context"
 	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // StoreID: [1, storeCount]
@@ -119,17 +125,16 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, nil, time.Second, false, 0)
+		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, time.Second, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, nil, time.Second, false, 0)
+		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, time.Second, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
-
 }
 
 func TestDeepCopyStoreTaskMap(t *testing.T) {
@@ -150,4 +155,77 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 	for _, task := range storeTasks2 {
 		require.Equal(t, 2, len(task.regionInfos))
 	}
+}
+
+// Make sure no duplicated ip:addr.
+func generateOneAddr() string {
+	var ip string
+	for i := 0; i < 4; i++ {
+		if i != 0 {
+			ip += "."
+		}
+		ip += strconv.Itoa(rand.Intn(255))
+	}
+	return ip + ":" + strconv.Itoa(rand.Intn(65535))
+}
+
+func generateDifferentAddrs(num int) (res []string) {
+	addrMap := make(map[string]struct{})
+	for len(addrMap) < num {
+		addr := generateOneAddr()
+		if _, ok := addrMap[addr]; !ok {
+			addrMap[addr] = struct{}{}
+		}
+	}
+	for addr := range addrMap {
+		res = append(res, addr)
+	}
+	return
+}
+
+func TestConsistentHash(t *testing.T) {
+	allAddrs := generateDifferentAddrs(100)
+
+	computeNodes := allAddrs[:30]
+	storageNodes := allAddrs[30:]
+	firstRoundMap := make(map[string]string)
+	for round := 0; round < 100; round++ {
+		hasher := consistent.New()
+		rand.Shuffle(len(computeNodes), func(i, j int) {
+			computeNodes[i], computeNodes[j] = computeNodes[j], computeNodes[i]
+		})
+		for _, computeNode := range computeNodes {
+			hasher.Add(computeNode)
+		}
+		for _, storageNode := range storageNodes {
+			computeNode, err := hasher.Get(storageNode)
+			require.NoError(t, err)
+			if round == 0 {
+				firstRoundMap[storageNode] = computeNode
+			} else {
+				firstRoundAddr, ok := firstRoundMap[storageNode]
+				require.True(t, ok)
+				require.Equal(t, firstRoundAddr, computeNode)
+			}
+		}
+	}
+}
+
+func TestTopoFetcherBackoff(t *testing.T) {
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	expectErr := errors.New("Cannot find proper topo from AutoScaler")
+	var retryNum int
+	start := time.Now()
+	for {
+		retryNum++
+		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
+			break
+		}
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+	}
+	dura := time.Since(start)
+	// fetchTopoMaxBackoff is milliseconds.
+	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
+	require.GreaterOrEqual(t, dura, 30*time.Second)
+	require.LessOrEqual(t, dura, 50*time.Second)
 }

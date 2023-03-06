@@ -75,14 +75,14 @@ func TestReset(t *testing.T) {
 	require.Equal(t, rule.Index, 2)
 
 	r := rule.Data[0].(map[string]string)
-	require.Equal(t, "7480000000000000ff015f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0100000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["end_key"])
 	r = rule.Data[1].(map[string]string)
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 	r = rule.Data[2].(map[string]string)
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff045f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0400000000000000f8", r["end_key"])
 
 	r1 := rule.Clone()
 	require.Equal(t, r1, rule)
@@ -97,8 +97,8 @@ func TestReset(t *testing.T) {
 	require.Equal(t, rule.Index, 3)
 
 	r = r2.Data[0].(map[string]string)
-	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
-	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
+	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
+	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 
 	// default case
 	spec = &ast.AttributesSpec{Default: true}

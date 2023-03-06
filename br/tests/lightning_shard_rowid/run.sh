@@ -25,25 +25,21 @@ if [ "$is_on" = "ON" ] || [ "$is_on" = "1" ]; then
   sleep 2
 fi
 
-for backend in importer local; do
-    if [ "$backend" = 'local' ]; then
-        check_cluster_version 4 0 0 'local backend' || continue
-    fi
+check_cluster_version 4 0 0 'local backend'
 
-    run_sql 'DROP DATABASE IF EXISTS shard_rowid;'
-    run_lightning --backend $backend
+run_sql 'DROP DATABASE IF EXISTS shard_rowid;'
+run_lightning
 
-    run_sql "SELECT count(*) from shard_rowid.shr"
-    check_contains "count(*): 16"
+run_sql "SELECT count(*) from shard_rowid.shr"
+check_contains "count(*): 16"
 
-    run_sql "SELECT count(distinct _tidb_rowid & b'000001111111111111111111111111111111111111111111111111111111111') as count FROM shard_rowid.shr"
-    check_contains "count: 16"
+run_sql "SELECT count(distinct _tidb_rowid & b'000001111111111111111111111111111111111111111111111111111111111') as count FROM shard_rowid.shr"
+check_contains "count: 16"
 
-    # since we use random to generate the shard bits, with 16 record, there maybe less than 8 distinct value,
-    # but it should be bigger than 4
-    run_sql 'SELECT count between 5 and 8 as correct from (SELECT count(distinct _tidb_rowid >> 60) as count from shard_rowid.shr) _'
-    check_contains "correct: 1"
-done
+# since we use random to generate the shard bits, with 16 record, there maybe less than 8 distinct value,
+# but it should be bigger than 4
+run_sql 'SELECT count between 5 and 8 as correct from (SELECT count(distinct _tidb_rowid >> 60) as count from shard_rowid.shr) _'
+check_contains "correct: 1"
 
 if [ -n "$is_on" ]; then
   run_sql "set @@global.tidb_enable_clustered_index = '$is_on'";

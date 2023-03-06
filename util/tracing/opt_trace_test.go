@@ -72,6 +72,9 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 			TP:          "foo1",
 			ExplainInfo: "bar1",
 			ChildrenID:  []int{2},
+			mapChildren: map[int]struct{}{
+				2: {},
+			},
 		},
 	}
 	expect2 := []*PlanTrace{
@@ -92,12 +95,19 @@ func TestFlattenLogicalPlanTrace(t *testing.T) {
 			TP:          "foo3",
 			ExplainInfo: "bar3",
 			ChildrenID:  []int{4},
+			mapChildren: map[int]struct{}{
+				4: {},
+			},
 		},
 		{
 			ID:          1,
 			TP:          "foo1",
 			ExplainInfo: "bar1",
 			ChildrenID:  []int{2, 3},
+			mapChildren: map[int]struct{}{
+				2: {},
+				3: {},
+			},
 		},
 	}
 	require.EqualValues(t, toFlattenPlanTrace(root1), expect1)

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/tablecodec"
+	"golang.org/x/exp/maps"
 )
 
 var (
@@ -39,9 +40,13 @@ type TemporaryTableSnapshotInterceptor struct {
 }
 
 // SessionSnapshotInterceptor creates a new snapshot interceptor for temporary table data fetch
-func SessionSnapshotInterceptor(sctx sessionctx.Context) kv.SnapshotInterceptor {
+func SessionSnapshotInterceptor(sctx sessionctx.Context, is infoschema.InfoSchema) kv.SnapshotInterceptor {
+	if !is.HasTemporaryTable() {
+		return nil
+	}
+
 	return NewTemporaryTableSnapshotInterceptor(
-		sctx.GetInfoSchema().(infoschema.InfoSchema),
+		is,
 		getSessionData(sctx),
 	)
 }
@@ -95,9 +100,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap
 		}
 
 		if len(snapResult) > 0 {
-			for k, v := range result {
-				snapResult[k] = v
-			}
+			maps.Copy(snapResult, result)
 			result = snapResult
 		}
 	}

@@ -15,6 +15,7 @@
 package types
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -322,7 +323,7 @@ func TestRoundWithHalfEven(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, ModeHalfEven)
+		err = dec.Round(&rounded, ca.scale, ModeHalfUp)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))
@@ -393,7 +394,7 @@ func TestRoundWithCeil(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, modeCeiling)
+		err = dec.Round(&rounded, ca.scale, ModeCeiling)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))
@@ -475,17 +476,44 @@ func TestToBinFromBin(t *testing.T) {
 	var dec MyDecimal
 	dec.FromInt(1)
 	errTests := []struct {
-		prec int
-		frac int
+		prec       int
+		frac       int
+		ToBinErr   error
+		FromBinErr error
 	}{
-		{82, 1},
-		{-1, 1},
-		{10, 31},
-		{10, -1},
+		{82, 1, ErrBadNumber, ErrTruncated},
+		{-1, 1, ErrBadNumber, ErrBadNumber},
+		{10, 31, ErrBadNumber, ErrBadNumber},
+		{10, -1, ErrBadNumber, ErrBadNumber},
 	}
 	for _, tt := range errTests {
 		_, err := dec.ToBin(tt.prec, tt.frac)
-		require.True(t, ErrBadNumber.Equal(err))
+		require.Equal(t, tt.ToBinErr, err)
+		err = dec.FromString([]byte{'0'})
+		require.NoError(t, err)
+		buf, err := dec.ToBin(1, 0)
+		require.NoError(t, err)
+		_, err = dec.FromBin(buf, tt.prec, tt.frac)
+		require.Equal(t, tt.FromBinErr, err)
+	}
+}
+
+func TestDecimalBinSize(t *testing.T) {
+	type tcase struct {
+		precision int
+		frac      int
+		output    int
+		err       error
+	}
+	tests := []tcase{
+		{3, 1, 2, nil},
+		{-1, 0, 0, ErrBadNumber},
+		{3, 5, 0, ErrBadNumber},
+	}
+	for _, tt := range tests {
+		binSize, err := DecimalBinSize(tt.precision, tt.frac)
+		require.Equal(t, tt.output, binSize)
+		require.Equal(t, tt.err, err)
 	}
 }
 
@@ -991,4 +1019,23 @@ func TestFromStringMyDecimal(t *testing.T) {
 
 	// reset
 	wordBufLen = maxWordBufLen
+}
+
+func TestMarshalMyDecimal(t *testing.T) {
+	cases := []string{
+		"12345",
+		"12345.",
+		".00012345000098765",
+		".12345000098765",
+		"-.000000012345000098765",
+		"123E-2",
+	}
+	for _, tt := range cases {
+		var v1, v2 MyDecimal
+		require.NoError(t, v1.FromString([]byte(tt)))
+		j, err := json.Marshal(&v1)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(j, &v2))
+		require.Equal(t, 0, v1.Compare(&v2))
+	}
 }

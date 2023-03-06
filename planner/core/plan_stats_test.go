@@ -20,22 +20,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPlanStatsLoad(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -183,6 +186,16 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.Greater(t, countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
+		{ // check idx(b)
+			sql: "select * from t USE INDEX(idx) where b >= 10",
+			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+				pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+				require.True(t, ok)
+				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+				require.True(t, ok)
+				require.True(t, pis.Stats().HistColl.Indices[1].IsEssentialStatsLoaded())
+			},
+		},
 	}
 	for _, testCase := range testCases {
 		if testCase.skip {
@@ -221,8 +234,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	newConfig.Performance.StatsLoadQueueSize = 1
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -250,16 +262,27 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumn := model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[0].ID}
-	resultCh := make(chan model.TableColumnID, 1)
+	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
+	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
-	dom.StatsHandle().AppendNeededColumn(neededColumn, resultCh, timeout) // make channel queue full
-	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
+	task := &handle.NeededItemTask{
+		TableItemID: neededColumn,
+		ResultCh:    resultCh,
+		ToTimeout:   time.Now().Local().Add(timeout),
+	}
+	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
+	sql := "select * from t where c>1"
+	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
 	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.Error(t, err) // fail sql for timeout when pseudo=false
+
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
+	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
+	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
 	switch pp := plan.(type) {
@@ -269,5 +292,28 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
 	default:
 		t.Error("unexpected plan:", pp)
+	}
+}
+
+func TestPlanStatsStatusRecord(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (b int,key b(b))`)
+	tk.MustExec("insert into t (b) values (1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where b >= 1")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 0)
+	// drop stats in order to change status
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tk.MustQuery("select * from t where b >= 1")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus, 2)
+	for _, status := range tk.Session().GetSessionVars().StmtCtx.StatsLoadStatus {
+		require.Equal(t, status, "allEvicted")
 	}
 }

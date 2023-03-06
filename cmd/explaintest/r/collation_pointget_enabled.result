@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_point_get;
 use collation_point_get;
 drop table if exists t;
@@ -123,15 +124,15 @@ select *, a, b from t tmp where tmp.a = "aa";
 a	b	a	b
 aa	bb	aa	bb
 select a from t where xxxxx.a = "aa";
-Error 1054: Unknown column 'xxxxx.a' in 'where clause'
+Error 1054 (42S22): Unknown column 'xxxxx.a' in 'where clause'
 select xxxxx.a from t where a = "aa";
-Error 1054: Unknown column 'xxxxx.a' in 'field list'
+Error 1054 (42S22): Unknown column 'xxxxx.a' in 'field list'
 select a from t tmp where t.a = "aa";
-Error 1054: Unknown column 't.a' in 'where clause'
+Error 1054 (42S22): Unknown column 't.a' in 'where clause'
 select t.a from t tmp where a = "aa";
-Error 1054: Unknown column 't.a' in 'field list'
+Error 1054 (42S22): Unknown column 't.a' in 'field list'
 select t.* from t tmp where a = "aa";
-Error 1051: Unknown table 't'
+Error 1051 (42S02): Unknown table 't'
 drop table if exists t;
 create table t(a char(4) primary key, b char(4));
 insert into t values("aa", "bb");

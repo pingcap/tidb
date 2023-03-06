@@ -42,7 +42,7 @@ func TestGetJSONInsecure(t *testing.T) {
 	u, err := url.Parse(mockServer.URL)
 	require.NoError(t, err)
 
-	tls, err := common.NewTLS("", "", "", u.Host)
+	tls, err := common.NewTLS("", "", "", u.Host, nil, nil, nil)
 	require.NoError(t, err)
 
 	var result struct{ Path string }
@@ -73,23 +73,29 @@ func TestGetJSONSecure(t *testing.T) {
 func TestInvalidTLS(t *testing.T) {
 	tempDir := t.TempDir()
 	caPath := filepath.Join(tempDir, "ca.pem")
-	_, err := common.NewTLS(caPath, "", "", "localhost")
-	require.Regexp(t, "could not read ca certificate:.*", err.Error())
 
-	err = os.WriteFile(caPath, []byte("invalid ca content"), 0o644)
+	caContent := []byte(`-----BEGIN CERTIFICATE-----
+MIIBITCBxwIUf04/Hucshr7AynmgF8JeuFUEf9EwCgYIKoZIzj0EAwIwEzERMA8G
+A1UEAwwIYnJfdGVzdHMwHhcNMjIwNDEzMDcyNDQxWhcNMjIwNDE1MDcyNDQxWjAT
+MREwDwYDVQQDDAhicl90ZXN0czBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL+X
+wczUg0AbaFFaCI+FAk3K9vbB9JeIORgGKS+F1TKip5tvm96g7S5lq8SgY38SXVc3
+0yS3YqWZqnRjWi+sLwIwCgYIKoZIzj0EAwIDSQAwRgIhAJcpSwsUhqkM08LK1gYC
+ze4ZnCkwJdP2VdpI3WZsoI7zAiEAjP8X1c0iFwYxdAbQAveX+9msVrzyUpZOohi4
+RtgQTNI=
+-----END CERTIFICATE-----
+`)
+	err := os.WriteFile(caPath, caContent, 0o644)
 	require.NoError(t, err)
-	_, err = common.NewTLS(caPath, "", "", "localhost")
-	require.Regexp(t, "failed to append ca certs", err.Error())
 
 	certPath := filepath.Join(tempDir, "test.pem")
 	keyPath := filepath.Join(tempDir, "test.key")
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
-	require.Regexp(t, "could not load client key pair: open.*", err.Error())
 
-	err = os.WriteFile(certPath, []byte("invalid cert content"), 0o644)
+	certContent := []byte("invalid cert content")
+	err = os.WriteFile(certPath, certContent, 0o644)
 	require.NoError(t, err)
-	err = os.WriteFile(keyPath, []byte("invalid key content"), 0o600)
+	keyContent := []byte("invalid key content")
+	err = os.WriteFile(keyPath, keyContent, 0o600)
 	require.NoError(t, err)
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
-	require.Regexp(t, "could not load client key pair: tls.*", err.Error())
+	_, err = common.NewTLS(caPath, "", "", "localhost", caContent, certContent, keyContent)
+	require.ErrorContains(t, err, "tls: failed to find any PEM data in certificate input")
 }

@@ -4,8 +4,10 @@ package utils
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,5 +111,68 @@ func TestCompareEndKey(t *testing.T) {
 	for _, tt := range testCase {
 		res := CompareEndKey(tt.key1, tt.key2)
 		require.Equal(t, tt.ans, res)
+	}
+}
+
+func TestClampKeyRanges(t *testing.T) {
+	r := func(a, b string) kv.KeyRange {
+		return kv.KeyRange{
+			StartKey: []byte(a),
+			EndKey:   []byte(b),
+		}
+	}
+	type Case struct {
+		ranges  []kv.KeyRange
+		clampIn []kv.KeyRange
+		result  []kv.KeyRange
+	}
+
+	cases := []Case{
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0005", "0008")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0006", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("0003", "0004"), r("0006", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0009")},
+			clampIn: []kv.KeyRange{r("0001", "0004"), r("0005", "0008")},
+			result:  []kv.KeyRange{r("0001", "0002"), r("00021", "0003"), r("0005", "0008")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0152")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0152")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "")},
+			clampIn: []kv.KeyRange{r("0001", "0100"), r("0150", "0200")},
+			result:  []kv.KeyRange{r("0001", "0050"), r("0051", "0095"), r("0098", "0100"), r("0150", "0200")},
+		},
+		{
+			ranges:  []kv.KeyRange{r("", "0050")},
+			clampIn: []kv.KeyRange{r("", "")},
+			result:  []kv.KeyRange{r("", "0050")},
+		},
+	}
+	run := func(t *testing.T, c Case) {
+		require.ElementsMatch(
+			t,
+			IntersectAll(CloneSlice(c.ranges), CloneSlice(c.clampIn)),
+			c.result)
+		require.ElementsMatch(
+			t,
+			IntersectAll(c.clampIn, c.ranges),
+			c.result)
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			run(t, c)
+		})
 	}
 }

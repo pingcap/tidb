@@ -18,17 +18,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/tidb/metrics"
-)
-
-var (
-	getLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("get", "latest")
-	getTSCounter      = metrics.InfoCacheCounters.WithLabelValues("get", "ts")
-	getVersionCounter = metrics.InfoCacheCounters.WithLabelValues("get", "version")
-
-	hitLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
-	hitTSCounter      = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
-	hitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
+	infoschema_metrics "github.com/pingcap/tidb/infoschema/metrics"
 )
 
 // InfoCache handles information schema, including getting and setting.
@@ -43,17 +33,24 @@ type InfoCache struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(capcity int) *InfoCache {
-	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
+func NewCache(capacity int) *InfoCache {
+	return &InfoCache{cache: make([]InfoSchema, 0, capacity)}
+}
+
+// Reset resets the cache.
+func (h *InfoCache) Reset(capacity int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cache = make([]InfoSchema, 0, capacity)
 }
 
 // GetLatest gets the newest information schema.
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	getLatestCounter.Inc()
+	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
-		hitLatestCounter.Inc()
+		infoschema_metrics.HitLatestCounter.Inc()
 		return h.cache[0]
 	}
 	return nil
@@ -63,12 +60,31 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	getVersionCounter.Inc()
+	infoschema_metrics.GetVersionCounter.Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
-	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		hitVersionCounter.Inc()
+
+	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
+	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
+	// in this case the `i` will not be 0.
+	// If i == 0, it means the argument version is `10`, or greater than `10`, if `version` is 10
+	// `h.cache[i].SchemaMetaVersion() == version` will be true, so we can return the latest schema, return nil if not.
+	// The following code is equivalent to:
+	// ```
+	//		if h.GetLatest().SchemaMetaVersion() < version {
+	//			return nil
+	//		}
+	//
+	//		if i < len(h.cache) {
+	//			hitVersionCounter.Inc()
+	//			return h.cache[i]
+	//		}
+	// ```
+
+	if i < len(h.cache) && (i != 0 || h.cache[i].SchemaMetaVersion() == version) {
+		infoschema_metrics.HitVersionCounter.Inc()
 		return h.cache[i]
 	}
 	return nil
@@ -81,10 +97,10 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	getTSCounter.Inc()
+	infoschema_metrics.GetTSCounter.Inc()
 	if snapshotTS >= h.maxUpdatedSnapshotTS {
 		if len(h.cache) > 0 {
-			hitTSCounter.Inc()
+			infoschema_metrics.HitTSCounter.Inc()
 			return h.cache[0]
 		}
 	}

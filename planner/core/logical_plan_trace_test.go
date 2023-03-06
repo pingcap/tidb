@@ -16,15 +16,15 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSingleRuleTraceStep(t *testing.T) {
 	tt := []struct {
 		sql             string
 		flags           []uint64
@@ -191,7 +191,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_7,TableScan_8]",
 				},
 			},
 		},
@@ -202,7 +202,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p1] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_5",
 				},
 			},
 		},
@@ -213,7 +213,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
@@ -224,7 +224,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p2] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_6",
 				},
 			},
 		},
@@ -246,7 +246,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
@@ -257,7 +257,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p1] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_6",
 				},
 			},
 		},
@@ -393,13 +393,14 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	for i, tc := range tt {
 		sql := tc.sql
-		comment := Commentf("case:%v sql:%s", i, sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
+		stmt, err := s.p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, comment)
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().AllowAggPushDown = true
@@ -407,26 +408,26 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
+		require.NoError(t, err, comment)
 		flag := uint64(0)
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
 		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
-		c.Assert(err, IsNil)
-		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
-		c.Assert(otrace, NotNil)
+		require.NoError(t, err, comment)
+		trace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
+		require.NotNil(t, trace, comment)
 		assert := false
-		for _, step := range otrace.Steps {
+		for _, step := range trace.Steps {
 			if step.RuleName == tc.assertRuleName {
 				assert = true
 				for i, ruleStep := range step.Steps {
-					c.Assert(ruleStep.Action, Equals, tc.assertRuleSteps[i].assertAction)
-					c.Assert(ruleStep.Reason, Equals, tc.assertRuleSteps[i].assertReason)
+					require.Equal(t, tc.assertRuleSteps[i].assertAction, ruleStep.Action)
+					require.Equal(t, tc.assertRuleSteps[i].assertReason, ruleStep.Reason)
 				}
 			}
 		}
-		c.Assert(assert, IsTrue)
+		require.True(t, assert)
 	}
 }
 

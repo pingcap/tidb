@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -36,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
+	"golang.org/x/exp/slices"
 )
 
 const promReadTimeout = time.Second * 10
@@ -88,9 +89,12 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	return totalRows, nil
 }
 
+// MockMetricsPromDataKey is for test
+type MockMetricsPromDataKey struct{}
+
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
-		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
+		failpoint.Return(ctx.Value(MockMetricsPromDataKey{}).(pmodel.Matrix), nil)
 	})
 
 	// Add retry to avoid network error.
@@ -155,7 +159,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.NewTime(
-		types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
+		types.FromGoTime(time.UnixMilli(int64(pair.Timestamp))),
 		mysql.TypeDatetime,
 		types.MaxFsp,
 	)))
@@ -202,8 +206,9 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
@@ -278,8 +283,9 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {

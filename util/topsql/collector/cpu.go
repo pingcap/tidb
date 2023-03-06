@@ -54,12 +54,11 @@ type SQLCPUTimeRecord struct {
 // SQLCPUCollector uses to consume cpu profile from globalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
 // It is not thread-safe, should only be used in one goroutine.
 type SQLCPUCollector struct {
-	started bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-
+	ctx        context.Context
 	collector  Collector
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	started    bool
 	registered bool
 }
 
@@ -192,7 +191,7 @@ func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLC
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
+func (*SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
 	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
@@ -214,22 +213,25 @@ type sqlStats struct {
 
 // tune use to adjust sql stats. Consider following situation:
 // The `sqlStats` maybe:
-//     plans: {
-//         "table_scan": 200ms, // The cpu time of the sql that plan with `table_scan` is 200ms.
-//         "index_scan": 300ms, // The cpu time of the sql that plan with `index_scan` is 300ms.
-//       },
-//     total:      600ms,       // The total cpu time of the sql is 600ms.
+//
+//	plans: {
+//	    "table_scan": 200ms, // The cpu time of the sql that plan with `table_scan` is 200ms.
+//	    "index_scan": 300ms, // The cpu time of the sql that plan with `index_scan` is 300ms.
+//	  },
+//	total:      600ms,       // The total cpu time of the sql is 600ms.
+//
 // total_time - table_scan_time - index_scan_time = 100ms, and this 100ms means those sample data only contain the
 // sql_digest label, doesn't contain the plan_digest label. This is cause by the `pprof profile` is base on sample,
 // and the plan digest can only be set after optimizer generated execution plan. So the remain 100ms means the plan
 // optimizer takes time to generated plan.
 // After this tune function, the `sqlStats` become to:
-//     plans: {
-//         ""          : 100ms,  // 600 - 200 - 300 = 100ms, indicate the optimizer generated plan time cost.
-//         "table_scan": 200ms,
-//         "index_scan": 300ms,
-//       },
-//     total:      600ms,
+//
+//	plans: {
+//	    ""          : 100ms,  // 600 - 200 - 300 = 100ms, indicate the optimizer generated plan time cost.
+//	    "table_scan": 200ms,
+//	    "index_scan": 300ms,
+//	  },
+//	total:      600ms,
 func (s *sqlStats) tune() {
 	if len(s.plans) == 0 {
 		s.plans[""] = s.total
@@ -252,11 +254,13 @@ func (s *sqlStats) tune() {
 	s.plans[""] += optimize
 }
 
-// CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
-func CtxWithDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
-	if len(planDigest) == 0 {
-		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
-	}
+// CtxWithSQLDigest wrap the ctx with sql digest.
+func CtxWithSQLDigest(ctx context.Context, sqlDigest []byte) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
+}
+
+// CtxWithSQLAndPlanDigest wrap the ctx with sql digest and plan digest.
+func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
 	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
 		labelPlanDigest, string(hack.String(planDigest))))
 }

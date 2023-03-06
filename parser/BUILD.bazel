@@ -1,0 +1,59 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "parser",
+    srcs = [
+        "digester.go",
+        "hintparser.go",
+        "hintparserimpl.go",
+        "lexer.go",
+        "misc.go",
+        "parser.go",
+        "yy_parser.go",
+    ],
+    importpath = "github.com/pingcap/tidb/parser",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/auth",
+        "//parser/charset",
+        "//parser/duration",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/opcode",
+        "//parser/terror",
+        "//parser/tidb",
+        "//parser/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "parser_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "consistent_test.go",
+        "digester_test.go",
+        "hintparser_test.go",
+        "lexer_test.go",
+        "main_test.go",
+        "parser_test.go",
+    ],
+    data = glob(["**"]),
+    embed = [":parser"],
+    flaky = True,
+    deps = [
+        "//parser/ast",
+        "//parser/charset",
+        "//parser/format",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/opcode",
+        "//parser/terror",
+        "//parser/test_driver",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

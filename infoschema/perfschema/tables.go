@@ -15,9 +15,9 @@
 package perfschema
 
 import (
+	"context"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/profile"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -68,6 +69,7 @@ const (
 	tableNamePDProfileAllocs                 = "pd_profile_allocs"
 	tableNamePDProfileBlock                  = "pd_profile_block"
 	tableNamePDProfileGoroutines             = "pd_profile_goroutines"
+	tableNameSessionVariables                = "session_variables"
 )
 
 var tableIDMap = map[string]int64{
@@ -101,6 +103,7 @@ var tableIDMap = map[string]int64{
 	tableNamePDProfileAllocs:                 autoid.PerformanceSchemaDBID + 28,
 	tableNamePDProfileBlock:                  autoid.PerformanceSchemaDBID + 29,
 	tableNamePDProfileGoroutines:             autoid.PerformanceSchemaDBID + 30,
+	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -204,6 +207,11 @@ func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
 }
 
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (vt *perfSchemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
+}
+
 // initTableIndices initializes the indices of the perfSchemaTable.
 func initTableIndices(t *perfSchemaTable) error {
 	tblInfo := t.meta
@@ -217,7 +225,7 @@ func initTableIndices(t *perfSchemaTable) error {
 	return nil
 }
 
-func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
@@ -233,20 +241,22 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("goroutine")
 	case tableNameTiKVProfileCPU:
 		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
-		fullRows, err = dataForRemoteProfile(ctx, "tikv", "/debug/pprof/profile?seconds="+interval, false)
+		fullRows, err = dataForRemoteProfile(sctx, "tikv", "/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileCPU:
 		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds="+interval, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileMemory:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/heap", false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/heap", false)
 	case tableNamePDProfileMutex:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/mutex", false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/mutex", false)
 	case tableNamePDProfileAllocs:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/allocs", false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/allocs", false)
 	case tableNamePDProfileBlock:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/block", false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/block", false)
 	case tableNamePDProfileGoroutines:
-		fullRows, err = dataForRemoteProfile(ctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
+	case tableNameSessionVariables:
+		fullRows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 	}
 	if err != nil {
 		return
@@ -266,9 +276,8 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	rows, err := vt.getRows(ctx, cols)
+func (vt *perfSchemaTable) IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error {
+	rows, err := vt.getRows(ctx, sctx, cols)
 	if err != nil {
 		return err
 	}
@@ -382,7 +391,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -390,7 +399,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].addr < results[j].addr })
+	slices.SortFunc(results, func(i, j result) bool { return i.addr < j.addr })
 	var finalRows [][]types.Datum
 	for _, result := range results {
 		addr := types.NewStringDatum(result.addr)

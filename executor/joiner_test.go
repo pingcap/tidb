@@ -16,22 +16,16 @@ package executor
 
 import (
 	"math/rand"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSuiteJoiner{})
-
-type testSuiteJoiner struct{}
-
-func (s *testSuiteJoiner) SetUpSuite(c *C) {
-}
-
-func (s *testSuiteJoiner) TestRequiredRows(c *C) {
+func TestRequiredRows(t *testing.T) {
 	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
@@ -60,7 +54,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil)
+				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil, false)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)
@@ -74,8 +68,8 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 					it := chunk.NewIterator4Chunk(innerChk)
 					it.Begin()
 					_, _, err := joiner.tryToMatchInners(outerRow, it, result)
-					c.Assert(err, IsNil)
-					c.Assert(result.NumRows(), Equals, required)
+					require.NoError(t, err)
+					require.Equal(t, required, result.NumRows())
 				}
 			}
 		}
@@ -87,7 +81,7 @@ func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chu
 	for numRows > 0 {
 		numRows--
 		for col, field := range fields {
-			switch field.Tp {
+			switch field.GetType() {
 			case mysql.TypeLong:
 				chk.AppendInt64(col, 0)
 			case mysql.TypeFloat:

@@ -30,7 +30,6 @@ import (
 
 // TopSQLCollector uses for testing.
 type TopSQLCollector struct {
-	sync.Mutex
 	// sql_digest -> normalized SQL
 	sqlMap map[string]string
 	// plan_digest -> normalized plan
@@ -38,6 +37,7 @@ type TopSQLCollector struct {
 	// (sql + plan_digest) -> sql stats
 	sqlStatsMap map[string]*collector.SQLCPUTimeRecord
 	collectCnt  atomic.Int64
+	sync.Mutex
 }
 
 // NewTopSQLCollector uses for testing.
@@ -50,7 +50,7 @@ func NewTopSQLCollector() *TopSQLCollector {
 }
 
 // Start implements TopSQLReporter interface.
-func (c *TopSQLCollector) Start() {}
+func (*TopSQLCollector) Start() {}
 
 // Collect uses for testing.
 func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
@@ -78,7 +78,7 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 }
 
 // CollectStmtStatsMap implements stmtstats.Collector.
-func (c *TopSQLCollector) CollectStmtStatsMap(_ stmtstats.StatementStatsMap) {}
+func (*TopSQLCollector) CollectStmtStatsMap(_ stmtstats.StatementStatsMap) {}
 
 // GetSQLStatsBySQLWithRetry uses for testing.
 func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*collector.SQLCPUTimeRecord {
@@ -118,6 +118,20 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	return stats
 }
 
+// GetSQLCPUTimeBySQL uses for testing.
+func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
+	sqlDigest := GenSQLDigest(sql)
+	cpuTime := uint32(0)
+	c.Lock()
+	for _, stmt := range c.sqlStatsMap {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
+			cpuTime += stmt.CPUTimeMs
+		}
+	}
+	c.Unlock()
+	return cpuTime
+}
+
 // GetSQL uses for testing.
 func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
 	c.Lock()
@@ -135,7 +149,7 @@ func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
+func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, _ bool) {
 	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
 	_, ok := c.sqlMap[digestStr]
@@ -143,11 +157,14 @@ func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, is
 		c.sqlMap[digestStr] = normalizedSQL
 	}
 	c.Unlock()
-
 }
 
 // RegisterPlan uses for testing.
-func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string) {
+func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool) {
+	if isLarge {
+		return
+	}
+
 	digestStr := string(hack.String(planDigest))
 	c.Lock()
 	_, ok := c.planMap[digestStr]
@@ -175,15 +192,25 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
+// Reset cleans all collected data.
+func (c *TopSQLCollector) Reset() {
+	c.Lock()
+	defer c.Unlock()
+	c.sqlMap = make(map[string]string)
+	c.planMap = make(map[string]string)
+	c.sqlStatsMap = make(map[string]*collector.SQLCPUTimeRecord)
+	c.collectCnt.Store(0)
+}
+
 // CollectCnt uses for testing.
 func (c *TopSQLCollector) CollectCnt() int64 {
 	return c.collectCnt.Load()
 }
 
 // Close implements the interface.
-func (c *TopSQLCollector) Close() {}
+func (*TopSQLCollector) Close() {}
 
-func (c *TopSQLCollector) hash(stat collector.SQLCPUTimeRecord) string {
+func (*TopSQLCollector) hash(stat collector.SQLCPUTimeRecord) string {
 	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }
 

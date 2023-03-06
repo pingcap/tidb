@@ -20,27 +20,28 @@ import (
 
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 4)
+var testDataMap = make(testdata.BookKeeper)
+var planSuiteUnexportedData testdata.TestData
 var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-
-	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
-	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
-
+	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
@@ -52,14 +53,6 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetIntegrationPartitionSuiteData() testdata.TestData {
-	return testDataMap["integration_partition_suite"]
-}
-
-func GetPlanNormalizedSuiteData() testdata.TestData {
-	return testDataMap["plan_normalized_suite"]
-}
-
-func GetStatsSuiteData() testdata.TestData {
-	return testDataMap["stats_suite"]
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
 }

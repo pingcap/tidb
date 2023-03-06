@@ -42,8 +42,7 @@ func TestValidInspectionSummaryRules(t *testing.T) {
 }
 
 func TestInspectionSummary(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -52,7 +51,7 @@ func TestInspectionSummary(t *testing.T) {
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}

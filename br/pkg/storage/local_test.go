@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,4 +89,41 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 2, i)
+
+	names = []string{name2}
+	i = 0
+	err = store.WalkDir(context.TODO(), &WalkOption{ObjPrefix: "test.warehouse.1"}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		require.Equal(t, int64(len(data)), size)
+		i++
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, i)
+
+	// test file not exists
+	exists, err := store.FileExists(context.TODO(), "/123/456")
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	// test walk nonexistent directory
+	err = store.WalkDir(context.TODO(), &WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
+		return errors.New("find file")
+	})
+	require.NoError(t, err)
+	// write file to a nonexistent directory
+	err = store.WriteFile(context.TODO(), "/123/456/789.txt", []byte(data))
+	require.NoError(t, err)
+	exists, err = store.FileExists(context.TODO(), "/123/456")
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	// test walk existent directory
+	err = store.WalkDir(context.TODO(), &WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
+		if path == "123/456/789.txt" {
+			return nil
+		}
+		return errors.Errorf("find other file: %s", path)
+	})
+	require.NoError(t, err)
 }

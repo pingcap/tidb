@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -55,7 +57,7 @@ var (
 const (
 	idLen     = 8
 	prefixLen = 1 + idLen /*tableID*/ + 2
-	// RecordRowKeyLen is public for calculating avgerage row size.
+	// RecordRowKeyLen is public for calculating average row size.
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
@@ -80,6 +82,11 @@ const TableSplitKeyLen = 1 + idLen
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
 	return tablePrefix
+}
+
+// MetaPrefix returns meta prefix 'm'.
+func MetaPrefix() []byte {
+	return metaPrefix
 }
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
@@ -194,6 +201,25 @@ func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
 	return datumValues, nil
 }
 
+// EncodeMetaKey encodes the key and field into meta key.
+func EncodeMetaKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	ek = codec.EncodeBytes(ek, field)
+	return ek
+}
+
+// EncodeMetaKeyPrefix encodes the key prefix into meta key
+func EncodeMetaKeyPrefix(key []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8)
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	return ek
+}
+
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64
@@ -253,7 +279,16 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
 	if !key.HasPrefix(tablePrefix) {
-		return 0
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return 0
+		}
+		key = k
+		if !key.HasPrefix(tablePrefix) {
+			return 0
+		}
 	}
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
@@ -375,6 +410,20 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
+// DecodeColumnValueWithDatum decodes data to an existing Datum according to the column info.
+func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Location, result *types.Datum) error {
+	var err error
+	_, *result, err = codec.DecodeOne(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	*result, err = Unflatten(*result, ft, loc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DecodeRowWithMapNew decode a row to datum map.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
@@ -401,7 +450,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	return rd.DecodeToDatumMap(b, row)
 }
 
-// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
+// DecodeRowWithMap decodes a byte slice into datums with an existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
@@ -504,7 +553,7 @@ func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
-		if mysql.HasUnsignedFlag(ft.Flag) {
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
 			d = types.NewUintDatum(uint64(handle.IntValue()))
 		} else {
 			d = types.NewIntDatum(handle.IntValue())
@@ -573,24 +622,24 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	if datum.IsNull() {
 		return datum, nil
 	}
-	switch ft.Tp {
+	switch ft.GetType() {
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		datum.SetString(datum.GetString(), ft.Collate)
+		datum.SetString(datum.GetString(), ft.GetCollate())
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, ft.Decimal)
+		t := types.NewTime(types.ZeroCoreTime, ft.GetType(), ft.GetDecimal())
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.GetType() == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
 				return datum, errors.Trace(err)
@@ -600,27 +649,27 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: // duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.GetDecimal()}
 		datum.SetMysqlDuration(dur)
 		return datum, nil
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			enum = types.Enum{}
 		}
-		datum.SetMysqlEnum(enum, ft.Collate)
+		datum.SetMysqlEnum(enum, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
+		set, err := types.ParseSetValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlSet(set, ft.Collate)
+		datum.SetMysqlSet(set, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeBit:
 		val := datum.GetUint64()
-		byteSize := (ft.Flen + 7) >> 3
+		byteSize := (ft.GetFlen() + 7) >> 3
 		datum.SetUint64(0)
 		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
@@ -770,7 +819,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restor
 			newResults[i] = results[i]
 			continue
 		}
-		if collate.IsBinCollation(columns[i].Ft.Collate) {
+		if collate.IsBinCollation(columns[i].Ft.GetCollate()) {
 			noPaddingDatum, err := DecodeColumnValue(results[i], columns[i].Ft, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -812,7 +861,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		copyColInfo := rowcodec.ColInfo{
 			ID: col.ID,
 		}
-		if collate.IsBinCollation(col.Ft.Collate) {
+		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 		} else {
@@ -867,8 +916,9 @@ func getIndexVersion(value []byte) int {
 }
 
 // DecodeIndexKV uses to decode index key values.
-//   `colsLen` is expected to be index columns count.
-//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
+//
+//	`colsLen` is expected to be index columns count.
+//	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
@@ -934,12 +984,28 @@ func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefix encodes table prefix with table ID.
+// EncodeTablePrefix encodes the table prefix to generate a key
 func EncodeTablePrefix(tableID int64) kv.Key {
-	var key kv.Key
+	key := make([]byte, 0, tablePrefixLength+idLen)
 	key = append(key, tablePrefix...)
 	key = codec.EncodeInt(key, tableID)
 	return key
+}
+
+// EncodeTablePrefixSeekKey encodes the table prefix and encodecValue into a kv.Key.
+// It used for seek justly.
+func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
+	key := make([]byte, 0, tablePrefixLength+idLen+len(encodecValue))
+	key = appendTablePrefix(key, tableID)
+	key = append(key, encodecValue...)
+	return key
+}
+
+// appendTablePrefix appends table prefix "t[tableID]" into buf.
+func appendTablePrefix(buf []byte, tableID int64) []byte {
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // appendTableRecordPrefix appends table record prefix  "t[tableID]_r".
@@ -992,6 +1058,9 @@ func IsUntouchedIndexKValue(k, v []byte) bool {
 		return false
 	}
 	vLen := len(v)
+	if IsTempIndexKey(k) {
+		return vLen > 0 && v[vLen-1] == kv.UnCommitIndexKVFlag
+	}
 	if vLen <= MaxOldEncodeValueLen {
 		return (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag
 	}
@@ -1079,55 +1148,284 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
+// TempIndexPrefix used to generate temporary index ID from index ID.
+const TempIndexPrefix = 0x7fff000000000000
+
+// IndexIDMask used to get index id from index ID/temp index ID.
+const IndexIDMask = 0xffffffffffff
+
+// IndexKey2TempIndexKey generates a temporary index key.
+func IndexKey2TempIndexKey(key []byte) {
+	idxIDBytes := key[prefixLen : prefixLen+idLen]
+	idxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(idxIDBytes))
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | idxID)
+	binary.BigEndian.PutUint64(key[prefixLen:], eid)
+}
+
+// TempIndexKey2IndexKey generates an index key from temporary index key.
+func TempIndexKey2IndexKey(tempIdxKey []byte) {
+	tmpIdxIDBytes := tempIdxKey[prefixLen : prefixLen+idLen]
+	tempIdxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(tmpIdxIDBytes))
+	eid := codec.EncodeIntToCmpUint(tempIdxID & IndexIDMask)
+	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
+}
+
+// IsTempIndexKey checks whether the input key is for a temp index.
+func IsTempIndexKey(indexKey []byte) (isTemp bool) {
+	indexIDKey := indexKey[prefixLen : prefixLen+8]
+	indexID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
+	tempIndexID := int64(TempIndexPrefix) | indexID
+	return tempIndexID == indexID
+}
+
+// TempIndexValueFlag is the flag of temporary index value.
+type TempIndexValueFlag byte
+
+const (
+	// TempIndexValueFlagNormal means the following value is a distinct the normal index value.
+	TempIndexValueFlagNormal TempIndexValueFlag = iota
+	// TempIndexValueFlagNonDistinctNormal means the following value is the non-distinct normal index value.
+	TempIndexValueFlagNonDistinctNormal
+	// TempIndexValueFlagDeleted means the following value is the distinct and deleted index value.
+	TempIndexValueFlagDeleted
+	// TempIndexValueFlagNonDistinctDeleted means the following value is the non-distinct deleted index value.
+	TempIndexValueFlagNonDistinctDeleted
+)
+
+// TempIndexValue is the value of temporary index.
+// It contains one or more element, each element represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+//
+// The temp index value is encoded as:
+//   - [element 1][element 2]...[element n] {for distinct values}
+//   - [element 1]                          {for non-distinct values}
+type TempIndexValue []*TempIndexValueElem
+
+// IsEmpty checks whether the value is empty.
+func (v TempIndexValue) IsEmpty() bool {
+	return len(v) == 0
+}
+
+// Current returns the current latest temp index value.
+func (v TempIndexValue) Current() *TempIndexValueElem {
+	return v[len(v)-1]
+}
+
+// FilterOverwritten is used by the temp index merge process to remove the overwritten index operations.
+// For example, the value {temp_idx_key -> [h2, h2d, h3, h1d]} recorded four operations on the original index.
+// Since 'h2d' overwrites 'h2', we can remove 'h2' from the value.
+func (v TempIndexValue) FilterOverwritten() TempIndexValue {
+	if len(v) <= 1 || !v[0].Distinct {
+		return v
+	}
+	occurred := kv.NewHandleMap()
+	for i := len(v) - 1; i >= 0; i-- {
+		if _, ok := occurred.Get(v[i].Handle); !ok {
+			occurred.Set(v[i].Handle, struct{}{})
+		} else {
+			v[i] = nil
+		}
+	}
+	ret := v[:0]
+	for _, elem := range v {
+		if elem != nil {
+			ret = append(ret, elem)
+		}
+	}
+	return ret
+}
+
+// TempIndexValueElem represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+type TempIndexValueElem struct {
+	Value    []byte
+	Handle   kv.Handle
+	KeyVer   byte
+	Delete   bool
+	Distinct bool
+}
+
+// Encode encodes the temp index value.
+func (v *TempIndexValueElem) Encode(buf []byte) []byte {
+	if v.Delete {
+		if v.Distinct {
+			handle := v.Handle
+			var hEncoded []byte
+			var hLen uint16
+			if handle.IsInt() {
+				hEncoded = codec.EncodeUint(hEncoded, uint64(handle.IntValue()))
+				hLen = 8
+			} else {
+				hEncoded = handle.Encoded()
+				hLen = uint16(len(hEncoded))
+			}
+			// flag + handle length + handle + temp key version
+			if buf == nil {
+				buf = make([]byte, 0, hLen+4)
+			}
+			buf = append(buf, byte(TempIndexValueFlagDeleted))
+			buf = append(buf, byte(hLen>>8), byte(hLen))
+			buf = append(buf, hEncoded...)
+			buf = append(buf, v.KeyVer)
+			return buf
+		}
+		// flag + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, 2)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNonDistinctDeleted))
+		buf = append(buf, v.KeyVer)
+		return buf
+	}
+	if v.Distinct {
+		// flag + value length + value + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, len(v.Value)+4)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNormal))
+		vLen := uint16(len(v.Value))
+		buf = append(buf, byte(vLen>>8), byte(vLen))
+		buf = append(buf, v.Value...)
+		buf = append(buf, v.KeyVer)
+		return buf
+	}
+	// flag + value + temp key version
+	if buf == nil {
+		buf = make([]byte, 0, len(v.Value)+2)
+	}
+	buf = append(buf, byte(TempIndexValueFlagNonDistinctNormal))
+	buf = append(buf, v.Value...)
+	buf = append(buf, v.KeyVer)
+	return buf
+}
+
+// DecodeTempIndexValue decodes the temp index value.
+func DecodeTempIndexValue(value []byte) (TempIndexValue, error) {
+	var (
+		values []*TempIndexValueElem
+		err    error
+	)
+	for len(value) > 0 {
+		v := &TempIndexValueElem{}
+		value, err = v.DecodeOne(value)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// DecodeOne decodes one temp index value element.
+func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
+	flag := TempIndexValueFlag(b[0])
+	b = b[1:]
+	switch flag {
+	case TempIndexValueFlagNormal:
+		vLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		v.Value = b[:vLen]
+		b = b[vLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		return b, err
+	case TempIndexValueFlagNonDistinctNormal:
+		v.Value = b[:len(b)-1]
+		v.KeyVer = b[len(b)-1]
+		return nil, nil
+	case TempIndexValueFlagDeleted:
+		hLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		if hLen == idLen {
+			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
+		} else {
+			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
+		}
+		b = b[hLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		v.Delete = true
+		return b, nil
+	case TempIndexValueFlagNonDistinctDeleted:
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Delete = true
+		return b, nil
+	default:
+		return nil, errors.New("invalid temp index value")
+	}
+}
+
+// TempIndexValueIsUntouched returns true if the value is untouched.
+// All the temp index value has the suffix of temp key version.
+// All the temp key versions differ from the uncommitted KV flag.
+func TempIndexValueIsUntouched(b []byte) bool {
+	if len(b) > 0 && b[len(b)-1] == kv.UnCommitIndexKVFlag {
+		return true
+	}
+	return false
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
-//		+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
-//		|
-//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
-//		|  Length:   1     | len(options) | len(padding) |    8        |     1
-//		|
-//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
-//		|  IntHandle:     Only exists when table use int handles and index is unique.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		+-- Old Encoding (without restore data, integer handle, local)
-//		|
-//		|  Layout: [Handle] | [UntouchedFlag]
-//		|  Length:   8      |     1
-//		|
-//		|  Handle:        Only exists in unique index.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		|  Length of value <= 9, use to distinguish from the new encoding.
-// 		|
-//		+-- IndexValueForClusteredIndexVersion1
-//		|
-//		|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
-//		|  Length:   1     |        1        |      1         |  len(options) |         1
-//		|
-//		|  TailLen:       len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  Layout of Options:
-//		|
-//		|     Segment:             Common Handle                 |     Global Index      |   New Collation
-// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
-//		|
-//		|     Common Handle Segment: Exists when unique index used common handles.
-//		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
-//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
-//		|     The restored data contains both the values of a and b.
-//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
-//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
-//		|     and the restored data together to restore original data.
+//
+//	+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
+//	|
+//	|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//	|  Length:   1     | len(options) | len(padding) |    8        |     1
+//	|
+//	|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//	|  IntHandle:     Only exists when table use int handles and index is unique.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	+-- Old Encoding (without restore data, integer handle, local)
+//	|
+//	|  Layout: [Handle] | [UntouchedFlag]
+//	|  Length:   8      |     1
+//	|
+//	|  Handle:        Only exists in unique index.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//	|  Length of value <= 9, use to distinguish from the new encoding.
+//	|
+//	+-- IndexValueForClusteredIndexVersion1
+//	|
+//	|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
+//	|  Length:   1     |        1        |      1         |  len(options) |         1
+//	|
+//	|  TailLen:       len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  Layout of Options:
+//	|
+//	|     Segment:             Common Handle                 |     Global Index      |   New Collation
+//	|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
+//	|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
+//	|
+//	|     Common Handle Segment: Exists when unique index used common handles.
+//	|     Global Index Segment:  Exists when index is global.
+//	|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
+//	|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
+//	|     The restored data contains both the values of a and b.
+//	|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
+//	|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
+//	|     and the restored data together to restore original data.
 func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
@@ -1158,7 +1456,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
+func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	tailLen := 0
@@ -1172,19 +1470,19 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 	if idxInfo.Global {
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
-	if IdxValNeedRestoredData || len(handleRestoredData) > 0 {
+	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
 			// If  the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
 			if types.NeedRestoredData(&col.FieldType) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.Collate) {
+				if collate.IsBinCollation(col.GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1216,7 +1514,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 }
 
 // genIndexValueVersion0 create index value for both local and global index.
-func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	idxVal := make([]byte, 0)
 	idxVal = append(idxVal, 0)
 	newEncode := false
@@ -1229,7 +1527,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if IdxValNeedRestoredData {
+	if idxValNeedRestoredData {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
 			colIds[i] = tblInfo.Columns[col.Offset].ID
@@ -1258,7 +1556,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
 			// then should also write the untouched index key/value to mem-buffer to make sure the data
 			// is consistent with the index in txn mem-buffer.
-			tailLen += 1
+			tailLen++
 			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
 		}
 		idxVal[0] = byte(tailLen)
@@ -1301,14 +1599,14 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		return
 	}
 	colValue := v.GetBytes()
-	if tblCol.Charset == charset.CharsetBin || tblCol.Charset == charset.CharsetASCII {
+	if tblCol.GetCharset() == charset.CharsetBin || tblCol.GetCharset() == charset.CharsetASCII {
 		// Count character length by bytes if charset is binary or ascii.
 		if len(colValue) > idxCol.Length {
 			// truncate value and limit its length
 			if v.Kind() == types.KindBytes {
 				v.SetBytes(colValue[:idxCol.Length])
 			} else {
-				v.SetString(v.GetString()[:idxCol.Length], tblCol.Collate)
+				v.SetString(v.GetString()[:idxCol.Length], tblCol.GetCollate())
 			}
 		}
 	} else if utf8.RuneCount(colValue) > idxCol.Length {
@@ -1316,7 +1614,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
-		v.SetString(truncateStr, tblCol.Collate)
+		v.SetString(truncateStr, tblCol.GetCollate())
 	}
 }
 
@@ -1534,4 +1832,44 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		resultValues = append(resultValues, pidBytes)
 	}
 	return resultValues, nil
+}
+
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouched flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
+}
+
+// VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.
+func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
+	tids := make([]int64, 0, keyRanges.PartitionNum())
+	collectFunc := func(ranges []kv.KeyRange, _ []int) error {
+		if len(ranges) == 0 {
+			return nil
+		}
+		tid := DecodeTableID(ranges[0].StartKey)
+		if tid <= 0 {
+			return errors.New("Incorrect keyRange is constrcuted")
+		}
+		tids = append(tids, tid)
+		for i := 1; i < len(ranges); i++ {
+			tmpTID := DecodeTableID(ranges[i].StartKey)
+			if tmpTID <= 0 {
+				return errors.New("Incorrect keyRange is constrcuted")
+			}
+			if tid != tmpTID {
+				return errors.Errorf("Using multi partition's ranges as single table's")
+			}
+		}
+		return nil
+	}
+	err := keyRanges.ForEachPartitionWithErr(collectFunc)
+	return tids, err
 }

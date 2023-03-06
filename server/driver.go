@@ -18,14 +18,15 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation, dbname and optionally the tls state.
-	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error)
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -34,7 +35,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, []types.Datum) (ResultSet, error)
+	Execute(context.Context, []expression.Expression) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -72,6 +73,8 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	// IsClosed checks whether the result set is closed.
+	IsClosed() bool
 }
 
 // fetchNotifier represents notifier will be called in COM_FETCH.

@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mock",
+    srcs = [
+        "client.go",
+        "context.go",
+        "iter.go",
+        "store.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//extension",
+        "//kv",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/terror",
+        "//sessionctx",
+        "//sessionctx/sessionstates",
+        "//sessionctx/variable",
+        "//util",
+        "//util/disk",
+        "//util/memory",
+        "//util/sli",
+        "//util/sqlexec",
+        "//util/topsql/stmtstats",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)
+
+go_test(
+    name = "mock_test",
+    timeout = "short",
+    srcs = [
+        "iter_test.go",
+        "main_test.go",
+        "mock_test.go",
+    ],
+    embed = [":mock"],
+    flaky = True,
+    deps = [
+        "//kv",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

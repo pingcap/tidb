@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -33,7 +32,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -44,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -124,6 +125,8 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
+	dupDetectOpt dupDetectOpt
+
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
 
@@ -135,6 +138,8 @@ type Engine struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	errorMgr           *errormanager.ErrorManager
+
+	logger log.Logger
 }
 
 func (e *Engine) setError(err error) {
@@ -145,7 +150,7 @@ func (e *Engine) setError(err error) {
 }
 
 func (e *Engine) Close() error {
-	log.L().Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
+	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	if e.db == nil {
 		return nil
 	}
@@ -232,6 +237,20 @@ func (e *Engine) unlock() {
 	}
 	e.isImportingAtomic.Store(0)
 	e.mutex.Unlock()
+}
+
+func (e *Engine) TotalMemorySize() int64 {
+	var memSize int64 = 0
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*Writer)
+		if w.kvBuffer != nil {
+			w.Lock()
+			memSize += w.kvBuffer.TotalSize()
+			w.Unlock()
+		}
+		return true
+	})
+	return memSize
 }
 
 type rangeOffsets struct {
@@ -427,8 +446,15 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	metrics := e.db.Metrics()
-	total := metrics.Total()
+	e.mutex.RLock()
+	db := e.db
+	e.mutex.RUnlock()
+
+	var total pebble.LevelMetrics
+	if db != nil {
+		metrics := db.Metrics()
+		total = metrics.Total()
+	}
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
@@ -525,7 +551,6 @@ func (e *Engine) ingestSSTLoop() {
 	for i := 0; i < concurrency; i++ {
 		e.wg.Add(1)
 		go func() {
-			defer e.wg.Done()
 			defer func() {
 				if e.ingestErr.Get() != nil {
 					seqLock.Lock()
@@ -535,6 +560,7 @@ func (e *Engine) ingestSSTLoop() {
 					flushQueue = flushQueue[:0]
 					seqLock.Unlock()
 				}
+				e.wg.Done()
 			}()
 			for {
 				select {
@@ -724,8 +750,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	sort.Slice(metas, func(i, j int) bool {
-		return bytes.Compare(metas[i].minKey, metas[j].minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) bool {
+		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
 	metaLevels := make([][]*sstMeta, 0)
@@ -767,7 +793,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 		totalCount += m.totalCount
 		fileSize += m.fileSize
 	}
-	log.L().Info("write data to local DB",
+	e.logger.Info("write data to local DB",
 		zap.Int64("size", totalSize),
 		zap.Int64("kvs", totalCount),
 		zap.Int("files", len(metas)),
@@ -854,7 +880,7 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 // saveEngineMeta saves the metadata about the DB into the DB itself.
 // This method should be followed by a Flush to ensure the data is actually synchronized
 func (e *Engine) saveEngineMeta() error {
-	log.L().Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
+	e.logger.Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
 	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
 }
@@ -863,18 +889,19 @@ func (e *Engine) loadEngineMeta() error {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
-			log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
+			e.logger.Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
 			return nil
 		}
 		return err
 	}
+	//nolint: errcheck
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {
-		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
+		e.logger.Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
 		return err
 	}
-	log.L().Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
+	e.logger.Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
 	return nil
 }
@@ -885,8 +912,8 @@ func sortAndMergeRanges(ranges []Range) []Range {
 		return ranges
 	}
 
-	sort.Slice(ranges, func(i, j int) bool {
-		return bytes.Compare(ranges[i].start, ranges[j].start) < 0
+	slices.SortFunc(ranges, func(i, j Range) bool {
+		return bytes.Compare(i.start, j.start) < 0
 	})
 
 	curEnd := ranges[0].end
@@ -945,7 +972,7 @@ func (e *Engine) unfinishedRanges(ranges []Range) []Range {
 	return filterOverlapRange(ranges, e.finishedRanges.ranges)
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) pkgkv.Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
@@ -954,11 +981,44 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) pkgkv.
 	if !e.duplicateDetection {
 		return pebbleIter{Iterator: e.db.NewIter(opts)}
 	}
-	logger := log.With(
+	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
+	return newDupDetectIter(e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+}
+
+// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+// in the engine. Empty upperBound means unbounded.
+func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
+		upperBound = nil
+	}
+	opt := &pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+
+	iter := e.newKVIter(context.Background(), opt)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		return nil, nil, nil
+	}
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	lastKey := append([]byte{}, iter.Key()...)
+	return firstKey, lastKey, nil
 }
 
 type sstMeta struct {
@@ -994,6 +1054,8 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+
+	tikvCodec tikv.Codec
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1008,7 +1070,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
 	for i := 0; i < len(kvs); i++ {
-		keySize := keyAdapter.EncodedLen(kvs[i].Key)
+		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
 		w.batchSize += int64(keySize + len(kvs[i].Val))
 		totalKeySize += keySize
 	}
@@ -1045,7 +1107,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 		}
 		lastKey = pair.Key
 		w.batchSize += int64(len(pair.Key) + len(pair.Val))
-		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key))
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
@@ -1074,6 +1136,10 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 
 	if w.engine.closed.Load() {
 		return errorEngineClosed
+	}
+
+	for i := range kvs {
+		kvs[i].Key = w.tikvCodec.EncodeKey(kvs[i].Key)
 	}
 
 	w.Lock()
@@ -1152,8 +1218,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		sort.Slice(w.writeBatch[:w.batchCount], func(i, j int) bool {
-			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+			return bytes.Compare(i.Key, j.Key) < 0
 		})
 		w.isWriteBatchSorted = true
 	}
@@ -1166,6 +1232,15 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		_ = common.KillMySelf()
+		// mimic we meet context cancel error when `addSST`
+		<-ctx.Done()
+		time.Sleep(5 * time.Second)
+		failpoint.Return(errors.Trace(ctx.Err()))
+	})
+
 	err = w.addSST(ctx, meta)
 	if err != nil {
 		return errors.Trace(err)
@@ -1192,7 +1267,7 @@ func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer}
+	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer, logger: w.engine.logger}
 	return sw, nil
 }
 
@@ -1201,6 +1276,7 @@ var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without orde
 type sstWriter struct {
 	*sstMeta
 	writer *sstable.Writer
+	logger log.Logger
 }
 
 func newSSTWriter(path string) (*sstable.Writer, error) {
@@ -1234,7 +1310,7 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	var lastKey []byte
 	for _, p := range kvs {
 		if bytes.Equal(p.Key, lastKey) {
-			log.L().Warn("duplicated key found, skip write", logutil.Key("key", p.Key))
+			sw.logger.Warn("duplicated key found, skip write", logutil.Key("key", p.Key))
 			continue
 		}
 		internalKey.UserKey = p.Key
@@ -1406,13 +1482,13 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		return nil, err
 	}
 	if key == nil {
-		return nil, errors.New("all ssts are empty!")
+		return nil, errors.New("all ssts are empty")
 	}
 	newMeta.minKey = append(newMeta.minKey[:0], key...)
 	lastKey := make([]byte, 0)
 	for {
 		if bytes.Equal(lastKey, key) {
-			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
+			i.e.logger.Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
 			newMeta.totalCount--
 			newMeta.totalSize -= int64(len(key) + len(val))
 
@@ -1445,7 +1521,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	newMeta.fileSize = int64(meta.Size)
 
 	dur := time.Since(start)
-	log.L().Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
+	i.e.logger.Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
 		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur), zap.String("file", name))
 
 	// async clean raw SSTs.
@@ -1454,7 +1530,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		for _, m := range metas {
 			totalSize += m.fileSize
 			if err := os.Remove(m.path); err != nil {
-				log.L().Warn("async cleanup sst file failed", zap.Error(err))
+				i.e.logger.Warn("async cleanup sst file failed", zap.Error(err))
 			}
 		}
 		// decrease the pending size after clean up
@@ -1471,6 +1547,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	paths := make([]string, 0, len(metas))
 	for _, m := range metas {
 		paths = append(paths, m.path)
+	}
+	if i.e.db == nil {
+		return errorEngineClosed
 	}
 	return i.e.db.Ingest(paths)
 }

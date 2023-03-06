@@ -36,17 +36,17 @@ type encodingGBK struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingGBK) Name() string {
+func (*encodingGBK) Name() string {
 	return CharsetGBK
 }
 
 // Tp implements Encoding interface.
-func (e *encodingGBK) Tp() EncodingTp {
+func (*encodingGBK) Tp() EncodingTp {
 	return EncodingTpGBK
 }
 
 // Peek implements Encoding interface.
-func (e *encodingGBK) Peek(src []byte) []byte {
+func (*encodingGBK) Peek(src []byte) []byte {
 	charLen := 2
 	if len(src) == 0 || src[0] < 0x80 {
 		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
@@ -58,7 +58,7 @@ func (e *encodingGBK) Peek(src []byte) []byte {
 	return src
 }
 
-func (e *encodingGBK) MbLen(bs string) int {
+func (*encodingGBK) MbLen(bs string) int {
 	if len(bs) < 2 {
 		return 0
 	}
@@ -73,12 +73,12 @@ func (e *encodingGBK) MbLen(bs string) int {
 }
 
 // ToUpper implements Encoding interface.
-func (e *encodingGBK) ToUpper(d string) string {
+func (*encodingGBK) ToUpper(d string) string {
 	return strings.ToUpperSpecial(GBKCase, d)
 }
 
 // ToLower implements Encoding interface.
-func (e *encodingGBK) ToLower(d string) string {
+func (*encodingGBK) ToLower(d string) string {
 	return strings.ToLowerSpecial(GBKCase, d)
 }
 
@@ -118,7 +118,7 @@ func NewCustomGBKEncoder() *encoding.Encoder {
 }
 
 // NewDecoder returns simplifiedchinese.GBK.NewDecoder().
-func (c customGBK) NewDecoder() *encoding.Decoder {
+func (customGBK) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
 		Transformer: customGBKDecoder{
 			gbkDecoder: simplifiedchinese.GBK.NewDecoder(),
@@ -152,7 +152,7 @@ type customGBKEncoder struct {
 }
 
 // NewEncoder returns simplifiedchinese.gbk.
-func (c customGBK) NewEncoder() *encoding.Encoder {
+func (customGBK) NewEncoder() *encoding.Encoder {
 	return &encoding.Encoder{
 		Transformer: customGBKEncoder{
 			gbkEncoder: simplifiedchinese.GBK.NewEncoder(),

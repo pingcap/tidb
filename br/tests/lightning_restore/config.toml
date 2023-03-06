@@ -3,3 +3,7 @@ table-concurrency = 4
 
 [tikv-importer]
 backend = 'local'
+
+[checkpoint]
+enable = true
+keep-after-success = "origin"

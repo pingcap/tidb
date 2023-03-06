@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "importer_lib",
+    srcs = [
+        "config.go",
+        "data.go",
+        "db.go",
+        "job.go",
+        "main.go",
+        "parser.go",
+        "rand.go",
+        "stats.go",
+    ],
+    importpath = "github.com/pingcap/tidb/cmd/importer",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//ddl",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//planner/core",
+        "//statistics",
+        "//statistics/handle",
+        "//types",
+        "//util/mathutil",
+        "//util/mock",
+        "@com_github_burntsushi_toml//:toml",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "importer",
+    embed = [":importer_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "importer_test",
+    timeout = "short",
+    srcs = ["db_test.go"],
+    embed = [":importer_lib"],
+    flaky = True,
+)

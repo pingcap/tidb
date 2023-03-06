@@ -42,7 +42,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Protocol Features
+// AuthSwitchRequest is a protocol feature.
 const AuthSwitchRequest byte = 0xfe
 
 // Server information.
@@ -81,6 +81,8 @@ const (
 	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen = 64
+	// MaxForeignKeyIdentifierLen is max length of foreign key identifier.
+	MaxForeignKeyIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
 	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
@@ -131,30 +133,40 @@ const (
 	ComEnd
 )
 
-// Client information.
+// Client information. https://dev.mysql.com/doc/dev/mysql-server/latest/group__group__cs__capabilities__flags.html
 const (
-	ClientLongPassword uint32 = 1 << iota
-	ClientFoundRows
-	ClientLongFlag
-	ClientConnectWithDB
-	ClientNoSchema
-	ClientCompress
-	ClientODBC
-	ClientLocalFiles
-	ClientIgnoreSpace
-	ClientProtocol41
-	ClientInteractive
-	ClientSSL
-	ClientIgnoreSigpipe
-	ClientTransactions
-	ClientReserved
-	ClientSecureConnection
-	ClientMultiStatements
-	ClientMultiResults
-	ClientPSMultiResults
-	ClientPluginAuth
-	ClientConnectAtts
-	ClientPluginAuthLenencClientData
+	ClientLongPassword               uint32 = 1 << iota // CLIENT_LONG_PASSWORD
+	ClientFoundRows                                     // CLIENT_FOUND_ROWS
+	ClientLongFlag                                      // CLIENT_LONG_FLAG
+	ClientConnectWithDB                                 // CLIENT_CONNECT_WITH_DB
+	ClientNoSchema                                      // CLIENT_NO_SCHEMA
+	ClientCompress                                      // CLIENT_COMPRESS, Not supported: https://github.com/pingcap/tidb/issues/22605
+	ClientODBC                                          // CLIENT_ODBC
+	ClientLocalFiles                                    // CLIENT_LOCAL_FILES
+	ClientIgnoreSpace                                   // CLIENT_IGNORE_SPACE
+	ClientProtocol41                                    // CLIENT_PROTOCOL_41
+	ClientInteractive                                   // CLIENT_INTERACTIVE
+	ClientSSL                                           // CLIENT_SSL
+	ClientIgnoreSigpipe                                 // CLIENT_IGNORE_SIGPIPE
+	ClientTransactions                                  // CLIENT_TRANSACTIONS
+	ClientReserved                                      // Deprecated: CLIENT_RESERVED
+	ClientSecureConnection                              // Deprecated: CLIENT_SECURE_CONNECTION
+	ClientMultiStatements                               // CLIENT_MULTI_STATEMENTS
+	ClientMultiResults                                  // CLIENT_MULTI_RESULTS
+	ClientPSMultiResults                                // CLIENT_PS_MULTI_RESULTS
+	ClientPluginAuth                                    // CLIENT_PLUGIN_AUTH
+	ClientConnectAtts                                   // CLIENT_CONNECT_ATTRS
+	ClientPluginAuthLenencClientData                    // CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+	ClientHandleExpiredPasswords                        // CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS, Not supported: https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_expired_passwords.html
+	ClientSessionTrack                                  // CLIENT_SESSION_TRACK, Not supported: https://github.com/pingcap/tidb/issues/35309
+	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
+	// 1 << 25 == CLIENT_OPTIONAL_RESULTSET_METADATA
+	// 1 << 26 == CLIENT_ZSTD_COMPRESSION_ALGORITHM
+	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
+	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
+	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
+	// 1 << 30 == CLIENT_SSL_VERIFY_SERVER_CERT
+	// 1 << 31 == CLIENT_REMEMBER_OPTIONS
 )
 
 // Cache type information.
@@ -166,7 +178,11 @@ const (
 const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
+	AuthTiDBSM3Password     = "tidb_sm3_password"     // #nosec G101
+	AuthMySQLClearPassword  = "mysql_clear_password"
 	AuthSocket              = "auth_socket"
+	AuthTiDBSessionToken    = "tidb_session_token"
+	AuthTiDBAuthToken       = "tidb_auth_token"
 )
 
 // MySQL database and tables.
@@ -189,15 +205,17 @@ const (
 	GlobalStatusTable = "GLOBAL_STATUS"
 	// TiDBTable is the table contains tidb info.
 	TiDBTable = "tidb"
-	//  RoleEdgesTable is the table contains role relation info
+	// RoleEdgeTable is the table contains role relation info
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
+	// PasswordHistoryTable is the table in system db contains password history.
+	PasswordHistoryTable = "password_history"
 )
 
 // MySQL type maximum length.
 const (
-	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// NotFixedDec For arguments that have no fixed number of decimals, the decimals value is set to 31,
 	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
 	NotFixedDec = 31
 
@@ -214,6 +232,7 @@ const (
 	MaxDurationWidthNoFsp    = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp  = 17 // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
 	MaxBlobWidth             = 16777216
+	MaxLongBlobWidth         = 4294967295
 	MaxBitDisplayWidth       = 64
 	MaxFloatPrecisionLength  = 24
 	MaxDoublePrecisionLength = 53
@@ -230,7 +249,12 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+
+// SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
+
+// SM3PWDHashLen is the length of tidb_sm3_password's hash.
+const SM3PWDHashLen = 70
 
 // Command2Str is the command information to command name.
 var Command2Str = map[byte]string{
@@ -594,4 +618,14 @@ const (
 	PrimaryKeyName = "PRIMARY"
 	// DefaultDecimal defines the default decimal value when the value out of range.
 	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
+	PartitionCountLimit = 8192
+)
+
+// This is enum_cursor_type in MySQL
+const (
+	CursorTypeReadOnly = 1 << iota
+	CursorTypeForUpdate
+	CursorTypeScrollable
 )

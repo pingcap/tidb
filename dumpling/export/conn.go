@@ -6,10 +6,9 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // BaseConn wraps connection instance.
@@ -62,6 +61,7 @@ func (conn *BaseConn) QuerySQLWithColumns(tctx *tcontext.Context, columns []stri
 		if retryTime > 1 && conn.rebuildConnFn != nil {
 			conn.DBConn, err = conn.rebuildConnFn(conn.DBConn, false)
 			if err != nil {
+				tctx.L().Warn("rebuild connection failed", zap.Error(err))
 				return
 			}
 		}

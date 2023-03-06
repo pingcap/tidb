@@ -66,7 +66,7 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		return PlacementScheduleStatePending, errors.Errorf("pd unavailable")
 	}
 
-	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	res, err := doRequest(ctx, "GetReplicationState", addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
 	if err == nil && res != nil {
 		st := PlacementScheduleStatePending
 		// it should not fail

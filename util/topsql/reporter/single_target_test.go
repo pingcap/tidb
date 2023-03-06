@@ -43,6 +43,9 @@ func TestSingleTargetDataSink(t *testing.T) {
 	ds.Start()
 	defer ds.Close()
 
+	recordsCnt := server.RecordsCnt()
+	sqlMetaCnt := server.SQLMetaCnt()
+
 	err = ds.TrySend(&ReportData{
 		DataRecords: []tipb.TopSQLRecord{{
 			SqlDigest:  []byte("S1"),
@@ -66,7 +69,8 @@ func TestSingleTargetDataSink(t *testing.T) {
 	}, time.Now().Add(10*time.Second))
 	assert.NoError(t, err)
 
-	server.WaitCollectCnt(1, 5*time.Second)
+	server.WaitCollectCnt(recordsCnt, 1, 5*time.Second)
+	server.WaitCollectCntOfSQLMeta(sqlMetaCnt, 1, 5*time.Second)
 
 	assert.Len(t, server.GetLatestRecords(), 1)
 	assert.Len(t, server.GetTotalSQLMetas(), 1)

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -32,7 +33,7 @@ import (
 // It's mainly designed for plan-cache, since some ranges in a cached plan have to be rebuild when reusing.
 type MutableRanges interface {
 	// Range returns the underlying range values.
-	Range() []*Range
+	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
 	Rebuild() error
 }
@@ -41,23 +42,30 @@ type MutableRanges interface {
 type Ranges []*Range
 
 // Range returns the range array.
-func (rs Ranges) Range() []*Range {
+func (rs Ranges) Range() Ranges {
 	return rs
 }
 
 // Rebuild rebuilds this range.
-func (rs Ranges) Rebuild() error {
+func (Ranges) Rebuild() error {
 	return nil
+}
+
+// MemUsage gets the memory usage of ranges.
+func (rs Ranges) MemUsage() (sum int64) {
+	for _, ran := range rs {
+		sum += ran.MemUsage()
+	}
+	return
 }
 
 // Range represents a range generated in physical plan building phase.
 type Range struct {
-	LowVal  []types.Datum
-	HighVal []types.Datum
-
-	LowExclude  bool // Low value is exclusive.
-	HighExclude bool // High value is exclusive.
+	LowVal      []types.Datum // Low value is exclusive.
+	HighVal     []types.Datum // High value is exclusive.
 	Collators   []collate.Collator
+	LowExclude  bool
+	HighExclude bool
 }
 
 // Width returns the width of this range.
@@ -67,6 +75,9 @@ func (ran *Range) Width() int {
 
 // Clone clones a Range.
 func (ran *Range) Clone() *Range {
+	if ran == nil {
+		return nil
+	}
 	newRange := &Range{
 		LowVal:      make([]types.Datum, 0, len(ran.LowVal)),
 		HighVal:     make([]types.Datum, 0, len(ran.HighVal)),
@@ -215,6 +226,23 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 		}
 	}
 	return len(ran.LowVal), nil
+}
+
+// EmptyRangeSize is the size of empty range.
+const EmptyRangeSize = int64(unsafe.Sizeof(Range{}))
+
+// MemUsage gets the memory usage of range.
+func (ran *Range) MemUsage() (sum int64) {
+	// 16 is the size of Collator interface.
+	sum = EmptyRangeSize + int64(len(ran.Collators))*16
+	for _, val := range ran.LowVal {
+		sum += val.MemUsage()
+	}
+	for _, val := range ran.HighVal {
+		sum += val.MemUsage()
+	}
+	// We ignore size of collator currently.
+	return sum
 }
 
 func formatDatum(d types.Datum, isLeftSide bool) string {

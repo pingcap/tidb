@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "temptable",
+    srcs = [
+        "ddl.go",
+        "infoschema.go",
+        "interceptor.go",
+    ],
+    importpath = "github.com/pingcap/tidb/table/temptable",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//kv",
+        "//meta",
+        "//meta/autoid",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//store/driver/txn",
+        "//table",
+        "//table/tables",
+        "//tablecodec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_x_exp//maps",
+    ],
+)
+
+go_test(
+    name = "temptable_test",
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "interceptor_test.go",
+        "main_test.go",
+    ],
+    embed = [":temptable"],
+    flaky = True,
+    deps = [
+        "//infoschema",
+        "//kv",
+        "//meta/autoid",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx",
+        "//store/driver/txn",
+        "//store/mockstore",
+        "//table",
+        "//tablecodec",
+        "//testkit/testsetup",
+        "//types",
+        "//util/codec",
+        "//util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

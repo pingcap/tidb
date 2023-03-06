@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -111,7 +110,7 @@ func TestSetVar(t *testing.T) {
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			require.Equal(t, true, ok)
-			sessionVar, ok := ctx.GetSessionVars().Users[key]
+			sessionVar, ok := ctx.GetSessionVars().GetUserVarVal(key)
 			require.Equal(t, true, ok)
 			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
@@ -135,7 +134,7 @@ func TestGetVar(t *testing.T) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
+		ctx.GetSessionVars().SetUserVarVal(kv.key, types.NewDatum(kv.val))
 		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -143,7 +142,7 @@ func TestGetVar(t *testing.T) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		types.DefaultParamTypeForValue(kv.val, tp)
-		ctx.GetSessionVars().UserVarTypes[kv.key] = tp
+		ctx.GetSessionVars().SetUserVarType(kv.key, tp)
 	}
 
 	testCases := []struct {
@@ -160,7 +159,7 @@ func TestGetVar(t *testing.T) {
 		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
-		tp, ok := ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
+		tp, ok := ctx.GetSessionVars().GetUserVarType(tc.args[0].(string))
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
@@ -203,13 +202,19 @@ func TestValues(t *testing.T) {
 
 func TestSetVarFromColumn(t *testing.T) {
 	ctx := createContext(t)
+	ft1 := types.FieldType{}
+	ft1.SetType(mysql.TypeVarString)
+	ft1.SetFlen(20)
+
+	ft2 := ft1.Clone()
+	ft3 := ft1.Clone()
 	// Construct arguments.
 	argVarName := &Constant{
 		Value:   types.NewStringDatum("a"),
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: &ft1,
 	}
 	argCol := &Column{
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: ft2,
 		Index:   0,
 	}
 
@@ -217,7 +222,7 @@ func TestSetVarFromColumn(t *testing.T) {
 	funcSetVar, err := NewFunction(
 		ctx,
 		ast.SetVar,
-		&types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		ft3,
 		[]Expression{argVarName, argCol}...,
 	)
 	require.NoError(t, err)
@@ -238,9 +243,7 @@ func TestSetVarFromColumn(t *testing.T) {
 
 	// Check whether the user variable changed.
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	sessionVar, ok := sessionVars.Users["a"]
+	sessionVar, ok := sessionVars.GetUserVarVal("a")
 	require.Equal(t, true, ok)
 	require.Equal(t, "a", sessionVar.GetString())
 }
@@ -260,10 +263,10 @@ func TestInFunc(t *testing.T) {
 	duration2 := types.Duration{Duration: 12*time.Hour + 1*time.Minute}
 	duration3 := types.Duration{Duration: 12*time.Hour + 1*time.Second}
 	duration4 := types.Duration{Duration: 12 * time.Hour}
-	json1 := json.CreateBinary("123")
-	json2 := json.CreateBinary("123.1")
-	json3 := json.CreateBinary("123.2")
-	json4 := json.CreateBinary("123.3")
+	json1 := types.CreateBinaryJSON("123")
+	json2 := types.CreateBinaryJSON("123.1")
+	json3 := types.CreateBinaryJSON("123.2")
+	json4 := types.CreateBinaryJSON("123.3")
 	testCases := []struct {
 		args []interface{}
 		res  interface{}
@@ -298,8 +301,6 @@ func TestInFunc(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
 	}
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))

@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -48,9 +46,10 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const clusterLogBatchSize = 256
@@ -138,7 +137,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
 	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
 	}
 	return e.retriever.close()
 }
@@ -177,8 +176,8 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
-
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	//nolint: prealloc
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
@@ -252,7 +251,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					}
 					items = append(items, item{key: key, val: str})
 				}
-				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+				slices.SortFunc(items, func(i, j item) bool { return i.key < j.key })
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
@@ -271,7 +270,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -279,7 +278,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
@@ -310,108 +309,12 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
-
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
-	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
-	infoTp := e.serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for i, srv := range serversInfo {
-		address := srv.Address
-		remote := address
-		if srv.ServerType == "tidb" {
-			remote = srv.StatusAddr
-		}
-		wg.Add(1)
-		go func(index int, remote, address, serverTP string) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
-				if err != nil {
-					ch <- result{idx: index, err: err}
-					return
-				}
-				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
-			}, nil)
-		}(i, remote, address, srv.ServerType)
-	}
-	wg.Wait()
-	close(ch)
-	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
-	for result := range ch {
-		if result.err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			continue
-		}
-		results = append(results, result)
-	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
-}
-
-func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(items))
-	for _, v := range items {
-		for _, item := range v.Pairs {
-			row := types.MakeDatums(
-				tp,
-				addr,
-				v.Tp,
-				v.Name,
-				item.Key,
-				item.Value,
-			)
-			rows = append(rows, row)
-		}
-	}
-	return rows
-}
-
-func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		clusterSecurity := security.ClusterSecurity()
-		tlsConfig, err := clusterSecurity.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-	conn, err := grpc.Dial(address, opt)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			log.Error("close grpc connection error", zap.Error(err))
-		}
-	}()
-
-	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
-	if err != nil {
-		return nil, err
-	}
-	return r.Items, nil
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
@@ -420,34 +323,12 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 	for _, server := range servers {
 		parts := strings.Split(server, ",")
 		serversInfo = append(serversInfo, infoschema.ServerInfo{
-			ServerType: parts[0],
-			Address:    parts[1],
 			StatusAddr: parts[2],
+			Address:    parts[1],
+			ServerType: parts[0],
 		})
 	}
 	return serversInfo
-}
-
-func filterClusterServerInfo(serversInfo []infoschema.ServerInfo, nodeTypes, addresses set.StringSet) []infoschema.ServerInfo {
-	if len(nodeTypes) == 0 && len(addresses) == 0 {
-		return serversInfo
-	}
-
-	filterServers := make([]infoschema.ServerInfo, 0, len(serversInfo))
-	for _, srv := range serversInfo {
-		// Skip some node type which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
-			continue
-		}
-		// Skip some node address which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
-			continue
-		}
-		filterServers = append(filterServers, srv)
-	}
-	return filterServers
 }
 
 type clusterLogRetriever struct {
@@ -515,7 +396,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 
 	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	var levels = make([]diagnosticspb.LogLevel, 0, len(e.extractor.LogLevels))
 	for l := range e.extractor.LogLevels {
@@ -551,7 +432,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	serversInfo []infoschema.ServerInfo,
 	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
 	// gRPC options
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
@@ -565,7 +446,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
-	var results []chan logStreamResult // nolint: prealloc
+	var results []chan logStreamResult //nolint: prealloc
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address
@@ -660,7 +541,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 	for e.heap.Len() > 0 && len(finalRows) < clusterLogBatchSize {
 		minTimeItem := heap.Pop(e.heap).(logStreamResult)
 		headMessage := minTimeItem.messages[0]
-		loggingTime := time.Unix(headMessage.Time/1000, (headMessage.Time%1000)*int64(time.Millisecond))
+		loggingTime := time.UnixMilli(headMessage.Time)
 		finalRows = append(finalRows, types.MakeDatums(
 			loggingTime.Format("2006/01/02 15:04:05.000"),
 			minTimeItem.typ,
@@ -817,7 +698,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
-
 	var results []chan hotRegionsResult
 	for _, srv := range pdServers {
 		for typ := range e.extractor.HotRegionTypes {
@@ -942,13 +822,12 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	// Ignore row without corresponding schema.
 	if tableInfos, ok := regionsTableInfos[int64(hisHotRegion.RegionID)]; ok {
 		for _, tableInfo := range tableInfos {
-			updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+			updateTimestamp := time.UnixMilli(hisHotRegion.UpdateTime)
 			if updateTimestamp.Location() != tz {
 				updateTimestamp.In(tz)
 			}
 			updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-			row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-
+			row := make([]types.Datum, len(infoschema.GetTableTiDBHotRegionsHistoryCols()))
 			row[0].SetMysqlTime(updateTime)
 			row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
 			row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
@@ -982,5 +861,137 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 		}
 	}
 
+	return rows, nil
+}
+
+type tikvRegionPeersRetriever struct {
+	dummyCloser
+	extractor *plannercore.TikvRegionPeersExtractor
+	retrieved bool
+}
+
+func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+	e.retrieved = true
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
+	regionMap := make(map[int64]*helper.RegionInfo)
+	storeMap := make(map[int64]struct{})
+
+	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
+		regionsInfo, err := tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return nil, err
+		}
+		return e.packTiKVRegionPeersRows(regionsInfo.Regions, storeMap)
+	}
+
+	for _, storeID := range e.extractor.StoreIDs {
+		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id,
+		// storeMap is used to filter peers on unexpected stores.
+		storeMap[int64(storeID)] = struct{}{}
+		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
+		if err != nil {
+			return nil, err
+		}
+		for i, regionInfo := range storeRegionsInfo.Regions {
+			// regionMap is used to remove dup regions and record the region in regionsInfoByStoreID.
+			if _, ok := regionMap[regionInfo.ID]; !ok {
+				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
+				regionMap[regionInfo.ID] = &storeRegionsInfo.Regions[i]
+			}
+		}
+	}
+
+	if len(e.extractor.RegionIDs) == 0 {
+		return e.packTiKVRegionPeersRows(regionsInfoByStoreID, storeMap)
+	}
+
+	for _, regionID := range e.extractor.RegionIDs {
+		regionInfoByStoreID, ok := regionMap[int64(regionID)]
+		if !ok {
+			// if there is storeIDs, target region_id is fetched by storeIDs,
+			// otherwise we need to fetch it from PD.
+			if len(e.extractor.StoreIDs) == 0 {
+				regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+				if err != nil {
+					return nil, err
+				}
+				regionsInfo = append(regionsInfo, *regionInfo)
+			}
+		} else {
+			regionsInfo = append(regionsInfo, *regionInfoByStoreID)
+		}
+	}
+
+	return e.packTiKVRegionPeersRows(regionsInfo, storeMap)
+}
+
+func (e *tikvRegionPeersRetriever) isUnexpectedStoreID(storeID int64, storeMap map[int64]struct{}) bool {
+	if len(e.extractor.StoreIDs) == 0 {
+		return false
+	}
+	if _, ok := storeMap[storeID]; ok {
+		return false
+	}
+	return true
+}
+
+func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
+	regionsInfo []helper.RegionInfo, storeMap map[int64]struct{}) ([][]types.Datum, error) {
+	//nolint: prealloc
+	var rows [][]types.Datum
+	for _, region := range regionsInfo {
+		records := make([][]types.Datum, 0, len(region.Peers))
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range region.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64, len(region.DownPeers))
+		for _, peerStat := range region.DownPeers {
+			downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
+		}
+		for _, peer := range region.Peers {
+			// isUnexpectedStoreID return true if we should filter this peer.
+			if e.isUnexpectedStoreID(peer.StoreID, storeMap) {
+				continue
+			}
+
+			row := make([]types.Datum, len(infoschema.GetTableTiKVRegionPeersCols()))
+			row[0].SetInt64(region.ID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
+			if peer.IsLearner {
+				row[3].SetInt64(1)
+			} else {
+				row[3].SetInt64(0)
+			}
+			if peer.ID == region.Leader.ID {
+				row[4].SetInt64(1)
+			} else {
+				row[4].SetInt64(0)
+			}
+			if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[5].SetString(downPeer, mysql.DefaultCollationName)
+				row[6].SetInt64(downSec)
+			} else if pendingPeerIDSet.Exist(peer.ID) {
+				row[5].SetString(pendingPeer, mysql.DefaultCollationName)
+			} else {
+				row[5].SetString(normalPeer, mysql.DefaultCollationName)
+			}
+			records = append(records, row)
+		}
+		rows = append(rows, records...)
+	}
 	return rows, nil
 }

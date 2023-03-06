@@ -13,13 +13,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/config"
+	tidbutils "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +36,14 @@ var (
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
+		"mysql.user",
+		"mysql.db",
+		"mysql.tables_priv",
+		"mysql.columns_priv",
+		"mysql.global_priv",
+		"mysql.global_grants",
+		"mysql.default_roles",
+		"mysql.role_edges",
 		"!sys.*",
 		"!INFORMATION_SCHEMA.*",
 		"!PERFORMANCE_SCHEMA.*",
@@ -111,9 +120,8 @@ func Init(cmd *cobra.Command) (err error) {
 			// otherwise the info will be print in stdout...
 			tidbLogCfg.File.Filename = timestampLogFileName()
 		} else {
-			// Disable annoying TiDB Log.
-			// TODO: some error logs outputs randomly, we need to fix them in TiDB.
-			tidbLogCfg.Level = "fatal"
+			// Don't print slow log in br
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
 		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {

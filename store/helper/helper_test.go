@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
 
 func TestHotRegion(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -72,8 +73,7 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
@@ -83,8 +83,7 @@ func TestGetRegionsTableInfo(t *testing.T) {
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -96,8 +95,7 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
-	store, clean := createMockStore(t)
-	defer clean()
+	store := createMockStore(t)
 
 	h := helper.Helper{
 		Store:       store,
@@ -139,7 +137,7 @@ func (s *mockStore) Describe() string {
 	return ""
 }
 
-func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
+func createMockStore(t *testing.T) (store helper.Storage) {
 	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
@@ -154,10 +152,11 @@ func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
 		[]string{"invalid_pd_address", server.URL[len("http://"):]},
 	}
 
-	clean = func() {
+	t.Cleanup(func() {
 		server.Close()
+		view.Stop()
 		require.NoError(t, store.Close())
-	}
+	})
 
 	return
 }
@@ -201,7 +200,6 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("write http response failed", zap.Error(err))
 	}
-
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {
@@ -437,11 +435,9 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 func TestComputeTiFlashStatus(t *testing.T) {
 	regionReplica := make(map[int64]int)
 	// There are no region in this TiFlash store.
-	resp1 := "0\n\n"
-	// There are one region 1009 in this TiFlash store.
-	resp2 := "1\n1009 1010 \n"
-	br1 := bufio.NewReader(strings.NewReader(resp1))
-	br2 := bufio.NewReader(strings.NewReader(resp2))
+	br1 := bufio.NewReader(strings.NewReader("0\n\n"))
+	// There are 2 regions 1009/1010 in this TiFlash store.
+	br2 := bufio.NewReader(strings.NewReader("2\n1009 1010 \n"))
 	err := helper.ComputeTiFlashStatus(br1, &regionReplica)
 	require.NoError(t, err)
 	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
@@ -453,6 +449,19 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	v, ok = regionReplica[1010]
 	require.Equal(t, v, 1)
 	require.Equal(t, ok, true)
+
+	regionReplica2 := make(map[int64]int)
+	var sb strings.Builder
+	for i := 1000; i < 3000; i++ {
+		sb.WriteString(fmt.Sprintf("%v ", i))
+	}
+	s := fmt.Sprintf("2000\n%v\n", sb.String())
+	require.NoError(t, helper.ComputeTiFlashStatus(bufio.NewReader(strings.NewReader(s)), &regionReplica2))
+	require.Equal(t, 2000, len(regionReplica2))
+	for i := 1000; i < 3000; i++ {
+		_, ok := regionReplica2[int64(i)]
+		require.True(t, ok)
+	}
 }
 
 // TestTableRange tests the first part of GetPDRegionStats.

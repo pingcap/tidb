@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 create database collation_agg_func;
 use collation_agg_func;
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
@@ -132,13 +133,13 @@ approx_count_distinct(value collate utf8mb4_bin, value1)
 create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
 insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
 insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
-Error 1265: Data truncated for column 'b' at row 1
+Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
-Error 1265: Data truncated for column 'b' at row 1
+Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
-Error 1265: Data truncated for column 'b' at row 1
+Error 1265 (01000): Data truncated for column 'b' at row 1
 split table tt by (0), (1), (2), (3), (4), (5);
 desc format='brief' select min(a) from tt;
 id	estRows	task	access object	operator info
@@ -148,9 +149,18 @@ StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
     └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
       └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
         └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-select min(a) from tt;
-min(a)
-B
+desc format='brief' select lower(min(a)) from tt;
+id	estRows	task	access object	operator info
+Projection	1.00	root		lower(Column#6)->Column#7
+└─StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
+  └─TopN	1.00	root		collation_agg_func.tt.a, offset:0, count:1
+    └─TableReader	1.00	root		data:TopN
+      └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
+        └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
+          └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+select lower(min(a)) from tt;
+lower(min(a))
+b
 desc format='brief' select min(a collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
@@ -200,11 +210,9 @@ select min(b) from tt;
 min(b)
 B
 desc format='brief' select min(b collate utf8mb4_bin) from tt;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
-└─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:min(cast(collation_agg_func.tt.b, enum('a','B','c')))->Column#8
-    └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
+select min(b collate utf8mb4_bin) from tt;
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select max(b) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
@@ -215,11 +223,9 @@ select max(b) from tt;
 max(b)
 c
 desc format='brief' select max(b collate utf8mb4_bin) from tt;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
-└─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:max(cast(collation_agg_func.tt.b, enum('a','B','c')))->Column#8
-    └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
+select max(b collate utf8mb4_bin) from tt;
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select min(c) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:min(collation_agg_func.tt.c)->Column#6
@@ -229,11 +235,9 @@ select min(c) from tt;
 min(c)
 B
 desc format='brief' select min(c collate utf8mb4_bin) from tt;
-id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:min(Column#7)->Column#6
-└─Projection	10000.00	root		cast(collation_agg_func.tt.c, set('a','B','c'))->Column#7
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
+select min(c collate utf8mb4_bin) from tt;
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select max(c) from tt;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:max(collation_agg_func.tt.c)->Column#6
@@ -243,11 +247,9 @@ select max(c) from tt;
 max(c)
 c
 desc format='brief' select max(c collate utf8mb4_bin) from tt;
-id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:max(Column#7)->Column#6
-└─Projection	10000.00	root		cast(collation_agg_func.tt.c, set('a','B','c'))->Column#7
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
+select max(c collate utf8mb4_bin) from tt;
+Error 1235 (42000): This version of TiDB doesn't yet support 'use collate clause for enum or set'
 desc format='brief' select min(d) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.d)->Column#6
@@ -262,13 +264,13 @@ min(d)
 desc format='brief' select min(d collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6
-└─Projection	1.00	root		cast(collation_agg_func.tt.d, json BINARY)->Column#8
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
   └─Projection	1.00	root		collation_agg_func.tt.d
     └─TopN	1.00	root		Column#7, offset:0, count:1
-      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, json BINARY)->Column#7
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
         └─TableReader	1.00	root		data:TopN
-          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY), offset:0, count:1
-            └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)))
               └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select min(d collate utf8mb4_bin) from tt;
 min(d collate utf8mb4_bin)
@@ -287,13 +289,13 @@ max(d)
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(Column#8)->Column#6
-└─Projection	1.00	root		cast(collation_agg_func.tt.d, json BINARY)->Column#8
+└─Projection	1.00	root		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
   └─Projection	1.00	root		collation_agg_func.tt.d
     └─TopN	1.00	root		Column#7:desc, offset:0, count:1
-      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, json BINARY)->Column#7
+      └─Projection	1.00	root		collation_agg_func.tt.d, cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
         └─TableReader	1.00	root		data:TopN
-          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, json BINARY):desc, offset:0, count:1
-            └─Selection	8000.00	cop[tikv]		not(isnull(cast(cast(collation_agg_func.tt.d, json BINARY), var_string(4294967295))))
+          └─TopN	1.00	cop[tikv]		cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin):desc, offset:0, count:1
+            └─Selection	8000.00	cop[tikv]		not(isnull(cast(collation_agg_func.tt.d, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)))
               └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 select max(d collate utf8mb4_bin) from tt;
 max(d collate utf8mb4_bin)

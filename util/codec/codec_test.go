@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
@@ -521,13 +520,13 @@ func TestBytes(t *testing.T) {
 
 func parseTime(t *testing.T, s string) types.Time {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
+	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp, nil)
 	require.NoError(t, err)
 	return m
 }
 
 func parseDuration(t *testing.T, s string) types.Duration {
-	m, err := types.ParseDuration(nil, s, types.DefaultFsp)
+	m, _, err := types.ParseDuration(nil, s, types.DefaultFsp)
 	require.NoError(t, err)
 	return m
 }
@@ -802,7 +801,7 @@ func TestJSON(t *testing.T) {
 	originalDatums := make([]types.Datum, 0, len(tbl))
 	for _, jsonDatum := range tbl {
 		var d types.Datum
-		j, err := json.ParseBinaryFromString(jsonDatum)
+		j, err := types.ParseBinaryJSONFromString(jsonDatum)
 		require.NoError(t, err)
 		d.SetMysqlJSON(j)
 		originalDatums = append(originalDatums, d)
@@ -869,8 +868,12 @@ func TestCut(t *testing.T) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 		{
-			types.MakeDatums(json.CreateBinary("abc")),
-			types.MakeDatums(json.CreateBinary("abc")),
+			types.MakeDatums(types.CreateBinaryJSON("abc")),
+			types.MakeDatums(types.CreateBinaryJSON("abc")),
+		},
+		{
+			types.MakeDatums(types.CreateBinaryJSON(types.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+			types.MakeDatums(types.CreateBinaryJSON(types.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -960,7 +963,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 				require.True(t, expect.IsNull())
 			} else {
 				if got.Kind() != types.KindMysqlDecimal {
-					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.Collate))
+					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.GetCollate()))
 					require.NoError(t, err)
 					require.Equalf(t, 0, cmp, "expect: %v, got %v", expect, got)
 				} else {
@@ -983,21 +986,29 @@ func TestHashGroup(t *testing.T) {
 
 	buf1 := make([][]byte, 3)
 	tp1 := tp
-	tp1.Flen = 20
-	tp1.Decimal = 5
+	tp1.SetFlen(20)
+	tp1.SetDecimal(5)
 	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
 	require.Error(t, err)
 
 	tp2 := tp
-	tp2.Flen = 12
-	tp2.Decimal = 10
+	tp2.SetFlen(12)
+	tp2.SetDecimal(10)
 	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
 	require.Error(t, err)
 }
 
 func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
-	decType.Decimal = 2
+	decType.SetDecimal(2)
+	_tp1 := types.NewFieldType(mysql.TypeEnum)
+	_tp1.SetElems([]string{"a"})
+	_tp2 := types.NewFieldType(mysql.TypeSet)
+	_tp2.SetElems([]string{"a"})
+	_tp3 := types.NewFieldType(mysql.TypeSet)
+	_tp3.SetElems([]string{"a", "b", "c", "d", "e", "f"})
+	_tp4 := types.NewFieldType(mysql.TypeBit)
+	_tp4.SetFlen(8)
 	table := []struct {
 		value interface{}
 		tp    *types.FieldType
@@ -1036,11 +1047,11 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
-		{types.Enum{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
-		{types.Set{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
-		{types.Set{Name: "f", Value: 32}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a", "b", "c", "d", "e", "f"}}},
-		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
-		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
+		{types.Enum{Name: "a", Value: 1}, _tp1},
+		{types.Set{Name: "a", Value: 1}, _tp2},
+		{types.Set{Name: "f", Value: 32}, _tp3},
+		{types.BinaryLiteral{100}, _tp4},
+		{types.CreateBinaryJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
@@ -1176,6 +1187,9 @@ func TestHashChunkRow(t *testing.T) {
 
 	testHashChunkRowEqual(t, "x", []byte("x"), true)
 	testHashChunkRowEqual(t, "x", []byte("y"), false)
+
+	testHashChunkRowEqual(t, types.CreateBinaryJSON(int64(1)), types.CreateBinaryJSON(float64(1.0)), true)
+	testHashChunkRowEqual(t, types.CreateBinaryJSON(uint64(math.MaxUint64)), types.CreateBinaryJSON(float64(math.MaxUint64)), false)
 }
 
 func TestValueSizeOfSignedInt(t *testing.T) {

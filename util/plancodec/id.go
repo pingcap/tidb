@@ -57,6 +57,8 @@ const (
 	TypeExchangeSender = "ExchangeSender"
 	// TypeExchangeReceiver is the type of mpp exchanger receiver.
 	TypeExchangeReceiver = "ExchangeReceiver"
+	// TypeExpand is the type of mpp expand source operator.
+	TypeExpand = "Expand"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
@@ -127,6 +129,10 @@ const (
 	TypeCTE = "CTEFullScan"
 	// TypeCTEDefinition is the type of CTE definition
 	TypeCTEDefinition = "CTE"
+	// TypeForeignKeyCheck is the type of FKCheck
+	TypeForeignKeyCheck = "Foreign_Key_Check"
+	// TypeForeignKeyCascade is the type of FKCascade
+	TypeForeignKeyCascade = "Foreign_Key_Cascade"
 )
 
 // plan id.
@@ -174,16 +180,22 @@ const (
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
 	typeTableSampleID         int = 42
-	typeTableFullScan         int = 43
-	typeTableRangeScan        int = 44
-	typeTableRowIDScan        int = 45
-	typeIndexFullScan         int = 46
-	typeIndexRangeScan        int = 47
-	typeExchangeReceiver      int = 48
-	typeExchangeSender        int = 49
-	typeCTE                   int = 50
-	typeCTEDefinition         int = 51
-	typeCTETable              int = 52
+	typeTableFullScanID       int = 43
+	typeTableRangeScanID      int = 44
+	typeTableRowIDScanID      int = 45
+	typeIndexFullScanID       int = 46
+	typeIndexRangeScanID      int = 47
+	typeExchangeReceiverID    int = 48
+	typeExchangeSenderID      int = 49
+	typeCTEID                 int = 50
+	typeCTEDefinitionID       int = 51
+	typeCTETableID            int = 52
+	typePartitionUnionID      int = 53
+	typeShuffleID             int = 54
+	typeShuffleReceiverID     int = 55
+	typeForeignKeyCheck       int = 56
+	typeForeignKeyCascade     int = 57
+	typeExpandID              int = 58
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -207,6 +219,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeJoinID
 	case TypeUnion:
 		return typeUnionID
+	case TypePartitionUnion:
+		return typePartitionUnionID
 	case TypeTableScan:
 		return typeTableScanID
 	case TypeMemTableScan:
@@ -255,6 +269,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexReaderID
 	case TypeWindow:
 		return typeWindowID
+	case TypeShuffle:
+		return typeShuffleID
+	case TypeShuffleReceiver:
+		return typeShuffleReceiverID
 	case TypeTiKVSingleGather:
 		return typeTiKVSingleGatherID
 	case TypeIndexMerge:
@@ -274,25 +292,31 @@ func TypeStringToPhysicalID(tp string) int {
 	case TypeTableSample:
 		return typeTableSampleID
 	case TypeTableFullScan:
-		return typeTableFullScan
+		return typeTableFullScanID
 	case TypeTableRangeScan:
-		return typeTableRangeScan
+		return typeTableRangeScanID
 	case TypeTableRowIDScan:
-		return typeTableRowIDScan
+		return typeTableRowIDScanID
 	case TypeIndexFullScan:
-		return typeIndexFullScan
+		return typeIndexFullScanID
 	case TypeIndexRangeScan:
-		return typeIndexRangeScan
+		return typeIndexRangeScanID
 	case TypeExchangeReceiver:
-		return typeExchangeReceiver
+		return typeExchangeReceiverID
 	case TypeExchangeSender:
-		return typeExchangeSender
+		return typeExchangeSenderID
 	case TypeCTE:
-		return typeCTE
+		return typeCTEID
 	case TypeCTEDefinition:
-		return typeCTEDefinition
+		return typeCTEDefinitionID
 	case TypeCTETable:
-		return typeCTETable
+		return typeCTETableID
+	case TypeForeignKeyCheck:
+		return typeForeignKeyCheck
+	case TypeForeignKeyCascade:
+		return typeForeignKeyCascade
+	case TypeExpand:
+		return typeExpandID
 	}
 	// Should never reach here.
 	return 0
@@ -319,6 +343,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeJoin
 	case typeUnionID:
 		return TypeUnion
+	case typePartitionUnionID:
+		return TypePartitionUnion
 	case typeTableScanID:
 		return TypeTableScan
 	case typeMemTableScanID:
@@ -367,6 +393,10 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexReader
 	case typeWindowID:
 		return TypeWindow
+	case typeShuffleID:
+		return TypeShuffle
+	case typeShuffleReceiverID:
+		return TypeShuffleReceiver
 	case typeTiKVSingleGatherID:
 		return TypeTiKVSingleGather
 	case typeIndexMergeID:
@@ -379,30 +409,38 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeBatchPointGet
 	case typeClusterMemTableReader:
 		return TypeClusterMemTableReader
+	case typeDataSourceID:
+		return TypeDataSource
 	case typeLoadDataID:
 		return TypeLoadData
 	case typeTableSampleID:
 		return TypeTableSample
-	case typeTableFullScan:
+	case typeTableFullScanID:
 		return TypeTableFullScan
-	case typeTableRangeScan:
+	case typeTableRangeScanID:
 		return TypeTableRangeScan
-	case typeTableRowIDScan:
+	case typeTableRowIDScanID:
 		return TypeTableRowIDScan
-	case typeIndexFullScan:
+	case typeIndexFullScanID:
 		return TypeIndexFullScan
-	case typeIndexRangeScan:
+	case typeIndexRangeScanID:
 		return TypeIndexRangeScan
-	case typeExchangeReceiver:
+	case typeExchangeReceiverID:
 		return TypeExchangeReceiver
-	case typeExchangeSender:
+	case typeExchangeSenderID:
 		return TypeExchangeSender
-	case typeCTE:
+	case typeCTEID:
 		return TypeCTE
-	case typeCTEDefinition:
+	case typeCTEDefinitionID:
 		return TypeCTEDefinition
-	case typeCTETable:
+	case typeCTETableID:
 		return TypeCTETable
+	case typeForeignKeyCheck:
+		return TypeForeignKeyCheck
+	case typeForeignKeyCascade:
+		return TypeForeignKeyCascade
+	case typeExpandID:
+		return TypeExpand
 	}
 
 	// Should never reach here.
