@@ -812,6 +812,7 @@ func (e *LoadDataWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]ty
 			if err != nil {
 				return err
 			}
+			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 		}
 		return nil
 	default:
