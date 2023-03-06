@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -390,11 +391,11 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
-		if r.pos < 0 && realOffset >= 0 {
+		if realOffset < 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
 		}
 	case io.SeekEnd:
-		if offset >= 0 {
+		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset + r.totalSize
@@ -411,8 +412,13 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	if r.reader != nil {
 		_ = r.reader.Close()
+		r.reader = nil
 	}
 	r.pos = realOffset
+	if realOffset >= r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return realOffset, nil
+	}
 	rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
 	if err != nil {
 		return 0, errors.Annotatef(err,
