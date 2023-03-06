@@ -338,7 +338,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	}
 	err = completeInsertErr(c, val, rowIdx, err)
 
-	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+	// TODO: why we rely on DupKeyAsWarning here?
+	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && !e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
 		return err
 	}
 	// TODO: should not filter all types of errors here.

@@ -876,8 +876,12 @@ func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) err
 		if err != nil {
 			return err
 		}
-		e.rows = append(e.rows, r)
-		e.curBatchCnt++
+		if r != nil {
+			e.rows = append(e.rows, r)
+			e.curBatchCnt++
+		} else {
+			e.rowCount--
+		}
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
 				zap.Uint64("totalRows", e.rowCount))
