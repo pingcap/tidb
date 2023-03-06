@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -146,7 +147,7 @@ func (ei *engineInfo) ImportAndClean() error {
 // WriterContext is used to keep a lightning local writer for each backfill worker.
 type WriterContext struct {
 	ctx    context.Context
-	rowSeq func() int64
+	unique bool
 	lWrite *backend.LocalEngineWriter
 }
 
@@ -191,12 +192,8 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 	}
 	wc := &WriterContext{
 		ctx:    ei.ctx,
+		unique: unique,
 		lWrite: lWrite,
-	}
-	if unique {
-		wc.rowSeq = func() int64 {
-			return ei.rowSeq.Add(1)
-		}
 	}
 	return wc, nil
 }
@@ -218,12 +215,12 @@ func (ei *engineInfo) closeWriters() error {
 }
 
 // WriteRow Write one row into local writer buffer.
-func (wCtx *WriterContext) WriteRow(key, idxVal []byte) error {
+func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
-	if wCtx.rowSeq != nil {
-		kvs[0].RowID = wCtx.rowSeq()
+	if wCtx.unique {
+		kvs[0].RowID = handle.Encoded()
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
