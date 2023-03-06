@@ -385,25 +385,20 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	var realOffset int64
 	switch whence {
 	case io.SeekStart:
-		if offset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
-		}
 		realOffset = offset
 	case io.SeekCurrent:
 		realOffset = r.pos + offset
-		if realOffset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
-		}
 	case io.SeekEnd:
 		if offset > 0 {
 			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
 		}
 		realOffset = offset + r.totalSize
-		if realOffset < 0 {
-			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range when length is '%v'", offset, r.totalSize)
-		}
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'. total size is '%v'", offset, r.pos, r.totalSize)
 	}
 
 	if realOffset == r.pos {

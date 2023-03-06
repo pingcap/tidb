@@ -239,9 +239,9 @@ func TestGCS(t *testing.T) {
 	_, err = efr.Read(p)
 	require.Contains(t, err.Error(), "EOF")
 
-	offs, err = efr.Seek(int64(0), io.SeekCurrent)
+	offs, err = efr.Seek(int64(1), io.SeekCurrent)
 	require.NoError(t, err)
-	require.Equal(t, int64(len(key2Data)), offs)
+	require.Equal(t, int64(len(key2Data)+1), offs)
 	_, err = efr.Read(p)
 	require.Contains(t, err.Error(), "EOF")
 
