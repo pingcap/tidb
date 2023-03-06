@@ -312,3 +312,23 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID int64, state string, eq b
 
 	return rs[0].GetInt64(0), nil
 }
+
+func (stm *SubTaskManager) CheckTaskStates(globalTaskID int64, eq bool, states ...string) (cnt int64, err error) {
+	stm.mu.Lock()
+	defer stm.mu.Unlock()
+
+	query := "select count(*) from mysql.tidb_sub_task where task_id = %?"
+	for i := 0; i < len(states); i++ {
+		if eq {
+			query += " and state = %?"
+		} else {
+			query += " and state != %?"
+		}
+	}
+	rs, err := ExecSQL(stm.ctx, stm.se, query, globalTaskID, states)
+	if err != nil {
+		return 0, err
+	}
+
+	return rs[0].GetInt64(0), nil
+}

@@ -65,6 +65,13 @@ func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
 	return d.runningGlobalTasks.tasks
 }
 
+func (d *dispatcher) isRunningGlobalTask(gTask *proto.Task) bool {
+	d.runningGlobalTasks.RLock()
+	defer d.runningGlobalTasks.RUnlock()
+	_, ok := d.runningGlobalTasks.tasks[gTask.ID]
+	return ok
+}
+
 func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
@@ -89,17 +96,17 @@ func (d *dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskE
 		return false, "failed"
 	}
 
-	// Suppose that the task pending = 0 means that all subtask finish.
-	cnt, err = d.subTaskMgr.CheckTaskState(gTask.ID, proto.TaskStatePending, true)
+	// Suppose that the tasks are succeed or reverted  means that all subtask finish.
+	cnt, err = d.subTaskMgr.CheckTaskStates(gTask.ID, false, proto.TaskStateSucceed, proto.TaskStateReverted)
 	if err != nil {
 		logutil.BgLogger().Warn("check task failed", zap.Error(err))
 		return false, ""
 	}
-	if cnt == 0 {
-		return true, ""
+	if cnt > 0 {
+		return false, ""
 	}
 
-	return false, ""
+	return true, ""
 }
 
 // DetectionTaskLoop monitors the status of the subtasks.
@@ -119,7 +126,7 @@ func (d *dispatcher) DetectionTaskLoop() {
 				if errStr != "" {
 					d.handleError(gTask, errStr)
 				} else if stepIsFinished {
-					logutil.BgLogger().Info("a step of task finished", zap.Int64("taskID", int64(gTask.ID)))
+					logutil.BgLogger().Info("a step of task finished", zap.Int64("taskID", gTask.ID))
 					d.loadTaskAndProgress(gTask, false)
 				}
 			}
@@ -128,9 +135,18 @@ func (d *dispatcher) DetectionTaskLoop() {
 }
 
 func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) {
+	defer d.delRunningGlobalTasks(gTask.ID)
 	err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
+		// TODO: Consider retry
+	}
+
+	gTask.State = proto.TaskStateReverted
+	err = d.gTaskMgr.UpdateTask(gTask)
+	if err != nil {
+		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+		// TODO: Consider retry
 	}
 }
 
@@ -153,13 +169,10 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 		gTask.State = proto.TaskStateSucceed
 	}
 
-	// Special handling for the new/finished tasks.
-	if gTask.State == proto.TaskStateSucceed {
-		d.delRunningGlobalTasks(gTask.ID)
-		_ = d.subTaskMgr.DeleteTasks(gTask.ID)
-	} else if gTask.State == proto.TaskStatePending {
+	// Special handling for the new tasks.
+	// About TaskStateSucceed gTask, we consider keeping records first.
+	if gTask.State == proto.TaskStatePending {
 		gTask.StartTime = time.Now()
-		d.setRunningGlobalTasks(gTask)
 		gTask.State = proto.TaskStateRunning
 	}
 
@@ -171,6 +184,7 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 	}
 
 	if finished {
+		d.delRunningGlobalTasks(gTask.ID)
 		return nil
 	}
 
@@ -212,7 +226,14 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if gTask == nil {
 					break
 				}
-				d.loadTaskAndProgress(gTask, true)
+				if d.isRunningGlobalTask(gTask) {
+					break
+				}
+				err = d.loadTaskAndProgress(gTask, true)
+				if err != nil {
+					d.delRunningGlobalTasks(gTask.ID)
+				}
+				d.setRunningGlobalTasks(gTask)
 				cnt++
 			}
 		}
