@@ -18,6 +18,7 @@ TiDB lightning is a tool used for importing data at TB scale to TiDB clusters. I
 - Supporting many file formats like mydumper-like dump files, parquet
 - Supporting read files from cloud storage like S3
 - Very high importing speed when use [physical import mode](https://docs.pingcap.com/tidb/stable/tidb-lightning-physical-import-mode)
+In the context of this RFC we always mean TiDB lightning's physical import mode when refer to TiDB lightning.
 
 Although they both have some advantanges, merely one of them is limited in data loading sceario. For example, the user tends to load large amount of data using TiDB lightning considering the performance, but if the TiDB cluster is deployed in k8s TiDB lightning need to be launched in a k8s pod to access the cluster. This introduces many problems, and LOAD DATA only requires the user to execute a SQL through MySQL client.
 
@@ -84,6 +85,10 @@ The *data parser* output the data of one row in the type of `[]types.Datum`, the
 
 The *load data worker* owns a `InsertValues`, which can be used to encode the data to KV pairs. `InsertValues` is also used by other INSERT-like statements, it has more maintenance that lightning's separated KV encoder. Reusing it rather than lightning's one can prevent bugs that caused by lightning's encoding behaviour is outdated, for example, [#41454](https://github.com/pingcap/tidb/issues/41454).
 
+The *KV encoder* receives the data from *data parser* in the type of `[]types.Datum`, converts it to table data with the table schema, and encoding it to KV pairs. After encoding, *KV encoder* will save the result in the type of `[]byte` in the memory buffer of current session's active transaction.
+
 ### KV writer
+
+Currently LOAD DATA and TiDB lightning represent two ways to write data, LOAD DATA writes KV pairs in the way of a general transaction KV, while TiDB lightning write a larger mount KV pairs by ingesting SST files to underlying RocksDB at TiKV's side. 
 
 ## Other Issues
