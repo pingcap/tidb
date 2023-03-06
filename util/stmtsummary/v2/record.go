@@ -656,10 +656,12 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 			Tables:     tables,
 			IndexNames: indexes,
 		},
-		MemMax:    10000,
-		DiskMax:   10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
-		Succeed:   true,
+		MemMax:       10000,
+		DiskMax:      10000,
+		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		Succeed:      true,
+		KeyspaceName: "keyspace_a",
+		KeyspaceID:   1,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
