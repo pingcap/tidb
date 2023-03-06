@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -46,7 +46,7 @@ type restoreSchemaSuite struct {
 	rc               *Controller
 	controller       *gomock.Controller
 	tableInfos       []*model.TableInfo
-	infoGetter       *PreRestoreInfoGetterImpl
+	infoGetter       *PreImportInfoGetterImpl
 	targetInfoGetter *TargetInfoGetterImpl
 }
 
@@ -111,7 +111,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg: config,
 	}
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              config,
 		srcStorage:       store,
 		targetInfoGetter: targetInfoGetter,

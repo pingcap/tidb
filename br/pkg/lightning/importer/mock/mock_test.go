@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -103,7 +103,7 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ti := NewMockTargetInfo()
-	var _ restore.TargetInfoGetter = ti
+	var _ importer.TargetInfoGetter = ti
 	const replicaCount = 3
 	const emptyRegionCount = 5
 	const s01TotalSize uint64 = 10 << 30

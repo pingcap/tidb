@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -46,7 +48,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-type TableRestore struct {
+type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
 	dbInfo    *checkpoints.TidbDBInfo
@@ -60,7 +62,7 @@ type TableRestore struct {
 	ignoreColumns map[string]struct{}
 }
 
-func NewTableRestore(
+func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
 	dbInfo *checkpoints.TidbDBInfo,
@@ -69,14 +71,14 @@ func NewTableRestore(
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
 	logger log.Logger,
-) (*TableRestore, error) {
+) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
 
-	return &TableRestore{
+	return &TableImporter{
 		tableName:     tableName,
 		dbInfo:        dbInfo,
 		tableInfo:     tableInfo,
@@ -89,12 +91,121 @@ func NewTableRestore(
 	}, nil
 }
 
-func (tr *TableRestore) Close() {
+func (tr *TableImporter) importTable(
+	ctx context.Context,
+	rc *Controller,
+	cp *checkpoints.TableCheckpoint,
+) (bool, error) {
+	// 1. Load the table info.
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
+	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
+	// no need to do anything if the chunks are already populated
+	if len(cp.Engines) > 0 {
+		tr.logger.Info("reusing engines and files info from checkpoint",
+			zap.Int("enginesCnt", len(cp.Engines)),
+			zap.Int("filesCnt", cp.CountChunks()),
+		)
+		err := addExtendDataForCheckpoint(ctx, rc.cfg, cp)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
+		if err := tr.populateChunks(ctx, rc, cp); err != nil {
+			return false, errors.Trace(err)
+		}
+
+		// fetch the max chunk row_id max value as the global max row_id
+		rowIDMax := int64(0)
+		for _, engine := range cp.Engines {
+			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
+				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
+			}
+		}
+		db, _ := rc.tidbGlue.GetDB()
+		versionStr, err := version.FetchVersion(ctx, db)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		versionInfo := version.ParseServerInfo(versionStr)
+
+		// "show table next_row_id" is only available after tidb v4.0.0
+		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
+			// first, insert a new-line into meta table
+			if err = metaMgr.InitTableMeta(ctx); err != nil {
+				return false, err
+			}
+
+			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+			if err != nil {
+				return false, err
+			}
+			tr.RebaseChunkRowIDs(cp, rowIDBase)
+
+			if checksum != nil {
+				if cp.Checksum != *checksum {
+					cp.Checksum = *checksum
+					rc.saveCpCh <- saveCp{
+						tableName: tr.tableName,
+						merger: &checkpoints.TableChecksumMerger{
+							Checksum: cp.Checksum,
+						},
+					}
+				}
+				tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
+			}
+		}
+		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
+			return false, errors.Trace(err)
+		}
+		web.BroadcastTableCheckpoint(tr.tableName, cp)
+
+		// rebase the allocator so it exceeds the number of rows.
+		if tr.tableInfo.Core.ContainsAutoRandomBits() {
+			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+				return false, err
+			}
+		} else {
+			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+				return false, err
+			}
+		}
+		rc.saveCpCh <- saveCp{
+			tableName: tr.tableName,
+			merger: &checkpoints.RebaseCheckpointMerger{
+				AllocBase: cp.AllocBase,
+			},
+		}
+	}
+
+	// 2. Restore engines (if still needed)
+	err := tr.importEngines(ctx, rc, cp)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	err = metaMgr.UpdateTableStatus(ctx, metaStatusRestoreFinished)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
+}
+
+func (tr *TableImporter) Close() {
 	tr.encTable = nil
 	tr.logger.Info("restore done")
 }
 
-func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
+func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
 	chunks, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
@@ -144,7 +255,7 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
-func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+func (tr *TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -169,7 +280,7 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 //
 // The argument `columns` _must_ be in lower case.
-func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
+func (tr *TableImporter) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
 	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core, tr.logger)
 	if err != nil {
 		return err
@@ -212,10 +323,10 @@ func createColumnPermutation(
 	return colPerm, nil
 }
 
-func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
+func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
-		tr.logger.Error("fail to restoreEngines because indexengine is nil")
+		tr.logger.Error("fail to importEngines because indexengine is nil")
 		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
 	}
 
@@ -322,7 +433,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 				go func(w *worker.Worker, eid int32, ecp *checkpoints.EngineCheckpoint) {
 					defer wg.Done()
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-					dataClosedEngine, err := tr.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+					dataClosedEngine, err := tr.preprocessEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err == nil {
@@ -409,7 +520,11 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	return nil
 }
 
-func (tr *TableRestore) restoreEngine(
+// preprocessEngine do some preprocess work
+// for local backend, it do local sort, for tidb backend it transforms data into sql and execute
+// TODO: it's not a correct name for tidb backend, since there's no post-process for it
+// TODO: after separate local/tidb backend more clearly, rename it.
+func (tr *TableImporter) preprocessEngine(
 	pCtx context.Context,
 	rc *Controller,
 	indexEngine *backend.OpenedEngine,
@@ -546,7 +661,7 @@ ChunkLoop:
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
 			setError(err)
 			break
@@ -576,7 +691,7 @@ ChunkLoop:
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *worker.Worker, cr *chunkRestore) {
+		go func(w *worker.Worker, cr *chunkProcessor) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
@@ -586,7 +701,7 @@ ChunkLoop:
 			if metrics != nil {
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			}
-			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc)
+			err := cr.process(ctx, tr, engineID, dataWriter, indexWriter, rc)
 			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
@@ -700,7 +815,7 @@ ChunkLoop:
 	return closedDataEngine, nil
 }
 
-func (tr *TableRestore) importEngine(
+func (tr *TableImporter) importEngine(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
@@ -733,7 +848,7 @@ func (tr *TableRestore) importEngine(
 //
 // if the parameter forcePostProcess to true, postProcess force run checksum and analyze even if the
 // post-process-at-last config is true. And if this two phases are skipped, the first return value will be true.
-func (tr *TableRestore) postProcess(
+func (tr *TableImporter) postProcess(
 	ctx context.Context,
 	rc *Controller,
 	cp *checkpoints.TableCheckpoint,
@@ -993,7 +1108,7 @@ func parseColumnPermutations(
 	return colPerm, nil
 }
 
-func (tr *TableRestore) importKV(
+func (tr *TableImporter) importKV(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
@@ -1045,7 +1160,7 @@ func (tr *TableRestore) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
@@ -1060,7 +1175,7 @@ func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChe
 	return nil
 }
 
-func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
+func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)

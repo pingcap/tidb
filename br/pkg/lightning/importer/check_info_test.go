@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package importer
 
 import (
 	"context"
@@ -338,7 +338,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	}
 
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:        cfg,
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
@@ -455,7 +455,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg: cfg,
 	}
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              cfg,
 		dbMetas:          dbMetas,
 		targetInfoGetter: targetInfoGetter,
@@ -582,10 +582,10 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed", `return`)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/CheckTableEmptyFailed", `return`)
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/CheckTableEmptyFailed")
 	}()
 
 	// restrict the concurrency to ensure there are more tables than workers
@@ -612,7 +612,7 @@ func TestLocalResource(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = dir
 	cfg.TikvImporter.Backend = "local"
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
-	preInfoGetter := &PreRestoreInfoGetterImpl{
+	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:        cfg,
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,

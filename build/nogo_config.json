@@ -200,7 +200,7 @@
     "only_files": {
       "util/gctuner": "only for util/gctuner",
       "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "only for br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "only for br/pkg/lightning/importer/opts",
       "executor/aggregate.go": "only for executor/aggregate.go",
       "types/json_binary_functions.go": "only for types/json_binary_functions.go",
       "types/json_binary_test.go": "only for types/json_binary_test.go",
@@ -330,7 +330,7 @@
     },
     "only_files": {
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
@@ -359,7 +359,7 @@
     },
     "only_files": {
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
