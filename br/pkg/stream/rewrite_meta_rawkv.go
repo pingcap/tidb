@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -37,28 +38,37 @@ const (
 
 // SchemasReplace specifies schemas information mapping old schemas to new schemas.
 
+type RewriteStatus int
+
+const (
+	RewriteStatus_PreConsturctMap = iota
+	RewriteStatus_Run
+)
+
 type OldID = int64
 type NewID = int64
 
 type TableReplace struct {
-	OldTableInfo *model.TableInfo
+	Name         string
 	NewTableID   NewID
 	PartitionMap map[OldID]NewID
 	IndexMap     map[OldID]NewID
 }
-
 type DBReplace struct {
-	OldDBInfo *model.DBInfo
-	NewDBID   NewID
-	TableMap  map[OldID]*TableReplace
+	Name     string
+	NewDBID  NewID
+	TableMap map[OldID]*TableReplace
 }
 
 type SchemasReplace struct {
-	DbMap                     map[OldID]*DBReplace
-	globalTableIdMap          map[OldID]NewID
-	ingestRecorder            *ingestrec.IngestRecorder
-	RewriteTS                 uint64        // used to rewrite commit ts in meta kv.
-	TableFilter               filter.Filter // used to filter schema/table
+	Status           RewriteStatus
+	DbMap            map[OldID]*DBReplace
+	globalTableIdMap map[OldID]NewID
+
+	ingestRecorder *ingestrec.IngestRecorder
+	RewriteTS      uint64        // used to rewrite commit ts in meta kv.
+	TableFilter    filter.Filter // used to filter schema/table
+
 	genGenGlobalID            func(ctx context.Context) (int64, error)
 	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
@@ -68,9 +78,9 @@ type SchemasReplace struct {
 }
 
 // NewTableReplace creates a TableReplace struct.
-func NewTableReplace(tableInfo *model.TableInfo, newID NewID) *TableReplace {
+func NewTableReplace(name string, newID NewID) *TableReplace {
 	return &TableReplace{
-		OldTableInfo: tableInfo,
+		Name:         name,
 		NewTableID:   newID,
 		PartitionMap: make(map[OldID]NewID),
 		IndexMap:     make(map[OldID]NewID),
@@ -78,11 +88,11 @@ func NewTableReplace(tableInfo *model.TableInfo, newID NewID) *TableReplace {
 }
 
 // NewDBReplace creates a DBReplace struct.
-func NewDBReplace(dbInfo *model.DBInfo, newID NewID) *DBReplace {
+func NewDBReplace(name string, newID NewID) *DBReplace {
 	return &DBReplace{
-		OldDBInfo: dbInfo,
-		NewDBID:   newID,
-		TableMap:  make(map[OldID]*TableReplace),
+		Name:     name,
+		NewDBID:  newID,
+		TableMap: make(map[OldID]*TableReplace),
 	}
 }
 
@@ -97,7 +107,9 @@ func NewSchemasReplace(
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64),
 ) *SchemasReplace {
 	globalTableIdMap := make(map[OldID]NewID)
-	for _, dr := range dbMap {
+	for dbID, dr := range dbMap {
+		globalTableIdMap[dbID] = dr.NewDBID
+
 		for tblID, tr := range dr.TableMap {
 			globalTableIdMap[tblID] = tr.NewTableID
 			for oldpID, newpID := range tr.PartitionMap {
@@ -130,17 +142,23 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		return nil, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[dbID]
-	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, errors.Trace(err)
+	if sr.Status == RewriteStatus_PreConsturctMap {
+		if _, exist := sr.DbMap[dbID]; !exist {
+			newID, err := sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			sr.DbMap[dbID] = NewDBReplace("", newID)
 		}
-		dbReplace = NewDBReplace(nil, newID)
-		sr.DbMap[dbID] = dbReplace
+		return nil, nil
 	}
 
-	rawMetaKey.UpdateField(meta.DBkey(dbReplace.NewDBID))
+	dbMap, exist := sr.DbMap[dbID]
+	if !exist {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
+	}
+
+	rawMetaKey.UpdateField(meta.DBkey(dbMap.NewDBID))
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -153,27 +171,26 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[oldDBInfo.ID]
-	if !exist {
-		// If the schema has existed, don't need generate a new ID.
-		// Or we need a new ID to rewrite the dbID in kv entry.
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, errors.Trace(err)
+	if sr.Status == RewriteStatus_PreConsturctMap {
+		if dr, exist := sr.DbMap[oldDBInfo.ID]; !exist {
+			newID, err := sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			sr.DbMap[oldDBInfo.ID] = NewDBReplace(oldDBInfo.Name.O, newID)
+		} else {
+			dr.Name = oldDBInfo.Name.O
 		}
-
-		dbReplace = NewDBReplace(oldDBInfo, newID)
-		sr.DbMap[oldDBInfo.ID] = dbReplace
-	} else {
-		// update the old DBInfo, because we need save schemas at the end of 'restore point'.
-		dbReplace.OldDBInfo = oldDBInfo
+		return nil, nil
 	}
 
-	log.Debug("rewrite dbinfo", zap.String("dbName", dbReplace.OldDBInfo.Name.O),
-		zap.Int64("old ID", oldDBInfo.ID), zap.Int64("new ID", dbReplace.NewDBID))
+	dbMap, exist := sr.DbMap[oldDBInfo.ID]
+	if !exist {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", oldDBInfo.ID)
+	}
 
 	newDBInfo := oldDBInfo.Clone()
-	newDBInfo.ID = dbReplace.NewDBID
+	newDBInfo.ID = dbMap.NewDBID
 	newValue, err := json.Marshal(newDBInfo)
 	if err != nil {
 		return nil, err
@@ -218,7 +235,6 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 ) ([]byte, error) {
 	var (
 		err   error
-		newID int64
 		exist bool
 	)
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
@@ -236,32 +252,38 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		return nil, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[dbID]
+	dbMap, exist := sr.DbMap[dbID]
 	if !exist {
-		newID, err = sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		dbReplace = NewDBReplace(nil, newID)
-		sr.DbMap[dbID] = dbReplace
-	}
-
-	tableReplace, exist := dbReplace.TableMap[tableID]
-	if !exist {
-		newID, exist = sr.globalTableIdMap[tableID]
-		if !exist {
-			newID, err = sr.genGenGlobalID(context.Background())
+		if sr.Status == RewriteStatus_PreConsturctMap {
+			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			sr.globalTableIdMap[tableID] = newID
+			dbMap = NewDBReplace("", newID)
+			sr.DbMap[dbID] = dbMap
+			sr.globalTableIdMap[dbID] = newID
+		} else {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
-		tableReplace = NewTableReplace(nil, newID)
-		dbReplace.TableMap[tableID] = tableReplace
 	}
 
-	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.NewDBID))
-	rawMetaKey.UpdateField(encodeField(tableReplace.NewTableID))
+	tableMap, exist := dbMap.TableMap[tableID]
+	if !exist {
+		if sr.Status == RewriteStatus_PreConsturctMap {
+			newID, err := sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tableMap = NewTableReplace("", newID)
+			dbMap.TableMap[tableID] = tableMap
+			sr.globalTableIdMap[tableID] = newID
+		} else {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableID)
+		}
+	}
+
+	rawMetaKey.UpdateKey(meta.DBkey(dbMap.NewDBID))
+	rawMetaKey.UpdateField(encodeField(tableMap.NewTableID))
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -272,72 +294,65 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	var (
 		tableInfo model.TableInfo
 		err       error
-		newID     int64
-		exist     bool
 	)
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// update table ID
-	dbReplace, exist := sr.DbMap[dbID]
+	dbMap, exist := sr.DbMap[dbID]
 	if !exist {
-		newID, err = sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		dbReplace = NewDBReplace(nil, newID)
-		sr.DbMap[dbID] = dbReplace
-	}
-
-	tableReplace, exist := dbReplace.TableMap[tableInfo.ID]
-	if !exist {
-		newID, exist = sr.globalTableIdMap[tableInfo.ID]
-		if !exist {
-			newID, err = sr.genGenGlobalID(context.TODO())
+		if sr.Status == RewriteStatus_PreConsturctMap {
+			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			sr.globalTableIdMap[tableInfo.ID] = newID
+			dbMap = NewDBReplace("", newID)
+			sr.DbMap[dbID] = dbMap
+		} else {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
-
-		tableReplace = NewTableReplace(&tableInfo, newID)
-		dbReplace.TableMap[tableInfo.ID] = tableReplace
-	} else {
-		tableReplace.OldTableInfo = &tableInfo
 	}
 
-	log.Debug("rewrite tableInfo", zap.String("table-name", tableInfo.Name.String()),
-		zap.Int64("old ID", tableInfo.ID), zap.Int64("new ID", tableReplace.NewTableID))
+	tableMap, exist := dbMap.TableMap[tableInfo.ID]
+	if !exist {
+		if sr.Status == RewriteStatus_PreConsturctMap {
+			newID, err := sr.genGenGlobalID(context.Background())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tableMap = NewTableReplace(tableInfo.Name.O, newID)
+			dbMap.TableMap[tableInfo.ID] = tableMap
+		} else {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableInfo.ID)
+		}
+	}
 
 	newTableInfo := tableInfo.Clone()
-	if tableInfo.Partition != nil {
-		newTableInfo.Partition = tableInfo.Partition.Clone()
-	}
-	newTableInfo.ID = tableReplace.NewTableID
 
-	// update partition table ID
+	// update table ID and partition ID.
+	newTableInfo.ID = tableMap.NewTableID
 	partitions := newTableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			newID, exist = tableReplace.PartitionMap[tbl.ID]
+			newID, exist := tableMap.PartitionMap[tbl.ID]
 			if !exist {
-				newID, exist = sr.globalTableIdMap[tbl.ID]
-				if !exist {
+				if sr.Status == RewriteStatus_PreConsturctMap {
 					newID, err = sr.genGenGlobalID(context.Background())
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					sr.globalTableIdMap[tbl.ID] = newID
+					tableMap.PartitionMap[tbl.ID] = newID
+				} else {
+					return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tbl.ID)
 				}
-				tableReplace.PartitionMap[tbl.ID] = newID
 			}
-
-			log.Debug("update partition",
-				zap.String("partition-name", tbl.Name.String()),
-				zap.Int64("old-id", tbl.ID), zap.Int64("new-id", newID))
 			partitions.Definitions[i].ID = newID
 		}
+	}
+
+	if sr.Status == RewriteStatus_PreConsturctMap {
+		return nil, nil
 	}
 
 	// Force to disable TTL_ENABLE when restore
@@ -498,12 +513,12 @@ func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 // RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
-
 	if !IsMetaDBKey(e.Key) {
-		if cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
+		if sr.Status == RewriteStatus_Run && cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
-				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))
+				log.Debug("failed to decode the job", zap.String("error", err.Error()),
+					zap.String("job", string(e.Value)))
 				// The value in write-cf is like "p\XXXX\XXX" need not restore. skip it
 				// The value in default-cf that can Decode() need restore.
 				return nil, nil

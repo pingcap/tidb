@@ -1067,7 +1067,9 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 		return err
 	}
 	if len(tasks) > 0 {
-		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+		return errors.Errorf("log backup task is running: %s, "+
+			"please stop the task before restore, and after PITR operation finished, "+
+			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
 	}
 
 	// check cdc changefeed
@@ -1246,8 +1248,13 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	dbMaps, err := InitSchemasMap(ctx, cfg, client.GetClusterID(ctx))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// get the schemas ID replace information.
-	schemasReplace, err := client.InitSchemasReplaceForDDL(&fullBackupTables, cfg.TableFilter)
+	schemasReplace, err := client.InitSchemasReplaceForDDL(dbMaps, &fullBackupTables, cfg.TableFilter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1312,10 +1319,6 @@ func restoreStream(
 
 	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
-	}
-
-	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
-		return errors.Trace(err)
 	}
 
 	if err = client.InsertGCRows(ctx); err != nil {
@@ -1595,6 +1598,7 @@ func initFullBackupTables(
 
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
+
 	databases, err := utils.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1625,6 +1629,43 @@ func initFullBackupTables(
 	}
 
 	return tables, nil
+}
+
+func InitSchemasMap(
+	ctx context.Context,
+	cfg *RestoreConfig,
+	clusterID uint64,
+) ([]*backuppb.PitrDBMap, error) {
+	var storage string
+	if len(cfg.FullBackupStorage) > 0 {
+		storage = cfg.FullBackupStorage
+	} else {
+		storage = cfg.Storage
+	}
+	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	metaFileName := metautil.CreateMetaFileName(clusterID)
+	exist, err := s.FileExists(ctx, metaFileName)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
+	} else if !exist {
+		metaFileName = metautil.MetaFile
+	}
+
+	log.Info("read schemas", zap.String("backupmeta", metaFileName))
+	metaData, err := s.ReadFile(ctx, metaFileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return backupMeta.GetDbMaps(), nil
 }
 
 func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
@@ -1672,21 +1713,18 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 	filter := schemasReplace.TableFilter
 
 	for _, dbReplace := range schemasReplace.DbMap {
-		if dbReplace.OldDBInfo == nil ||
-			utils.IsSysDB(dbReplace.OldDBInfo.Name.O) ||
-			!filter.MatchSchema(dbReplace.OldDBInfo.Name.O) {
+		if utils.IsSysDB(dbReplace.Name) || !filter.MatchSchema(dbReplace.Name) {
 			continue
 		}
 
 		for oldTableID, tableReplace := range dbReplace.TableMap {
-			if tableReplace.OldTableInfo == nil ||
-				!filter.MatchTable(dbReplace.OldDBInfo.Name.O, tableReplace.OldTableInfo.Name.O) {
+			if !filter.MatchTable(dbReplace.Name, tableReplace.Name) {
 				continue
 			}
 
 			if _, exist := rules[oldTableID]; !exist {
 				log.Info("add rewrite rule",
-					zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.OldTableInfo.Name.O),
+					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.NewTableID))
 				rules[oldTableID] = restore.GetRewriteRuleOfTable(
 					oldTableID, tableReplace.NewTableID, 0, tableReplace.IndexMap, false)
@@ -1695,7 +1733,7 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 			for oldID, newID := range tableReplace.PartitionMap {
 				if _, exist := rules[oldID]; !exist {
 					log.Info("add rewrite rule",
-						zap.String("tableName", dbReplace.OldDBInfo.Name.O+"."+tableReplace.OldTableInfo.Name.O),
+						zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
 					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
 				}
