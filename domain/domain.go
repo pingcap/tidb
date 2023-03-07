@@ -88,6 +88,17 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+var (
+	mdlCheckLookDuration = 50 * time.Millisecond
+)
+
+func init() {
+	if intest.InTest {
+		// In test we can set duration lower to make test faster.
+		mdlCheckLookDuration = 2 * time.Millisecond
+	}
+}
+
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{
@@ -153,6 +164,7 @@ type Domain struct {
 		sctxs map[sessionctx.Context]bool
 	}
 
+	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
 }
 
@@ -712,78 +724,81 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 }
 
 func (do *Domain) mdlCheckLoop() {
-	ticker := time.Tick(time.Millisecond * 50)
+	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
 	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
 
 	for {
+		// Wait for channels
 		select {
+		case <-do.mdlCheckCh:
 		case <-ticker:
-			if !variable.EnableMDL.Load() {
-				continue
-			}
-
-			do.mdlCheckTableInfo.mu.Lock()
-			maxVer := do.mdlCheckTableInfo.newestVer
-			if maxVer > saveMaxSchemaVersion {
-				saveMaxSchemaVersion = maxVer
-			} else if !jobNeedToSync {
-				// Schema doesn't change, and no job to check in the last run.
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
-			if jobNeedToCheckCnt == 0 {
-				jobNeedToSync = false
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
-			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-				jobsVerMap[k] = v
-			}
-			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
-				jobsIdsMap[k] = v
-			}
-			do.mdlCheckTableInfo.mu.Unlock()
-
-			jobNeedToSync = true
-
-			sm := do.InfoSyncer().GetSessionManager()
-			if sm == nil {
-				logutil.BgLogger().Info("session manager is nil")
-			} else {
-				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
-			}
-
-			if len(jobsVerMap) == jobNeedToCheckCnt {
-				jobNeedToSync = false
-			}
-
-			// Try to gc jobCache.
-			if len(jobCache) > 1000 {
-				jobCache = make(map[int64]int64, 1000)
-			}
-
-			for jobID, ver := range jobsVerMap {
-				if cver, ok := jobCache[jobID]; ok && cver >= ver {
-					// Already update, skip it.
-					continue
-				}
-				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-				if err != nil {
-					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-				} else {
-					jobCache[jobID] = ver
-				}
-			}
 		case <-do.exit:
 			return
+		}
+
+		if !variable.EnableMDL.Load() {
+			continue
+		}
+
+		do.mdlCheckTableInfo.mu.Lock()
+		maxVer := do.mdlCheckTableInfo.newestVer
+		if maxVer > saveMaxSchemaVersion {
+			saveMaxSchemaVersion = maxVer
+		} else if !jobNeedToSync {
+			// Schema doesn't change, and no job to check in the last run.
+			do.mdlCheckTableInfo.mu.Unlock()
+			continue
+		}
+
+		jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+		if jobNeedToCheckCnt == 0 {
+			jobNeedToSync = false
+			do.mdlCheckTableInfo.mu.Unlock()
+			continue
+		}
+
+		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+		jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+			jobsVerMap[k] = v
+		}
+		for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+			jobsIdsMap[k] = v
+		}
+		do.mdlCheckTableInfo.mu.Unlock()
+
+		jobNeedToSync = true
+
+		sm := do.InfoSyncer().GetSessionManager()
+		if sm == nil {
+			logutil.BgLogger().Info("session manager is nil")
+		} else {
+			sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+		}
+
+		if len(jobsVerMap) == jobNeedToCheckCnt {
+			jobNeedToSync = false
+		}
+
+		// Try to gc jobCache.
+		if len(jobCache) > 1000 {
+			jobCache = make(map[int64]int64, 1000)
+		}
+
+		for jobID, ver := range jobsVerMap {
+			if cver, ok := jobCache[jobID]; ok && cver >= ver {
+				// Already update, skip it.
+				continue
+			}
+			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+			if err != nil {
+				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+			} else {
+				jobCache[jobID] = ver
+			}
 		}
 	}
 }
@@ -844,6 +859,10 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			return
 		}
 		do.refreshMDLCheckTableInfo()
+		select {
+		case do.mdlCheckCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -941,6 +960,7 @@ func (do *Domain) Close() {
 		do.onClose()
 	}
 	gctuner.WaitMemoryLimitTunerExitInTest()
+	close(do.mdlCheckCh)
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -964,6 +984,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsVerMap: make(map[int64]int64),
 			jobsIdsMap: make(map[int64]string),
 		},
+		mdlCheckCh: make(chan struct{}),
 	}
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
