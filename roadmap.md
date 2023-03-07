@@ -8,8 +8,8 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   <thead>
     <tr>
       <th>Category</th>
-      <th>Mid-year stable</th>
-      <th>End of year stable</th>
+      <th>Mid-year LTS release</th>
+      <th>End-of-year LTS release</th>
       <th>2-3 year projection</th>
     </tr>
   </thead>
