@@ -1272,6 +1272,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			scaledRowCount := child.Stats().RowCount / selSelectivity
 			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
 		}
+
+		rootLimit := PhysicalLimit{
+			Count:       p.Count,
+			Offset:      p.Offset,
+			PartitionBy: newPartitionBy,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		rootLimit.SetSchema(copTsk.tablePlan.Schema())
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
 	}

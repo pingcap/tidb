@@ -64,6 +64,7 @@ var (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
+	_ SelectResult = (*sortedSelectResults)(nil)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -87,6 +88,7 @@ func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems
 	s.initCompareFuncs()
 	s.buildKeyColumns()
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
+	s.cachedChunkIdx = make([]int, len(selectResult))
 	return s
 }
 
@@ -137,16 +139,38 @@ func (ssr *sortedSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	panic("Not support NextRaw for sortedSelectResults")
 }
 
-func (ssr *sortedSelectResults) Next(ctx context.Context, chunk *chunk.Chunk) (err error) {
-	chunk.Reset()
-	for i, c := range ssr.cachedChunks {
-		if c == nil {
-			if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
-				return err
-			}
+func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
+	c.Reset()
+	for i := range ssr.cachedChunks {
+		if ssr.cachedChunks[i] == nil {
+			ssr.cachedChunks[i] = c.CopyConstruct()
 		}
 	}
-	return ssr.selectResult[1].Next(ctx, chunk)
+	for c.NumRows() < c.RequiredRows() {
+		minSelectResultIdx := -1
+		for i := range ssr.cachedChunks {
+			if ssr.cachedChunkIdx[i] >= ssr.cachedChunks[i].NumRows() {
+				if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
+					return err
+				}
+				if ssr.cachedChunks[i].NumRows() == 0 {
+					continue
+				}
+				ssr.cachedChunkIdx[i] = 0
+			}
+			idx := ssr.cachedChunkIdx[i]
+			row := ssr.cachedChunks[i].GetRow(idx)
+			if minSelectResultIdx == -1 || ssr.lessRow(row, ssr.cachedChunks[minSelectResultIdx].GetRow(ssr.cachedChunkIdx[minSelectResultIdx])) {
+				minSelectResultIdx = i
+			}
+		}
+		if minSelectResultIdx == -1 {
+			break
+		}
+		c.AppendRow(ssr.cachedChunks[minSelectResultIdx].GetRow(ssr.cachedChunkIdx[minSelectResultIdx]))
+		ssr.cachedChunkIdx[minSelectResultIdx]++
+	}
+	return nil
 }
 
 func (ssr *sortedSelectResults) Close() (err error) {
