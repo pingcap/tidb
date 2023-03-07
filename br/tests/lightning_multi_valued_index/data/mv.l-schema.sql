@@ -1,0 +1,1 @@
+create table l(pk bigint primary key auto_increment ,j json, i bigint, c char(64)) partition by hash(pk) PARTITIONS 10;
