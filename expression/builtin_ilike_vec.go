@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -30,21 +31,62 @@ func LowerAlphaAscii(lowered_col *chunk.Column, row_num int) {
 	}
 }
 
-func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, row_num int, excluded_char []int64) {
+func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, row_num int, excluded_char int64) int64 {
+	actual_escape_char := excluded_char
 	for i := 0; i < row_num; i++ {
 		str := lowered_col.GetString(i)
 		str_bytes := hack.Slice(str)
-		escape_char := excluded_char[i]
 
-		excluded_char[i] = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape_char)))
+		actual_escape_char = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(excluded_char)))
 	}
+	return actual_escape_char
 }
 
 func (b *builtinIlikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIlikeSig) constVec(input *chunk.Chunk, result *chunk.Column) error {
+	// rowNum := input.NumRows()
+	// expr, isConstNull, err := b.args[0].EvalString(b.ctx, chunk.Row{})
+	// if isConstNull {
+	// 	fillNullStringIntoResult(result, rowNum)
+	// 	return nil
+	// } else if err != nil {
+	// 	return err
+	// }
+
+	// bufPattern, err := b.bufAllocator.get()
+	// if err != nil {
+	// 	return err
+	// }
+	// defer b.bufAllocator.put(bufPattern)
+	// if err = b.args[1].VecEvalString(b.ctx, input, bufPattern); err != nil {
+	// 	return err
+	// }
+
+	// escape := int64(int64('\\'))
+
+	// if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+	// 	return errors.Errorf("escape should be const")
+	// }
+
+	// escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
+	// if isConstNull {
+	// 	fillNullStringIntoResult(result, rowNum)
+	// 	return nil
+	// } else if err != nil {
+	// 	return err
+	// }
+
+	return nil
+}
+
+func (b *builtinIlikeSig) vecConst(input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
+
+func (b *builtinIlikeSig) vecVec(input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
 	bufVal, err := b.bufAllocator.get()
 	if err != nil {
@@ -54,6 +96,7 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
 		return err
 	}
+
 	bufPattern, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -63,38 +106,126 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
-	bufEscape, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufEscape)
-	if err = b.args[2].VecEvalInt(b.ctx, input, bufEscape); err != nil {
-		return err
-	}
-	escapes := bufEscape.Int64s()
+	escape := int64(int64('\\'))
 
-	// Must not use b.pattern to avoid data race
+	if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		return errors.Errorf("escape should be const")
+	}
+
+	escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
+	if isConstNull {
+		fillNullStringIntoResult(result, rowNum)
+		return nil
+	} else if err != nil {
+		return err
+	}
+
 	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
-
 	tmpValCol := bufVal.CopyConstruct(nil)
 	tmpPatternCol := bufPattern.CopyConstruct(nil)
+
 	LowerAlphaAscii(tmpValCol, rowNum)
-	LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escapes)
+	escape = LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escape)
 	bufVal = tmpValCol
 	bufPattern = tmpPatternCol
 
 	result.ResizeInt64(rowNum, false)
-	result.MergeNulls(bufVal, bufPattern, bufEscape)
+	result.MergeNulls(bufVal, bufPattern)
 	i64s := result.Int64s()
 
 	for i := 0; i < rowNum; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
+		pattern.Compile(bufPattern.GetString(i), byte(escape))
 		match := pattern.DoMatch(bufVal.GetString(i))
 		i64s[i] = boolToInt64(match)
 	}
 
 	return nil
+}
+
+func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
+	rowNum := input.NumRows()
+	escape := int64(int64('\\'))
+
+	if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+		return escape, true, errors.Errorf("escape should be const")
+	}
+
+	escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
+	if isConstNull {
+		fillNullStringIntoResult(result, rowNum)
+		return escape, true, nil
+	} else if err != nil {
+		return escape, true, err
+	}
+	return escape, false, nil
+}
+
+func (b *builtinIlikeSig) lowerExpr(param *regexpParam, rowNum int) {
+	col := param.getCol()
+	if col == nil {
+		str := param.getStringVal(0)
+		str_bytes := hack.Slice(str)
+		stringutil.LowerOneString(str_bytes)
+		param.setStrVal(str)
+		return
+	}
+
+	tmpExprCol := param.getCol().CopyConstruct(nil)
+	LowerAlphaAscii(tmpExprCol, rowNum)
+	param.setCol(tmpExprCol)
+}
+
+func (b *builtinIlikeSig) lowerPattern(param *regexpParam, rowNum int, escape int64) int64 {
+	col := param.getCol()
+	if col == nil {
+		str := param.getStringVal(0)
+		str_bytes := hack.Slice(str)
+		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape)))
+		return escape
+	}
+
+	tmpPatternCol := param.getCol().CopyConstruct(nil)
+	escape = LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escape)
+	param.setCol(tmpPatternCol)
+
+	return escape
+}
+
+func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	// if b.args[0].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+	// 	return b.constVec(input, result)
+	// } else {
+	// 	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+	// 		return b.vecConst(input, result)
+	// 	}
+
+	// 	return b.vecVec(input, result)
+	// }
+	rowNum := input.NumRows()
+	params := make([]*regexpParam, 0, 3)
+	defer releaseBuffers(&b.baseBuiltinFunc, params)
+
+	for i := 0; i < 2; i++ {
+		param, isConstNull, err := buildStringParam(&b.baseBuiltinFunc, i, input, false)
+		if err != nil {
+			return ErrRegexp.GenWithStackByArgs(err)
+		}
+		if isConstNull {
+			fillNullStringIntoResult(result, rowNum)
+			return nil
+		}
+		params = append(params, param)
+	}
+
+	escape, ret, err := b.getEscape(input, result)
+	if err != nil || ret {
+		return err
+	}
+
+	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
+	b.lowerExpr(params[0], rowNum)
+	escape = b.lowerPattern(params[0], rowNum, escape)
 }

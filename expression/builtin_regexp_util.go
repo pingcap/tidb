@@ -38,6 +38,18 @@ type regexpParam struct {
 	col           *chunk.Column
 }
 
+func (re *regexpParam) setStrVal(val string) {
+	re.defaultStrVal = val
+}
+
+func (re *regexpParam) setIntVal(val int64) {
+	re.defaultIntVal = val
+}
+
+func (re *regexpParam) setCol(new_col *chunk.Column) {
+	re.col = new_col
+}
+
 func (re *regexpParam) getCol() *chunk.Column {
 	return re.col
 }
