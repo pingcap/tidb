@@ -746,7 +746,7 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), len(b.workers))
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
 }
 
 func (b *backfillScheduler) canSkipError(err error) bool {

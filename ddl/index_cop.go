@@ -166,8 +166,8 @@ func (c *copReqSender) run() {
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage, workerCnt int) *copReqSenderPool {
-	poolSize := workerCnt * copReadConcurrencyFactor
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
+	poolSize := 16 * copReadConcurrencyFactor
 	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
