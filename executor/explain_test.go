@@ -618,6 +618,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
 
 	explainFormats := []string{
 		types.ExplainFormatBrief,
@@ -632,19 +633,20 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatPlanCache,
 	}
 
+	tk.MustExec(fmt.Sprintf("select * from t"))
+	tk.MustExec(fmt.Sprintf("explain analyze select * from t"))
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.InExplainStmt, true)
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.ExplainFormat, types.ExplainFormatROW)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	for _, format := range explainFormats {
 		tk.MustExec(fmt.Sprintf("explain analyze format = '%v' select * from t", format))
 		require.Equal(t, tk.Session().GetSessionVars().StmtCtx.InExplainStmt, true)
 		require.Equal(t, tk.Session().GetSessionVars().StmtCtx.ExplainFormat, format)
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	}
-
-	connID := tk.MustQuery("select connection_id()").Rows()[0][0]
-	for _, format := range explainFormats {
-		tk.MustExec(fmt.Sprintf("explain format = '%v' for connection %v", format, connID))
-		require.Equal(t, tk.Session().GetSessionVars().StmtCtx.InExplainStmt, true)
-		require.Equal(t, tk.Session().GetSessionVars().StmtCtx.ExplainFormat, format)
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		if format != types.ExplainFormatPlanCache {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		} else {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
 	}
 }
 
@@ -669,15 +671,15 @@ func TestExplainFormatPlanCache(t *testing.T) {
 	tk.MustExec("explain analyze format = 'plan_cache' select * from t limit 1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	connID := tk.MustQuery("select connection_id()").Rows()[0][0]
-	tk.MustExec("select * from t limit 1")
-	tk.MustExec(fmt.Sprintf("explain format = 'plan_cache' for connection %v", connID))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prep plan cache: not a select statement"))
-
 	// hit
 	tk.MustExec("explain format = 'plan_cache' select * from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("explain format = 'plan_cache' select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("explain analyze format = 'plan_cache' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("explain analyze format = 'plan_cache' select * from t")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// will not use plan cache
@@ -693,6 +695,8 @@ func TestExplainFormatPlanCache(t *testing.T) {
 		types.ExplainFormatCostTrace,
 	}
 
+	tk.MustExec(fmt.Sprintf("explain select * from t"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	for _, format := range explainFormats {
 		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t", format))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
