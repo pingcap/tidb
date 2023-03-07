@@ -36,7 +36,9 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -260,6 +262,9 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 		if err2 != nil {
 			if causeErr := errors.Cause(err2); causeErr == errHasPendingAdmin {
 				log.Info("schedule ongoing on tikv, will retry later", zap.Error(err2))
+			} else if status.Code(err2) == codes.Unimplemented {
+				log.Error("admin check is not implemented, please check tikv version (require > v6.3.0)", zap.Error(err2))
+				return errors.Trace(err2)
 			} else {
 				log.Warn("failed to wait schedule, will retry later", zap.Error(err2))
 			}
