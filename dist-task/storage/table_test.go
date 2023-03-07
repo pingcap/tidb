@@ -16,12 +16,13 @@ package storage
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/tidb/dist-task/proto"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"testing"
 )
 
 func TestMain(m *testing.M) {
@@ -92,5 +93,18 @@ func TestSubTaskTable(t *testing.T) {
 	sm, err := GetSubTaskManager()
 	require.NoError(t, err)
 
-	sm.CheckTaskState()
+	err = sm.AddNewTask(1, "tidb1", (&proto.SimpleNumberSTaskMeta{}).Serialize(), "test", false)
+	require.NoError(t, err)
+
+	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Nil(t, nilTask)
+
+	task, err := sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, "test", task.Type)
+	require.Equal(t, int64(1), task.TaskID)
+	require.Equal(t, proto.TaskStatePending, task.State)
+	require.Equal(t, "tidb1", task.SchedulerID)
+	require.Equal(t, &proto.SimpleNumberSTaskMeta{}, task.Meta)
 }

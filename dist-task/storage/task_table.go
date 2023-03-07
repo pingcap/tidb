@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/dist-task/proto"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -40,7 +41,7 @@ var globalTaskManagerInstance atomic.Value
 var subTaskManagerInstance atomic.Value
 
 func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTaskManager {
-	ctx = util.WithInternalSourceType(ctx, "distribute_framework")
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return &GlobalTaskManager{
 		ctx: ctx,
 		se:  se,
@@ -48,6 +49,7 @@ func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTas
 }
 
 func NewSubTaskManager(ctx context.Context, se sessionctx.Context) *SubTaskManager {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return &SubTaskManager{
 		ctx: ctx,
 		se:  se,
@@ -313,22 +315,6 @@ func (stm *SubTaskManager) DeleteTasks(globalTaskID int64) error {
 	}
 
 	return nil
-}
-
-func (stm *SubTaskManager) CheckTaskState(globalTaskID int64, state string, eq bool) (cnt int64, err error) {
-	stm.mu.Lock()
-	defer stm.mu.Unlock()
-
-	query := "select count(*) from mysql.tidb_sub_task where task_id = %? and state = %?"
-	if !eq {
-		query = "select count(*) from mysql.tidb_sub_task where task_id = %? and state != %?"
-	}
-	rs, err := ExecSQL(stm.ctx, stm.se, query, globalTaskID, state)
-	if err != nil {
-		return 0, err
-	}
-
-	return rs[0].GetInt64(0), nil
 }
 
 func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
