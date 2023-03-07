@@ -21,6 +21,9 @@ import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 )
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
