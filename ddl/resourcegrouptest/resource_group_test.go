@@ -77,11 +77,11 @@ func TestResourceGroupBasic(t *testing.T) {
 	res := tk.MustQuery("show warnings")
 	res.Check(testkit.Rows("Note 8248 Resource group 'x' already exists"))
 
-	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
+	tk.MustExec("set global tidb_enable_resource_control = off")
 	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
 
-	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
 
