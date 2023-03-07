@@ -46,104 +46,25 @@ func (b *builtinIlikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIlikeSig) constVec(input *chunk.Chunk, result *chunk.Column) error {
-	// rowNum := input.NumRows()
-	// expr, isConstNull, err := b.args[0].EvalString(b.ctx, chunk.Row{})
-	// if isConstNull {
-	// 	fillNullStringIntoResult(result, rowNum)
-	// 	return nil
-	// } else if err != nil {
-	// 	return err
-	// }
-
-	// bufPattern, err := b.bufAllocator.get()
-	// if err != nil {
-	// 	return err
-	// }
-	// defer b.bufAllocator.put(bufPattern)
-	// if err = b.args[1].VecEvalString(b.ctx, input, bufPattern); err != nil {
-	// 	return err
-	// }
-
-	// escape := int64(int64('\\'))
-
-	// if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-	// 	return errors.Errorf("escape should be const")
-	// }
-
-	// escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
-	// if isConstNull {
-	// 	fillNullStringIntoResult(result, rowNum)
-	// 	return nil
-	// } else if err != nil {
-	// 	return err
-	// }
-
-	return nil
+func (b *builtinIlikeSig) canMemorize(param *regexpParam) bool {
+	return param.getCol() == nil
 }
 
-func (b *builtinIlikeSig) vecConst(input *chunk.Chunk, result *chunk.Column) error {
-	return nil
-}
-
-func (b *builtinIlikeSig) vecVec(input *chunk.Chunk, result *chunk.Column) error {
-	rowNum := input.NumRows()
-	bufVal, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufVal)
-	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
-		return err
+func (b *builtinIlikeSig) tryToMemorize(param *regexpParam, escape int64) {
+	if !b.canMemorize(param) {
+		return
 	}
 
-	bufPattern, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(bufPattern)
-	if err = b.args[1].VecEvalString(b.ctx, input, bufPattern); err != nil {
-		return err
-	}
-
-	escape := int64(int64('\\'))
-
-	if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-		return errors.Errorf("escape should be const")
-	}
-
-	escape, isConstNull, err := b.args[2].EvalInt(b.ctx, chunk.Row{})
-	if isConstNull {
-		fillNullStringIntoResult(result, rowNum)
-		return nil
-	} else if err != nil {
-		return err
-	}
-
-	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
-	tmpValCol := bufVal.CopyConstruct(nil)
-	tmpPatternCol := bufPattern.CopyConstruct(nil)
-
-	LowerAlphaAscii(tmpValCol, rowNum)
-	escape = LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escape)
-	bufVal = tmpValCol
-	bufPattern = tmpPatternCol
-	bufEscape = tmpEscape
-
-	result.ResizeInt64(rowNum, false)
-	result.MergeNulls(bufVal, bufPattern)
-	i64s := result.Int64s()
-
-	for i := 0; i < rowNum; i++ {
-		if result.IsNull(i) {
-			continue
+	memorization := func() {
+		if b.pattern == nil {
+			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
+			b.pattern.Compile(param.getStringVal(0), byte(escape))
+			b.isMemorizedPattern = true
 		}
-		pattern.Compile(bufPattern.GetString(i), byte(escape))
-		match := pattern.DoMatch(bufVal.GetString(i))
-		i64s[i] = boolToInt64(match)
 	}
 
-	return nil
+	// Only be executed once to achieve thread-safe
+	b.once.Do(memorization)
 }
 
 func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
@@ -185,6 +106,7 @@ func (b *builtinIlikeSig) lowerPattern(param *regexpParam, rowNum int, escape in
 		str := param.getStringVal(0)
 		str_bytes := hack.Slice(str)
 		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape)))
+		param.setStrVal(str)
 		return escape
 	}
 
@@ -195,16 +117,59 @@ func (b *builtinIlikeSig) lowerPattern(param *regexpParam, rowNum int, escape in
 	return escape
 }
 
-func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	// if b.args[0].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-	// 	return b.constVec(input, result)
-	// } else {
-	// 	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-	// 		return b.vecConst(input, result)
-	// 	}
+func (b *builtinIlikeSig) vecVec(params []*regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+	result.ResizeInt64(rowNum, false)
+	result.MergeNulls(params[0].getCol(), params[1].getCol())
+	i64s := result.Int64s()
+	for i := 0; i < rowNum; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		b.pattern.Compile(params[1].getStringVal(i), byte(escape))
+		match := b.pattern.DoMatch(params[0].getStringVal(i))
+		i64s[i] = boolToInt64(match)
+	}
+	return nil
+}
 
-	// 	return b.vecVec(input, result)
-	// }
+func (b *builtinIlikeSig) constVec(expr string, param *regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+	result.ResizeInt64(rowNum, false)
+	result.MergeNulls(param.getCol())
+	i64s := result.Int64s()
+	for i := 0; i < rowNum; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		b.pattern.Compile(param.getStringVal(i), byte(escape))
+		match := b.pattern.DoMatch(expr)
+		i64s[i] = boolToInt64(match)
+	}
+	return nil
+}
+
+func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+	result.ResizeInt64(rowNum, false)
+	result.MergeNulls(exprParam.getCol())
+	i64s := result.Int64s()
+	for i := 0; i < rowNum; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		match := b.pattern.DoMatch(exprParam.getStringVal(i))
+		i64s[i] = boolToInt64(match)
+	}
+	return nil
+}
+
+func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+	if params[0].getCol() == nil {
+		return b.constVec(params[0].getStringVal(0), params[1], rowNum, escape, result)
+	}
+
+	return b.vecVec(params, rowNum, escape, result)
+}
+
+func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
 	params := make([]*regexpParam, 0, 3)
 	defer releaseBuffers(&b.baseBuiltinFunc, params)
@@ -226,7 +191,14 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
-	pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 	b.lowerExpr(params[0], rowNum)
 	escape = b.lowerPattern(params[0], rowNum, escape)
+
+	b.tryToMemorize(params[1], escape)
+	if !b.isMemorizedPattern {
+		b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		return b.ilikeWithoutMemorization(params, rowNum, escape, result)
+	}
+
+	return b.ilikeWithMemorization(params[0], rowNum, escape, result)
 }
