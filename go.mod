@@ -271,11 +271,14 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
+	stathat.com/c/consistent v1.0.0 // indirect
 )
 
 replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
+	github.com/pingcap/kvproto => github.com/iosmanthus/kvproto v0.0.0-20230307113443-b53c62a9d11e
 	github.com/pingcap/tidb/parser => ./parser
+	github.com/tikv/client-go/v2 => github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230307141124-6b1baae7ef56
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
