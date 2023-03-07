@@ -375,6 +375,7 @@
       "server/conn_test.go": "server/conn_test.go",
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
+      "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
       "errno/": "errno code",
