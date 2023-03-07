@@ -857,17 +857,23 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	dom.StopAutoAnalyze()
+
+	var drainClientWait time.Duration
 	if graceful {
-		done := make(chan struct{})
-		svr.GracefulDown(context.Background(), done)
-		// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
-		// See https://github.com/pingcap/tidb/issues/40038 for details.
-		svr.KillSysProcesses()
+		drainClientWait = 1<<63 - 1
 	} else {
-		svr.TryGracefulDown()
+		drainClientWait = gracefulCloseConnectionsTimeout
 	}
+	cancelClientWait := time.Second * 1
+	svr.DrainClients(drainClientWait, cancelClientWait)
+
+	// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
+	// See https://github.com/pingcap/tidb/issues/40038 for details.
+	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()

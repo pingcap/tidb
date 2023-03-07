@@ -113,6 +113,7 @@ func newClientConn(s *Server) *clientConn {
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
+		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
 }
@@ -156,6 +157,8 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	// quit is close once clientConn quit Run().
+	quit       chan struct{}
 	extensions *extension.SessionExtensions
 
 	// Proxy Protocol Enabled
@@ -1041,6 +1044,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
+			err := cc.Close()
+			terror.Log(err)
+		}
+
+		close(cc.quit)
 	}()
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -1049,6 +1058,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
+		// Close connection between txn when we are going to shutdown server.
+		if cc.server.inShutdownMode.Load() {
+			if !cc.ctx.GetSessionVars().InTxn() {
+				return
+			}
+		}
+
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) ||
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
@@ -1058,6 +1074,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
+		// default 28800(8h), FIXME: should not block at here when we kill the connection.
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
@@ -1148,22 +1165,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
-}
-
-// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
-func (cc *clientConn) ShutdownOrNotify() bool {
-	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		return false
-	}
-	// If the client connection status is reading, it's safe to shutdown it.
-	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
-		return true
-	}
-	// If the client connection status is dispatching, we can't shutdown it immediately,
-	// so set the status to WaitShutdown as a notification, the loop in clientConn.Run
-	// will detect it and then exit.
-	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
-	return false
 }
 
 func errStrForLog(err error, enableRedactLog bool) string {
