@@ -332,6 +332,7 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 	tk.MustExec("begin")
 	tkDDL.MustExec("alter table test.t modify column a char(10);")
 	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
+	tk.MustGetErrCode("select * from t", mysql.ErrInfoSchemaChanged)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil>"))
 

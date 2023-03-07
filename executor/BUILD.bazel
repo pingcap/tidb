@@ -119,6 +119,7 @@ go_library(
         "//expression",
         "//expression/aggregation",
         "//infoschema",
+        "//keyspace",
         "//kv",
         "//meta",
         "//meta/autoid",
