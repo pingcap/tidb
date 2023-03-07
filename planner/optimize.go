@@ -81,7 +81,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
-		isExplain || stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache { // in explain
+		isExplain || // explain external
+		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
