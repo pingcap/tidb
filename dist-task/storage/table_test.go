@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/dist-task/proto"
 	"github.com/pingcap/tidb/testkit"
@@ -107,4 +108,57 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, "tidb1", task.SchedulerID)
 	require.Equal(t, &proto.SimpleNumberSTaskMeta{}, task.Meta)
+
+	ids, err := sm.GetSchedulerIDs(1)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	require.Equal(t, "tidb1", ids[0])
+
+	cnt, err := sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	ok, err := sm.HasSubtasksInStates("tidb1", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	err = sm.UpdateHeartbeat("tidb1", 1, time.Now())
+	require.NoError(t, err)
+
+	err = sm.UpdateSubtaskState(1, proto.TaskStateRunning)
+	require.NoError(t, err)
+
+	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Nil(t, task)
+
+	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStateRunning)
+	require.NoError(t, err)
+	require.Equal(t, "test", task.Type)
+	require.Equal(t, int64(1), task.TaskID)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.Equal(t, "tidb1", task.SchedulerID)
+	require.Equal(t, &proto.SimpleNumberSTaskMeta{}, task.Meta)
+
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+
+	ok, err = sm.HasSubtasksInStates("tidb1", 1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = sm.DeleteTasks(1)
+	require.NoError(t, err)
+
+	ok, err = sm.HasSubtasksInStates("tidb1", 1, proto.TaskStatePending, proto.TaskStateRunning)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = sm.AddNewTask(2, "tidb1", (&proto.SimpleNumberSTaskMeta{}).Serialize(), "test", true)
+	require.NoError(t, err)
+
+	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
 }

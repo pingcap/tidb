@@ -305,11 +305,11 @@ func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, hear
 	return err
 }
 
-func (stm *SubTaskManager) DeleteTasks(globalTaskID int64) error {
+func (stm *SubTaskManager) DeleteTasks(taskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = %?", globalTaskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where task_id = %?", taskID)
 	if err != nil {
 		return err
 	}
