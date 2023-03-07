@@ -168,9 +168,9 @@ func TestServerIsBusy(t *testing.T) {
 }
 
 func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/hint-memoryIsLimited-sleep", "return(true)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited", "return(true)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/hint-memoryIsLimited-sleep")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited")
 	}()
 
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
