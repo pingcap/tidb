@@ -125,7 +125,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
-	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
+	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 
 	return
 }
@@ -597,6 +597,12 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		// if the job already exist, don't need to submit scan tasks
 		if jobExist {
 			return nil
+		}
+
+		sql, args = createJobHistorySQL(jobID, table, expireTime, now)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
 		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)

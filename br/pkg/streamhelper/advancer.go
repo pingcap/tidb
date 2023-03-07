@@ -170,33 +170,34 @@ func tsoBefore(n time.Duration) uint64 {
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
 }
 
+func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
+	c.checkpointsMu.Lock()
+	defer c.checkpointsMu.Unlock()
+
+	f(c.checkpoints)
+}
+
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context, threshold time.Duration) (uint64, error) {
 	var targets []spans.Valued
-	c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
-		targets = append(targets, v)
-		return true
+	var minValue spans.Valued
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		vsf.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
+			targets = append(targets, v)
+			return true
+		})
+		minValue = vsf.Min()
 	})
+	log.Info("[log backup advancer hint] current last region",
+		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
+		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
 	if len(targets) == 0 {
-		c.checkpointsMu.Lock()
-		defer c.checkpointsMu.Unlock()
-		return c.checkpoints.MinValue(), nil
+		return minValue.Value, nil
 	}
-	samples := targets
-	if len(targets) > 3 {
-		samples = targets[:3]
-	}
-	for _, sample := range samples {
-		log.Info("[log backup advancer hint] sample range.", zap.Stringer("sample", sample), zap.Int("total-len", len(targets)))
-	}
-
 	err := c.tryAdvance(ctx, len(targets), func(i int) kv.KeyRange { return targets[i].Key })
 	if err != nil {
 		return 0, err
 	}
-	c.checkpointsMu.Lock()
-	ts := c.checkpoints.MinValue()
-	c.checkpointsMu.Unlock()
-	return ts, nil
+	return minValue.Value, nil
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -289,7 +290,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
 		c.lastCheckpoint = e.Info.StartTs
-		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
+		p, err := c.env.BlockGCUntil(ctx, c.task.StartTs)
+		if err != nil {
+			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
+		}
+		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
@@ -302,6 +307,9 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
+		}
+		if _, err := c.env.BlockGCUntil(ctx, 0); err != nil {
+			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventErr:
@@ -319,6 +327,7 @@ func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
 		return false
 	}
 	c.lastCheckpoint = cp
+	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return true
 }
 
@@ -336,7 +345,6 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 			zap.Uint64("checkpoint", cp),
 			zap.String("task", c.task.Name),
 			zap.Stringer("take", time.Since(start)))
-		metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	}
 	return nil
 }
@@ -391,6 +399,18 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
+	}
+	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint-1)
+	if err != nil {
+		return errors.Annotatef(err,
+			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
+			c.lastCheckpoint-1, p)
+	}
+	if p <= c.lastCheckpoint-1 {
+		log.Info("updated log backup GC safe point.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
+	}
+	if p > c.lastCheckpoint-1 {
+		log.Warn("update log backup GC safe point failed: stale.", zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint-1))
 	}
 	return nil
 }

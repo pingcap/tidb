@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -1458,7 +1457,6 @@ func (rc *Client) execChecksum(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	table := tbl.OldTable
 	if checksumResp.Checksum != table.Crc64Xor ||
 		checksumResp.TotalKvs != table.TotalKvs ||
@@ -1473,7 +1471,7 @@ func (rc *Client) execChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-
+	logger.Info("success in validate checksum")
 	loadStatCh <- &tbl
 	return nil
 }
@@ -1737,15 +1735,6 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
 ) error {
-	// For TiDB 6.6, we do not support recover TiFlash replica while enabling API V2.
-	// TODO(iosmanthus): remove this after TiFlash support API V2.
-	if rc.GetDomain().Store().GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
-		log.Warn("TiFlash does not support API V2, reset replica count to 0")
-		for _, table := range tables {
-			table.Info.TiFlashReplica = nil
-		}
-		return nil
-	}
 	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
 		return err

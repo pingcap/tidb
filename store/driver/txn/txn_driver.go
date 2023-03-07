@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -69,6 +70,10 @@ func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
+	// For partition table, also cached tblInfo with TableID for global index.
+	if info != nil && info.ID != id {
+		txn.idxNameCache[info.ID] = info
+	}
 }
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
@@ -272,6 +277,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetTxnSource(val.(uint64))
 	case kv.ResourceGroupName:
 		txn.KVTxn.SetResourceGroupName(val.(string))
+	case kv.LoadBasedReplicaReadThreshold:
+		txn.KVTxn.GetSnapshot().SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	}
 }
 
