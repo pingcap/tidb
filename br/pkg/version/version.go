@@ -160,6 +160,29 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 	return nil
 }
 
+// CheckVersionForBRVolSnap checks whether version of the cluster and BR-volsnapshot backup itself is compatible.
+// Note: BR'version >= 6.3.0 at least in this function
+func CheckVersionForBRVolSnap(s *metapb.Store, tikvVersion *semver.Version) error {
+	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
+	if err != nil {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
+	}
+
+	// tikvVersion should at least 6.1.0
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 3) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use volume snapshot backup, please update tikv's version to at least v6.3.0(v6.5.0+ recommanded)",
+			s.Address, tikvVersion)
+	}
+
+	// versions of BR at least 6.3.0
+	if BRVersion.Major < 6 || (BRVersion.Major == 6 && BRVersion.Minor < 3) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "BR version %s is too low when use volume snapshot backup, please use BR at least v6.3.0(v6.5.0+ recommanded)",
+			BRVersion)
+	}
+
+	return nil
+}
+
 // CheckVersionForDDL checks whether we use queue or table to execute ddl during restore.
 func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
 	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
