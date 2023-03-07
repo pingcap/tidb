@@ -175,6 +175,11 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
+		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+			return nil, errors.Annotatef(err,
+				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
+				s.gcs.Bucket, path)
+		}
 		return nil, errors.Annotatef(err,
 			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
