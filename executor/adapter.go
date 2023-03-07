@@ -1507,8 +1507,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      keyspaceName,
+		KeyspaceID:        keyspaceID,
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
