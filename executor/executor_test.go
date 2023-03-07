@@ -88,7 +88,7 @@ func checkFileName(s string) bool {
 		"session_bindings.sql",
 		"global_bindings.sql",
 		"sql/sql0.sql",
-		"explain/sql0.txt",
+		"explain.txt",
 		"statsMem/test.t_dump_single.txt",
 		"sql_meta.toml",
 	}
