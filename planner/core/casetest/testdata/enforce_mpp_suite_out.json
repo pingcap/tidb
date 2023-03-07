@@ -494,7 +494,7 @@
           "  └─Projection_7 12500.00 mpp[tiflash]  test.t.a",
           "    └─HashJoin_39 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
           "      ├─ExchangeReceiver_42(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_41 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender_41 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan_40 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "      └─TableFullScan_43(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],

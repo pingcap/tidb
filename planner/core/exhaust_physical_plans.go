@@ -1991,16 +1991,75 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
+func calcBroadcastExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(taskCnt-1)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	size := avg * row
+	return row, size, true
+}
+
+func (p *LogicalJoin) calcBroadcastExchangeSizeByChild(taskCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcBroadcastExchangeSize(p.children[0], taskCnt)
+	row2, size2, hasSize2 := calcBroadcastExchangeSize(p.children[1], taskCnt)
+
+	if hasSize1 && hasSize2 {
+		return math.Min(row1, row2), math.Min(size1, size2), true
+	}
+
+	return math.Min(row1, row2), 0, false
+}
+
+func calcHashExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(taskCnt-1) / float64(taskCnt)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	sz := avg * row
+	return row, sz, true
+}
+
+func (p *LogicalJoin) calcHashExchangeSizeByChild(taskCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcHashExchangeSize(p.children[0], taskCnt)
+	row2, size2, hasSize2 := calcHashExchangeSize(p.children[1], taskCnt)
+	if hasSize1 && hasSize2 {
+		return row1 + row2, size1 + size2, true
+	}
+	return row1 + row2, 0, false
+}
+
 // If we can use mpp broadcast join, that's our first choice.
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
-	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+	mustRightChildFit := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
+	mustLeftChildFit := p.JoinType == RightOuterJoin
+
+	if mustRightChildFit {
 		return checkChildFitBC(p.children[1])
-	} else if p.JoinType == RightOuterJoin {
+	} else if mustLeftChildFit {
 		return checkChildFitBC(p.children[0])
 	}
+
+	taskCnt := 3
+	if !mustRightChildFit && !mustLeftChildFit {
+		var rowBC, szBC, rowHash, szHash float64
+		var hasSizeBC, hasSizeHash bool
+		rowBC, szBC, hasSizeBC = p.calcBroadcastExchangeSizeByChild(taskCnt)
+		rowHash, szHash, hasSizeHash = p.calcHashExchangeSizeByChild(taskCnt)
+		if hasSizeBC && hasSizeHash {
+			return szBC < szHash
+		} else {
+			return rowBC < rowHash
+		}
+	}
+
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
@@ -2050,6 +2109,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 				return bcastJoins, true, nil
 			}
 		}
+		fmt.Println(p)
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			joins = append(joins, mppJoins...)

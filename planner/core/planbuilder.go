@@ -106,6 +106,17 @@ type tableHintInfo struct {
 	hjProbeTables       []hintTableInfo
 }
 
+type mppHintInfo struct {
+	taskCnt int
+}
+
+// broadcast exchange size
+//   Build: (taskCnt - 1) * sizeof(BuildTable)
+//   Probe: 0
+// hash exchange size
+//   Build: sizeof(BuildTable) * (taskCnt - 1) / taskCnt
+//   Probe: sizeof(ProbeTable) * (taskCnt - 1) / taskCnt
+
 type limitHintInfo struct {
 	preferLimitToCop bool
 }
