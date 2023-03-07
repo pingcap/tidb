@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -310,15 +312,18 @@ func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4
 			}
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
+			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
+			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
 			var err error
-			lower, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
@@ -335,7 +340,7 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	// So we need to add TopN total count here.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
+	rs, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, selSQL, tableID, colID)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
