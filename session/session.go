@@ -421,7 +421,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -432,7 +432,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.preparedPlanCache
 }
@@ -2567,6 +2567,9 @@ func (s *session) Close() {
 	s.ClearDiskFullOpt()
 	if s.preparedPlanCache != nil {
 		s.preparedPlanCache.Close()
+	}
+	if s.nonPreparedPlanCache != nil {
+		s.nonPreparedPlanCache.Close()
 	}
 }
 
