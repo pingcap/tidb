@@ -91,9 +91,9 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
 			sleepDuration := 15 * time.Second
 
-			failpoint.Inject("hint-memoryIsLimited-sleep", func(val failpoint.Value) {
+			failpoint.Inject("hint-memory-is-limited", func(val failpoint.Value) {
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-memoryIsLimited-sleep injected.")
+					logutil.CL(ctx).Debug("failpoint hint-memory-is-limited injected.")
 					sleepDuration = 100 * time.Microsecond
 				}
 			})
