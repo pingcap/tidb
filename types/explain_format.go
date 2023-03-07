@@ -37,7 +37,7 @@ var (
 	ExplainFormatTiDBJSON = "tidb_json"
 	// ExplainFormatCostTrace prints the cost and cost formula of each operator.
 	ExplainFormatCostTrace = "cost_trace"
-	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache
+	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
