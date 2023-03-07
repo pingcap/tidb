@@ -24,7 +24,7 @@ Although they both have some advantanges, merely one of them is limited in data 
 
 ## Detailed Design
 
-In short, we will decouple LOAD DATA statement and TiDB lightning into many components, and try to pick the best parts of both and combine them.
+For the user, they can use LOAD DATA statement with new options to leverage the advantages of the both side. In short, we will decouple LOAD DATA statement and TiDB lightning into many components, and try to pick the best parts from both side and combine them.
 
 ### Data source reader
 
@@ -85,10 +85,19 @@ The *data parser* output the data of one row in the type of `[]types.Datum`, the
 
 The *load data worker* owns a `InsertValues`, which can be used to encode the data to KV pairs. `InsertValues` is also used by other INSERT-like statements, it has more maintenance that lightning's separated KV encoder. Reusing it rather than lightning's one can prevent bugs that caused by lightning's encoding behaviour is outdated, for example, [#41454](https://github.com/pingcap/tidb/issues/41454).
 
-The *KV encoder* receives the data from *data parser* in the type of `[]types.Datum`, converts it to table data with the table schema, and encoding it to KV pairs. After encoding, *KV encoder* will save the result in the type of `[]byte` in the memory buffer of current session's active transaction.
+The *KV encoder* receives the data from *data parser* in the type of `[]types.Datum`, converts it to table data under the table schema, and encoding it to KV pairs. After encoding, *KV encoder* will save the result in the type of `[]byte` in the memory buffer of current session's active transaction.
 
 ### KV writer
 
-Currently LOAD DATA and TiDB lightning represent two ways to write data, LOAD DATA writes KV pairs in the way of a general transaction KV, while TiDB lightning write a larger mount KV pairs by ingesting SST files to underlying RocksDB at TiKV's side. 
+Currently LOAD DATA and TiDB lightning represent two ways to write data, LOAD DATA writes KV pairs in the way of a general KV transaction, while TiDB lightning write a larger mount KV pairs by ingesting SST files to underlying RocksDB at TiKV's side. Their distinct characteristics require an option of LOAD DATA to switch between them. For the common part, they both use `[]byte` from *KV encoder* as the input, and we will explain the following procedure in the next paragraphs.
 
-## Other Issues
+Due to the current architecture of TiDB, transaction *KV writer* has coupled with other existing concepts, and we only need to call "commit" method of them. So when we received a batch of KV pairs from *KV encoder*, these KV pairs form a transaction and then writes to downstream.
+
+For ingesting *KV writer* like TiDB lightning, it has the best performance when it can see all data before start writing, so after take one batch from *KV encoder*, the KV pairs should be saved temporarily in the local engine of ingesting *KV writer*, waiting to trigger a real writing to TiKV. The time to trigger a real writing may be decided in following discussions, here we list some preliminary cases:
+- When the whole data is finished reading
+- When reach the disk quota of the TiDB node that running the *load data worker*
+- When considerable amount of data is finished reading and it worth saving a checkpoint
+
+## Linking Issues
+
+[#40499](https://github.com/pingcap/tidb/issues/40499)
