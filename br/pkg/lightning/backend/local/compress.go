@@ -65,7 +65,7 @@ func (d *gzipDecompressor) Do(r io.Reader) ([]byte, error) {
 	}
 
 	defer func() {
-		z.Close()
+		_ = z.Close()
 		gzipReaderPool.Put(z)
 	}()
 	return io.ReadAll(z)
