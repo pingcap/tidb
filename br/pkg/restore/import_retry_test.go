@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -163,6 +164,48 @@ func TestServerIsBusy(t *testing.T) {
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
+	require.Equal(t, rs.RetryTimes(), 1)
+}
+
+func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited", "return(true)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited")
+	}()
+
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient(false)
+	rs := utils.InitialRetryState(2, 0, 0)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctx := context.Background()
+
+	serverIsBusy := errorpb.Error{
+		Message: "memory is limited",
+		ServerIsBusy: &errorpb.ServerIsBusy{
+			Reason: "",
+		},
+	}
+	// record the regions we didn't touch.
+	meetRegions := []*split.RegionInfo{}
+	// record all regions we meet with id == 2.
+	idEqualsTo2Regions := []*split.RegionInfo{}
+	theFirstRun := true
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+		if theFirstRun && r.Region.Id == 2 {
+			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
+			theFirstRun = false
+			return restore.RPCResult{
+				StoreError: &serverIsBusy,
+			}
+		}
+		meetRegions = append(meetRegions, r)
+		return restore.RPCResultOK()
+	})
+
+	require.NoError(t, err)
+	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
+	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
+	require.Equal(t, rs.RetryTimes(), 0)
 }
 
 func printRegion(name string, infos []*split.RegionInfo) {
