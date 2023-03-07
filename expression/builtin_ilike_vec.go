@@ -128,6 +128,7 @@ func (b *builtinIlikeSig) vecVec(input *chunk.Chunk, result *chunk.Column) error
 	escape = LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escape)
 	bufVal = tmpValCol
 	bufPattern = tmpPatternCol
+	bufEscape = tmpEscape
 
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(bufVal, bufPattern)

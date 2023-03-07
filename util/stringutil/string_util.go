@@ -443,6 +443,11 @@ func LowerOneString(str []byte) {
 
 // LowerOneStringExcludeEscapeChar, Sometimes we want to lower strings and exclude an escape char
 //
+// When escape_char is a capital char, we shouldn't lower the escape char.
+// For example, 'aaaa' ilike 'AAAA' escape 'A', we should convert 'AAAA' to 'AaAa'.
+// If we do not exclude the escape char, 'AAAA' will be lowered to 'aaaa', and we
+// can not get the correct result.
+//
 // When escape_char is a lower char, we need to convert it to the capital char
 // Because: when lowering "ABC" with escape 'a', after lower, "ABC" -> "abc",
 // then 'a' will be an escape char and it is not expected.
