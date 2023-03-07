@@ -550,6 +550,7 @@ const (
     	key(create_time)
 	);`
 
+	// CreateGlobalTask is a table about global task.
 	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		type VARCHAR(256) NOT NULL,
@@ -562,6 +563,7 @@ const (
 		step INT(11)
 	);`
 
+	// CreateSubTask is a table about sub-task.
 	CreateSubTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_sub_task (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		type VARCHAR(256) NOT NULL DEFAULT '',
