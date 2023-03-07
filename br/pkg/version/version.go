@@ -168,7 +168,7 @@ func CheckVersionForBRVolSnap(s *metapb.Store, tikvVersion *semver.Version) erro
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
 	}
 
-	// tikvVersion should at least 6.1.0
+	// tikvVersion should at least 6.3.0
 	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 3) {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use volume snapshot backup, please update tikv's version to at least v6.3.0(v6.5.0+ recommanded)",
 			s.Address, tikvVersion)
