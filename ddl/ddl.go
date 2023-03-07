@@ -1239,7 +1239,7 @@ func (d *ddl) startCleanDeadTableLock() {
 	}
 }
 
-// SwitchMDL enables MDL or disable DDL.
+// SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
 	isEnableBefore := variable.EnableMDL.Load()
 	if isEnableBefore == enable {
