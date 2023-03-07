@@ -633,8 +633,8 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatPlanCache,
 	}
 
-	tk.MustExec(fmt.Sprintf("select * from t"))
-	tk.MustExec(fmt.Sprintf("explain analyze select * from t"))
+	tk.MustExec("select * from t")
+	tk.MustExec("explain analyze select * from t")
 	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.InExplainStmt, true)
 	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.ExplainFormat, types.ExplainFormatROW)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -695,7 +695,7 @@ func TestExplainFormatPlanCache(t *testing.T) {
 		types.ExplainFormatCostTrace,
 	}
 
-	tk.MustExec(fmt.Sprintf("explain select * from t"))
+	tk.MustExec("explain select * from t")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	for _, format := range explainFormats {
 		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t", format))
