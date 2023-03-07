@@ -61,7 +61,7 @@ func TestDumpGCFileParseTime(t *testing.T) {
 	_, err = parseTime(name3)
 	require.NotNil(t, err)
 
-	name4 := fmt.Sprintf("extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip")
+	name4 := "extract_-brq6zKMarD9ayaifkHc4A==_1678168728477502000.zip"
 	_, err = parseTime(name4)
 	require.NoError(t, err)
 
