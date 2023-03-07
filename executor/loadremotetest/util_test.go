@@ -34,9 +34,12 @@ type mockGCSSuite struct {
 }
 
 var (
-	gcsHost     = "127.0.0.1"
-	gcsPort     = uint16(4443)
-	gcsEndpoint = fmt.Sprintf("http://%s:%d", gcsHost, gcsPort)
+	gcsHost = "127.0.0.1"
+	gcsPort = uint16(4443)
+	// for fake gcs server, we must use this endpoint format
+	// NOTE: must end with '/'
+	gcsEndpointFormat = "http://%s:%d/storage/v1/"
+	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
 func TestLoadRemote(t *testing.T) {
