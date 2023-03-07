@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -126,6 +127,14 @@ func (bwCtx *backfillWorkerContext) setCopReqSenderPool(pID int64, copReqPool *c
 	bwCtx.copReqSender.pools[pID] = copReqPool
 }
 
+func (bwCtx *backfillWorkerContext) printCopReqSenderPools() {
+	str := fmt.Sprintf("zzz, all --------------------------------- pools:%#v, ", bwCtx.copReqSender.pools)
+	for pid, pool := range bwCtx.copReqSender.pools {
+		str += fmt.Sprintf("key:%d, tid:%d, pid:%d", pid, pool.copCtx.tblInfo.ID, pool.copCtx.physicalTableID)
+	}
+	logutil.BgLogger().Warn(str)
+}
+
 func (bwCtx *backfillWorkerContext) getCopReqSenderPool(d *ddl, task *reorgBackfillTask) *copReqSenderPool {
 	bwCtx.copReqSender.Lock()
 	defer bwCtx.copReqSender.Unlock()
@@ -136,9 +145,10 @@ func (bwCtx *backfillWorkerContext) getCopReqSenderPool(d *ddl, task *reorgBackf
 	}
 	copReqPool := initCopReqSenderPool(d.ctx, d.store, task.physicalTable, bfJob.EleID, bfJob.Meta.SQLMode, bfJob.Meta.Location)
 	logutil.BgLogger().Warn("zzz---------------------------------",
-		zap.Int64("tid", copReqPool.copCtx.tblInfo.ID), zap.Int64("pid", copReqPool.copCtx.physicalTableID),
+		zap.Int64("tid", copReqPool.copCtx.tblInfo.ID), zap.Int64("pool pid", copReqPool.copCtx.physicalTableID),
 		zap.Int64("bfJob pid", bfJob.PhysicalTableID),
 		zap.Int64("task tid", task.physicalTable.Meta().ID), zap.Int64("task pid", task.physicalTable.GetPhysicalID()))
+	bwCtx.printCopReqSenderPools()
 	copReqPool.adjustSize(len(bwCtx.backfillWorkers)/2 + 1)
 	bwCtx.copReqSender.pools[bfJob.PhysicalTableID] = copReqPool
 	return copReqPool
@@ -153,12 +163,9 @@ func (bwCtx *backfillWorkerContext) sendCopReq(d *ddl, bfWorker *backfillWorker,
 		return
 	}
 
-	if addIdxWorker.copReqSenderPool.copCtx.physicalTableID == task.bfJob.PhysicalTableID {
-		addIdxWorker.copReqSenderPool.sendTask(task)
-		return
+	if addIdxWorker.copReqSenderPool.copCtx.physicalTableID != task.bfJob.PhysicalTableID {
+		addIdxWorker.copReqSenderPool = bwCtx.getCopReqSenderPool(d, task)
 	}
-
-	addIdxWorker.copReqSenderPool = bwCtx.getCopReqSenderPool(d, task)
 	addIdxWorker.copReqSenderPool.sendTask(task)
 }
 

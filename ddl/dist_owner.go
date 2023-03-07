@@ -392,6 +392,7 @@ func checkJobIsFinished(sess *session, ddlJobID int64) (bool, error) {
 func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte) error {
 	var err error
 	var metas []*model.BackfillMeta
+	rowCnt := int64(0)
 	for i := 0; i < retrySQLTimes; i++ {
 		metas, err = GetBackfillMetas(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
 			ddlJobID, hex.EncodeToString(currEleKey), currEleID), "get_backfill_job_metas")
@@ -400,7 +401,10 @@ func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte)
 				if m.Error != nil {
 					return m.Error
 				}
+				rowCnt += m.RowCount
 			}
+			logutil.BgLogger().Info("zzz--------------------------------- get result",
+				zap.Int64("rowCnt", rowCnt), zap.Int("tasks", len(metas)))
 			return nil
 		}
 
