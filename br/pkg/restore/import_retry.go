@@ -4,6 +4,7 @@ package restore
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -85,6 +86,13 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
+	if result.StoreError.GetServerIsBusy() != nil {
+		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
+			time.Sleep(15 * time.Second)
+			return true
+		}
+	}
+
 	if nl := result.StoreError.GetNotLeader(); nl != nil {
 		if nl.Leader != nil {
 			region.Leader = nl.Leader
