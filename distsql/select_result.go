@@ -78,12 +78,13 @@ type SelectResult interface {
 }
 
 // NewSortedSelectResults is only for partition table
-func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems) SelectResult {
+func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	cur := make([]int, len(selectResult))
 	s := &sortedSelectResults{
 		selectResult: selectResult,
 		cur:          cur,
 		byItems:      byitems,
+		memTracker:   memTracker,
 	}
 	s.initCompareFuncs()
 	s.buildKeyColumns()
@@ -101,6 +102,8 @@ type sortedSelectResults struct {
 
 	cachedChunks   []*chunk.Chunk
 	cachedChunkIdx []int
+
+	memTracker *memory.Tracker
 }
 
 func (ssr *sortedSelectResults) initCompareFuncs() {
@@ -144,12 +147,14 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
 			ssr.cachedChunks[i] = c.CopyConstruct()
+			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
 		}
 	}
 	for c.NumRows() < c.RequiredRows() {
 		minSelectResultIdx := -1
 		for i := range ssr.cachedChunks {
 			if ssr.cachedChunkIdx[i] >= ssr.cachedChunks[i].NumRows() {
+				prevMemUsage := ssr.cachedChunks[i].MemoryUsage()
 				if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
 					return err
 				}
@@ -157,6 +162,7 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 					continue
 				}
 				ssr.cachedChunkIdx[i] = 0
+				ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage() - prevMemUsage)
 			}
 			idx := ssr.cachedChunkIdx[i]
 			row := ssr.cachedChunks[i].GetRow(idx)
@@ -174,11 +180,13 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 }
 
 func (ssr *sortedSelectResults) Close() (err error) {
-	for _, sr := range ssr.selectResult {
+	for i, sr := range ssr.selectResult {
 		err = sr.Close()
 		if err != nil {
 			return err
 		}
+		ssr.memTracker.Consume(-ssr.cachedChunks[i].MemoryUsage())
+		ssr.cachedChunks[i] = nil
 	}
 	return nil
 }
