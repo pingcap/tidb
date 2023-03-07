@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,11 +47,45 @@ func TestCPUValue(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		value, unsupported := GetCPUUsage()
 		require.False(t, unsupported)
-		require.GreaterOrEqual(t, value, 0.0)
+		require.Greater(t, value, 0.0)
 		require.Less(t, value, 1.0)
 	}
-
 	observer.Stop()
+	close(exit)
+	wg.Wait()
+}
+
+func TestFailpointCPUValue(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr", "return(true)")
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr")
+	}()
+	observer := NewCPUObserver()
+	exit := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-exit:
+					return
+				default:
+					runtime.Gosched()
+				}
+			}
+		}()
+	}
+	observer.Start()
+	for n := 0; n < 10; n++ {
+		time.Sleep(1 * time.Second)
+		value, unsupported := GetCPUUsage()
+		require.True(t, unsupported)
+		require.Equal(t, value, 0.0)
+	}
+	// we do not stop the observer, because we inject the fail-point and the observer will not start.
+	// if this test case happen goleak, it must have a bug.
 	close(exit)
 	wg.Wait()
 }

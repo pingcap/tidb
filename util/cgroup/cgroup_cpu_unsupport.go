@@ -18,11 +18,19 @@ package cgroup
 
 import (
 	"runtime"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 )
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
 func GetCgroupCPU() (CPUUsage, error) {
 	var cpuUsage CPUUsage
+	failpoint.Inject("GetCgroupCPUErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(cpuUsage, errors.Errorf("mockAddBatchDDLJobsErr"))
+		}
+	})
 	cpuUsage.NumCPU = runtime.NumCPU()
 	return cpuUsage, nil
 }
