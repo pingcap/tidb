@@ -27,6 +27,7 @@ import (
 func GetCgroupCPU() (CPUUsage, error) {
 	var cpuUsage CPUUsage
 	failpoint.Inject("GetCgroupCPUErr", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
 			failpoint.Return(cpuUsage, errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
