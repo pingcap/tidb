@@ -555,7 +555,8 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		start_time DATETIME,
+		start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    	end_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11)
@@ -567,9 +568,10 @@ const (
 		task_id BIGINT(20) NOT NULL,
 		designate_tidb_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		start_time DATETIME,
+		start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        end_time TIMESTAMP,
 		meta LONGBLOB,
-		heartbeat DATETIME
+		heartbeat TIMESTAMP
 	);`
 )
 

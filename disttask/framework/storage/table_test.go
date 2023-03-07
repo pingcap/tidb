@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/dist-task/proto"
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -47,7 +47,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	gm, err := GetGlobalTaskManager()
 	require.NoError(t, err)
 
-	id, err := gm.AddNewTask("test", 4, (&proto.SimpleNumberGTaskMeta{}).Serialize())
+	id, err := gm.AddNewTask("test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -57,7 +57,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.Equal(t, "test", task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, uint64(4), task.Concurrency)
-	require.Equal(t, &proto.SimpleNumberGTaskMeta{}, task.Meta)
+	require.Equal(t, []byte("test"), task.Meta)
 
 	task2, err := gm.GetTaskByID(1)
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestSubTaskTable(t *testing.T) {
 	sm, err := GetSubTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewTask(1, "tidb1", (&proto.SimpleNumberSTaskMeta{}).Serialize(), "test", false)
+	err = sm.AddNewTask(1, "tidb1", []byte("test"), "test", false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -107,7 +107,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(1), task.TaskID)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, "tidb1", task.SchedulerID)
-	require.Equal(t, &proto.SimpleNumberSTaskMeta{}, task.Meta)
+	require.Equal(t, []byte("test"), task.Meta)
 
 	ids, err := sm.GetSchedulerIDs(1)
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(1), task.TaskID)
 	require.Equal(t, proto.TaskStateRunning, task.State)
 	require.Equal(t, "tidb1", task.SchedulerID)
-	require.Equal(t, &proto.SimpleNumberSTaskMeta{}, task.Meta)
+	require.Equal(t, []byte("test"), task.Meta)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewTask(2, "tidb1", (&proto.SimpleNumberSTaskMeta{}).Serialize(), "test", true)
+	err = sm.AddNewTask(2, "tidb1", []byte("test"), "test", true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)

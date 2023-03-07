@@ -57,6 +57,7 @@ type Task struct {
 	DispatcherID string
 	Concurrency  uint64
 	StartTime    time.Time
+	EndTime      time.Time
 	Meta         []byte
 }
 
@@ -69,6 +70,7 @@ type Subtask struct {
 	State       string
 	SchedulerID string
 	StartTime   time.Time
+	EndTime     time.Time
 	Meta        []byte
 }
 
