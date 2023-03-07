@@ -42,9 +42,12 @@ type mockGCSSuite struct {
 }
 
 var (
-	gcsHost     = "127.0.0.1"
-	gcsPort     = uint16(4444)
-	gcsEndpoint = fmt.Sprintf("http://%s:%d", gcsHost, gcsPort)
+	gcsHost = "127.0.0.1"
+	gcsPort = uint16(4444)
+	// for fake gcs server, we must use this endpoint format
+	// NOTE: must end with '/'
+	gcsEndpointFormat = "http://%s:%d/storage/v1/"
+	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
 func TestAsyncLoad(t *testing.T) {
@@ -140,7 +143,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:08
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":0,"LoadedRowCnt":1}`
+		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":0,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:09
 		// commit one task and sleep 3 seconds
@@ -148,7 +151,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:11
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":2,"LoadedRowCnt":2}`
+		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:12
 		// finish job
@@ -158,7 +161,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		require.NoError(s.T(), err)
 		expected.Status = JobFinished
 		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-		expected.Progress = `{"SourceFileSize":-1,"LoadedFileSize":3,"LoadedRowCnt":2}`
+		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":3,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 	}()
 

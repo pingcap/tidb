@@ -701,8 +701,23 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		LoadedFileSize: 0,
 		LoadedRowCnt:   0,
 	}
-	// TODO try to read total file size from remote storage. gcs seems wrongly
-	// implement io.Seek
+
+	if e.loadRemoteInfo.store != nil {
+		reader2, err2 := e.loadRemoteInfo.store.Open(ctx, e.loadRemoteInfo.path)
+		if err2 != nil {
+			logutil.Logger(ctx).Warn("open file failed, can not know file size", zap.Error(err2))
+		} else {
+			//nolint: errcheck
+			defer reader2.Close()
+
+			filesize, err3 := reader2.Seek(0, io.SeekEnd)
+			if err3 != nil {
+				logutil.Logger(ctx).Warn("seek file end failed, can not know file size", zap.Error(err2))
+			} else {
+				progress.SourceFileSize = filesize
+			}
+		}
+	}
 	e.progress.Store(&progress)
 
 	err = asyncloaddata.StartJob(ctx, sqlExec, jobID)
