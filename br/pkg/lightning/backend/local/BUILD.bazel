@@ -88,6 +88,7 @@ go_test(
     name = "local_test",
     timeout = "short",
     srcs = [
+        "compress_test.go",
         "duplicate_test.go",
         "engine_test.go",
         "iterator_test.go",
