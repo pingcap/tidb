@@ -26,6 +26,7 @@ go_test(
     embed = [":cpu"],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
