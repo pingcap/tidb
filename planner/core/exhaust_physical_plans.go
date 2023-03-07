@@ -2055,9 +2055,8 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		rowHash, szHash, hasSizeHash = p.calcHashExchangeSizeByChild(taskCnt)
 		if hasSizeBC && hasSizeHash {
 			return szBC < szHash
-		} else {
-			return rowBC < rowHash
 		}
+		return rowBC < rowHash
 	}
 
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
