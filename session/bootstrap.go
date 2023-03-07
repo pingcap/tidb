@@ -549,6 +549,28 @@ const (
     	key(parent_table_id, create_time),
     	key(create_time)
 	);`
+
+	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time DATETIME,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11)
+	);`
+
+	CreateSubTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_sub_task (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL DEFAULT '',
+		task_id BIGINT(20) NOT NULL,
+		designate_tidb_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time DATETIME,
+		meta LONGBLOB,
+		heartbeat DATETIME
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -804,11 +826,12 @@ const (
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
 	version134 = 134
+	version135 = 135
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version134
+var currentBootstrapVersion int64 = version135
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -930,6 +953,7 @@ var (
 		upgradeToVer132,
 		upgradeToVer133,
 		upgradeToVer134,
+		upgradeToVer135,
 	}
 )
 
@@ -2316,6 +2340,14 @@ func upgradeToVer134(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
 }
 
+func upgradeToVer135(s Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+	mustExecute(s, CreateGlobalTask)
+	mustExecute(s, CreateSubTask)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2426,6 +2458,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTask)
 	// Create tidb_ttl_job_history table
 	mustExecute(s, CreateTTLJobHistory)
+	// Create tidb_global_task table
+	mustExecute(s, CreateGlobalTask)
+	// Create tidb_sub_task table
+	mustExecute(s, CreateSubTask)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
