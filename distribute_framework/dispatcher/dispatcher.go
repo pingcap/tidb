@@ -149,14 +149,9 @@ func (d *dispatcher) DetectionTaskLoop() {
 				} else {
 					if gTask.State == proto.TaskStateReverting {
 						// Finish the rollback step.
-						gTask.State = proto.TaskStateReverted
-						logutil.BgLogger().Warn("ssssssssssssssssssssssssssssssssss")
-						err = d.gTaskMgr.UpdateTask(gTask)
-						if err != nil {
-							logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-						}
+						d.updateTaskRevertInfo(gTask)
 					} else {
-						// // Finish the normal step.
+						// Finish the normal step.
 						logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
 						err = d.loadTaskAndProgress(gTask, false)
 					}
@@ -182,11 +177,6 @@ func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) error {
 }
 
 func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) error {
-	// All subtasks are reverted, update the global task.
-	if receiveErr == proto.TaskStateReverted {
-		return d.updateTaskRevertInfo(gTask)
-	}
-
 	meta, err := GetGTaskFlowHandle(gTask.Type).HandleError(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
@@ -222,7 +212,7 @@ func (d *dispatcher) handleError(gTask *proto.Task, receiveErr string) error {
 			SchedulerID: id,
 			Meta:        meta,
 		}
-		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), gTask.Type, true)
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), subtask.Type, true)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
 			return err
@@ -282,7 +272,7 @@ func (d *dispatcher) loadTaskAndProgress(gTask *proto.Task, fromPending bool) (e
 		// TODO: Consider batch splitting
 		// TODO: Synchronization interruption problem, e.g. AddNewTask failed
 		// TODO: batch insert
-		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), gTask.Type, false)
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), subtask.Type, false)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
 			return err
