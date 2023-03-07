@@ -2822,7 +2822,6 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 // RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
 // TODO: need to implement the range filter out feature
 func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
-	filter := rtree.NewRangeTree()
 	err := recorder.RewriteTableID(func(tableID int64) (int64, error) {
 		rewriteRule, exists := rewriteRules[tableID]
 		if !exists {
@@ -2834,9 +2833,9 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 		}
 		return newTableID, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
+	return errors.Trace(err)
+	/* TODO: we can use range filter to skip restoring the index kv using accelerated indexing feature
+	filter := rtree.NewRangeTree()
 	err = recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		// range after table ID rewritten
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
@@ -2849,6 +2848,7 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 		return nil
 	})
 	return errors.Trace(err)
+	*/
 }
 
 // MockClient create a fake client used to test.
