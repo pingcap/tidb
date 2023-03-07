@@ -189,31 +189,49 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 
 func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
+	affectedColumns := make(map[*statistics.Column]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
-		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
-			continue
+		if row.GetInt64(1) > 0 { // is index
+			idx, ok := table.Indices[row.GetInt64(2)]
+			if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
+				continue
+			}
+			if idx.TopN == nil {
+				idx.TopN = statistics.NewTopN(32)
+			}
+			affectedIndexes[idx] = struct{}{}
+			data := make([]byte, len(row.GetBytes(3)))
+			copy(data, row.GetBytes(3))
+			idx.TopN.AppendTopN(data, row.GetUint64(4))
+		} else {
+			col, ok := table.Columns[row.GetInt64(2)]
+			if !ok || col.Info == nil || !mysql.HasPriKeyFlag(col.Info.GetFlag()) || (col.CMSketch == nil && col.StatsVer <= statistics.Version1) {
+				continue
+			}
+			if col.TopN == nil {
+				col.TopN = statistics.NewTopN(32)
+			}
+			affectedColumns[col] = struct{}{}
+			data := make([]byte, len(row.GetBytes(3)))
+			copy(data, row.GetBytes(3))
+			col.TopN.AppendTopN(data, row.GetUint64(4))
 		}
-		if idx.TopN == nil {
-			idx.TopN = statistics.NewTopN(32)
-		}
-		affectedIndexes[idx] = struct{}{}
-		data := make([]byte, len(row.GetBytes(2)))
-		copy(data, row.GetBytes(2))
-		idx.TopN.AppendTopN(data, row.GetUint64(3))
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
+	}
+	for col := range affectedColumns {
+		col.TopN.Sort()
 	}
 }
 
 func (h *Handle) initStatsTopN(cache *statsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value, count from mysql.stats_top_n"
 	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
