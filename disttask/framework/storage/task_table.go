@@ -251,11 +251,11 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID strin
 }
 
 // GetSubtaskInStates gets the subtask in the states.
-func (stm *SubTaskManager) GetSubtaskInStates(InstanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
+func (stm *SubTaskManager) GetSubtaskInStates(tidbID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	args := []interface{}{InstanceID, taskID}
+	args := []interface{}{tidbID, taskID}
 	args = append(args, states...)
 	rs, err := execSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
