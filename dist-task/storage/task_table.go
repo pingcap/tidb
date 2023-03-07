@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -79,7 +79,6 @@ func SetSubTaskManager(is *SubTaskManager) {
 }
 
 func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-	//logutil.BgLogger().Info("exec sql", zap.String("sql", sql), zap.Reflect("args", args))
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -147,7 +146,7 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, start_time = %?, step = %? where id = %?", task.State, task.DispatcherID, task.StartTime.String(), task.Step, task.ID)
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %? where id = %?", task.State, task.DispatcherID, task.Step, task.ID)
 	if err != nil {
 		return err
 	}
@@ -296,19 +295,19 @@ func (stm *SubTaskManager) UpdateSubtaskState(id int64, state string) error {
 	return err
 }
 
-func (stm *SubTaskManager) UpdateHeartbeat(TiDB string, taskID int64, heartbeat time.Time) error {
+func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set heartbeat = %? where designate_tidb_id = %? and task_id = %?", heartbeat.String(), TiDB, taskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set heartbeat = %? where designate_tidb_id = %? and task_id = %?", heartbeat.String(), instanceID, taskID)
 	return err
 }
 
-func (stm *SubTaskManager) DeleteTasks(globelTaskID int64) error {
+func (stm *SubTaskManager) DeleteTasks(globalTaskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = %?", globelTaskID)
+	_, err := ExecSQL(stm.ctx, stm.se, "delete mysql.tidb_sub_task where global_task_id = %?", globalTaskID)
 	if err != nil {
 		return err
 	}
@@ -331,28 +330,6 @@ func (stm *SubTaskManager) CheckTaskState(globalTaskID int64, state string, eq b
 
 	return rs[0].GetInt64(0), nil
 }
-
-//func (stm *SubTaskManager) CheckTaskNonStates(globalTaskID int64, states ...interface{}) (cnt int64, err error) {
-//	stm.mu.Lock()
-//	defer stm.mu.Unlock()
-//
-//	if len(states) == 0 {
-//		return 0, nil
-//	}
-//
-//	query := "select count(*) from mysql.tidb_sub_task where task_id = %?"
-//	for i := 0; i < len(states); i++ {
-//		query += " and state != %?"
-//	}
-//	args := []interface{}{globalTaskID}
-//	args = append(args, states...)
-//	rs, err := ExecSQL(stm.ctx, stm.se, query, args...)
-//	if err != nil {
-//		return 0, err
-//	}
-//
-//	return rs[0].GetInt64(0), nil
-//}
 
 func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
 	stm.mu.Lock()
