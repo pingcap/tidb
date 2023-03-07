@@ -163,6 +163,7 @@ type LogicalJoin struct {
 	rightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
+	// NAEQConditions means null aware equal conditions, which is used for null aware anti joins.
 	NAEQConditions  []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
