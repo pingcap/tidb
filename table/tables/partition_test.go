@@ -17,10 +17,17 @@ package tables_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
+	gotime "time"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -32,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2348,4 +2356,657 @@ func TestPruneModeWarningInfo(t *testing.T) {
 		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
 	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
+}
+
+type testCallback struct {
+	ddl.Callback
+	OnJobRunBeforeExported func(job *model.Job)
+}
+
+func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
+	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
+	require.NoError(t, err)
+	return &testCallback{
+		Callback: defHookFactory(dom),
+	}
+}
+
+func (c *testCallback) OnJobRunBefore(job *model.Job) {
+	if c.OnJobRunBeforeExported != nil {
+		c.OnJobRunBeforeExported(job)
+	}
+}
+
+func TestReorgPartExtensivePart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	// TODO: Handle different column types?
+	// TODO: Handle index for different column types / combinations as well?
+
+	// Steps:
+	// - create a table (should at least test both LIST and RANGE partition, Including COLUMNS)
+	// - add base data
+	// - start DDL
+	// - before each (and after?) each state transition:
+	//   - Crash (if rollback is needed, then OK, but the rest need to be tested
+	//   - Fail
+	//   - run queries that could clash with backfill etc. (How to handle expected errors?)
+	//     - on both the 'current' state and 'previous' state!
+	//   - run ADMIN CHECK TABLE
+	//
+	// OK Just start and then extend :)
+
+	//tk.MustExec(`create table t (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e)) partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`)
+	tk.MustExec(`create table t (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a)) partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`)
+	tk.MustExec(`create table t2 (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`)
+
+	// TODO: Test again with timestamp in col e!!
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `d` datetime DEFAULT NULL,\n" +
+		"  `e` timestamp NULL DEFAULT NULL,\n" +
+		"  `f` double DEFAULT NULL,\n" +
+		"  `g` text DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		//"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		//"  KEY `b` (`b`),\n" +
+		//"  KEY `c` (`c`,`b`),\n" +
+		//"  KEY `d` (`d`,`c`),\n" +
+		//"  KEY `e` (`e`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`a`)\n" +
+		"(PARTITION `pNull` VALUES LESS THAN (''),\n" +
+		" PARTITION `pM` VALUES LESS THAN ('M'),\n" +
+		" PARTITION `pLast` VALUES LESS THAN (MAXVALUE))"))
+
+	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
+		"t2 CREATE TABLE `t2` (\n" +
+		"  `a` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `d` datetime DEFAULT NULL,\n" +
+		"  `e` timestamp NULL DEFAULT NULL,\n" +
+		"  `f` double DEFAULT NULL,\n" +
+		"  `g` text DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`),\n" +
+		"  KEY `d` (`d`,`c`),\n" +
+		"  KEY `e` (`e`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	dom := domain.GetDomain(tk.Session())
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := newTestCallBack(t, dom)
+	dom.DDL().SetHook(hook)
+
+	rows := 10000
+	pkInserts := 200
+	pkUpdates := 200
+	pkDeletes := 100 // Enough to delete half of what is inserted?
+	pkMap := make(map[string]struct{}, rows)
+	pkArray := make([]string, 0, len(pkMap))
+	//seed := rand.Int63()
+	//logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	//seed = 2619640531148228497
+	seed := int64(3498486109051357355)
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	getNewPK := func(m map[string]struct{}, suf string) string {
+		newPK := randStr(2+reorgRand.Intn(5), reorgRand) + suf
+		lowerPK := strings.ToLower(newPK)
+		for _, ok := m[lowerPK]; ok; {
+			newPK = randStr(2+reorgRand.Intn(5), reorgRand)
+			lowerPK = strings.ToLower(newPK)
+			_, ok = m[lowerPK]
+		}
+		m[lowerPK] = struct{}{}
+		return newPK
+	}
+	cnt := 0
+	getValues := func(pk string, asAssignment bool) string {
+		s := `('%s', '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `a = '%s', b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		return fmt.Sprintf(s,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+	// Generate a start set:
+	for i := 0; i < rows; i++ {
+		pk := getNewPK(pkMap, "-o")
+		pkArray = append(pkArray, pk)
+		values := getValues(pk, false)
+		tk.MustExec(`insert into t values ` + values)
+		tk.MustExec(`insert into t2 values ` + values)
+	}
+	// TODO: Also test without analyze table
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t2`)
+	tk.MustQuery(`select * from t except select * from t2`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t2 except select * from t`).Check(testkit.Rows())
+
+	// How to arrange data for possible collisions?
+	// change both PK column, SK column and non indexed column!
+	// Run various changes in transactions, in two concurrent sessions
+	// + mirror those transactions on a copy of the same table and data without DDL
+	// to verify expected transaction conflicts!
+	// We should try to collide:
+	// Current data : 1-1000
+	// insert vN    1-200 // random order, random length of transaction?
+	// insert vN-1 100-300 // interleaved with vN, random order+length of txn?
+	// update vN    1-20, 100-120, 200-220, 300-320..
+	// update vN-1  10-30, 110-130, 210-230, ...
+	// delete vN
+	// delete vN-1
+	//               insert      update       delete <-
+	//  insert
+	//  update
+	//  delete
+	// TODO: Also make sure we update the PK so it moves between different before and after partitions
+	// TODO: Also check if non-affected indexes in UPDATE is touched?
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+	tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+	tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+	currentState := model.StateNone
+	transitions := 0
+	var currTbl table.Table
+	currSchema := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
+	prevTbl, err := currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	require.NoError(t, err)
+	var hookErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if hookErr != nil {
+			// Enough to find a single error
+			return
+		}
+		if job.Type == model.ActionReorganizePartition && job.SchemaState != currentState {
+			transitions++
+			// use random generation to possibly trigger txn collisions / deadlocks?
+			// insert (dup in new/old , non dup)
+			// update (dup in new/old , non dup as in same old/new partition -> update, different new/old -> insert + delete)
+			// delete
+			// verify with select after commit?
+
+			logutil.BgLogger().Info("State before ins/upd/del", zap.Int("transitions", transitions),
+				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
+			if job.SchemaState == model.StateDeleteReorganization {
+				//tk2.MustQuery(`explain format='brief' select count(distinct a) from t`).Check(testkit.Rows())
+			}
+			//tk2.MustQuery(`(select a,c from t except select a,c from t2) union (select a,0 from t except select a,0 from t2)`).Check(testkit.Rows())
+			/*
+				res := tk2.MustQuery(`select a,c from t`).Sort()
+				for _, row := range res.Rows() {
+					logutil.BgLogger().Info("row t", zap.String("a", row[0].(string)), zap.String("c", row[1].(string)))
+				}
+				res = tk2.MustQuery(`select a,c from t2`).Sort()
+				for _, row := range res.Rows() {
+					logutil.BgLogger().Info("row t2", zap.String("a", row[0].(string)), zap.String("c", row[1].(string)))
+				}
+			*/
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			//tk2.MustQuery(`select count(distinct a) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			// Start with PK changes (non duplicate keys)
+			insPK := make([]string, 0, pkInserts)
+			values := make([]string, 0, pkInserts)
+			for i := 0; i < pkInserts; i += 2 {
+				pk := getNewPK(pkMap, "-i0")
+				logutil.BgLogger().Debug("insert1", zap.String("pk", pk))
+				pkArray = append(pkArray, pk)
+				insPK = append(insPK, pk)
+				values = append(values, getValues(pk, false))
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			hookErr = tk2.ExecToErr(`insert into t values ` + strings.Join(values, ","))
+			if hookErr != nil {
+				return
+			}
+			hookErr = tk2.ExecToErr(`insert into t2 values ` + strings.Join(values, ","))
+			if hookErr != nil {
+				return
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			currSchema = sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
+			currTbl, hookErr = currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using previous schema version
+
+			values = values[:0]
+			for i := 1; i < pkInserts; i += 2 {
+				pk := getNewPK(pkMap, "-i1")
+				logutil.BgLogger().Debug("insert2", zap.String("pk", pk))
+				pkArray = append(pkArray, pk)
+				insPK = append(insPK, pk)
+				values = append(values, getValues(pk, false))
+			}
+			hookErr = tk2.ExecToErr(`insert into t values ` + strings.Join(values, ","))
+			if hookErr != nil {
+				return
+			}
+			hookErr = tk2.ExecToErr(`insert into t2 values ` + strings.Join(values, ","))
+			if hookErr != nil {
+				return
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			rs, err := tk2.Exec(`select count(*) from t`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			tRows := tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			rs, err = tk2.Exec(`select count(*) from t2`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			t2Rows := tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			if tRows != t2Rows {
+				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+			}
+
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using current schema version
+
+			// Half from insert (1/4 in current schema version)
+			values = values[:0]
+			for i := 0; i < pkUpdates; i += 4 {
+				insIdx := reorgRand.Intn(len(insPK))
+				oldPK := insPK[insIdx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				newPK := getNewPK(pkMap, "-u0")
+				insPK[insIdx] = newPK
+				idx := len(pkArray) - len(insPK) + insIdx
+				pkArray[idx] = newPK
+				value := getValues(newPK, true)
+
+				logutil.BgLogger().Debug("update1", zap.String("old", oldPK), zap.String("value", value))
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+
+				// Also do some non-pk column updates!
+				insIdx = reorgRand.Intn(len(insPK))
+				oldPK = insPK[insIdx]
+				value = getValues(oldPK, true)
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using previous schema version
+
+			// Half from insert (1/4 in previous schema version)
+			values = values[:0]
+			for i := 1; i < pkUpdates; i += 4 {
+				insIdx := reorgRand.Intn(len(insPK))
+				oldPK := insPK[insIdx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				newPK := getNewPK(pkMap, "-u1")
+				insPK[insIdx] = newPK
+				idx := len(pkArray) - len(insPK) + insIdx
+				pkArray[idx] = newPK
+				value := getValues(newPK, true)
+				logutil.BgLogger().Debug("update2", zap.String("old", oldPK), zap.String("value", value))
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+
+				// Also do some non-pk column updates!
+				insIdx = reorgRand.Intn(len(insPK))
+				oldPK = insPK[insIdx]
+				value = getValues(oldPK, true)
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			// TODO: Also just change some fields, since if PK changes it does RemoveRecord + AddRecord
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			// Half from Old
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using current schema version
+
+			// TODO: Add test for update of non-PK columns!!!
+			// Half from old (1/4 in current schema version)
+			values = values[:0]
+			for i := 2; i < pkUpdates; i += 4 {
+				idx := reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK := pkArray[idx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				newPK := getNewPK(pkMap, "-u2")
+				pkArray[idx] = newPK
+				value := getValues(newPK, true)
+				logutil.BgLogger().Debug("update3", zap.String("old", oldPK), zap.String("value", value))
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+
+				// Also do some non-pk column updates!
+				idx = reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK = pkArray[idx]
+				value = getValues(oldPK, true)
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using previous schema version
+
+			// Half from old (1/4 in previous schema version)
+			values = values[:0]
+			for i := 3; i < pkUpdates; i += 4 {
+				idx := reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK := pkArray[idx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				newPK := getNewPK(pkMap, "-u3")
+				pkArray[idx] = newPK
+				value := getValues(newPK, true)
+				logutil.BgLogger().Debug("update4", zap.String("old", oldPK), zap.String("value", value))
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+
+				// Also do some non-pk column updates!
+				idx = reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK = pkArray[idx]
+				value = getValues(oldPK, true)
+
+				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`update t2 set ` + value + ` where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			rs, err = tk2.Exec(`select count(*) from t`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			tRows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			rs, err = tk2.Exec(`select count(*) from t2`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			t2Rows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			if tRows != t2Rows {
+				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+			}
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using current schema version
+
+			// Half from insert (1/4 in current schema version)
+			values = values[:0]
+			for i := 0; i < pkDeletes; i += 4 {
+				insIdx := reorgRand.Intn(len(insPK))
+				oldPK := insPK[insIdx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				idx := len(pkArray) - len(insPK) + insIdx
+				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
+				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				//logutil.BgLogger().Info("delete0", zap.String("pk", oldPK))
+
+				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`delete from t2 where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using previous schema version
+
+			// Half from insert (1/4 in previous schema version)
+			values = values[:0]
+			for i := 1; i < pkDeletes; i += 4 {
+				insIdx := reorgRand.Intn(len(insPK))
+				oldPK := insPK[insIdx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				idx := len(pkArray) - len(insPK) + insIdx
+				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
+				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				//logutil.BgLogger().Info("delete1", zap.String("pk", oldPK))
+
+				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`delete from t2 where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			// Half from Old
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using current schema version
+
+			// Half from old (1/4 in current schema version)
+			values = values[:0]
+			for i := 2; i < pkDeletes; i += 4 {
+				idx := reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK := pkArray[idx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				//logutil.BgLogger().Info("delete2", zap.String("pk", oldPK))
+
+				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`delete from t2 where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			if len(pkMap) != len(pkArray) {
+				panic("Different length!!!")
+			}
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using previous schema version
+
+			// Half from old (1/4 in previous schema version)
+			values = values[:0]
+			for i := 3; i < pkDeletes; i += 4 {
+				idx := reorgRand.Intn(len(pkArray) - len(insPK))
+				oldPK := pkArray[idx]
+				lowerPK := strings.ToLower(oldPK)
+				delete(pkMap, lowerPK)
+				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				//logutil.BgLogger().Info("delete3", zap.String("pk", oldPK))
+
+				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+				hookErr = tk2.ExecToErr(`delete from t2 where a = "` + oldPK + `"`)
+				if hookErr != nil {
+					return
+				}
+			}
+			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+			rs, err = tk2.Exec(`select count(*) from t`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			tRows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			rs, err = tk2.Exec(`select count(*) from t2`)
+			if err != nil {
+				hookErr = err
+				return
+			}
+			t2Rows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
+			if tRows != t2Rows {
+				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+			}
+
+			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
+			// Now using current schema version
+			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
+			prevTbl = currTbl
+			logutil.BgLogger().Info("State after ins/upd/del", zap.Int("transitions", transitions),
+				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
+		}
+	}
+	tk.MustExec(`alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`)
+	require.NoError(t, hookErr)
+	tk.MustExec(`admin check table t`)
+	tk.MustExec(`admin check table t2`)
+	//tk.MustQuery(`select count(*) from t`).Check(testkit.Rows("10233"))
+	//tk.MustQuery(`select count(*) from t2`).Check(testkit.Rows("10233"))
+	tk.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t except select * from t2 LIMIT 1`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t2 except select * from t LIMIT 1`).Check(testkit.Rows())
+}
+
+// Emojis fold to a single rune, and ö compares as o, so just complicated having other runes.
+// Enough to just distribute between A and Z + testing simple folding
+var runes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func randStr(n int, r *rand.Rand) string {
+	var sb strings.Builder
+	sb.Grow(n)
+	for i := 0; i < n; i++ {
+		_, _ = sb.WriteRune(runes[r.Intn(len(runes))])
+	}
+	return sb.String()
 }

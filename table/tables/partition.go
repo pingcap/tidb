@@ -99,7 +99,7 @@ type partitionedTable struct {
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
 	reorganizePartitions map[int64]interface{}
-	// doubleWriteParittions are the partitions not visible, but we should double write to
+	// doubleWritePartitions are the partitions not visible, but we should double write to
 	doubleWritePartitions map[int64]interface{}
 	reorgPartitionExpr    *PartitionExpr
 }
@@ -1453,6 +1453,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	if err != nil {
 		return
 	}
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+		return
+	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
 		// Double write to the ongoing reorganized partition
 		pid, err = t.locateReorgPartition(ctx, r)
@@ -1519,6 +1522,7 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 			return errors.Trace(err)
 		}
 		tbl = t.GetPartition(pid)
+		// TODO: if DeleteOnly don't assert EXISTS!
 		err = tbl.RemoveRecord(ctx, h, r)
 		if err != nil {
 			return errors.Trace(err)
