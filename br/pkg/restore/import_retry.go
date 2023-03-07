@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -88,7 +89,15 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
 	if result.StoreError.GetServerIsBusy() != nil {
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
-			time.Sleep(15 * time.Second)
+			sleepDuration := 15 * time.Second
+
+			failpoint.Inject("hint-memoryIsLimited-sleep", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.CL(ctx).Debug("failpoint hint-memoryIsLimited-sleep injected.")
+					sleepDuration = 100 * time.Microsecond
+				}
+			})
+			time.Sleep(sleepDuration)
 			return true
 		}
 	}
