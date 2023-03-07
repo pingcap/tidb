@@ -531,6 +531,14 @@ func buildBatchCopTasksForPartitionedTable(
 	return batchTasks, nil
 }
 
+func filterAliveStoresStr(ctx context.Context, storesStr []string, ttl time.Duration, kvStore *kvStore) (aliveStores []string) {
+	aliveIdx := filterAliveStoresHelper(ctx, storesStr, ttl, kvStore)
+	for _, idx := range aliveIdx {
+		aliveStores = append(aliveStores, storesStr[idx])
+	}
+	return aliveStores
+}
+
 func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Duration, kvStore *kvStore) (aliveStores []*tikv.Store) {
 	storesStr := make([]string, 0, len(stores))
 	for _, s := range stores {
@@ -649,6 +657,8 @@ func buildBatchCopTasksConsistentHash(
 		if err != nil {
 			return nil, err
 		}
+		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
+		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
 		if len(storesStr) == 0 {
 			retErr := errors.New("Cannot find proper topo from AutoScaler")
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
