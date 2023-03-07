@@ -1991,7 +1991,7 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
-func calcBroadcastExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
 	s := p.statsInfo()
 	row := float64(s.Count()) * float64(taskCnt-1)
 	if s.HistColl == nil {
@@ -2002,9 +2002,9 @@ func calcBroadcastExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bo
 	return row, size, true
 }
 
-func (p *LogicalJoin) calcBroadcastExchangeSizeByChild(taskCnt int) (float64, float64, bool) {
-	row1, size1, hasSize1 := calcBroadcastExchangeSize(p.children[0], taskCnt)
-	row2, size2, hasSize2 := calcBroadcastExchangeSize(p.children[1], taskCnt)
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, taskCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, taskCnt)
+	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, taskCnt)
 
 	if hasSize1 && hasSize2 {
 		return math.Min(row1, row2), math.Min(size1, size2), true
@@ -2013,7 +2013,7 @@ func (p *LogicalJoin) calcBroadcastExchangeSizeByChild(taskCnt int) (float64, fl
 	return math.Min(row1, row2), 0, false
 }
 
-func calcHashExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bool) {
+func calcHashExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
 	s := p.statsInfo()
 	row := float64(s.Count()) * float64(taskCnt-1) / float64(taskCnt)
 	if s.HistColl == nil {
@@ -2024,13 +2024,31 @@ func calcHashExchangeSize(p LogicalPlan, taskCnt int) (float64, float64, bool) {
 	return row, sz, true
 }
 
-func (p *LogicalJoin) calcHashExchangeSizeByChild(taskCnt int) (float64, float64, bool) {
-	row1, size1, hasSize1 := calcHashExchangeSize(p.children[0], taskCnt)
-	row2, size2, hasSize2 := calcHashExchangeSize(p.children[1], taskCnt)
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, taskCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcHashExchangeSize(p1, taskCnt)
+	row2, size2, hasSize2 := calcHashExchangeSize(p2, taskCnt)
 	if hasSize1 && hasSize2 {
 		return row1 + row2, size1 + size2, true
 	}
 	return row1 + row2, 0, false
+}
+
+func isJoinFitMPPBCJ(p *LogicalJoin, taskCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], taskCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], taskCnt)
+	if hasSizeBC && hasSizeHash {
+		return szBC < szHash
+	}
+	return rowBC < rowHash
+}
+
+func isPlanfitMPPBCJ(p Plan, taskCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcHashExchangeSize(p, taskCnt)
+	rowHash, szHash, hasSizeHash := calcBroadcastExchangeSize(p, taskCnt)
+	if hasSizeBC && hasSizeHash {
+		return szBC < szHash
+	}
+	return rowBC < rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.
@@ -2038,28 +2056,16 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
-	mustRightChildFit := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
-	mustLeftChildFit := p.JoinType == RightOuterJoin
-
-	if mustRightChildFit {
-		return checkChildFitBC(p.children[1])
-	} else if mustLeftChildFit {
-		return checkChildFitBC(p.children[0])
-	}
 
 	taskCnt := 3
-	if !mustRightChildFit && !mustLeftChildFit {
-		var rowBC, szBC, rowHash, szHash float64
-		var hasSizeBC, hasSizeHash bool
-		rowBC, szBC, hasSizeBC = p.calcBroadcastExchangeSizeByChild(taskCnt)
-		rowHash, szHash, hasSizeHash = p.calcHashExchangeSizeByChild(taskCnt)
-		if hasSizeBC && hasSizeHash {
-			return szBC < szHash
-		}
-		return rowBC < rowHash
+
+	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+		return isPlanfitMPPBCJ(p.children[1], taskCnt)
+	} else if p.JoinType == RightOuterJoin {
+		return isPlanfitMPPBCJ(p.children[0], taskCnt)
 	}
 
-	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
+	return isJoinFitMPPBCJ(p, taskCnt)
 }
 
 // canPushToCop checks if it can be pushed to some stores.
