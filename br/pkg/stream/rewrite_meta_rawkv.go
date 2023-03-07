@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
@@ -36,34 +37,36 @@ const (
 	WriteCF   = "write"
 )
 
-// SchemasReplace specifies schemas information mapping old schemas to new schemas.
-
 type RewriteStatus int
 
 const (
-	RewriteStatus_PreConsturctMap = iota
-	RewriteStatus_Run
+	RewriteStatusPreConstructMap = iota // represents construct map status.
+	RewriteStatusRestoreKV              // represents restore meta kv status.
 )
 
-type OldID = int64
-type NewID = int64
+type UpstreamID = int64
+type DownstreamID = int64
 
+// TableReplace specifies table information mapping from up-stream cluster to up-stream cluster.
 type TableReplace struct {
 	Name         string
-	NewTableID   NewID
-	PartitionMap map[OldID]NewID
-	IndexMap     map[OldID]NewID
-}
-type DBReplace struct {
-	Name     string
-	NewDBID  NewID
-	TableMap map[OldID]*TableReplace
+	TableID      DownstreamID
+	PartitionMap map[UpstreamID]DownstreamID
+	IndexMap     map[UpstreamID]DownstreamID
 }
 
+// DBReplace specifies database information mapping from up-stream cluster to up-stream cluster.
+type DBReplace struct {
+	Name     string
+	DbID     DownstreamID
+	TableMap map[UpstreamID]*TableReplace
+}
+
+// SchemasReplace specifies schemas information mapping from up-stream cluster to up-stream cluster.
 type SchemasReplace struct {
-	Status           RewriteStatus
-	DbMap            map[OldID]*DBReplace
-	globalTableIdMap map[OldID]NewID
+	status           RewriteStatus
+	DbMap            map[UpstreamID]*DBReplace
+	globalTableIdMap map[UpstreamID]DownstreamID
 
 	ingestRecorder *ingestrec.IngestRecorder
 	RewriteTS      uint64        // used to rewrite commit ts in meta kv.
@@ -78,27 +81,27 @@ type SchemasReplace struct {
 }
 
 // NewTableReplace creates a TableReplace struct.
-func NewTableReplace(name string, newID NewID) *TableReplace {
+func NewTableReplace(name string, newID DownstreamID) *TableReplace {
 	return &TableReplace{
 		Name:         name,
-		NewTableID:   newID,
-		PartitionMap: make(map[OldID]NewID),
-		IndexMap:     make(map[OldID]NewID),
+		TableID:      newID,
+		PartitionMap: make(map[UpstreamID]DownstreamID),
+		IndexMap:     make(map[UpstreamID]DownstreamID),
 	}
 }
 
 // NewDBReplace creates a DBReplace struct.
-func NewDBReplace(name string, newID NewID) *DBReplace {
+func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 	return &DBReplace{
 		Name:     name,
-		NewDBID:  newID,
-		TableMap: make(map[OldID]*TableReplace),
+		DbID:     newID,
+		TableMap: make(map[UpstreamID]*TableReplace),
 	}
 }
 
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
-	dbMap map[OldID]*DBReplace,
+	dbMap map[UpstreamID]*DBReplace,
 	restoreTS uint64,
 	tableFilter filter.Filter,
 	genID func(ctx context.Context) (int64, error),
@@ -106,12 +109,10 @@ func NewSchemasReplace(
 	insertDeleteRangeForTable func(jobID int64, tableIDs []int64),
 	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64),
 ) *SchemasReplace {
-	globalTableIdMap := make(map[OldID]NewID)
-	for dbID, dr := range dbMap {
-		globalTableIdMap[dbID] = dr.NewDBID
-
+	globalTableIdMap := make(map[UpstreamID]DownstreamID)
+	for _, dr := range dbMap {
 		for tblID, tr := range dr.TableMap {
-			globalTableIdMap[tblID] = tr.NewTableID
+			globalTableIdMap[tblID] = tr.TableID
 			for oldpID, newpID := range tr.PartitionMap {
 				globalTableIdMap[oldpID] = newpID
 			}
@@ -131,6 +132,84 @@ func NewSchemasReplace(
 	}
 }
 
+// TidySchemaMaps produces schemas id maps from up-stream to down-stream.
+func (sr *SchemasReplace) TidySchemaMaps() []*backuppb.PitrDBMap {
+	dbMaps := make([]*backuppb.PitrDBMap, 0, len(sr.DbMap))
+
+	for dbID, dr := range sr.DbMap {
+		dbm := backuppb.PitrDBMap{
+			Name: dr.Name,
+			IdMap: &backuppb.IDMap{
+				UpstreamId:  dbID,
+				DowstreamId: dr.DbID,
+			},
+			Tables: make([]*backuppb.PitrTableMap, 0, len(dr.TableMap)),
+		}
+
+		for tblID, tr := range dr.TableMap {
+			tm := backuppb.PitrTableMap{
+				Name: tr.Name,
+				IdMap: &backuppb.IDMap{
+					UpstreamId:  tblID,
+					DowstreamId: tr.TableID,
+				},
+				Partitions: make([]*backuppb.IDMap, 0, len(tr.PartitionMap)),
+			}
+
+			for upID, downID := range tr.PartitionMap {
+				pm := backuppb.IDMap{
+					UpstreamId:  upID,
+					DowstreamId: downID,
+				}
+				tm.Partitions = append(tm.Partitions, &pm)
+			}
+			dbm.Tables = append(dbm.Tables, &tm)
+		}
+		dbMaps = append(dbMaps, &dbm)
+	}
+
+	return dbMaps
+}
+
+func FromSchemaMaps(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
+	dbReplaces := make(map[UpstreamID]*DBReplace)
+
+	for _, db := range dbMaps {
+		dr := NewDBReplace(db.Name, db.IdMap.DowstreamId)
+		dbReplaces[db.IdMap.UpstreamId] = dr
+
+		for _, tbl := range db.Tables {
+			tr := NewTableReplace(tbl.Name, tbl.IdMap.DowstreamId)
+			dr.TableMap[tbl.IdMap.UpstreamId] = tr
+			for _, p := range tbl.Partitions {
+				tr.PartitionMap[p.UpstreamId] = p.DowstreamId
+			}
+		}
+	}
+
+	return dbReplaces
+}
+
+// IsPreConsturctMapStatus checks the status is PreConsturctMap.
+func (sr *SchemasReplace) IsPreConsturctMapStatus() bool {
+	return sr.status == RewriteStatusPreConstructMap
+}
+
+// IsRestoreKVStatus checks the status is RestoreKV.
+func (sr *SchemasReplace) IsRestoreKVStatus() bool {
+	return sr.status == RewriteStatusRestoreKV
+}
+
+// SetPreConstructMapStatus sets the PreConstructMap status.
+func (sr *SchemasReplace) SetPreConstructMapStatus() {
+	sr.status = RewriteStatusPreConstructMap
+}
+
+// SetRestoreKVStatus sets the RestoreKV status.
+func (sr *SchemasReplace) SetRestoreKVStatus() {
+	sr.status = RewriteStatusRestoreKV
+}
+
 func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error) {
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
@@ -142,13 +221,14 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		return nil, errors.Trace(err)
 	}
 
-	if sr.Status == RewriteStatus_PreConsturctMap {
+	if sr.IsPreConsturctMapStatus() {
 		if _, exist := sr.DbMap[dbID]; !exist {
 			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			sr.DbMap[dbID] = NewDBReplace("", newID)
+			sr.globalTableIdMap[dbID] = newID
 		}
 		return nil, nil
 	}
@@ -158,7 +238,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 	}
 
-	rawMetaKey.UpdateField(meta.DBkey(dbMap.NewDBID))
+	rawMetaKey.UpdateField(meta.DBkey(dbMap.DbID))
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -171,7 +251,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if sr.Status == RewriteStatus_PreConsturctMap {
+	if sr.IsPreConsturctMapStatus() {
 		if dr, exist := sr.DbMap[oldDBInfo.ID]; !exist {
 			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
@@ -190,7 +270,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	}
 
 	newDBInfo := oldDBInfo.Clone()
-	newDBInfo.ID = dbMap.NewDBID
+	newDBInfo.ID = dbMap.DbID
 	newValue, err := json.Marshal(newDBInfo)
 	if err != nil {
 		return nil, err
@@ -252,38 +332,45 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		return nil, errors.Trace(err)
 	}
 
-	dbMap, exist := sr.DbMap[dbID]
+	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		if sr.Status == RewriteStatus_PreConsturctMap {
+		if sr.IsPreConsturctMapStatus() {
 			newID, err := sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			dbMap = NewDBReplace("", newID)
-			sr.DbMap[dbID] = dbMap
-			sr.globalTableIdMap[dbID] = newID
+			dbReplace = NewDBReplace("", newID)
+			sr.DbMap[dbID] = dbReplace
 		} else {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
 	}
 
-	tableMap, exist := dbMap.TableMap[tableID]
+	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		if sr.Status == RewriteStatus_PreConsturctMap {
-			newID, err := sr.genGenGlobalID(context.Background())
+		newID, exist := sr.globalTableIdMap[tableID]
+		if !exist {
+			if sr.IsRestoreKVStatus() {
+				return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableID)
+			}
+
+			newID, err = sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			tableMap = NewTableReplace("", newID)
-			dbMap.TableMap[tableID] = tableMap
 			sr.globalTableIdMap[tableID] = newID
-		} else {
-			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableID)
 		}
+
+		tableReplace = NewTableReplace("", newID)
+		dbReplace.TableMap[tableID] = tableReplace
 	}
 
-	rawMetaKey.UpdateKey(meta.DBkey(dbMap.NewDBID))
-	rawMetaKey.UpdateField(encodeField(tableMap.NewTableID))
+	if sr.IsPreConsturctMapStatus() {
+		return nil, nil
+	}
+
+	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
+	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
 	if cf == WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -292,66 +379,80 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, error) {
 	var (
-		tableInfo model.TableInfo
-		err       error
+		tableInfo    model.TableInfo
+		err          error
+		exist        bool
+		dbReplace    *DBReplace
+		tableReplace *TableReplace
 	)
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// update table ID
-	dbMap, exist := sr.DbMap[dbID]
+	dbReplace, exist = sr.DbMap[dbID]
 	if !exist {
-		if sr.Status == RewriteStatus_PreConsturctMap {
-			newID, err := sr.genGenGlobalID(context.Background())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			dbMap = NewDBReplace("", newID)
-			sr.DbMap[dbID] = dbMap
-		} else {
+		if sr.IsRestoreKVStatus() {
 			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", dbID)
 		}
+
+		newID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dbReplace = NewDBReplace("", newID)
+		sr.DbMap[dbID] = dbReplace
 	}
 
-	tableMap, exist := dbMap.TableMap[tableInfo.ID]
+	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		if sr.Status == RewriteStatus_PreConsturctMap {
-			newID, err := sr.genGenGlobalID(context.Background())
+		newID, exist := sr.globalTableIdMap[tableInfo.ID]
+		if !exist {
+			if sr.IsRestoreKVStatus() {
+				return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableInfo.ID)
+			}
+
+			newID, err = sr.genGenGlobalID(context.Background())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			tableMap = NewTableReplace(tableInfo.Name.O, newID)
-			dbMap.TableMap[tableInfo.ID] = tableMap
-		} else {
-			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tableInfo.ID)
+			sr.globalTableIdMap[tableInfo.ID] = newID
 		}
+
+		tableReplace = NewTableReplace(tableInfo.Name.O, newID)
+		dbReplace.TableMap[tableInfo.ID] = tableReplace
+	} else {
+		tableReplace.Name = tableInfo.Name.O
 	}
 
-	newTableInfo := tableInfo.Clone()
-
 	// update table ID and partition ID.
-	newTableInfo.ID = tableMap.NewTableID
+	newTableInfo := tableInfo.Clone()
+	newTableInfo.ID = tableReplace.TableID
+
 	partitions := newTableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			newID, exist := tableMap.PartitionMap[tbl.ID]
+			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				if sr.Status == RewriteStatus_PreConsturctMap {
+				newID, exist = sr.globalTableIdMap[tbl.ID]
+				if !exist {
+					if sr.IsRestoreKVStatus() {
+						return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tbl.ID)
+					}
+
 					newID, err = sr.genGenGlobalID(context.Background())
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					tableMap.PartitionMap[tbl.ID] = newID
-				} else {
-					return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find id:%v in maps", tbl.ID)
+					sr.globalTableIdMap[tbl.ID] = newID
 				}
+				tableReplace.PartitionMap[tbl.ID] = newID
 			}
 			partitions.Definitions[i].ID = newID
 		}
 	}
 
-	if sr.Status == RewriteStatus_PreConsturctMap {
+	if sr.IsPreConsturctMapStatus() {
 		return nil, nil
 	}
 
@@ -359,7 +460,6 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if newTableInfo.TTLInfo != nil {
 		newTableInfo.TTLInfo.Enable = false
 	}
-
 	if sr.AfterTableRewritten != nil {
 		sr.AfterTableRewritten(false, newTableInfo)
 	}
@@ -396,6 +496,10 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if sr.IsPreConsturctMapStatus() {
+		return nil, nil
 	}
 	// NOTE: the normal path is in the `SchemaReplace.rewriteTableInfo`
 	//       for now, we rewrite key and value separately hence we cannot
@@ -514,7 +618,7 @@ func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
 	if !IsMetaDBKey(e.Key) {
-		if sr.Status == RewriteStatus_Run && cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
+		if sr.IsRestoreKVStatus() && cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()),
@@ -620,7 +724,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				log.Debug("DropSchema: record a table, but it doesn't exist in job args", zap.Int64("oldTableID", tableID))
 				continue
 			}
-			newTableIDs = append(newTableIDs, tableReplace.NewTableID)
+			newTableIDs = append(newTableIDs, tableReplace.TableID)
 			for partitionID, newPartitionID := range tableReplace.PartitionMap {
 				if _, exist := argsSet[partitionID]; !exist {
 					log.Debug("DropSchema: record a partition, but it doesn't exist in job args", zap.Int64("oldPartitionID", partitionID))
@@ -631,7 +735,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 		}
 
 		if len(newTableIDs) != len(tableIDs) {
-			log.Debug("DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
+			log.Debug("DropSchema: try to drop a non-existent table/partition, whose UpstreamID doesn't exist in tableReplace")
 			// only drop newTableIDs' ranges
 		}
 
@@ -671,7 +775,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 			return nil
 		}
 
-		sr.insertDeleteRangeForTable(newJobID, []int64{tableReplace.NewTableID})
+		sr.insertDeleteRangeForTable(newJobID, []int64{tableReplace.TableID})
 		return nil
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
@@ -725,7 +829,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
@@ -757,7 +861,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropIndexes: // // Deprecated, we use ActionMultiSchemaChange instead.
@@ -788,7 +892,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropColumn:
@@ -817,7 +921,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 					sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
 			} else {
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 			}
 		}
 		return nil
@@ -847,7 +951,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 					sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
 			} else {
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 			}
 		}
 	case model.ActionModifyColumn:
@@ -876,7 +980,7 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
+			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
 		}
 	}
 	return nil

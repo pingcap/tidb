@@ -1578,16 +1578,7 @@ func initFullBackupTables(
 		return nil, errors.Trace(err)
 	}
 
-	metaFileName := metautil.CreateMetaFileName(cfg.StartTS)
-	exist, err := s.FileExists(ctx, metaFileName)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
-	} else if !exist {
-		metaFileName = metautil.MetaFile
-	}
-
-	log.Info("read schemas", zap.String("backupmeta", metaFileName))
-	metaData, err := s.ReadFile(ctx, metaFileName)
+	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1636,27 +1627,21 @@ func InitSchemasMap(
 	cfg *RestoreConfig,
 	clusterID uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	var storage string
-	if len(cfg.FullBackupStorage) > 0 {
-		storage = cfg.FullBackupStorage
-	} else {
-		storage = cfg.Storage
-	}
-	_, s, err := GetStorage(ctx, storage, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	metaFileName := metautil.CreateMetaFileName(clusterID)
-	exist, err := s.FileExists(ctx, metaFileName)
+	filename := metautil.PitrIDMapsFilename(clusterID)
+	exist, err := s.FileExists(ctx, filename)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
+		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
 	} else if !exist {
-		metaFileName = metautil.MetaFile
+		log.Info("pitr id maps isn't existed", zap.String("file", filename))
+		return nil, nil
 	}
 
-	log.Info("read schemas", zap.String("backupmeta", metaFileName))
-	metaData, err := s.ReadFile(ctx, metaFileName)
+	metaData, err := s.ReadFile(ctx, filename)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1725,9 +1710,9 @@ func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *s
 			if _, exist := rules[oldTableID]; !exist {
 				log.Info("add rewrite rule",
 					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
-					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.NewTableID))
+					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
 				rules[oldTableID] = restore.GetRewriteRuleOfTable(
-					oldTableID, tableReplace.NewTableID, 0, tableReplace.IndexMap, false)
+					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
 			}
 
 			for oldID, newID := range tableReplace.PartitionMap {

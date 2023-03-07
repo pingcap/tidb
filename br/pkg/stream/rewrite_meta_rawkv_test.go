@@ -72,17 +72,17 @@ func TestRewriteValueForDB(t *testing.T) {
 
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
-	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].NewDBID)
+	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].DbID)
 
-	newId := sr.DbMap[dbID].NewDBID
+	newId := sr.DbMap[dbID].DbID
 	newValue, needWrite, err = sr.rewriteDBInfo(value)
 	require.Nil(t, err)
 	require.True(t, needWrite)
 
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
-	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].NewDBID)
-	require.Equal(t, newId, sr.DbMap[dbID].NewDBID)
+	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].DbID)
+	require.Equal(t, newId, sr.DbMap[dbID].DbID)
 }
 
 func TestRewriteValueForTable(t *testing.T) {
@@ -110,18 +110,18 @@ func TestRewriteValueForTable(t *testing.T) {
 
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
 	require.EqualValues(t, tableInfo.TiFlashReplica.Count, 1)
 
-	newID := sr.DbMap[dbId].TableMap[tableID].NewTableID
+	newID := sr.DbMap[dbId].TableMap[tableID].TableID
 	newValue, needRewrite, err = sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	require.True(t, needRewrite)
 
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
-	require.Equal(t, newID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
+	require.Equal(t, newID, sr.DbMap[dbId].TableMap[tableID].TableID)
 	require.EqualValues(t, tableCount, 2)
 }
 
@@ -169,7 +169,7 @@ func TestRewriteValueForPartitionTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.String(), tableName)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
 	require.Equal(
 		t,
 		tableInfo.Partition.Definitions[0].ID,
@@ -353,7 +353,7 @@ func TestRewriteValueForTTLTable(t *testing.T) {
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.String(), tableName)
-	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].TableID)
 	require.NotNil(t, tableInfo.TTLInfo)
 	require.Equal(t, colName, tableInfo.TTLInfo.ColumnName.O)
 	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
@@ -502,18 +502,18 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		mDDLJobPartition2OldID: mDDLJobPartition2NewID,
 	}
 	tableReplace0 := &TableReplace{
-		NewTableID:   mDDLJobTable0NewID,
+		TableID:      mDDLJobTable0NewID,
 		PartitionMap: partitionMap,
 	}
 	tableReplace1 := &TableReplace{
-		NewTableID: mDDLJobTable1NewID,
+		TableID: mDDLJobTable1NewID,
 	}
 	tableMap := map[int64]*TableReplace{
 		mDDLJobTable0OldID: tableReplace0,
 		mDDLJobTable1OldID: tableReplace1,
 	}
 	dbReplace := &DBReplace{
-		NewDBID:  mDDLJobDBNewID,
+		DbID:     mDDLJobDBNewID,
 		TableMap: tableMap,
 	}
 	schemaReplace.DbMap[mDDLJobDBOldID] = dbReplace
