@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "scheduler",
@@ -12,11 +12,4 @@ go_library(
         "//resourcemanager/util",
         "//util/cpu",
     ],
-)
-
-go_test(
-    name = "scheduler_test",
-    timeout = "short",
-    srcs = ["cpu_scheduler_test.go"],
-    embed = [":scheduler"],
 )
