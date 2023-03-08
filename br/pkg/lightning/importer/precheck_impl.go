@@ -161,16 +161,16 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 
 	if tikvSourceSize > tikvAvail {
 		theResult.Passed = false
-		theResult.Message += fmt.Sprintf("The estimated storage space required by the TiKV cluster is %s but the actual storage space is %s.",
+		theResult.Message += fmt.Sprintf("TiKV requires more storage space. Estimated required size: %s. Actual size: %s.",
 			units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tikvAvail)))
 	}
 	if tiflashAvail > 0 && tiflashSourceSize > tiflashAvail {
 		theResult.Passed = false
-		theResult.Message += fmt.Sprintf(" The estimated storage space required for the Tiflash cluster is %s, but the actual storage space is %s.",
+		theResult.Message += fmt.Sprintf(" TiFlash requires more storage space. Estimated required size: %s. Actual size: %s.",
 			units.BytesSize(float64(tiflashSourceSize)), units.BytesSize(float64(tiflashAvail)))
 	}
 	if !theResult.Passed {
-		theResult.Message += " Please expand the storage space in advance, otherwise the data import task may fail."
+		theResult.Message += " Please increase storage to prevent import task failures."
 	}
 	return theResult, nil
 }
