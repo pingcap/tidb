@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -134,6 +136,34 @@ func TestIssue40296(t *testing.T) {
 	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
 		testkit.Rows("ee -9605492323393070105 0850-03-15"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
+func TestNonPreparedPlanCachePlanString(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+
+	ctx := tk.Session()
+	planString := func(sql string) string {
+		stmts, err := session.Parse(ctx, sql)
+		require.NoError(t, err)
+		stmt := stmts[0]
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(context.Background(), ctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		require.NoError(t, err)
+		return plannercore.ToString(p)
+	}
+
+	require.Equal(t, planString("select * from t where a < 1"), "")
+	require.Equal(t, planString("select * from t where a < 10"), "")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	require.Equal(t, planString("select * from t where b < 1"), "")
+	require.Equal(t, planString("select * from t where b < 10"), "")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestNonPreparedPlanCacheJSONFilter(t *testing.T) {
