@@ -138,7 +138,7 @@ func (ssr *sortedSelectResults) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-func (ssr *sortedSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
 	panic("Not support NextRaw for sortedSelectResults")
 }
 

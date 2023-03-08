@@ -159,7 +159,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if tryRowHint {
 			buildOpt.rowHints = hints
 		}
-		// split task by regionID
 		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
@@ -1026,7 +1025,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return it.Next(ctx)
 		}
 	} else {
-		// order matters, task is ordered by partitionID and startKey
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.

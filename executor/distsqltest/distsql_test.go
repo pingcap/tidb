@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -61,18 +62,16 @@ func TestDistsqlPartitionTableConcurrency(t *testing.T) {
 	// 20-ranges-partitioned table checker
 	ctx3 := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		require.Equal(t, req.KeyRanges.PartitionNum(), 20)
-		require.Equal(t, req.Concurrency, 15)
+		require.Equal(t, req.Concurrency, variable.DefDistSQLScanConcurrency)
 	})
 	ctxs := []context.Context{ctx1, ctx2, ctx3}
 	for i, tbl := range []string{"t1", "t2", "t3"} {
 		ctx := ctxs[i]
-		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s order by id asc limit 1", tbl)).
-			Check(testkit.Rows("0 0"))
-		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s order by id asc limit 5", tbl)).
-			Check(testkit.Rows("0 0", "50 50", "100 100", "150 150", "200 200"))
-		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s order by id desc limit 1", tbl)).
-			Check(testkit.Rows("950 950"))
-		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s order by id desc limit 5", tbl)).
-			Check(testkit.Rows("950 950", "900 900", "850 850", "800 800", "750 750"))
+		// If order by is added here, the concurrency is always equal to 1.
+		// Because we will use different kv.Request for each partition in TableReader.
+		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s limit 1", tbl))
+		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s limit 5", tbl))
+		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s limit 1", tbl))
+		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s limit 5", tbl))
 	}
 }

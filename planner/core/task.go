@@ -1232,14 +1232,16 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
 			}
 
-			rootLimit := PhysicalLimit{
-				Count:       p.Count,
-				Offset:      p.Offset,
-				PartitionBy: newPartitionBy,
-			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-			rootLimit.SetSchema(copTsk.indexPlan.Schema())
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			return attachPlan2Task(rootLimit, rootTask), true
+			if _, ok := rootTask.p.(*PhysicalIndexLookUpReader); !ok {
+				rootLimit := PhysicalLimit{
+					Count:       p.Count,
+					Offset:      p.Offset,
+					PartitionBy: newPartitionBy,
+				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+				rootLimit.SetSchema(copTsk.indexPlan.Schema())
+				return attachPlan2Task(rootLimit, rootTask), true
+			}
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {

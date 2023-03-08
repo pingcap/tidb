@@ -188,10 +188,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
-	if e.table.Meta().Name.O == "t1" || e.table.Meta().Name.O == "t2" {
-		time.Sleep(time.Millisecond)
-	}
-
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
@@ -319,7 +315,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	}
 
 	// use sortedSelectResults here when pushDown limit for partition table.
-	if e.byItems != nil {
+	if e.kvRangeBuilder != nil && e.byItems != nil {
 		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 		if err != nil {
 			return nil, err
