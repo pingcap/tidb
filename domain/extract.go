@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,8 @@ const (
 const (
 	// ExtractTaskType indicates type of extract task
 	ExtractTaskType = "taskType"
+	// ExtractPlanTaskSkipStats indicates skip stats for extract plan task
+	ExtractPlanTaskSkipStats = "SkipStats"
 )
 
 // ExtractType indicates type
@@ -102,6 +105,10 @@ type ExtractTask struct {
 	ExtractType     ExtractType
 	IsBackgroundJob bool
 
+	// Param for Extract Plan
+	SkipStats      bool
+	UseHistoryView bool
+
 	// variables for plan task type
 	Begin time.Time
 	End   time.Time
@@ -132,7 +139,7 @@ func (w *extractWorker) extractTask(ctx context.Context, task *ExtractTask) (str
 }
 
 func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) (string, error) {
-	if !config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+	if task.UseHistoryView && !config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
 		return "", errors.New("tidb_stmt_summary_enable_persistent should be enabled for extract task")
 	}
 	records, err := w.collectRecords(ctx, task)
@@ -145,7 +152,7 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 		logutil.BgLogger().Error("package stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
-	return w.dumpExtractPlanPackage(p)
+	return w.dumpExtractPlanPackage(task, p)
 }
 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, error) {
@@ -153,8 +160,12 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 	defer w.Unlock()
 	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY WHERE SUMMARY_END_TIME > '%s' OR SUMMARY_BEGIN_TIME < '%s'",
-		task.Begin.Format(types.TimeFormat), task.End.Format(types.TimeFormat)))
+	sourceTable := "STATEMENTS_SUMMARY_HISTORY"
+	if !task.UseHistoryView {
+		sourceTable = "STATEMENTS_SUMMARY"
+	}
+	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES, SAMPLE_USER FROM INFORMATION_SCHEMA.%s WHERE SUMMARY_END_TIME > '%s' AND SUMMARY_BEGIN_TIME < '%s'",
+		sourceTable, task.Begin.Format(types.TimeFormat), task.End.Format(types.TimeFormat)))
 	if err != nil {
 		return nil, err
 	}
@@ -171,6 +182,7 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 			digest:     record.digest,
 			planDigest: record.planDigest,
 		}
+		record.userName = row.GetString(6)
 		record.tables = make([]tableNamePair, 0)
 		setRecord, err := w.handleTableNames(tableNames, record)
 		if err != nil {
@@ -324,7 +336,7 @@ func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (str
  |	 |-digest1.sql
  |	 |-...
 */
-func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name string, err error) {
+func (w *extractWorker) dumpExtractPlanPackage(task *ExtractTask, p *extractPlanPackage) (name string, err error) {
 	f, name, err := GenerateExtractFile()
 	if err != nil {
 		return "", err
@@ -351,7 +363,7 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name stri
 		return "", err
 	}
 	// dump extract plan task meta
-	if err = dumpExtractMeta(ExtractPlanType, zw); err != nil {
+	if err = dumpExtractMeta(task, zw); err != nil {
 		return "", err
 	}
 	// Dump Schema and View
@@ -371,8 +383,10 @@ func (w *extractWorker) dumpExtractPlanPackage(p *extractPlanPackage) (name stri
 		return "", err
 	}
 	// Dump stats
-	if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
-		return "", err
+	if !task.SkipStats {
+		if err = dumpStats(zw, p.tables, GetDomain(w.sctx)); err != nil {
+			return "", err
+		}
 	}
 	// Dump sqls and plan
 	if err = dumpSQLRecords(p.records, zw); err != nil {
@@ -404,6 +418,7 @@ type singleSQLRecord struct {
 	SQL        string `json:"sql"`
 	Digest     string `json:"digest"`
 	BinaryPlan string `json:"binaryPlan"`
+	UserName   string `json:"userName"`
 }
 
 // dumpSQLRecord dumps sql records into one file for each record, the format is in json.
@@ -418,6 +433,7 @@ func dumpSQLRecord(record *stmtSummaryHistoryRecord, path string, zw *zip.Writer
 		SQL:        record.sql,
 		Digest:     record.digest,
 		BinaryPlan: record.binaryPlan,
+		UserName:   record.userName,
 	}
 	content, err := json.Marshal(singleSQLRecord)
 	if err != nil {
@@ -430,13 +446,18 @@ func dumpSQLRecord(record *stmtSummaryHistoryRecord, path string, zw *zip.Writer
 	return nil
 }
 
-func dumpExtractMeta(t ExtractType, zw *zip.Writer) error {
+func dumpExtractMeta(task *ExtractTask, zw *zip.Writer) error {
 	cf, err := zw.Create(ExtractMetaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	varMap := make(map[string]string)
-	varMap[ExtractTaskType] = taskTypeToString(t)
+	varMap[ExtractTaskType] = taskTypeToString(task.ExtractType)
+	switch task.ExtractType {
+	case ExtractPlanType:
+		varMap[ExtractPlanTaskSkipStats] = strconv.FormatBool(task.SkipStats)
+	}
+
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
@@ -461,6 +482,7 @@ type stmtSummaryHistoryRecord struct {
 	planDigest string
 	sql        string
 	binaryPlan string
+	userName   string
 
 	plan string
 	skip bool

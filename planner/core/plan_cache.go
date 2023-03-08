@@ -53,6 +53,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
+	vars.PreparedParams = vars.PreparedParams[:0]
 	for i, usingParam := range params {
 		val, err := usingParam.Eval(chunk.Row{})
 		if err != nil {
