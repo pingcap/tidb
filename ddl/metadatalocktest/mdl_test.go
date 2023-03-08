@@ -904,6 +904,27 @@ func TestMDLEnable2Disable(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+func TestSwitchMDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
+
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock ON"))
+
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
+}
+
 func TestMDLViewItself(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
