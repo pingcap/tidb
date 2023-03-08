@@ -1211,6 +1211,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
 			stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1230,6 +1231,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				scaledRowCount := child.Stats().RowCount / selSelectivity
 				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
 			}
+
+			rootLimit := PhysicalLimit{
+				Count:       p.Count,
+				Offset:      p.Offset,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			rootLimit.SetSchema(copTsk.indexPlan.Schema())
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			return attachPlan2Task(rootLimit, rootTask), true
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {

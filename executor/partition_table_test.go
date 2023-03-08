@@ -715,8 +715,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartition, "TopN"))
 		regularResult := tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
-		// TODO, fix it later, https://github.com/pingcap/tidb/issues/41801
-		// tk.MustQuery(queryHashPartition).Check(regularResult)
+		tk.MustQuery(queryHashPartition).Check(regularResult)
 	}
 
 	// test indexMerge
