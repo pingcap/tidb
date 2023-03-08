@@ -61,6 +61,7 @@ func (p *basePhysicalPlan) getPlanCostVer2(taskType property.TaskType, option *P
 	} else {
 		p.planCostVer2 = sumCostVer2(childCosts)
 	}
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -83,6 +84,7 @@ func (p *PhysicalSelection) getPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{filterCost, childCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -107,6 +109,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{childCost, divCostVer2(projCost, concurrency)})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -124,6 +127,7 @@ func (p *PhysicalIndexScan) getPlanCostVer2(taskType property.TaskType, option *
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.planCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -152,7 +156,7 @@ func (p *PhysicalTableScan) getPlanCostVer2(taskType property.TaskType, option *
 	if p.StoreType == kv.TiFlash {
 		p.planCostVer2 = sumCostVer2([]costVer2{p.planCostVer2, scanCostVer2(option, 10000, rowSize, scanFactor)})
 	}
-
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -178,6 +182,7 @@ func (p *PhysicalIndexReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	p.planCostVer2 = divCostVer2(sumCostVer2([]costVer2{childCost, netCost}), concurrency)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -207,6 +212,7 @@ func (p *PhysicalTableReader) getPlanCostVer2(taskType property.TaskType, option
 	}
 
 	p.planCostVer2 = divCostVer2(sumCostVer2([]costVer2{childCost, netCost}), concurrency)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 
 	// consider tidb_enforce_mpp
@@ -274,6 +280,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.6)
 	}
 
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -319,6 +326,7 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	sumIndexSideCost := sumCostVer2(indexSideCost)
 
 	p.planCostVer2 = sumCostVer2([]costVer2{tableSideCost, sumIndexSideCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -372,6 +380,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{childCost, sortCPUCost, sortMemCost, sortDiskCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -402,6 +411,7 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{childCost, topNCPUCost, topNMemCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -425,6 +435,7 @@ func (p *PhysicalStreamAgg) getPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{childCost, aggCost, groupCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -457,6 +468,7 @@ func (p *PhysicalHashAgg) getPlanCostVer2(taskType property.TaskType, option *Pl
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{startCost, childCost, divCostVer2(sumCostVer2([]costVer2{aggCost, groupCost, hashBuildCost, hashProbeCost}), concurrency)})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -487,6 +499,7 @@ func (p *PhysicalMergeJoin) getPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{leftChildCost, rightChildCost, filterCost, groupCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -540,6 +553,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		p.planCostVer2 = sumCostVer2([]costVer2{startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2([]costVer2{probeFilterCost, probeHashCost}), tidbConcurrency)})
 	}
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -607,6 +621,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{startCost, buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2([]costVer2{doubleReadCost, probeCost, probeFilterCost, hashTableCost}), probeConcurrency)})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -654,6 +669,7 @@ func (p *PhysicalApply) getPlanCostVer2(taskType property.TaskType, option *Plan
 	probeCost := mulCostVer2(probeChildCost, buildRows)
 
 	p.planCostVer2 = sumCostVer2([]costVer2{buildChildCost, buildFilterCost, probeCost, probeFilterCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -675,6 +691,7 @@ func (p *PhysicalUnionAll) getPlanCostVer2(taskType property.TaskType, option *P
 		childCosts = append(childCosts, childCost)
 	}
 	p.planCostVer2 = divCostVer2(sumCostVer2(childCosts), concurrency)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -705,6 +722,7 @@ func (p *PhysicalExchangeReceiver) getPlanCostVer2(taskType property.TaskType, o
 	}
 
 	p.planCostVer2 = sumCostVer2([]costVer2{childCost, netCost})
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -724,6 +742,7 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	p.planCostVer2 = netCostVer2(option, 1, rowSize, netFactor)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -744,6 +763,7 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
 	p.planCostVer2 = netCostVer2(option, rows, rowSize, netFactor)
+	p.planCostVer2.setName(p.ExplainID().String())
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -1003,6 +1023,7 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 }
 
 type costTrace struct {
+	// name indicates a short name which represents the formula calculation itself
 	name        string
 	factorCosts map[string]float64 // map[factorName]cost, used to calibrate the cost model
 	formula     string             // It used to trace the cost calculation.
@@ -1018,6 +1039,12 @@ func (t *costTrace) asFormula() string {
 type costVer2 struct {
 	cost  float64
 	trace *costTrace
+}
+
+func (c costVer2) setName(name string) {
+	if c.trace != nil {
+		c.trace.name = name
+	}
 }
 
 func traceCost(option *PlanCostOption) bool {
