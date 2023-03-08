@@ -1373,13 +1373,40 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has more than 50 constants",
 	}
 
-	for _, q := range supported {
+	all := append(supported, unsupported...)
+
+	explainFormats := []string{
+		types.ExplainFormatBrief,
+		types.ExplainFormatDOT,
+		types.ExplainFormatHint,
+		types.ExplainFormatROW,
+		types.ExplainFormatVerbose,
+		types.ExplainFormatTraditional,
+		types.ExplainFormatBinary,
+		types.ExplainFormatTiDBJSON,
+		types.ExplainFormatCostTrace,
+	}
+	// all cases no warnings use other format
+	for _, q := range all {
 		tk.MustExec("explain " + q)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustExec("explain " + q)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	for _, format := range explainFormats {
+		for _, q := range all {
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			//tk.MustQuery("show warnings").Check(testkit.Rows())
+			tk.MustQuery("show warnings").CheckNotContain("plan cache")
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
 	}
 
+	// unsupported case with warning use 'plan_cache' format
 	for idx, q := range unsupported {
-		tk.MustExec("explain " + q)
+		tk.MustExec("explain format = 'plan_cache'" + q)
 		warn := tk.MustQuery("show warnings").Rows()[0]
 		require.Equal(t, reasons[idx], warn[2])
 	}
+}
