@@ -22,12 +22,14 @@ go_library(
 
 go_test(
     name = "scheduler_test",
+    timeout = "short",
     srcs = [
         "manager_test.go",
         "register_test.go",
         "scheduler_test.go",
     ],
     embed = [":scheduler"],
+    flaky = true,
     deps = [
         "//disttask/framework/proto",
         "@com_github_pkg_errors//:errors",

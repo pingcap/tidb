@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -87,7 +87,7 @@ func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
 
 func init() {
 	scheduler.RegisterSchedulerConstructor(
-		TaskTypeExample,
+		proto.TaskTypeExample,
 		// The order of the scheduler is the same as the order of the subtasks.
 		func(task *proto.Task, step int64) (scheduler.Scheduler, error) {
 			switch step {
