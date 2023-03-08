@@ -328,7 +328,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-		stores := cache.RegionCache.GetTiFlashStores()
+		stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 		aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
 		for _, s := range aliveStores {
 			storeTaskMap[s.StoreID()] = &batchCopTask{
@@ -534,6 +534,14 @@ func buildBatchCopTasksForPartitionedTable(
 	return batchTasks, nil
 }
 
+func filterAliveStoresStr(ctx context.Context, storesStr []string, ttl time.Duration, kvStore *kvStore) (aliveStores []string) {
+	aliveIdx := filterAliveStoresHelper(ctx, storesStr, ttl, kvStore)
+	for _, idx := range aliveIdx {
+		aliveStores = append(aliveStores, storesStr[idx])
+	}
+	return aliveStores
+}
+
 func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Duration, kvStore *kvStore) (aliveStores []*tikv.Store) {
 	storesStr := make([]string, 0, len(stores))
 	for _, s := range stores {
@@ -580,6 +588,7 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 
 func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
 	hasher := consistent.New()
+	hasher.NumberOfReplicas = 200
 	for _, addr := range storesStr {
 		hasher.Add(addr)
 	}
@@ -600,22 +609,7 @@ func getTiFlashComputeRPCContextByConsistentHash(ids []tikv.RegionVerID, storesS
 	return res, nil
 }
 
-// todo: Only used when config.UseAutoScaler is false, will delete later.
-func getTiFlashComputeRPCContextByRoundRobin(ids []tikv.RegionVerID, stores []*tikv.Store) (res []*tikv.RPCContext, err error) {
-	startIdx := rand.Intn(len(stores))
-	for _, id := range ids {
-		rpcCtx := &tikv.RPCContext{
-			Region: id,
-			Addr:   stores[startIdx%len(stores)].GetAddr(),
-		}
-
-		startIdx++
-		res = append(res, rpcCtx)
-	}
-	return res, nil
-}
-
-func getTiFlashComputeRPCContextByRoundRobinHelper(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
+func getTiFlashComputeRPCContextByRoundRobin(ids []tikv.RegionVerID, storesStr []string) (res []*tikv.RPCContext, err error) {
 	startIdx := rand.Intn(len(storesStr))
 	for _, id := range ids {
 		rpcCtx := &tikv.RPCContext{
@@ -682,6 +676,8 @@ func buildBatchCopTasksConsistentHash(
 		if err != nil {
 			return nil, err
 		}
+		storesStr = filterAliveStoresStr(ctx, storesStr, ttl, kvStore)
+		logutil.BgLogger().Info("topo filter alive", zap.Any("topo", storesStr))
 		if len(storesStr) == 0 {
 			retErr := errors.New("Cannot find proper topo from AutoScaler")
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
@@ -697,7 +693,7 @@ func buildBatchCopTasksConsistentHash(
 
 	var rpcCtxs []*tikv.RPCContext
 	if dispatchPolicy == tiflashcompute.DispatchPolicyRR {
-		rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobinHelper(regionIDs, storesStr)
+		rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobin(regionIDs, storesStr)
 	} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
 		rpcCtxs, err = getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
 	} else {
@@ -830,7 +826,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP)
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -845,7 +841,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				// Then `splitRegion` will reloads these regions.
 				continue
 			}
-			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
+			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
 			} else {
@@ -1313,11 +1309,15 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		}
 		getStoreElapsed = time.Since(getStoreStart)
 
+		storesStr := make([]string, 0, len(stores))
+		for _, s := range stores {
+			storesStr = append(storesStr, s.GetAddr())
+		}
 		var rpcCtxs []*tikv.RPCContext
 		if dispatchPolicy == tiflashcompute.DispatchPolicyRR {
-			rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobin(regionIDs, stores)
+			rpcCtxs, err = getTiFlashComputeRPCContextByRoundRobin(regionIDs, storesStr)
 		} else if dispatchPolicy == tiflashcompute.DispatchPolicyConsistentHash {
-			rpcCtxs, err = cache.GetTiFlashComputeRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs, stores)
+			rpcCtxs, err = getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
 		} else {
 			err = errors.Errorf("unexpected dispatch policy %v", dispatchPolicy)
 		}
@@ -1365,15 +1365,11 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			zap.Any("len(tiflash_compute)", len(stores)),
 			zap.Any("dispatchPolicy", tiflashcompute.GetDispatchPolicy(dispatchPolicy)))
 		if log.GetLevel() <= zap.DebugLevel {
-			debugStores := make([]string, 0, len(stores))
-			for _, s := range stores {
-				debugStores = append(debugStores, s.GetAddr())
-			}
 			debugTaskMap := make(map[string]string, len(taskMap))
 			for s, b := range taskMap {
 				debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 			}
-			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", debugStores))
+			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", storesStr))
 		}
 		break
 	}
