@@ -616,26 +616,26 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 type PlanCacheType int
 
 const (
+	// DefaultNoCache no cache
+	DefaultNoCache PlanCacheType = iota
 	// SessionPrepared session prepared plan cache
-	SessionPrepared PlanCacheType = iota
+	SessionPrepared
 	// SessionNonPrepared session non-prepared plan cache
 	SessionNonPrepared
 )
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(cacheType PlanCacheType, reason error) {
+	if !sc.UseCache {
+		return // avoid unnecessary warnings
+	}
+	sc.UseCache = false
 	switch cacheType {
+	case DefaultNoCache:
+		sc.AppendWarning(errors.New("unknown cache type"))
 	case SessionPrepared:
-		if !sc.UseCache {
-			return // avoid unnecessary warnings
-		}
-		sc.UseCache = false
 		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
-		if !sc.UseCache {
-			return // avoid unnecessary warnings
-		}
-		sc.UseCache = false
 		if sc.InExplainStmt {
 			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
