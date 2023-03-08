@@ -1107,7 +1107,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Please expand the storage(.*)",
+			"(.*)Please increase storage(.*)",
 			true,
 			0,
 		},
