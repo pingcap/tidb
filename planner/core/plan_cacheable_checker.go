@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -201,6 +202,8 @@ func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
 	return ok
 }
 
+var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
+
 // NonPreparedPlanCacheableWithCtx checks whether the input ast is cacheable for non-prepared plan cache.
 // Only support: select {field} from {single-table} where {cond} and {cond} ...
 // {cond}: {col} {op} {val}
@@ -238,13 +241,17 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		}
 	}
 
-	checker := nonPreparedPlanCacheableChecker{
-		sctx:      sctx,
-		cacheable: true,
-		schema:    is,
-	}
-	node.Accept(&checker)
-	return checker.cacheable, checker.reason
+	// allocate and init the checker
+	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
+	checker.reset(sctx, is)
+
+	node.Accept(checker)
+	cacheable, reason := checker.cacheable, checker.reason
+
+	// put the checker back
+	nonPrepCacheCheckerPool.Put(checker)
+
+	return cacheable, reason
 }
 
 // nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
@@ -258,6 +265,16 @@ type nonPreparedPlanCacheableChecker struct {
 	tableNode *ast.TableName
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
+}
+
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema) {
+	checker.sctx = sctx
+	checker.cacheable = true
+	checker.schema = schema
+	checker.reason = ""
+	checker.tableNode = nil
+	checker.constCnt = 0
+	checker.filterCnt = 0
 }
 
 // Enter implements Visitor interface.
