@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/resourcemanager/scheduler"
-	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,8 +84,6 @@ func TestFailpointCPUValue(t *testing.T) {
 		require.True(t, unsupported)
 		require.Equal(t, value, 0.0)
 	}
-	sch := scheduler.CPUScheduler{}
-	require.Equal(t, scheduler.Hold, sch.Tune(util.UNKNOWN, util.NewMockGPool("test")))
 	// we do not stop the observer, because we inject the fail-point and the observer will not start.
 	// if this test case happen goleak, it must have a bug.
 	close(exit)
