@@ -700,6 +700,8 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 	if reuse != nil {
 		// Reuse map is cheaper than create a new map object.
 		// Go compiler optimize this cleanup code pattern to a clearmap() function.
+		reuse.mu.Lock()
+		defer reuse.mu.Unlock()
 		for k := range reuse.rootStats {
 			delete(reuse.rootStats, k)
 		}
