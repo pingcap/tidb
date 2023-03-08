@@ -98,7 +98,7 @@ func (m *MockPool) Run(f func()) error {
 	return args.Error(0)
 }
 
-func (m *MockPool) RunWithConcurrency(funcs chan func(), concurrency uint64) error {
+func (m *MockPool) RunWithConcurrency(funcs chan func(), _ uint64) error {
 	args := m.Called()
 	if args.Error(0) == nil {
 		go func() {

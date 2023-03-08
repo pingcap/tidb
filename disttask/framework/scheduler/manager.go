@@ -175,7 +175,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 }
 
 // onCanceledTasks cancels the running tasks.
-func (m *Manager) onCanceledTasks(ctx context.Context, tasks []*proto.Task) {
+func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range tasks {

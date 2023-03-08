@@ -60,7 +60,7 @@ func NewInternalScheduler(ctx context.Context, id string, taskID int64, subtaskT
 }
 
 // Start starts the scheduler.
-func (s *InternalSchedulerImpl) Start() {
+func (_ *InternalSchedulerImpl) Start() {
 	//	s.wg.Add(1)
 	//	go func() {
 	//		defer s.wg.Done()
@@ -97,7 +97,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
-	scheduler, err := s.createScheduler(task)
+	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -157,9 +157,8 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 				s.updateSubtaskState(subtask.ID, proto.TaskStateFailed)
 			}
 			break
-		} else {
-			s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
 		}
+		s.updateSubtaskState(subtask.ID, proto.TaskStateSucceed)
 	}
 
 	return s.getError()
@@ -177,7 +176,7 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 		return
 	}
 
-	executor, err := s.createSubtaskExecutor(minimalTask, tp, step)
+	executor, err := createSubtaskExecutor(minimalTask, tp, step)
 	if err != nil {
 		s.onError(err)
 		return
@@ -196,7 +195,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler rollback a step", zap.Any("step", task.Step))
-	scheduler, err := s.createScheduler(task)
+	scheduler, err := createScheduler(task)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -225,7 +224,7 @@ func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) 
 	return s.getError()
 }
 
-func (s *InternalSchedulerImpl) createScheduler(task *proto.Task) (Scheduler, error) {
+func createScheduler(task *proto.Task) (Scheduler, error) {
 	constructor, ok := schedulerConstructors[task.Type]
 	if !ok {
 		return nil, errors.Errorf("constructor of scheduler for type %s not found", task.Type)
@@ -233,7 +232,7 @@ func (s *InternalSchedulerImpl) createScheduler(task *proto.Task) (Scheduler, er
 	return constructor(task, task.Step)
 }
 
-func (s *InternalSchedulerImpl) createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
+func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {
 	constructor, ok := subtaskExecutorConstructors[tp]
 	if !ok {
 		return nil, errors.Errorf("constructor of subtask executor for type %s not found", tp)
