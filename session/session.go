@@ -421,7 +421,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -432,7 +432,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.preparedPlanCache
 }
@@ -2137,9 +2137,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
+	// Backup the original resource group name since sql hint might change it during optimization
+	originalResourceGroup := s.GetSessionVars().ResourceGroupName
+
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// the execution finished.
+	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+		defer func() {
+			// Restore the resource group for the session
+			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+		}()
+	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2556,6 +2567,9 @@ func (s *session) Close() {
 	s.ClearDiskFullOpt()
 	if s.preparedPlanCache != nil {
 		s.preparedPlanCache.Close()
+	}
+	if s.nonPreparedPlanCache != nil {
+		s.nonPreparedPlanCache.Close()
 	}
 }
 

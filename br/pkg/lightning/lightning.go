@@ -43,10 +43,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -77,7 +77,7 @@ type Lightning struct {
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
-	status     restore.LightningStatus
+	status     importer.LightningStatus
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
@@ -316,7 +316,7 @@ func (l *Lightning) RunServer() error {
 		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
-			restore.DeliverPauser.Pause() // force pause the progress on error
+			importer.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
 	}
@@ -519,7 +519,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	g := o.glue
 	if g == nil {
-		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
+		db, err := importer.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return common.ErrDBConnect.Wrap(err)
 		}
@@ -573,14 +573,18 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	keyspaceName, err := getKeyspaceName(g)
-	if err != nil {
-		o.logger.Error("fail to get keyspace name", zap.Error(err))
-		return errors.Trace(err)
+	var keyspaceName string
+	if taskCfg.TikvImporter.Backend == config.BackendLocal {
+		if taskCfg.TikvImporter.KeyspaceName == "" {
+			keyspaceName, err = getKeyspaceName(g)
+			if err != nil {
+				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
+			}
+		}
+		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 	}
-	o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 
-	param := &restore.ControllerParam{
+	param := &importer.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
 		DumpFileStorage:   s,
@@ -592,8 +596,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		KeyspaceName:      keyspaceName,
 	}
 
-	var procedure *restore.Controller
-	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
+	var procedure *importer.Controller
+	procedure, err = importer.NewImportController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -900,11 +904,11 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"paused":%v}`, restore.DeliverPauser.IsPaused())
+		fmt.Fprintf(w, `{"paused":%v}`, importer.DeliverPauser.IsPaused())
 
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		restore.DeliverPauser.Pause()
+		importer.DeliverPauser.Pause()
 		log.L().Info("progress paused")
 		_, _ = w.Write([]byte("{}"))
 
@@ -920,7 +924,7 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		restore.DeliverPauser.Resume()
+		importer.DeliverPauser.Resume()
 		log.L().Info("progress resumed")
 		_, _ = w.Write([]byte("{}"))
 
@@ -1038,27 +1042,27 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 		tableName = ""
 	}
 	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
+	db, err := importer.DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
+	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TableMetaTableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableMetaExist {
-		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
-		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
+		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, importer.TableMetaTableName)
+		if err = importer.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
+	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TaskMetaTableName)
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
+	return errors.Trace(importer.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {

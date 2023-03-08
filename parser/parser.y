@@ -10069,6 +10069,10 @@ SetStmt:
 	{
 		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
 	}
+|	"SET" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.SetResourceGroupStmt{Name: model.NewCIStr($4)}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
