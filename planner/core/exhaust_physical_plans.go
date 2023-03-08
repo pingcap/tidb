@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2059,19 +2058,16 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return true
 	}
 
-	mppStoreCnt := 0
-	if mppClient := p.ctx.GetMPPClient().(*copr.MPPClient); mppClient != nil {
-		mppStoreCnt = mppClient.GetTiFlashStoreCount()
-	}
-
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return checkChildFitBC(p.children[1])
 	} else if p.JoinType == RightOuterJoin {
 		return checkChildFitBC(p.children[0])
 	}
 
+	mppStoreCnt, ok := p.ctx.GetMPPClient().GetMPPStoreCount()
+
 	// if there is only ONE store, maybe other special way can be used for optimization
-	if mppStoreCnt > 1 {
+	if ok && mppStoreCnt > 1 {
 		return isJoinFitMPPBCJ(p, mppStoreCnt)
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
