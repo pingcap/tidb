@@ -117,6 +117,7 @@ type LoadDataInfo struct {
 	rows        [][]types.Datum
 	Drained     bool
 
+<<<<<<< HEAD
 	ColumnAssignments     []*ast.Assignment
 	ColumnAssignmentExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
@@ -124,6 +125,19 @@ type LoadDataInfo struct {
 	exprWarnings       []stmtctx.SQLWarn
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	FieldMappings      []*FieldMapping
+=======
+	format             string
+	schemaName         string
+	columnAssignments  []*ast.Assignment
+	columnsAndUserVars []*ast.ColumnNameOrUserVar
+	fieldMappings      []*FieldMapping
+	onDuplicate        ast.OnDuplicateKeyHandlingType
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	restrictive bool
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
@@ -131,7 +145,237 @@ type LoadDataInfo struct {
 	OnDuplicate     ast.OnDuplicateKeyHandlingType
 }
 
+<<<<<<< HEAD
 // FieldMapping inticates the relationship between input field and table column or user variable
+=======
+// NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
+func NewLoadDataWorker(
+	sctx sessionctx.Context,
+	plan *plannercore.LoadData,
+	tbl table.Table,
+	getSysSessionFn func() (sessionctx.Context, error),
+	putSysSessionFn func(context.Context, sessionctx.Context),
+) (*LoadDataWorker, error) {
+	insertVal := &InsertValues{
+		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
+		Table:          tbl,
+		Columns:        plan.Columns,
+		GenExprs:       plan.GenCols.Exprs,
+		isLoadData:     true,
+		txnInUse:       sync.Mutex{},
+		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
+	}
+	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
+	loadDataWorker := &LoadDataWorker{
+		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
+		commitTaskQueue:    make(chan commitTask, taskQueueSize),
+		InsertValues:       insertVal,
+		Path:               plan.Path,
+		format:             plan.Format,
+		schemaName:         plan.Table.Schema.O,
+		table:              tbl,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+		NullInfo:           plan.NullInfo,
+		IgnoreLines:        plan.IgnoreLines,
+		columnAssignments:  plan.ColumnAssignments,
+		columnsAndUserVars: plan.ColumnsAndUserVars,
+		onDuplicate:        plan.OnDuplicate,
+		Ctx:                sctx,
+		restrictive:        restrictive,
+		getSysSessionFn:    getSysSessionFn,
+		putSysSessionFn:    putSysSessionFn,
+	}
+	if !restrictive {
+		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
+		// meaning of this flag is not clear. I can only reuse it here.
+		sctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		sctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+		sctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	}
+
+	if err := loadDataWorker.initOptions(plan.Options); err != nil {
+		return nil, err
+	}
+	columnNames := loadDataWorker.initFieldMappings()
+	if err := loadDataWorker.initLoadColumns(columnNames); err != nil {
+		return nil, err
+	}
+	loadDataWorker.ResetBatch()
+	return loadDataWorker, nil
+}
+
+func (e *LoadDataWorker) initDefaultOptions() {
+	threadCnt := runtime.NumCPU()
+	if e.format == LoadDataFormatParquet {
+		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
+	}
+
+	e.importMode = logicalImportMode
+	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
+	e.checksum = config.OpLevelRequired
+	e.addIndex = true
+	e.analyze = config.OpLevelOptional
+	e.threadCnt = int64(threadCnt)
+	_ = e.batchSize.UnmarshalText([]byte("100MiB")) // todo confirm with pm
+	e.maxWriteSpeed = unlimitedWriteSpeed
+	e.splitFile = false
+	e.maxRecordedErrors = 100
+	e.detached = false
+}
+
+func (e *LoadDataWorker) initOptions(options []*plannercore.LoadDataOpt) error {
+	e.initDefaultOptions()
+
+	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
+	for _, opt := range options {
+		hasValue, ok := supportedOptions[opt.Name]
+		if !ok {
+			return ErrUnknownOption.FastGenByArgs(opt.Name)
+		}
+		if hasValue && opt.Value == nil || !hasValue && opt.Value != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if _, ok = specifiedOptions[opt.Name]; ok {
+			return ErrDuplicateOption.FastGenByArgs(opt.Name)
+		}
+		specifiedOptions[opt.Name] = opt
+	}
+
+	var (
+		v      string
+		err    error
+		isNull bool
+	)
+	if opt, ok := specifiedOptions[importModeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		v = strings.ToLower(v)
+		if v != logicalImportMode && v != physicalImportMode {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.importMode = v
+	}
+
+	if e.importMode == logicalImportMode {
+		// some options are only allowed in physical mode
+		for _, opt := range specifiedOptions {
+			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
+				return ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+			}
+		}
+	}
+	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[checksumOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.checksum.FromStringValue(v); err != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[addIndexOption]; ok {
+		var vInt int64
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.addIndex = vInt == 1
+	}
+	if opt, ok := specifiedOptions[analyzeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.analyze.FromStringValue(v); err != nil {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[threadOption]; ok {
+		// boolean true will be taken as 1
+		e.threadCnt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.threadCnt <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[batchSizeOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
+		v, isNull, err = opt.Value.EvalString(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	if opt, ok := specifiedOptions[splitFileOption]; ok {
+		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		var vInt int64
+		vInt, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		e.splitFile = vInt == 1
+	}
+	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
+		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(e.Ctx, chunk.Row{})
+		if err != nil || isNull || e.maxRecordedErrors < -1 {
+			return ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// todo: set a max value for this param?
+	}
+	if _, ok := specifiedOptions[detachedOption]; ok {
+		e.detached = true
+	}
+
+	e.adjustOptions()
+	return nil
+}
+
+func (e *LoadDataWorker) adjustOptions() {
+	if e.diskQuota < minDiskQuota {
+		e.diskQuota = minDiskQuota
+	}
+	// max value is cpu-count
+	numCPU := int64(runtime.NumCPU())
+	if e.threadCnt > numCPU {
+		e.threadCnt = numCPU
+	}
+	if e.batchSize < minBatchSize {
+		e.batchSize = minBatchSize
+	}
+	if e.maxWriteSpeed < minWriteSpeed {
+		e.maxWriteSpeed = minWriteSpeed
+	}
+}
+
+// FieldMapping indicates the relationship between input field and table column or user variable
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
@@ -622,16 +866,39 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
 
+<<<<<<< HEAD
 	replace := false
 	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		replace = true
+=======
+	switch e.onDuplicate {
+	case ast.OnDuplicateKeyHandlingReplace:
+		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, true)
+	case ast.OnDuplicateKeyHandlingIgnore:
+		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, false)
+	case ast.OnDuplicateKeyHandlingError:
+		for i, row := range rows[0:cnt] {
+			sizeHintStep := int(e.Ctx.GetSessionVars().ShardAllocateStep)
+			if sizeHintStep > 0 && i%sizeHintStep == 0 {
+				sizeHint := sizeHintStep
+				remain := len(rows[0:cnt]) - i
+				if sizeHint > remain {
+					sizeHint = remain
+				}
+				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
+			} else {
+				err = e.addRecord(ctx, row)
+			}
+			if err != nil {
+				return err
+			}
+			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		}
+		return nil
+	default:
+		return errors.Errorf("unknown on duplicate key handling: %v", e.onDuplicate)
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 	}
-
-	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
-	if err != nil {
-		return err
-	}
-	return err
 }
 
 // SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
@@ -716,8 +983,10 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 	}
 	err := e.addRecord(ctx, row)
 	if err != nil {
+		if e.restrictive {
+			return err
+		}
 		e.handleWarning(err)
-		return err
 	}
 	return nil
 }
@@ -867,10 +1136,115 @@ func (w *fieldWriter) GetField() (bool, field) {
 				w.OutputBuf = append(w.OutputBuf, w.escapeChar)
 				w.OutputBuf = append(w.OutputBuf, ch)
 			}
+<<<<<<< HEAD
+=======
+			return ErrLoadDataCantRead.GenWithStackByArgs(
+				err.Error(),
+				"Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)",
+			)
+		}
+		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
+		// So should add first here.
+		e.rowCount++
+		r, err := e.parserData2TableData(ctx, parser.LastRow().Row)
+		if err != nil {
+			return err
+		}
+		e.rows = append(e.rows, r)
+		e.curBatchCnt++
+		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
+			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
+			return nil
+		}
+	}
+}
+
+// parserData2TableData encodes the data of parser output.
+func (e *LoadDataWorker) parserData2TableData(
+	ctx context.Context,
+	parserData []types.Datum,
+) ([]types.Datum, error) {
+	var errColNumMismatch error
+	switch {
+	case len(parserData) < len(e.fieldMappings):
+		errColNumMismatch = ErrWarnTooFewRecords.GenWithStackByArgs(e.rowCount)
+	case len(parserData) > len(e.fieldMappings):
+		errColNumMismatch = ErrWarnTooManyRecords.GenWithStackByArgs(e.rowCount)
+	}
+
+	if errColNumMismatch != nil {
+		if e.restrictive {
+			return nil, errColNumMismatch
+		}
+		e.handleWarning(errColNumMismatch)
+	}
+
+	row := make([]types.Datum, 0, len(e.insertColumns))
+	sessionVars := e.Ctx.GetSessionVars()
+	setVar := func(name string, col *types.Datum) {
+		// User variable names are not case-sensitive
+		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
+		name = strings.ToLower(name)
+		if col == nil || col.IsNull() {
+			sessionVars.UnsetUserVar(name)
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 		} else {
 			w.OutputBuf = append(w.OutputBuf, ch)
 		}
 	}
+<<<<<<< HEAD
+=======
+
+	for i := 0; i < len(e.fieldMappings); i++ {
+		if i >= len(parserData) {
+			if e.fieldMappings[i].Column == nil {
+				setVar(e.fieldMappings[i].UserVar.Name, nil)
+				continue
+			}
+
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if types.IsTypeTime(e.fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(e.fieldMappings[i].Column.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.fieldMappings[i].Column.GetType())))
+				continue
+			}
+
+			row = append(row, types.NewDatum(nil))
+			continue
+		}
+
+		if e.fieldMappings[i].Column == nil {
+			setVar(e.fieldMappings[i].UserVar.Name, &parserData[i])
+			continue
+		}
+
+		row = append(row, parserData[i])
+	}
+	for i := 0; i < len(e.columnAssignments); i++ {
+		// eval expression of `SET` clause
+		d, err := expression.EvalAstExpr(e.Ctx, e.columnAssignments[i].Expr)
+		if err != nil {
+			if e.restrictive {
+				return nil, err
+			}
+			e.handleWarning(err)
+		}
+		row = append(row, d)
+	}
+
+	// a new row buffer will be allocated in getRow
+	newRow, err := e.getRow(ctx, row)
+	if err != nil {
+		if e.restrictive {
+			return nil, err
+		}
+		e.handleWarning(err)
+		// TODO: should not return nil! caller will panic when lookup index
+		return nil, nil
+	}
+
+	return newRow, nil
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 }
 
 // getFieldsFromLine splits line according to fieldsInfo.

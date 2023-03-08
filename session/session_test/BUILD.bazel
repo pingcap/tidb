@@ -26,7 +26,6 @@ go_test(
         "//privilege/privileges",
         "//session",
         "//sessionctx",
-        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//store/copr",
         "//store/mockstore",

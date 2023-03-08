@@ -20,19 +20,14 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 // ReplaceExec represents a replace executor.
@@ -65,6 +60,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
 func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
@@ -118,6 +114,8 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 	return true, nil
 }
 
+=======
+>>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	txn, err := e.ctx.Txn(true)
@@ -132,7 +130,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		}
 
 		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
-			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
+			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {
 				return err
 			}
@@ -184,7 +182,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 		if handle == nil {
 			continue
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 		if err != nil {
 			return false, true, err
 		}
