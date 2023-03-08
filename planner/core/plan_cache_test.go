@@ -18,8 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/planner"
-	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -28,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -159,11 +159,11 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	}
 
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
-	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])")
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
-	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))")
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
