@@ -2060,9 +2060,9 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	taskCnt := 3
 
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		return isPlanfitMPPBCJ(p.children[1], taskCnt)
+		return checkChildFitBC(p.children[1])
 	} else if p.JoinType == RightOuterJoin {
-		return isPlanfitMPPBCJ(p.children[0], taskCnt)
+		return checkChildFitBC(p.children[0])
 	}
 
 	return isJoinFitMPPBCJ(p, taskCnt)
