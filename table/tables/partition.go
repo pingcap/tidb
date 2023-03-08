@@ -1522,7 +1522,6 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 			return errors.Trace(err)
 		}
 		tbl = t.GetPartition(pid)
-		// TODO: if DeleteOnly don't assert EXISTS!
 		err = tbl.RemoveRecord(ctx, h, r)
 		if err != nil {
 			return errors.Trace(err)
