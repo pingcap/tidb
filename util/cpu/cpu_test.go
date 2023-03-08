@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cpu
+package cpu_test
 
 import (
 	"runtime"
@@ -21,11 +21,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
+	"github.com/pingcap/tidb/util/cpu"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCPUValue(t *testing.T) {
-	observer := NewCPUObserver()
+	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -45,7 +48,7 @@ func TestCPUValue(t *testing.T) {
 	observer.Start()
 	for n := 0; n < 10; n++ {
 		time.Sleep(1 * time.Second)
-		value, unsupported := GetCPUUsage()
+		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
 		require.Greater(t, value, 0.0)
 		require.Less(t, value, 1.0)
@@ -60,7 +63,7 @@ func TestFailpointCPUValue(t *testing.T) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr")
 	}()
-	observer := NewCPUObserver()
+	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -80,10 +83,12 @@ func TestFailpointCPUValue(t *testing.T) {
 	observer.Start()
 	for n := 0; n < 10; n++ {
 		time.Sleep(1 * time.Second)
-		value, unsupported := GetCPUUsage()
+		value, unsupported := cpu.GetCPUUsage()
 		require.True(t, unsupported)
 		require.Equal(t, value, 0.0)
 	}
+	sch := scheduler.CPUScheduler{}
+	require.Equal(t, scheduler.Hold, sch.Tune(util.UNKNOWN, util.NewMockGPool("test")))
 	// we do not stop the observer, because we inject the fail-point and the observer will not start.
 	// if this test case happen goleak, it must have a bug.
 	close(exit)

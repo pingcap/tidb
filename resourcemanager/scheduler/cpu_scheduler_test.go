@@ -16,17 +16,8 @@ package scheduler
 
 import (
 	"testing"
-
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/stretchr/testify/require"
 )
 
 func TestUnsupportCgroup(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr", "return(true)")
-	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/util/cgroup/GetCgroupCPUErr")
-	}()
-	sch := CPUScheduler{}
-	require.Equal(t, Hold, sch.Tune(util.UNKNOWN, util.NewMockGPool("test")))
+
 }
