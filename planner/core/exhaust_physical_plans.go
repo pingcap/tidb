@@ -1992,9 +1992,9 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
-func calcBroadcastExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(taskCnt-1)
+	row := float64(s.Count()) * float64(mppStoreCnt-1)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
@@ -2003,9 +2003,14 @@ func calcBroadcastExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
 	return row, size, true
 }
 
-func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, taskCnt int) (float64, float64, bool) {
-	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, taskCnt)
-	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, taskCnt)
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, mppStoreCnt)
+
+	// broadcast exchange size:
+	//   Build: (mppStoreCnt - 1) * sizeof(BuildTable)
+	//   Probe: 0
+	// choose the child plan with the maximum approximate value as Probe
 
 	if hasSize1 && hasSize2 {
 		return math.Min(row1, row2), math.Min(size1, size2), true
@@ -2014,9 +2019,9 @@ func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, taskCnt int) (float64, f
 	return math.Min(row1, row2), 0, false
 }
 
-func calcHashExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
+func calcHashExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
 	s := p.statsInfo()
-	row := float64(s.Count()) * float64(taskCnt-1) / float64(taskCnt)
+	row := float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
 	if s.HistColl == nil {
 		return row, 0, false
 	}
@@ -2025,27 +2030,23 @@ func calcHashExchangeSize(p Plan, taskCnt int) (float64, float64, bool) {
 	return row, sz, true
 }
 
-func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, taskCnt int) (float64, float64, bool) {
-	row1, size1, hasSize1 := calcHashExchangeSize(p1, taskCnt)
-	row2, size2, hasSize2 := calcHashExchangeSize(p2, taskCnt)
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcHashExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcHashExchangeSize(p2, mppStoreCnt)
+
+	// hash exchange size:
+	//   Build: sizeof(BuildTable) * (mppStoreCnt - 1) / mppStoreCnt
+	//   Probe: sizeof(ProbeTable) * (mppStoreCnt - 1) / mppStoreCnt
+
 	if hasSize1 && hasSize2 {
 		return row1 + row2, size1 + size2, true
 	}
 	return row1 + row2, 0, false
 }
 
-func isJoinFitMPPBCJ(p *LogicalJoin, taskCnt int) bool {
-	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], taskCnt)
-	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], taskCnt)
-	if hasSizeBC && hasSizeHash {
-		return szBC < szHash
-	}
-	return rowBC < rowHash
-}
-
-func isPlanfitMPPBCJ(p Plan, taskCnt int) bool {
-	rowBC, szBC, hasSizeBC := calcHashExchangeSize(p, taskCnt)
-	rowHash, szHash, hasSizeHash := calcBroadcastExchangeSize(p, taskCnt)
+func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
 		return szBC < szHash
 	}
@@ -2058,9 +2059,9 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return true
 	}
 
-	taskCnt := 0
+	mppStoreCnt := 0
 	if mppClient := p.ctx.GetMPPClient().(*copr.MPPClient); mppClient != nil {
-		taskCnt = mppClient.GetTiFlashStoreCount()
+		mppStoreCnt = mppClient.GetTiFlashStoreCount()
 	}
 
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -2069,8 +2070,9 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return checkChildFitBC(p.children[0])
 	}
 
-	if taskCnt != 0 {
-		return isJoinFitMPPBCJ(p, taskCnt)
+	// if there is only ONE store, maybe other special way can be used for optimization
+	if mppStoreCnt > 1 {
+		return isJoinFitMPPBCJ(p, mppStoreCnt)
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
