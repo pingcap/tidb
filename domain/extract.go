@@ -164,7 +164,7 @@ func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (
 	if !task.UseHistoryView {
 		sourceTable = "STATEMENTS_SUMMARY"
 	}
-	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES, SAMPLE_USER FROM INFORMATION_SCHEMA.%s WHERE SUMMARY_END_TIME > '%s' OR SUMMARY_BEGIN_TIME < '%s'",
+	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT STMT_TYPE, DIGEST, PLAN_DIGEST,QUERY_SAMPLE_TEXT, BINARY_PLAN, TABLE_NAMES, SAMPLE_USER FROM INFORMATION_SCHEMA.%s WHERE NOT(SUMMARY_END_TIME < '%s' OR SUMMARY_BEGIN_TIME > '%s')",
 		sourceTable, task.Begin.Format(types.TimeFormat), task.End.Format(types.TimeFormat)))
 	if err != nil {
 		return nil, err
