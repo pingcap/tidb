@@ -2119,7 +2119,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 				return bcastJoins, true, nil
 			}
 		}
-		fmt.Println(p)
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			joins = append(joins, mppJoins...)
