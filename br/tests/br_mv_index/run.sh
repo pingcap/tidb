@@ -38,7 +38,7 @@ wait
 
 # run ddls
 echo "run ddls..."
-run_sql "CREATE INDEX idx_c1 ON ${DB}.${TABLE}((cast(j->'$.string' as char(64) array)))"
+run_sql "CREATE INDEX idx_c2 ON ${DB}.${TABLE}((cast(j->'$.string' as char(64) array)))"
 # incremental backup
 echo "incremental backup start..."
 last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_DIR/$DB/full" | grep -oE "^[0-9]+")
