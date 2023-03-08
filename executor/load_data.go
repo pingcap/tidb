@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -83,8 +84,6 @@ const (
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
-	// InTest is a counter that bypass gcs authentication in unit tests.
-	InTest atomic.Int64
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
@@ -174,7 +173,7 @@ func (e *LoadDataExec) loadFromRemote(
 	filename string,
 ) error {
 	opt := &storage.ExternalStorageOptions{}
-	if InTest.Load() > 0 {
+	if intest.InTest {
 		opt.NoCredentials = true
 	}
 	s, err := storage.New(ctx, b, opt)

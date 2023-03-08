@@ -66,12 +66,10 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.store = testkit.CreateMockStore(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
-	executor.InTest.Add(1)
 }
 
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
-	executor.InTest.Add(-1)
 }
 
 func (s *mockGCSSuite) enableFailpoint(path, term string) {
