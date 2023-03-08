@@ -309,3 +309,201 @@ func BenchmarkGetPlanCost(b *testing.B) {
 		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, core.NewDefaultPlanCostOption().WithCostFlag(core.CostFlagRecalculate))
 	}
 }
+
+type Item struct {
+	name  string
+	value float64
+}
+
+type CostInput struct {
+	params  []Item
+	op      []string
+	formula string
+	cost    float64
+}
+
+func newCostInput(str string) CostInput {
+	input := CostInput{params: make([]Item, 0)}
+	a := strings.Split(str, ";")
+	b := strings.Split(a[0], "=")
+	input.formula = b[0]
+	input.formula = strings.ReplaceAll(input.formula, ")/", ") /")
+	input.formula = strings.ReplaceAll(input.formula, ")*", ") *")
+	fmt.Printf("%s\n", str)
+	fmt.Printf("formula: %s\n", b[0])
+	input.cost, _ = strconv.ParseFloat(b[1], 64)
+	c := strings.Split(a[1], ",")
+	for _, v := range c {
+		d := strings.Split(v, "=")
+		val, _ := strconv.ParseFloat(d[1], 64)
+		input.params = append(input.params, Item{d[0], val})
+	}
+	args := strings.Split(b[0], " ")
+	for _, v := range args {
+		if v == "(" {
+			continue
+		}
+		found := false
+		for _, v1 := range input.params {
+			if v1.name == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			input.op = append(input.op, v)
+		}
+	}
+	return input
+}
+
+func (c CostInput) Calc(t *testing.T, isTrace bool) *core.CostBuilder {
+	i := 0
+	isFirst := true
+	var builder *core.CostBuilder
+	for _, v := range c.params {
+		a := core.NewCostItemForTest(v.name, v.value)
+		if isFirst {
+			builder = core.GetCostBuilderForTest(a, isTrace)
+			isFirst = false
+			continue
+		}
+		builder.EvalOpForTest(c.op[i], a)
+		i++
+	}
+	val := builder.Value()
+	fmt.Printf("val : %v\n", val)
+	if isTrace {
+		require.Equal(t, val.AsFormula(), c.formula)
+	}
+	require.Equal(t, val.GetCost(), c.cost)
+	return builder
+}
+
+func TestCostBuilder(t *testing.T) {
+	inputs := []string{"a + b * c * d=70;a=10,b=10,c=2,d=3",
+		"a + b * c - d=27;a=10,b=10,c=2,d=3",
+		"a + b * c - d * e=15;a=10,b=10,c=2,d=3,e=5",
+		"a + b * c - d * e=0;a=10,b=10,c=2,d=3,e=10",
+		"a + b * c - d * e * f=-30;a=10,b=10,c=2,d=3,e=10,f=2",
+		"( a + b )* c=40;a=10,b=10,c=2",
+		"( a + b )* c + d + e - f=-59.27;a=10,b=10,c=2,d=0.4,e=0.33,f=100",
+		"( a + b )/ c=10;a=10,b=10,c=2",
+		"( a + b )/ c - d=90;a=10,b=10,c=0.2,d=10",
+		"( a + b )/ c - d * e=70;a=10,b=10,c=0.2,d=10,e=3",
+	}
+	for _, v := range inputs {
+		i := newCostInput(v)
+		i.Calc(t, true)
+		i.Calc(t, false)
+	}
+
+	inputs2 := []string{"a + b * c * d=70;a=10,b=10,c=2,d=3",
+		"a + b * c - d * e=20;a=10,b=10,c=2,d=2,e=5"}
+	i1 := newCostInput(inputs2[0])
+	b1 := i1.Calc(t, true)
+	i2 := newCostInput(inputs2[1])
+	b2 := i2.Calc(t, true)
+	b1.EvalOpForTest("+", b2.Value())
+	val := b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" + ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(90))
+
+	i1 = newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true)
+	b1.EvalOpForTest("*", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" * ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(1210))
+
+	i1 = newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true)
+	b1.EvalOpForTest(")*", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "( "+i1.formula+" ) * ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(1400))
+
+	i1 = newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true)
+	b1.EvalOpForTest("/", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" / ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(13))
+
+	i1 = newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true)
+	b1.EvalOpForTest(")/", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "( "+i1.formula+" ) / ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(3.5))
+
+	i1 = newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true)
+	b1.EvalOpForTest("-", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" - ( "+i2.formula+" )")
+	require.Equal(t, val.GetCost(), float64(50))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	b1 = i1.Calc(t, true).SetNameForTest("b1")
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b1.EvalOpForTest("+", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "b1 + b2")
+	require.Equal(t, val.GetCost(), float64(90))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	b1 = i1.Calc(t, true)
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b1.EvalOpForTest("+", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" + b2")
+	require.Equal(t, val.GetCost(), float64(90))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	b1 = i1.Calc(t, true)
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b1.EvalOpForTest("*", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), i1.formula+" * b2")
+	require.Equal(t, val.GetCost(), float64(1210))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	b1 = i1.Calc(t, true).SetNameForTest("b1")
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b1.EvalOpForTest("*", b2.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "b1 * b2")
+	require.Equal(t, val.GetCost(), float64(1400))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	i3 := newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true).SetNameForTest("b1")
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b3 := i3.Calc(t, true).SetNameForTest("b3")
+	b1.EvalOpForTest("*", b2.Value())
+	b1.EvalOpForTest("+", b3.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "b1 * b2 + b3")
+	require.Equal(t, val.GetCost(), float64(1470))
+
+	i1 = newCostInput(inputs2[0])
+	i2 = newCostInput(inputs2[1])
+	i3 = newCostInput(inputs2[0])
+	i4 := newCostInput(inputs2[0])
+	b1 = i1.Calc(t, true).SetNameForTest("b1")
+	b2 = i2.Calc(t, true).SetNameForTest("b2")
+	b3 = i3.Calc(t, true).SetNameForTest("b3")
+	b4 := i4.Calc(t, true).SetNameForTest("b4")
+	b1.EvalOpForTest("*", b2.Value())
+	b1.EvalOpForTest("+", b3.Value())
+	b1.EvalOpForTest("*", b4.Value())
+	val = b1.Value()
+	require.Equal(t, val.AsFormula(), "b1 * b2 + b3 * b4")
+	require.Equal(t, val.GetCost(), float64(6300))
+}
