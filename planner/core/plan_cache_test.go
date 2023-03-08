@@ -352,13 +352,13 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a+1=1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: query has some unsupported binary operation`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: query has some unsupported binary operation`))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that access multiple tables are not supported`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that access multiple tables are not supported`))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from (select * from t) tx`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that have sub-queries are not supported`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported`))
 
 	// no warning if disable this feature
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
@@ -542,12 +542,12 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 
 	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
+	tk.MustExec(`explain format = 'plan_cache' select * from t where a=1.1`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1.1' may be converted to INT`))
 
 	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
+	tk.MustExec(`explain format = 'plan_cache' select * from t where a='1'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
 }
 
@@ -1336,6 +1336,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 			"a = 21 or a = 22 or a = 23 or a = 24 or a = 25 or a = 26 or a = 27 or a = 28 or a = 29 or a = 30 or " +
 			"a = 31 or a = 32 or a = 33 or a = 34 or a = 35 or a = 36 or a = 37 or a = 38 or a = 39 or a = 40 or " +
 			"a = 41 or a = 42 or a = 43 or a = 44 or a = 45 or a = 46 or a = 47 or a = 48 or a = 49 or a = 50 or a = 51", // more than 50 constants
+		"select * from t where false", // table dual
 	}
 
 	reasons := []string{
@@ -1371,6 +1372,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
 		"skip non-prepared plan-cache: query has more than 50 constants",
+		"skip non-prepared plan-cache: get a TableDual plan",
 	}
 
 	all := append(supported, unsupported...)
