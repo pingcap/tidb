@@ -122,6 +122,10 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
+func (m *MDTableMeta) FullTableName() string {
+	return common.UniqueTable(m.DB, m.Name)
+}
+
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.
 // This can control the behavior when constructing an MDLoader.
 type MDLoaderSetupConfig struct {

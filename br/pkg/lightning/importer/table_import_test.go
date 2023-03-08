@@ -830,7 +830,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 		CleanupEngine(ctx, engineUUID).
 		Return(nil)
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
 	err = s.tr.importKV(ctx, closedEngine, rc, 1)
 	require.NoError(s.T(), err)
@@ -862,7 +862,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
 	err = s.tr.importKV(ctx, closedEngine, rc, 1)
 	require.Regexp(s.T(), "fake import error.*", err.Error())
@@ -999,13 +999,13 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
 	err = rc.saveStatusCheckpoint(
 		context.Background(),
-		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.UniqueTable("test", "tbl"), common.IndexEngineID,
 		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
 		checkpoints.CheckpointStatusImported,
 	)
@@ -1013,7 +1013,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
-	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)

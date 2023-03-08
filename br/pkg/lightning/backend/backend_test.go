@@ -64,7 +64,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 
 	engine, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
 	require.NoError(t, err)
-	closedEngine, err := engine.Close(ctx, nil)
+	closedEngine, err := engine.Close(ctx)
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1, 1)
 	require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 		Return(nil).
 		After(closeCall)
 
-	closedEngine, err := s.backend.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID)
+	closedEngine, err := s.backend.UnsafeCloseEngineWithUUID(ctx, nil, "some_tag", engineUUID, 0)
 	require.NoError(t, err)
 	err = closedEngine.Cleanup(ctx)
 	require.NoError(t, err)
