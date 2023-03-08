@@ -98,6 +98,7 @@ func (m *MockPool) Run(f func()) error {
 	return args.Error(0)
 }
 
+// RunWithConcurrency implements Pool.RunWithConcurrency.
 func (m *MockPool) RunWithConcurrency(funcs chan func(), _ uint64) error {
 	args := m.Called()
 	if args.Error(0) == nil {
@@ -110,60 +111,73 @@ func (m *MockPool) RunWithConcurrency(funcs chan func(), _ uint64) error {
 	return args.Error(0)
 }
 
+// ReleaseAndWait implements Pool.ReleaseAndWait.
 func (m *MockPool) ReleaseAndWait() {
 	m.Called()
 }
 
+// MockScheduler is a mock of Scheduler.
 type MockScheduler struct {
 	mock.Mock
 }
 
+// InitSubtaskExecEnv implements Scheduler.InitSubtaskExecEnv.
 func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
 
+// SplitSubtask implements Scheduler.SplitSubtask.
 func (m *MockScheduler) SplitSubtask(subtasks *proto.Subtask) []proto.MinimalTask {
 	args := m.Called(subtasks)
 	return args.Get(0).([]proto.MinimalTask)
 }
 
+// CleanupSubtaskExecEnv implements Scheduler.CleanupSubtaskExecEnv.
 func (m *MockScheduler) CleanupSubtaskExecEnv(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
 
+// Rollback implements Scheduler.Rollback.
 func (m *MockScheduler) Rollback(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
 
+// MockInternalScheduler is a mock of InternalScheduler.
 type MockInternalScheduler struct {
 	mock.Mock
 }
 
+// Start implements InternalScheduler.Start.
 func (m *MockInternalScheduler) Start() {
 	m.Called()
 }
 
+// Stop implements InternalScheduler.Stop.
 func (m *MockInternalScheduler) Stop() {
 	m.Called()
 }
 
+// Run implements InternalScheduler.Run.
 func (m *MockInternalScheduler) Run(ctx context.Context, task *proto.Task) error {
 	args := m.Called(ctx, task)
 	return args.Error(0)
 }
 
+// Rollback implements InternalScheduler.Rollback.
 func (m *MockInternalScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 	args := m.Called(ctx, task)
 	return args.Error(0)
 }
 
+// MockSubtaskExecutor is a mock of SubtaskExecutor.
 type MockSubtaskExecutor struct {
 	mock.Mock
 }
 
+// Run implements SubtaskExecutor.Run.
 func (m *MockSubtaskExecutor) Run(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
