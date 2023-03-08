@@ -2104,9 +2104,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
+		sc.ExplainFormat = explainStmt.Format
 		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
+	} else {
+		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
@@ -2152,11 +2155,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
-		sc.BadNullAsWarning = true
-		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
-		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
-		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
-		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
