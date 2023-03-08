@@ -299,10 +299,6 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-	origCTECanMPP := p.ctx.GetSessionVars().CurrentCTECanMPP
-	defer func() {
-		p.ctx.GetSessionVars().CurrentCTECanMPP = origCTECanMPP
-	}()
 	for _, pp := range physicalPlans {
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
@@ -310,9 +306,7 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		curCntPlan = 1
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
-		allMpp := true
 		lastIdx := len(p.children) - 1
-		p.ctx.GetSessionVars().CurrentCTECanMPP = true
 		for j := 0; j < lastIdx; j++ {
 			child := p.children[j]
 			childProp := pp.GetChildReqProps(j)
@@ -325,9 +319,11 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			if childTask != nil && childTask.invalid() {
 				break
 			}
-			childTasks = append(childTasks, childTask)
 			_, isMpp := childTask.(*mppTask)
-			allMpp = allMpp && isMpp
+			if !isMpp && prop.IsFlashProp() {
+				break
+			}
+			childTasks = append(childTasks, childTask)
 		}
 		// This check makes sure that there is no invalid child task.
 		if len(childTasks) != len(p.children)-1 {
@@ -335,7 +331,9 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		lastChildProp := pp.GetChildReqProps(lastIdx).CloneEssentialFields()
-		lastChildProp.CTECanMPP = allMpp
+		if lastChildProp.IsFlashProp() {
+			lastChildProp.CTEConsumerStatus = property.AllCTECanMpp
+		}
 		lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
 		childCnts[lastIdx] = cnt
 		if err != nil {
@@ -346,7 +344,7 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
-		if _, ok := lastChildTask.(*mppTask); !ok && allMpp {
+		if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEConsumerStatus == property.AllCTECanMpp {
 			continue
 		}
 
@@ -2676,8 +2674,8 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTECanMPP), zap.String("cte name", pcte.ExplainID().String()))
-	if prop.IsFlashProp() && prop.CTECanMPP {
+	logutil.BgLogger().Warn("build cte", zap.String("prop type", prop.TaskTp.String()), zap.Bool("can mpp", prop.CTEConsumerStatus == property.AllCTECanMpp), zap.String("cte name", pcte.ExplainID().String()))
+	if prop.IsFlashProp() && prop.CTEConsumerStatus == property.AllCTECanMpp {
 		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, 1, nil
 		}

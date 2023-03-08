@@ -161,6 +161,15 @@ func GetCollateNameByIDForPartition(collateID int32) string {
 	return collate.CollationID2Name(collateID)
 }
 
+// cteConsumerStatus indicates whether we can let the current CTE consumer/reader be executed on the MPP nodes.
+type cteConsumerStatus int
+
+const (
+	NoCTE cteConsumerStatus = iota
+	SomeCTEFailedMpp
+	AllCTECanMpp
+)
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
@@ -203,7 +212,7 @@ type PhysicalProperty struct {
 	// Non-MPP tasks do not care about it.
 	RejectSort bool
 
-	CTECanMPP bool
+	CTEConsumerStatus cteConsumerStatus
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -330,12 +339,8 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
-		if p.CTECanMPP {
-			p.hashcode = append(p.hashcode, codec.EncodeInt(p.hashcode, 1)...)
-		} else {
-			p.hashcode = append(p.hashcode, codec.EncodeInt(p.hashcode, 0)...)
-		}
 	}
+	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEConsumerStatus))...)
 	return p.hashcode
 }
 
@@ -355,7 +360,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
-		CTECanMPP:             p.CTECanMPP,
+		CTEConsumerStatus:     p.CTEConsumerStatus,
 	}
 	return prop
 }
