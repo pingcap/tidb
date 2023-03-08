@@ -383,6 +383,7 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		if kvcodec.isAutoRandomCol(col.ToInfo()) {
 			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
+			// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 				return nil, errors.Trace(err)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
@@ -331,5 +332,32 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
 		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
+	}
+}
+
+func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	p := parser.New()
+	sql := "select * from test.t where a<10"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	sctx := tk.Session()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+
+	core.NonPreparedPlanCacheable(stmt, is)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		if !ok {
+			b.Fatal()
+		}
 	}
 }

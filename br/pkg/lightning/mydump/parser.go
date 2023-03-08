@@ -93,12 +93,18 @@ type ChunkParser struct {
 
 // Chunk represents a portion of the data file.
 type Chunk struct {
-	Offset       int64
-	EndOffset    int64
-	RealOffset   int64
+	Offset     int64
+	EndOffset  int64
+	RealOffset int64
+	// we estimate row-id range of the chunk using file-size divided by some factor(depends on column count)
+	// after estimation, we will rebase them for all chunks of this table in this instance,
+	// then it's rebased again based on all instances of parallel import.
+	// allocatable row-id is in range [PrevRowIDMax, RowIDMax).
+	// PrevRowIDMax will be increased during local encoding
 	PrevRowIDMax int64
 	RowIDMax     int64
-	Columns      []string
+	// only assigned when using strict-mode for CSV files and the file contains header
+	Columns []string
 }
 
 // Row is the content of a row.
