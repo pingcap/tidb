@@ -56,6 +56,6 @@ result=$(run_sql "ADMIN SHOW DDL JOBS 1 WHERE job_type LIKE '%ingest%';")
 
 echo $(run_sql "ADMIN SHOW DDL JOBS 1;")
 
-[ "$result" -nt "" ] || { echo "adding index does not use ingest mode"; exit 1; }
+[ ! -z "$result" ] || { echo "adding index does not use ingest mode"; exit 1; }
 
 run_sql "DROP DATABASE $DB;"
