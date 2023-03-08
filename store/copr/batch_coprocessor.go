@@ -712,9 +712,6 @@ func buildBatchCopTasksConsistentHash(
 			Region:         tasks[i].region,
 			Ranges:         tasks[i].ranges,
 			PartitionIndex: tasks[i].partitionIndex,
-			// No need to setup regionMeta and Store info.
-			// Meta:           rpcCtx.Meta,
-			// AllStores:      []uint64{rpcCtx.Store.StoreID()},
 		}
 		if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
 			batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
@@ -1343,9 +1340,6 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 				Region:         tasks[i].region,
 				Ranges:         tasks[i].ranges,
 				PartitionIndex: tasks[i].partitionIndex,
-				// No need to setup regionMeta and Store info.
-				// Meta:           rpcCtx.Meta,
-				// AllStores:      []uint64{rpcCtx.Store.StoreID()},
 			}
 			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
 				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
