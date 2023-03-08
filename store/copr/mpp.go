@@ -576,7 +576,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 }
 
 func (c *MPPClient) GetMPPStoreCount() (int, bool) {
-	cnt := len(c.store.GetRegionCache().GetTiFlashStores())
+	cnt := len(c.store.GetRegionCache().GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode))
 	if cnt > 0 {
 		return cnt, true
 	}
@@ -589,6 +589,6 @@ func (c *MPPClient) GetMPPStoreCount() (int, bool) {
 			c.store.GetRegionCache().SetRegionCacheStore(s.GetId(), s.GetAddress(), s.GetPeerAddress(), tikvrpc.GetStoreTypeByMeta(s), 0, s.GetLabels())
 		}
 	}
-	cnt = len(c.store.GetRegionCache().GetTiFlashStores())
+	cnt = len(c.store.GetRegionCache().GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode))
 	return cnt, true
 }
