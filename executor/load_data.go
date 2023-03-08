@@ -887,7 +887,7 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 			// processing. So when "scanned" progress get forward we know the
 			// last block is processed.
 			// The corner case is when a record is larger than the block size,
-			// but that's should be rare.
+			// but that should be rare.
 			if task.scannedFileSize != currScannedFileSize {
 				lastScannedFileSize = currScannedFileSize
 				currScannedFileSize = task.scannedFileSize

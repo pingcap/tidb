@@ -20,6 +20,9 @@ import "encoding/json"
 type Progress struct {
 	// SourceFileSize is the size of the source file in bytes. When we can't get
 	// the size of the source file, it will be set to -1.
+	// Currently the value is read by seek(0, end), when LOAD DATA LOCAL we wrap
+	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
+	// it.
 	SourceFileSize int64
 	// LoadedFileSize is the size of the data that has been loaded in bytes.
 	LoadedFileSize int64
