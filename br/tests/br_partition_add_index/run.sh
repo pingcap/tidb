@@ -50,7 +50,7 @@ run_sql "CREATE DATABASE $DB;"
 echo "restore start..."
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
-run_sql "ALTER TABLE $DB.$table_name ADD INDEX idx(data);"
+run_sql "ALTER TABLE $DB.t0 ADD INDEX idx(data);"
 
 result=$(run_sql "ADMIN SHOW DDL JOBS 1 WHERE job_type LIKE '%ingest%';")
 msg=$(run_sql "ADMIN SHOW DDL JOBS 1;")
