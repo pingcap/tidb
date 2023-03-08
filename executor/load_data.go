@@ -243,6 +243,11 @@ type LoadDataWorker struct {
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	onDuplicate        ast.OnDuplicateKeyHandlingType
+	// Data interpretation is restrictive if the SQL mode is restrictive and neither
+	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
+	// operation.
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
+	restrictive bool
 
 	// import options
 	importMode        string
@@ -284,6 +289,8 @@ func NewLoadDataWorker(
 		txnInUse:       sync.Mutex{},
 		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
 	}
+	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 	loadDataWorker := &LoadDataWorker{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
 		commitTaskQueue:    make(chan commitTask, taskQueueSize),
@@ -300,9 +307,18 @@ func NewLoadDataWorker(
 		columnsAndUserVars: plan.ColumnsAndUserVars,
 		onDuplicate:        plan.OnDuplicate,
 		Ctx:                sctx,
+		restrictive:        restrictive,
 		getSysSessionFn:    getSysSessionFn,
 		putSysSessionFn:    putSysSessionFn,
 	}
+	if !restrictive {
+		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
+		// meaning of this flag is not clear. I can only reuse it here.
+		sctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		sctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+		sctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	}
+
 	if err := loadDataWorker.initOptions(plan.Options); err != nil {
 		return nil, err
 	}
@@ -959,16 +975,33 @@ func (e *LoadDataWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]ty
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
 
-	replace := false
-	if e.onDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		replace = true
+	switch e.onDuplicate {
+	case ast.OnDuplicateKeyHandlingReplace:
+		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, true)
+	case ast.OnDuplicateKeyHandlingIgnore:
+		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, false)
+	case ast.OnDuplicateKeyHandlingError:
+		for i, row := range rows[0:cnt] {
+			sizeHintStep := int(e.Ctx.GetSessionVars().ShardAllocateStep)
+			if sizeHintStep > 0 && i%sizeHintStep == 0 {
+				sizeHint := sizeHintStep
+				remain := len(rows[0:cnt]) - i
+				if sizeHint > remain {
+					sizeHint = remain
+				}
+				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
+			} else {
+				err = e.addRecord(ctx, row)
+			}
+			if err != nil {
+				return err
+			}
+			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		}
+		return nil
+	default:
+		return errors.Errorf("unknown on duplicate key handling: %v", e.onDuplicate)
 	}
-
-	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
-	if err != nil {
-		return err
-	}
-	return err
 }
 
 func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
@@ -977,8 +1010,10 @@ func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) err
 	}
 	err := e.addRecord(ctx, row)
 	if err != nil {
+		if e.restrictive {
+			return err
+		}
 		e.handleWarning(err)
-		return err
 	}
 	return nil
 }
@@ -1040,13 +1075,6 @@ func (e *LoadDataWorker) parserData2TableData(
 	ctx context.Context,
 	parserData []types.Datum,
 ) ([]types.Datum, error) {
-	// Data interpretation is restrictive if the SQL mode is restrictive and neither
-	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
-	// operation.
-	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
-	restrictive := e.Ctx.GetSessionVars().SQLMode.HasStrictMode() &&
-		e.onDuplicate != ast.OnDuplicateKeyHandlingIgnore
-
 	var errColNumMismatch error
 	switch {
 	case len(parserData) < len(e.fieldMappings):
@@ -1056,7 +1084,7 @@ func (e *LoadDataWorker) parserData2TableData(
 	}
 
 	if errColNumMismatch != nil {
-		if restrictive {
+		if e.restrictive {
 			return nil, errColNumMismatch
 		}
 		e.handleWarning(errColNumMismatch)
@@ -1103,11 +1131,10 @@ func (e *LoadDataWorker) parserData2TableData(
 		// eval expression of `SET` clause
 		d, err := expression.EvalAstExpr(e.Ctx, e.columnAssignments[i].Expr)
 		if err != nil {
-			if restrictive {
+			if e.restrictive {
 				return nil, err
 			}
 			e.handleWarning(err)
-			return nil, nil
 		}
 		row = append(row, d)
 	}
@@ -1115,10 +1142,11 @@ func (e *LoadDataWorker) parserData2TableData(
 	// a new row buffer will be allocated in getRow
 	newRow, err := e.getRow(ctx, row)
 	if err != nil {
-		if restrictive {
+		if e.restrictive {
 			return nil, err
 		}
 		e.handleWarning(err)
+		// TODO: should not return nil! caller will panic when lookup index
 		return nil, nil
 	}
 
