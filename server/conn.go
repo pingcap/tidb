@@ -1131,17 +1131,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			var (
-				txnMode string
-				dbName  string
-			)
+			var txnMode string
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
-				if config.GetGlobalConfig().Status.RecordDBLabel {
-					dbName = ctx.GetSessionVars().CurrentDB
-				}
 			}
-			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			for _, dbName := range GetDBNames(cc.getCtx()) {
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			}
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1206,20 +1202,15 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		}
 	}
 
-	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
-	sqlType := metrics.LblGeneral
-	if stmtType != "" {
-		sqlType = stmtType
-	}
-
 	cost := time.Since(startTime)
 	sessionVar := cc.ctx.GetSessionVars()
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
 
-	var dbName string
-	if config.GetGlobalConfig().Status.RecordDBLabel {
-		dbName = sessionVar.CurrentDB
+	stmtType := sessionVar.StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
 	}
 
 	switch sqlType {
@@ -1233,7 +1224,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
-	metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
+	for _, dbName := range GetDBNames(cc.getCtx()) {
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
+	}
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -2562,4 +2555,25 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	default:
 		return ""
 	}
+}
+
+// GetDBNames gets the sql layer database names from the context.
+func GetDBNames(ctx *TiDBContext) []string {
+	dbNames := make(map[string]struct{})
+	if ctx == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
+		return []string{""}
+	}
+	if ctx.GetSessionVars().StmtCtx != nil {
+		for _, t := range ctx.GetSessionVars().StmtCtx.Tables {
+			dbNames[t.DB] = struct{}{}
+		}
+	}
+	if len(dbNames) == 0 {
+		dbNames[ctx.GetSessionVars().CurrentDB] = struct{}{}
+	}
+	ns := make([]string, 0, len(dbNames))
+	for n := range dbNames {
+		ns = append(ns, n)
+	}
+	return ns
 }

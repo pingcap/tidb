@@ -1889,12 +1889,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	var dbName string
-	if config.GetGlobalConfig().Status.RecordDBLabel {
-		dbName = se.GetSessionVars().CurrentDB
+	for _, dbName := range GetDBNames(se) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	}
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2067,11 +2064,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		var dbName string
-		if config.GetGlobalConfig().Status.RecordDBLabel {
-			dbName = se.GetSessionVars().CurrentDB
+		for _, dbName := range GetDBNames(se) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -4282,4 +4277,25 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
+}
+
+// GetDBNames gets the sql layer database names from the session.
+func GetDBNames(se *session) []string {
+	dbNames := make(map[string]struct{})
+	if se == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
+		return []string{""}
+	}
+	if se.GetSessionVars().StmtCtx != nil {
+		for _, t := range se.GetSessionVars().StmtCtx.Tables {
+			dbNames[t.DB] = struct{}{}
+		}
+	}
+	if len(dbNames) == 0 {
+		dbNames[se.GetSessionVars().CurrentDB] = struct{}{}
+	}
+	ns := make([]string, 0, len(dbNames))
+	for n := range dbNames {
+		ns = append(ns, n)
+	}
+	return ns
 }
