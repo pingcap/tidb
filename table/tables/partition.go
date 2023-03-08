@@ -1644,9 +1644,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			// Update needs to be done in StateDeleteOnly as well
 			tbl = t.GetPartition(newTo)
-			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+				err = tbl.RemoveRecord(ctx, h, currData)
+			} else {
+				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}
