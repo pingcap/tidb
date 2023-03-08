@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2057,7 +2058,10 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return true
 	}
 
-	taskCnt := 3
+	taskCnt := 0
+	if mppClient := p.ctx.GetMPPClient().(*copr.MPPClient); mppClient != nil {
+		taskCnt = mppClient.GetTiFlashStoreCount()
+	}
 
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return checkChildFitBC(p.children[1])
@@ -2065,7 +2069,10 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return checkChildFitBC(p.children[0])
 	}
 
-	return isJoinFitMPPBCJ(p, taskCnt)
+	if taskCnt != 0 {
+		return isJoinFitMPPBCJ(p, taskCnt)
+	}
+	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
 // canPushToCop checks if it can be pushed to some stores.

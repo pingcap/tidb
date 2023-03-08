@@ -63,6 +63,10 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	return resultTasks
 }
 
+func (c *MPPClient) GetTiFlashStoreCount() int {
+	return len(c.store.GetRegionCache().GetTiFlashStores())
+}
+
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
