@@ -207,34 +207,34 @@ func (tr *TableImporter) Close() {
 
 func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
-	chunks, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
+	tableRegions, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
 			timestamp = int64(v.(int))
 		})
-		for _, chunk := range chunks {
-			engine, found := cp.Engines[chunk.EngineID]
+		for _, region := range tableRegions {
+			engine, found := cp.Engines[region.EngineID]
 			if !found {
 				engine = &checkpoints.EngineCheckpoint{
 					Status: checkpoints.CheckpointStatusLoaded,
 				}
-				cp.Engines[chunk.EngineID] = engine
+				cp.Engines[region.EngineID] = engine
 			}
 			ccp := &checkpoints.ChunkCheckpoint{
 				Key: checkpoints.ChunkCheckpointKey{
-					Path:   chunk.FileMeta.Path,
-					Offset: chunk.Chunk.Offset,
+					Path:   region.FileMeta.Path,
+					Offset: region.Chunk.Offset,
 				},
-				FileMeta:          chunk.FileMeta,
+				FileMeta:          region.FileMeta,
 				ColumnPermutation: nil,
-				Chunk:             chunk.Chunk,
+				Chunk:             region.Chunk,
 				Timestamp:         timestamp,
 			}
-			if len(chunk.Chunk.Columns) > 0 {
+			if len(region.Chunk.Columns) > 0 {
 				perms, err := parseColumnPermutations(
 					tr.tableInfo.Core,
-					chunk.Chunk.Columns,
+					region.Chunk.Columns,
 					tr.ignoreColumns,
 					log.FromContext(ctx))
 				if err != nil {
@@ -250,7 +250,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	}
 	task.End(zap.ErrorLevel, err,
 		zap.Int("enginesCnt", len(cp.Engines)),
-		zap.Int("filesCnt", len(chunks)),
+		zap.Int("filesCnt", len(tableRegions)),
 	)
 	return err
 }
@@ -661,11 +661,6 @@ ChunkLoop:
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
-		if err != nil {
-			setError(err)
-			break
-		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
 			remainChunkCnt = float64(chunk.UnfinishedSize()) / float64(chunk.TotalSize())
@@ -676,7 +671,6 @@ ChunkLoop:
 
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
-			cr.close()
 			setError(err)
 			break
 		}
@@ -684,7 +678,11 @@ ChunkLoop:
 		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 		if err != nil {
 			_, _ = dataWriter.Close(ctx)
-			cr.close()
+			setError(err)
+			break
+		}
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
+		if err != nil {
 			setError(err)
 			break
 		}
