@@ -2453,10 +2453,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	pkDeletes := 100 // Enough to delete half of what is inserted?
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
-	//seed := rand.Int63()
-	//logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
-	//seed = 2619640531148228497
-	seed := int64(3498486109051357355)
+	seed := rand.Int63()
 	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	getNewPK := func(m map[string]struct{}, suf string) string {
