@@ -63,24 +63,6 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	return resultTasks
 }
 
-func (c *MPPClient) GetMPPStoreCount() (int, bool) {
-	cnt := len(c.store.GetRegionCache().GetTiFlashStores())
-	if cnt > 0 {
-		return cnt, true
-	}
-	{
-		stores, err := c.store.GetRegionCache().PDClient().GetAllStores(c.store.store.Ctx())
-		if err != nil {
-			return 0, false
-		}
-		for _, s := range stores {
-			c.store.GetRegionCache().SetRegionCacheStore(s.GetId(), s.GetAddress(), s.GetPeerAddress(), tikvrpc.GetStoreTypeByMeta(s), 0, s.GetLabels())
-		}
-	}
-	cnt = len(c.store.GetRegionCache().GetTiFlashStores())
-	return cnt, true
-}
-
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
@@ -600,4 +582,22 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	}
 	go iter.run(ctxChild)
 	return iter
+}
+
+func (c *MPPClient) GetMPPStoreCount() (int, bool) {
+	cnt := len(c.store.GetRegionCache().GetTiFlashStores())
+	if cnt > 0 {
+		return cnt, true
+	}
+	{
+		stores, err := c.store.GetRegionCache().PDClient().GetAllStores(c.store.store.Ctx())
+		if err != nil {
+			return 0, false
+		}
+		for _, s := range stores {
+			c.store.GetRegionCache().SetRegionCacheStore(s.GetId(), s.GetAddress(), s.GetPeerAddress(), tikvrpc.GetStoreTypeByMeta(s), 0, s.GetLabels())
+		}
+	}
+	cnt = len(c.store.GetRegionCache().GetTiFlashStores())
+	return cnt, true
 }
