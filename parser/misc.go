@@ -414,6 +414,7 @@ var tokenMap = map[string]int{
 	"INVOKER":                  invoker,
 	"IO":                       io,
 	"RU_PER_SEC":               ruRate,
+	"PRIORITY":					priority,
 	"IO_READ_BANDWIDTH":        ioReadBandwidth,
 	"IO_WRITE_BANDWIDTH":       ioWriteBandwidth,
 	"IPC":                      ipc,

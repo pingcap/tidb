@@ -1818,6 +1818,7 @@ type ResourceGroupRefInfo struct {
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
 	RURate           uint64 `json:"ru_per_sec"`
+	Priority 	     uint64 `json:"priority"`
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
@@ -1828,6 +1829,9 @@ func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
+	}
+	if p.Priority != 0 {
+		writeSettingIntegerToBuilder(sb, "PRIORITY", p.Priority)
 	}
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)

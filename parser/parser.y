@@ -736,6 +736,7 @@ import (
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
+	priority	          "PRIORITY"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -1625,6 +1626,10 @@ DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"PRIORITY" EqOpt LengthNum
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
 	{
@@ -6639,6 +6644,7 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
+|   "PRIORITY"
 |	"BURSTABLE"
 
 /************************************************************************************

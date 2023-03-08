@@ -3347,6 +3347,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
+				group.Priority,
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3354,6 +3355,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 			)

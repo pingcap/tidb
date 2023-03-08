@@ -2116,6 +2116,7 @@ type ResourceUnitType int
 const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
+	ResourcePriority
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -2133,6 +2134,10 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		switch n.Tp {
 		case ResourceRURate:
 			ctx.WriteKeyWord("RU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case ResourcePriority:
+			ctx.WriteKeyWord("PRIORITY ")
 			ctx.WritePlain("= ")
 			ctx.WritePlainf("%d", n.UintValue)
 		case ResourceUnitCPU:
