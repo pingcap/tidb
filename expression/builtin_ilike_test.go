@@ -124,13 +124,48 @@ var vecBuiltinIlikeCases = map[string][]vecExprBenchCase{
 				&selectStringGener{
 					candidates: []string{"aaa", "ABC", "啊啊啊啊", "üÜ", "ü", "a", "A"},
 					randGen:    newDefaultRandGen(),
+				}},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners: []dataGenerator{
+				&selectStringGener{
+					candidates: []string{"aaa", "abc", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ", "Ü", "a", "A"},
+					// candidates: []string{"abc"},
+					randGen: newDefaultRandGen(),
 				},
-				newRangeInt64Gener(65, 122)},
+				&selectStringGener{
+					candidates: []string{"aaa", "ABC", "啊啊啊啊", "üÜ", "ü", "a", "A"},
+					// candidates: []string{"ABC"},
+					randGen: newDefaultRandGen(),
+				}},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
+		},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
+			geners: []dataGenerator{
+				&selectStringGener{
+					candidates: []string{"aaa", "abc", "aAa", "AaA", "a啊啊Aa啊", "啊啊啊啊", "üÜ", "Ü", "a", "A"},
+					randGen:    newDefaultRandGen(),
+				},
+				&selectStringGener{
+					candidates: []string{"aaa", "ABC", "啊啊啊啊", "üÜ", "ü", "a", "A"},
+					randGen:    newDefaultRandGen(),
+				}},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()},
 		},
 	},
 }
 
 func TestVectorizedBuiltinIlikeFunc(t *testing.T) {
+	vecBuiltinIlikeCases[ast.Ilike][0].constants = make([]*Constant, 3)
+	vecBuiltinIlikeCases[ast.Ilike][1].constants = make([]*Constant, 3)
+	vecBuiltinIlikeCases[ast.Ilike][2].constants = make([]*Constant, 3)
+	vecBuiltinIlikeCases[ast.Ilike][0].constants[2] = getIntConstant(int64(byte('A')))
+	vecBuiltinIlikeCases[ast.Ilike][1].constants[2] = getIntConstant(int64(byte('a')))
+	vecBuiltinIlikeCases[ast.Ilike][2].constants[2] = getIntConstant(int64(byte('\\')))
 	testVectorizedBuiltinFunc(t, vecBuiltinIlikeCases)
 }

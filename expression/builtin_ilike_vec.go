@@ -192,7 +192,7 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 
 	b.lowerExpr(params[0], rowNum)
-	escape = b.lowerPattern(params[0], rowNum, escape)
+	escape = b.lowerPattern(params[1], rowNum, escape)
 
 	b.tryToMemorize(params[1], escape)
 	if !b.isMemorizedPattern {
