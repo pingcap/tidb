@@ -155,6 +155,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
+	cacheType := stmtctx.SessionPrepared
+	if !isPrepStmt {
+		cacheType = stmtctx.SessionNonPrepared
+	}
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -168,6 +172,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		CacheType:           cacheType,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -415,6 +420,8 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+	// CacheType indicate which cache this stmt belong to, SessionPrepared or SessionNonPrepared ...
+	CacheType stmtctx.PlanCacheType
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

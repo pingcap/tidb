@@ -169,6 +169,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
