@@ -91,8 +91,16 @@ const (
 	pDumpPartitionStats = "dumpPartitionStats"
 	pBegin              = "begin"
 	pEnd                = "end"
-	pType               = "type"
-	pIsDump             = "isDump"
+)
+
+// For extract task handler
+const (
+	pType   = "type"
+	pIsDump = "isDump"
+
+	// For extract plan task handler
+	pIsSkipStats   = "isSkipStats"
+	pIsHistoryView = "isHistoryView"
 )
 
 // For query string

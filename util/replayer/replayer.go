@@ -50,6 +50,11 @@ func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalSta
 	return zf, fileName, err
 }
 
+// GeneratePlanReplayerFileName generates plan replayer capture task name
+func GeneratePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
+	return generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
+}
+
 func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()

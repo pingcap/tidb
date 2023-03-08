@@ -29,12 +29,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractPlanWithoutHistoryView(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	extractHandler := dom.GetExtractHandle()
+	task := domain.NewExtractPlanTask(time.Now(), time.Now())
+	task.UseHistoryView = false
+	_, err := extractHandler.ExtractTask(context.Background(), task)
+	require.NoError(t, err)
+}
+
 func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 	setupStmtSummary()
 	closeStmtSummary()
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	extractHandler := dom.GetExtractHandle()
-	_, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(time.Now(), time.Now()))
+	task := domain.NewExtractPlanTask(time.Now(), time.Now())
+	task.UseHistoryView = true
+	_, err := extractHandler.ExtractTask(context.Background(), task)
 	require.Error(t, err)
 }
 
@@ -61,7 +72,9 @@ func TestExtractHandlePlanTask(t *testing.T) {
 	time.Sleep(time.Second)
 	end := time.Now()
 	extractHandler := dom.GetExtractHandle()
-	name, err := extractHandler.ExtractTask(context.Background(), domain.NewExtractPlanTask(startTime, end))
+	task := domain.NewExtractPlanTask(startTime, end)
+	task.UseHistoryView = true
+	name, err := extractHandler.ExtractTask(context.Background(), task)
 	require.NoError(t, err)
 	require.True(t, len(name) > 0)
 }
