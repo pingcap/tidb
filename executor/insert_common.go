@@ -1192,12 +1192,15 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if r.ignored {
 			continue
 		}
-		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				if replace {
-					err2 := e.removeRow(ctx, txn, r)
+					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+					if err != nil {
+						return err
+					}
+					_, err2 := e.removeRow(ctx, txn, handle, r, false)
 					if err2 != nil {
 						return err2
 					}
@@ -1209,15 +1212,36 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+		skip := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
-				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				skip = true
-				break
-			}
-			if !kv.IsErrNotFound(err) {
+				if replace {
+					_, handle, err := tables.FetchDuplicatedHandle(
+						ctx,
+						uk.newKey,
+						true,
+						txn,
+						e.Table.Meta().ID,
+						uk.commonHandle,
+					)
+					if err != nil {
+						return err
+					}
+					if handle == nil {
+						continue
+					}
+					_, err = e.removeRow(ctx, txn, handle, r, true)
+					if err != nil {
+						return err
+					}
+				} else {
+					// If duplicate keys were found in BatchGet, mark row = nil.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					skip = true
+					break
+				}
+			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -1239,12 +1263,16 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
-func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) error {
-	handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
-	if err != nil {
-		return err
-	}
-
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeRow(
+	ctx context.Context,
+	txn kv.Transaction,
+	handle kv.Handle,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
@@ -1254,24 +1282,35 @@ func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBe
 		if kv.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
-		return err
+		return false, err
 	}
 
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if identical {
-		return nil
+		if inReplace {
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		return true, nil
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
-		return err
+		return false, err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
+	if inReplace {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	} else {
+		e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	}
 
-	return nil
+	return false, nil
 }
 
 // equalDatumsAsBinary compare if a and b contains the same datum values in binary collation.

@@ -2154,7 +2154,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
-		sc.DupKeyAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
