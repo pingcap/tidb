@@ -65,9 +65,9 @@ if [ "${row_count_inc}" != "${ROW_COUNT}" ];then
     exit 1
 fi
 
-run_sql "EXPLAIN SELECT * FROM t WHERE 1 MEMBER OF (j->'$.number')"
+run_sql "EXPLAIN SELECT * FROM $DB.$TABLE WHERE 1 MEMBER OF (j->'$.number')"
 check_contains 'IndexMerge'
-run_sql "EXPLAIN SELECT * FROM t WHERE 'a' MEMBER OF (j->'$.string')"
+run_sql "EXPLAIN SELECT * FROM $DB.$TABLE WHERE 'a' MEMBER OF (j->'$.string')"
 check_contains 'IndexMerge'
 
 
