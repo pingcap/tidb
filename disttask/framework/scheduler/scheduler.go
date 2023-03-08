@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// InternalSchedulerImpl is the implementation of InternalScheduler.
 type InternalSchedulerImpl struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -43,6 +44,7 @@ type InternalSchedulerImpl struct {
 	}
 }
 
+// NewInternalScheduler creates a new InternalScheduler.
 func NewInternalScheduler(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
 	logPrefix := fmt.Sprintf("id: %s, task_id: %d", id, taskID)
 	schedulerImpl := &InternalSchedulerImpl{
@@ -57,6 +59,7 @@ func NewInternalScheduler(ctx context.Context, id string, taskID int64, subtaskT
 	return schedulerImpl
 }
 
+// Start starts the scheduler.
 func (s *InternalSchedulerImpl) Start() {
 	//	s.wg.Add(1)
 	//	go func() {
@@ -65,6 +68,7 @@ func (s *InternalSchedulerImpl) Start() {
 	//	}()
 }
 
+// Stop stops the scheduler.
 func (s *InternalSchedulerImpl) Stop() {
 	s.cancel()
 	s.wg.Wait()
@@ -85,6 +89,7 @@ func (s *InternalSchedulerImpl) Stop() {
 //		}
 //	}
 
+// Run runs the scheduler task.
 func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
@@ -183,6 +188,7 @@ func (s *InternalSchedulerImpl) runMinimalTask(minimalTaskCtx context.Context, m
 	}
 }
 
+// Rollback rollbacks the scheduler task.
 func (s *InternalSchedulerImpl) Rollback(ctx context.Context, task *proto.Task) error {
 	rollbackCtx, rollbackCancel := context.WithCancel(ctx)
 	defer rollbackCancel()

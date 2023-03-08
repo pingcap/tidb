@@ -20,16 +20,20 @@ import (
 
 type schedulerRegisterOptions struct{}
 
+// SchedulerConstructor is the constructor of Scheduler.
 type SchedulerConstructor func(task *proto.Task, step int64) (Scheduler, error)
 
+// SchedulerRegisterOption is the register option of Scheduler.
 type SchedulerRegisterOption func(opts *schedulerRegisterOptions)
 
+// SubtaskExecutorConstructor is the constructor of SubtaskExecutor.
 type SubtaskExecutorConstructor func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error)
 
 type subtaskExecutorRegisterOptions struct {
 	PoolSize int
 }
 
+// SubtaskExecutorRegisterOption is the register option of SubtaskExecutor.
 type SubtaskExecutorRegisterOption func(opts *subtaskExecutorRegisterOptions)
 
 var (
@@ -40,6 +44,7 @@ var (
 	subtaskExecutorOptions      = make(map[string]subtaskExecutorRegisterOptions)
 )
 
+// RegisterSchedulerConstructor registers the constructor of Scheduler.
 func RegisterSchedulerConstructor(taskType string, constructor SchedulerConstructor, opts ...SchedulerRegisterOption) {
 	schedulerConstructors[taskType] = constructor
 
@@ -50,6 +55,7 @@ func RegisterSchedulerConstructor(taskType string, constructor SchedulerConstruc
 	schedulerOptions[taskType] = option
 }
 
+// RegisterSubtaskExectorConstructor registers the constructor of SubtaskExecutor.
 func RegisterSubtaskExectorConstructor(taskType string, constructor SubtaskExecutorConstructor, opts ...SubtaskExecutorRegisterOption) {
 	subtaskExecutorConstructors[taskType] = constructor
 

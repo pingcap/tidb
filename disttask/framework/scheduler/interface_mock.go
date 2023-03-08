@@ -21,10 +21,12 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+// MockTaskTable is a mock of TaskTable.
 type MockTaskTable struct {
 	mock.Mock
 }
 
+// GetTasksInStates implements TaskTable.GetTasksInStates.
 func (t *MockTaskTable) GetTasksInStates(states ...interface{}) ([]*proto.Task, error) {
 	args := t.Called(states...)
 	if args.Error(1) != nil {
@@ -36,6 +38,7 @@ func (t *MockTaskTable) GetTasksInStates(states ...interface{}) ([]*proto.Task, 
 	}
 }
 
+// GetTaskByID implements TaskTable.GetTaskByID.
 func (t *MockTaskTable) GetTaskByID(id int64) (*proto.Task, error) {
 	args := t.Called(id)
 	if args.Error(1) != nil {
@@ -47,10 +50,12 @@ func (t *MockTaskTable) GetTaskByID(id int64) (*proto.Task, error) {
 	}
 }
 
+// MockSubtaskTable is a mock of SubtaskTable.
 type MockSubtaskTable struct {
 	mock.Mock
 }
 
+// GetSubtaskInStates implements SubtaskTable.GetSubtaskInStates.
 func (m *MockSubtaskTable) GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
 	args := m.Called(instanceID, taskID, states)
 	if args.Error(1) != nil {
@@ -62,24 +67,29 @@ func (m *MockSubtaskTable) GetSubtaskInStates(instanceID string, taskID int64, s
 	}
 }
 
+// UpdateSubtaskState implements SubtaskTable.UpdateSubtaskState.
 func (m *MockSubtaskTable) UpdateSubtaskState(id int64, state string) error {
 	args := m.Called(id, state)
 	return args.Error(0)
 }
 
+// HasSubtasksInStates implements SubtaskTable.HasSubtasksInStates.
 func (m *MockSubtaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
 	args := m.Called(instanceID, taskID, states)
 	return args.Bool(0), args.Error(1)
 }
 
+// MockPool is a mock of Pool.
 type MockPool struct {
 	mock.Mock
 }
 
+// NewMockPool creates a new mock pool.
 func NewMockPool(int) Pool {
 	return &MockPool{}
 }
 
+// Run implements Pool.Run.
 func (m *MockPool) Run(f func()) error {
 	args := m.Called()
 	if args.Error(0) == nil {

@@ -27,20 +27,25 @@ import (
 
 var globalNumberCounter atomic.Int64
 
+// ExampleStepOneScheduler is a scheduler for step one.
 type ExampleStepOneScheduler struct {
 	task *proto.Task
 }
 
+// ExampleStepTwoScheduler is a scheduler for step two.
 type ExampleStepTwoScheduler struct {
 	task *proto.Task
 }
 
+// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
 func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	return nil
 }
 
+// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
+// SplitSubtask is used to split the subtask into multiple minimal tasks.
 func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
 	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
@@ -51,15 +56,19 @@ func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 	return miniTask
 }
 
+// Rollback is used to rollback all subtasks.
 func (s *ExampleStepOneScheduler) Rollback(ctx context.Context) error {
 	logutil.BgLogger().Info("rollback step one")
 	return nil
 }
 
+// InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
 func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
 
+// CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
 func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
 
+// SplitSubtask is used to split the subtask into multiple minimal tasks.
 func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
 	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
@@ -70,6 +79,7 @@ func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 	return miniTask
 }
 
+// Rollback is used to rollback all subtasks.
 func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
 	logutil.BgLogger().Info("rollback step two")
 	return nil

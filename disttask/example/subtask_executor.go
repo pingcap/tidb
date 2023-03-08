@@ -24,14 +24,17 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 )
 
+// ExampleStepOneSubtaskExecutor is an example subtask executor.
 type ExampleStepOneSubtaskExecutor struct {
 	minimalTask proto.MinimalTask
 }
 
+// ExampleStepTwoSubtaskExecutor is an example subtask executor.
 type ExampleStepTwoSubtaskExecutor struct {
 	minimalTask proto.MinimalTask
 }
 
+// Run implements the SubtaskExecutor interface.
 func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
 	logutil.BgLogger().Info("sub task executor run step one")
 
@@ -44,6 +47,7 @@ func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
 
+// Run implements the SubtaskExecutor interface.
 func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
 	logutil.BgLogger().Info("sub task executor run step two")
 
