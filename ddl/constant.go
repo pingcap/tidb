@@ -62,8 +62,7 @@ const (
 		checkpoint longblob not null,
 		start_time bigint,
 		state_update_time bigint,
-		meta longblob,
-		unique key(namespace, task_key))`
+		meta longblob)`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableSQL = "create table " + BackgroundSubtaskHistoryTable + `(
 	 	id bigint not null auto_increment primary key,
@@ -77,6 +76,6 @@ const (
 		checkpoint longblob not null,
 		start_time bigint,
 		state_update_time bigint,
-		meta longblob
-		)`
+		meta longblob,
+		unique key(namespace, task_key))`
 )

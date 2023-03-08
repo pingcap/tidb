@@ -2337,7 +2337,7 @@ func upgradeToVer135(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX 'namespace'", ddl.BackgroundSubtaskHistoryTable), dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
 }
 
 func writeOOMAction(s Session) {

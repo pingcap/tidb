@@ -16,7 +16,6 @@ package storage
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 // GlobalTaskManager is the manager of global task.
@@ -40,8 +40,8 @@ type GlobalTaskManager struct {
 	mu  sync.Mutex
 }
 
-var globalTaskManagerInstance atomic.Value
-var subTaskManagerInstance atomic.Value
+var globalTaskManagerInstance atomic.Pointer[GlobalTaskManager]
+var subTaskManagerInstance atomic.Pointer[SubTaskManager]
 
 // NewGlobalTaskManager creates a new global task manager.
 func NewGlobalTaskManager(ctx context.Context, se sessionctx.Context) *GlobalTaskManager {
@@ -67,7 +67,7 @@ func GetGlobalTaskManager() (*GlobalTaskManager, error) {
 	if v == nil {
 		return nil, errors.New("global task manager is not initialized")
 	}
-	return v.(*GlobalTaskManager), nil
+	return v, nil
 }
 
 // SetGlobalTaskManager sets the global task manager.
@@ -81,7 +81,7 @@ func GetSubTaskManager() (*SubTaskManager, error) {
 	if v == nil {
 		return nil, errors.New("subTask manager is not initialized")
 	}
-	return v.(*SubTaskManager), nil
+	return v, nil
 }
 
 // SetSubTaskManager sets the sub task manager.
@@ -246,7 +246,7 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID strin
 		st = proto.TaskStateRevertPending
 	}
 
-	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_background_subtask_history(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{})
+	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_background_subtask(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{})
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func (stm *SubTaskManager) GetSubtaskInStates(tidbID string, taskID int64, state
 
 	args := []interface{}{tidbID, taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select * from mysql.tidb_background_subtask_history where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select * from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (stm *SubTaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interfa
 
 	args := []interface{}{taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_background_subtask_history where task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_background_subtask where task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return 0, err
 	}
@@ -294,7 +294,7 @@ func (stm *SubTaskManager) HasSubtasksInStates(tidbID string, taskID int64, stat
 
 	args := []interface{}{tidbID, taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_background_subtask_history where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_background_subtask where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
 		return false, err
 	}
@@ -307,7 +307,7 @@ func (stm *SubTaskManager) UpdateSubtaskState(id int64, state string) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask_history set state = %? where id = %?", state, id)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask set state = %? where id = %?", state, id)
 	return err
 }
 
@@ -316,7 +316,7 @@ func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, hear
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask_history set exec_expired = %? where exec_id = %? and task_key = %?", heartbeat.String(), instanceID, taskID)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask set exec_expired = %? where exec_id = %? and task_key = %?", heartbeat.String(), instanceID, taskID)
 	return err
 }
 
@@ -325,7 +325,7 @@ func (stm *SubTaskManager) DeleteTasks(taskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "delete from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+	_, err := execSQL(stm.ctx, stm.se, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
 	if err != nil {
 		return err
 	}
@@ -338,7 +338,7 @@ func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := execSQL(stm.ctx, stm.se, "select distinct(exec_id) from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+	rs, err := execSQL(stm.ctx, stm.se, "select distinct(exec_id) from mysql.tidb_background_subtask where task_key = %?", taskID)
 	if err != nil {
 		return nil, err
 	}
