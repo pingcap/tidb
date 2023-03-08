@@ -60,7 +60,7 @@ func NewInternalScheduler(ctx context.Context, id string, taskID int64, subtaskT
 }
 
 // Start starts the scheduler.
-func (_ *InternalSchedulerImpl) Start() {
+func (*InternalSchedulerImpl) Start() {
 	//	s.wg.Add(1)
 	//	go func() {
 	//		defer s.wg.Done()
