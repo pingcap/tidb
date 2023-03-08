@@ -1466,8 +1466,8 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// Default policy is 'round_robin'
-	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("round_robin"))
+	// Default policy is 'consistent_hash'
+	tk.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows("consistent_hash"))
 
 	// tiflash_compute_dispatch_policy is global variable.
 	tk.MustExec("set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';")
