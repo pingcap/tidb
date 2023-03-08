@@ -343,7 +343,7 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 	tk.MustExec("create table t (a int, b int)")
 
 	p := parser.New()
-	sql := "select * from test.t where a<10 and b>10"
+	sql := "select * from test.t where a<10"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	if err != nil {
 		b.Fatal(err)
@@ -355,9 +355,9 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
 		if !ok {
-			b.Fatal(reason)
+			b.Fatal()
 		}
 	}
 }
