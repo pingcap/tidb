@@ -558,7 +558,7 @@ const (
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    	end_time TIMESTAMP,
+		end_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11)
