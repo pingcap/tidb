@@ -711,12 +711,13 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	tblInfo := tb.Meta()
 
 	// mock the statistics.Table
-	mockStatsTbl := mockStatsTable(tblInfo, 5000000)
+	mockStatsTbl := mockStatsTable(tblInfo, 500000)
 	colValues, err := generateIntDatum(1, 500)
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 10000, types.NewFieldType(mysql.TypeLonglong)),
+			Count:             500000,
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			StatsVer:          2,
@@ -727,17 +728,16 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	stat.HistColl = mockStatsTbl.HistColl
 
 	testKit.MustQuery("explain format = 'brief' " +
-		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 2) as t1 join t t2 where t2.a = 100 and t1.a = t2.b").
+		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b").
 		Check(testkit.Rows(
-			"Projection 12500.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-			"└─IndexJoin 12500.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-			"  ├─TableReader(Build) 20000.00 root  data:Selection",
-			"  │ └─Selection 20000.00 cop[tikv]  lt(test.t.a, 2), not(isnull(test.t.a))",
-			"  │   └─TableFullScan 5000000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-			"  └─IndexLookUp(Probe) 12500.00 root  ",
-			"    ├─Selection(Build) 6250000.00 cop[tikv]  not(isnull(test.t.b))",
-			"    │ └─IndexRangeScan 6250000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-			"    └─Selection(Probe) 12500.00 cop[tikv]  eq(test.t.a, 100)",
-			"      └─TableRowIDScan 6250000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+			"├─TableReader(Build) 1000.00 root  data:Selection",
+			"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+			"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"└─IndexLookUp(Probe) 1000000.00 root  ",
+			"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
+			"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+			"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+			"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 		))
 }
