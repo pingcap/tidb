@@ -57,7 +57,7 @@ type RPCClient struct {
 var CheckResourceTagForTopSQLInGoTest bool
 
 // UnistoreRPCClientSendHook exports for test.
-var UnistoreRPCClientSendHook func(*tikvrpc.Request)
+var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -68,8 +68,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	})
 
 	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
-		if val.(bool) && UnistoreRPCClientSendHook != nil {
-			UnistoreRPCClientSendHook(req)
+		if fn := UnistoreRPCClientSendHook.Load(); val.(bool) && fn != nil {
+			(*fn)(req)
 		}
 	})
 
