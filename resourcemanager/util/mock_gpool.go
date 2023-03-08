@@ -38,7 +38,7 @@ func (*MockGPool) Tune(_ int) {
 
 // LastTunerTs is only for test
 func (*MockGPool) LastTunerTs() time.Time {
-	panic("implement me")
+	return time.Now().Add(-1 * 10 * time.Second)
 }
 
 // MaxInFlight is only for test

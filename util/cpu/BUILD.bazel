@@ -28,8 +28,6 @@ go_test(
     race = "on",
     shard_count = 2,
     deps = [
-        "//resourcemanager/scheduler",
-        "//resourcemanager/util",
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

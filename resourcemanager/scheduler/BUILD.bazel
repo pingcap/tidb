@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "scheduler",
@@ -11,5 +11,16 @@ go_library(
     deps = [
         "//resourcemanager/util",
         "//util/cpu",
+    ],
+)
+
+go_test(
+    name = "scheduler_test",
+    srcs = ["cpu_scheduler_test.go"],
+    embed = [":scheduler"],
+    deps = [
+        "//resourcemanager/util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )
