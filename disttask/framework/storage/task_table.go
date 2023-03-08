@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -193,7 +195,7 @@ func (stm *GlobalTaskManager) GetTasksInStates(states ...interface{}) (task []*p
 	return task, nil
 }
 
-// GetTaskByID gets the task by the global task id.
+// GetTaskByID gets the task by the global task ID.
 func (stm *GlobalTaskManager) GetTaskByID(taskID int64) (task *proto.Task, err error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
@@ -220,15 +222,17 @@ type SubTaskManager struct {
 func row2SubTask(r chunk.Row) *proto.Subtask {
 	task := &proto.Subtask{
 		ID:          r.GetInt64(0),
-		Type:        r.GetString(1),
-		TaskID:      r.GetInt64(2),
-		SchedulerID: r.GetString(3),
-		State:       r.GetString(4),
-		Meta:        r.GetBytes(7),
+		Type:        proto.Int2Type(int(r.GetInt64(4))),
+		SchedulerID: r.GetString(5),
+		State:       r.GetString(7),
+		Meta:        r.GetBytes(11),
+		StartTime:   r.GetUint64(9),
 	}
-	// TODO: convert to local time.
-	task.StartTime, _ = r.GetTime(5).GoTime(time.UTC)
-	task.EndTime, _ = r.GetTime(6).GoTime(time.UTC)
+	tid, err := strconv.Atoi(r.GetString(2))
+	if err != nil {
+		logutil.BgLogger().Warn("unexpected task ID", zap.String("task ID", r.GetString(2)))
+	}
+	task.TaskID = int64(tid)
 	return task
 }
 
@@ -242,7 +246,7 @@ func (stm *SubTaskManager) AddNewTask(globalTaskID int64, designatedTiDBID strin
 		st = proto.TaskStateRevertPending
 	}
 
-	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_sub_task(task_id, designate_tidb_id, meta, state, type) values (%?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, st, tp)
+	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_background_subtask_history(task_key, exec_id, meta, state, type, checkpoint) values (%?, %?, %?, %?, %?, %?)", globalTaskID, designatedTiDBID, meta, st, proto.Type2Int(tp), []byte{})
 	if err != nil {
 		return err
 	}
@@ -257,7 +261,7 @@ func (stm *SubTaskManager) GetSubtaskInStates(tidbID string, taskID int64, state
 
 	args := []interface{}{tidbID, taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select * from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select * from mysql.tidb_background_subtask_history where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +279,7 @@ func (stm *SubTaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interfa
 
 	args := []interface{}{taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_sub_task where task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select count(*) from mysql.tidb_background_subtask_history where task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
 		return 0, err
 	}
@@ -290,7 +294,7 @@ func (stm *SubTaskManager) HasSubtasksInStates(tidbID string, taskID int64, stat
 
 	args := []interface{}{tidbID, taskID}
 	args = append(args, states...)
-	rs, err := execSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_sub_task where designate_tidb_id = %? and task_id = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	rs, err := execSQL(stm.ctx, stm.se, "select 1 from mysql.tidb_background_subtask_history where exec_id = %? and task_key = %? and state in ("+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
 		return false, err
 	}
@@ -303,7 +307,7 @@ func (stm *SubTaskManager) UpdateSubtaskState(id int64, state string) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set state = %? where id = %?", state, id)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask_history set state = %? where id = %?", state, id)
 	return err
 }
 
@@ -312,7 +316,7 @@ func (stm *SubTaskManager) UpdateHeartbeat(instanceID string, taskID int64, hear
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_sub_task set heartbeat = %? where designate_tidb_id = %? and task_id = %?", heartbeat.String(), instanceID, taskID)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_background_subtask_history set exec_expired = %? where exec_id = %? and task_key = %?", heartbeat.String(), instanceID, taskID)
 	return err
 }
 
@@ -321,7 +325,7 @@ func (stm *SubTaskManager) DeleteTasks(taskID int64) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "delete from mysql.tidb_sub_task where task_id = %?", taskID)
+	_, err := execSQL(stm.ctx, stm.se, "delete from mysql.tidb_background_subtask_history where task_key = %?", taskID)
 	if err != nil {
 		return err
 	}
@@ -334,7 +338,7 @@ func (stm *SubTaskManager) GetSchedulerIDs(taskID int64) ([]string, error) {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	rs, err := execSQL(stm.ctx, stm.se, "select distinct(designate_tidb_id) from mysql.tidb_sub_task where task_id = %?", taskID)
+	rs, err := execSQL(stm.ctx, stm.se, "select distinct(exec_id) from mysql.tidb_background_subtask_history where task_key = %?", taskID)
 	if err != nil {
 		return nil, err
 	}

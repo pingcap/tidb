@@ -94,7 +94,7 @@ func TestSubTaskTable(t *testing.T) {
 	sm, err := GetSubTaskManager()
 	require.NoError(t, err)
 
-	err = sm.AddNewTask(1, "tidb1", []byte("test"), "test", false)
+	err = sm.AddNewTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
 	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.TaskStatePending)
@@ -103,7 +103,7 @@ func TestSubTaskTable(t *testing.T) {
 
 	task, err := sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.Equal(t, "test", task.Type)
+	require.Equal(t, proto.TaskTypeExample, task.Type)
 	require.Equal(t, int64(1), task.TaskID)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, "tidb1", task.SchedulerID)
@@ -113,6 +113,10 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
 	require.Equal(t, "tidb1", ids[0])
+
+	ids, err = sm.GetSchedulerIDs(3)
+	require.NoError(t, err)
+	require.Len(t, ids, 0)
 
 	cnt, err := sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -134,7 +138,7 @@ func TestSubTaskTable(t *testing.T) {
 
 	task, err = sm.GetSubtaskInStates("tidb1", 1, proto.TaskStateRunning)
 	require.NoError(t, err)
-	require.Equal(t, "test", task.Type)
+	require.Equal(t, proto.TaskTypeExample, task.Type)
 	require.Equal(t, int64(1), task.TaskID)
 	require.Equal(t, proto.TaskStateRunning, task.State)
 	require.Equal(t, "tidb1", task.SchedulerID)
@@ -155,7 +159,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = sm.AddNewTask(2, "tidb1", []byte("test"), "test", true)
+	err = sm.AddNewTask(2, "tidb1", []byte("test"), proto.TaskTypeExample, true)
 	require.NoError(t, err)
 
 	cnt, err = sm.GetSubtaskInStatesCnt(2, proto.TaskStateRevertPending)

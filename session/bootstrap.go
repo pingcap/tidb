@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -561,19 +562,6 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11)
-	);`
-
-	// CreateSubTask is a table about sub-task.
-	CreateSubTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_sub_task (
-		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		type VARCHAR(256) NOT NULL DEFAULT '',
-		task_id BIGINT(20) NOT NULL,
-		designate_tidb_id VARCHAR(256),
-		state VARCHAR(64) NOT NULL,
-		start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        end_time TIMESTAMP,
-		meta LONGBLOB,
-		heartbeat TIMESTAMP
 	);`
 )
 
@@ -2349,7 +2337,7 @@ func upgradeToVer135(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	mustExecute(s, CreateSubTask)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX 'namespace'", ddl.BackgroundSubtaskHistoryTable), dbterror.ErrCantDropFieldOrKey)
 }
 
 func writeOOMAction(s Session) {
@@ -2464,8 +2452,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
-	// Create tidb_sub_task table
-	mustExecute(s, CreateSubTask)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

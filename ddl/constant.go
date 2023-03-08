@@ -77,6 +77,6 @@ const (
 		checkpoint longblob not null,
 		start_time bigint,
 		state_update_time bigint,
-		meta longblob,
-		unique key(namespace, task_key))`
+		meta longblob
+		)`
 )
