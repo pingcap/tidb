@@ -710,7 +710,9 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 
-	// mock the statistics.Table
+	// Mock the stats:
+	// The two columns are the same.
+	// From 0 to 499, each value has 1000 rows. Therefore, NDV is 500 and total row count is 500000.
 	mockStatsTbl := mockStatsTable(tblInfo, 500000)
 	colValues, err := generateIntDatum(1, 500)
 	require.NoError(t, err)

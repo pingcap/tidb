@@ -1155,16 +1155,20 @@ func getColsNDVFromHistColl(cols []*expression.Column, histColl *statistics.Hist
 		colUIDs[i] = col.UniqueID
 	}
 
+	// Try to get NDV from column stats if it's a single column.
 	if len(colUIDs) == 1 && histColl.Columns != nil {
 		uid := colUIDs[0]
 		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
 			return colStats.NDV
 		}
 	}
+
 	slices.Sort(colUIDs)
 	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
 		return -1
 	}
+
+	// Try to get NDV from index stats.
 	for idxID, idxCols := range histColl.Idx2ColumnIDs {
 		if len(idxCols) != len(colUIDs) {
 			continue
@@ -1275,6 +1279,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
+
+	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
+	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
+	// We use it as an upper bound here.
 	rowCountUpperBound := -1.0
 	if ds.tableStats != nil {
 		joinKeyNDV := getColsNDVFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
@@ -1282,6 +1290,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
 		}
 	}
+
 	if rowCountUpperBound > 0 {
 		rowCount = math.Min(rowCount, rowCountUpperBound)
 	}
