@@ -29,7 +29,7 @@ go_test(
         "scheduler_test.go",
     ],
     embed = [":scheduler"],
-    flaky = true,
+    flaky = True,
     deps = [
         "//disttask/framework/proto",
         "@com_github_pkg_errors//:errors",
