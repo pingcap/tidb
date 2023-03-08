@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -141,8 +140,8 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 		}
-		var filename string
-		u.Path, filename = filepath.Split(u.Path)
+		path := strings.Trim(u.Path, "/")
+		u.Path = ""
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
@@ -150,7 +149,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if b.GetLocal() != nil {
 			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
 		}
-		return e.loadFromRemote(ctx, b, filename)
+		return e.loadFromRemote(ctx, b, path)
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.ctx
@@ -167,7 +166,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *LoadDataExec) loadFromRemote(
 	ctx context.Context,
 	b *backup.StorageBackend,
-	filename string,
+	path string,
 ) error {
 	opt := &storage.ExternalStorageOptions{}
 	if InTest {
@@ -177,7 +176,7 @@ func (e *LoadDataExec) loadFromRemote(
 	if err != nil {
 		return ErrLoadDataCantAccess
 	}
-	fileReader, err := s.Open(ctx, filename)
+	fileReader, err := s.Open(ctx, path)
 	if err != nil {
 		return ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
 	}
@@ -185,7 +184,7 @@ func (e *LoadDataExec) loadFromRemote(
 
 	e.loadDataWorker.loadRemoteInfo = loadRemoteInfo{
 		store: s,
-		path:  filename,
+		path:  path,
 	}
 	return e.loadDataWorker.Load(ctx, fileReader)
 }
@@ -642,7 +641,11 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 
 	// processStream process input data, enqueue commit task
 	group.Go(func() error {
-		return e.processStream(groupCtx, parser)
+		err2 := e.processStream(groupCtx, parser)
+		if err2 == nil {
+			close(e.commitTaskQueue)
+		}
+		return err2
 	})
 	group.Go(func() error {
 		return e.commitWork(groupCtx)
@@ -677,7 +680,6 @@ func (e *LoadDataWorker) processStream(
 			return
 		}
 		if e.curBatchCnt == 0 {
-			close(e.commitTaskQueue)
 			return
 		}
 
