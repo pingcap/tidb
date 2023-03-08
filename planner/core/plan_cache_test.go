@@ -143,6 +143,7 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 
 	ctx := tk.Session()
 	planString := func(sql string) string {
@@ -157,12 +158,12 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		return plannercore.ToString(p)
 	}
 
-	require.Equal(t, planString("select * from t where a < 1"), "")
-	require.Equal(t, planString("select * from t where a < 10"), "")
+	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	require.Equal(t, planString("select * from t where b < 1"), "")
-	require.Equal(t, planString("select * from t where b < 10"), "")
+	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
