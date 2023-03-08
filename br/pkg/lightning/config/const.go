@@ -32,8 +32,6 @@ const (
 	SplitRegionKeys         int      = 1_280_000
 	MaxSplitRegionSizeRatio int      = 10
 
-	BufferSizeScale = 5
-
 	defaultMaxAllowedPacket = 64 * units.MiB
 
 	DefaultBatchSize ByteSize = 100 * units.GiB
@@ -45,4 +43,6 @@ var (
 		Timeout:             2 * time.Minute,
 		PermitWithoutStream: false,
 	})
+	// BufferSizeScale is the factor of block buffer size
+	BufferSizeScale = int64(5)
 )
