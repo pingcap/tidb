@@ -1861,3 +1861,30 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 		}()
 	}
 }
+
+func TestTiDBUpgradeToVer135(t *testing.T) {
+	store, _ := createStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver134 := version134
+	seV134 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver134))
+	require.NoError(t, err)
+	mustExec(t, seV134, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver134))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV134)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver134), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	dom.Close()
+}

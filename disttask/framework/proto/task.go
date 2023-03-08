@@ -57,6 +57,7 @@ type Task struct {
 	DispatcherID string
 	Concurrency  uint64
 	StartTime    time.Time
+	EndTime      time.Time
 	Meta         []byte
 }
 
@@ -68,10 +69,36 @@ type Subtask struct {
 	TaskID      int64
 	State       string
 	SchedulerID string
-	StartTime   time.Time
+	StartTime   uint64
+	EndTime     time.Time
 	Meta        []byte
 }
 
 // MinimalTask is the minimal task of distribute framework.
 // Each subtask is divided into multiple minimal tasks by scheduler.
 type MinimalTask interface{}
+
+// TaskTypeExample is TaskType of Example.
+const (
+	TaskTypeExample = "Example"
+)
+
+// Type2Int converts task type to int.
+func Type2Int(t string) int {
+	switch t {
+	case TaskTypeExample:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// Int2Type converts int to task type.
+func Int2Type(i int) string {
+	switch i {
+	case 1:
+		return TaskTypeExample
+	default:
+		return ""
+	}
+}
