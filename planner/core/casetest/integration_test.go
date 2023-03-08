@@ -1126,6 +1126,7 @@ func TestJoinHintCompatibility(t *testing.T) {
 	tk.MustExec("create table t7(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
 	tk.MustExec("create table t8(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
 	tk.MustExec("create table t9(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t7, t8, t9")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -1143,7 +1144,7 @@ func TestJoinHintCompatibility(t *testing.T) {
 	}
 
 	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
-	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t3), merge_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t2), merge_join(t) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
 	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
 
 	var input []string
