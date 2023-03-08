@@ -625,7 +625,6 @@ const (
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(cacheType PlanCacheType, reason error) {
-
 	switch cacheType {
 	case SessionPrepared:
 		if !sc.UseCache {
