@@ -24,10 +24,12 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -692,4 +694,50 @@ func TestSingleColumnIndexNDV(t *testing.T) {
 		require.Equal(t, expectedResults[i][1], row[6]) // distinct_count
 		require.Equal(t, expectedResults[i][2], row[7]) // null_count
 	}
+}
+
+func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// mock the statistics.Table
+	mockStatsTbl := mockStatsTable(tblInfo, 5000000)
+	colValues, err := generateIntDatum(1, 500)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 10000, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	testKit.MustQuery("explain format = 'brief' " +
+		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 2) as t1 join t t2 where t2.a = 100 and t1.a = t2.b").
+		Check(testkit.Rows(
+			"Projection 12500.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+			"└─IndexJoin 12500.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+			"  ├─TableReader(Build) 20000.00 root  data:Selection",
+			"  │ └─Selection 20000.00 cop[tikv]  lt(test.t.a, 2), not(isnull(test.t.a))",
+			"  │   └─TableFullScan 5000000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"  └─IndexLookUp(Probe) 12500.00 root  ",
+			"    ├─Selection(Build) 6250000.00 cop[tikv]  not(isnull(test.t.b))",
+			"    │ └─IndexRangeScan 6250000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+			"    └─Selection(Probe) 12500.00 cop[tikv]  eq(test.t.a, 100)",
+			"      └─TableRowIDScan 6250000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		))
 }
