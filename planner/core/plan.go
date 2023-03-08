@@ -380,6 +380,9 @@ type PhysicalPlan interface {
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
 
+	// return cost of this physical plan.
+	Cost() float64
+
 	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
 	appendChildCandidate(op *physicalOptimizeOp)
@@ -434,6 +437,7 @@ func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCo
 		return nil
 	}
 	op.tracer = tracer
+	op.CostFlag |= CostFlagTrace
 	return op
 }
 
@@ -532,6 +536,13 @@ type basePhysicalPlan struct {
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
 	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
 	TiFlashFineGrainedShuffleStreamCount uint64
+}
+
+func (p *basePhysicalPlan) Cost() float64 {
+	if p.planCostInit {
+		return p.planCostVer2.cost
+	}
+	return 0
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -894,7 +905,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), Cost: p.Cost(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
@@ -923,7 +934,7 @@ func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
 	childrenID := make([]int, 0)
 	for _, child := range p.Children() {
 		childCandidate := &tracing.CandidatePlanTrace{
-			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
+			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(), Cost: child.Cost(),
 				ExplainInfo: child.ExplainInfo()},
 		}
 		op.tracer.AppendCandidate(childCandidate)

@@ -364,7 +364,7 @@ func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, p
 		return
 	}
 	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{TP: pp.TP(), ID: pp.ID(),
+		PlanTrace: &tracing.PlanTrace{TP: pp.TP(), ID: pp.ID(), Cost: pp.Cost(),
 			ExplainInfo: pp.ExplainInfo(), ProperType: prop.String()},
 		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.ID())}
 	op.tracer.AppendCandidate(candidate)
@@ -375,7 +375,7 @@ func (op *physicalOptimizeOp) appendPlanCostDetail(detail *tracing.PhysicalPlanC
 	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.PhysicalPlanCostDetails[detail.GetPlanID()] = detail
+	op.tracer.PhysicalPlanCostDetails[fmt.Sprintf("%v_%v", detail.GetPlanType(), detail.GetPlanID())] = detail
 }
 
 // findBestTask implements LogicalPlan interface.

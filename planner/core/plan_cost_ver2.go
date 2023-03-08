@@ -38,6 +38,9 @@ func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
+		if traceCost(option) {
+			genPlanCostTrace(p, planCost, taskType, option)
+		}
 		return planCost.cost, err
 	}
 	return p.getPlanCostVer1(taskType, option)
@@ -1003,8 +1006,10 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 }
 
 type costTrace struct {
+	name        string
 	factorCosts map[string]float64 // map[factorName]cost, used to calibrate the cost model
 	formula     string             // It used to trace the cost calculation.
+	costParams  map[string]interface{}
 }
 
 type costVer2 struct {
@@ -1021,7 +1026,7 @@ func traceCost(option *PlanCostOption) bool {
 
 func newZeroCostVer2(trace bool) (ret costVer2) {
 	if trace {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 	}
 	return
 }
@@ -1029,7 +1034,7 @@ func newZeroCostVer2(trace bool) (ret costVer2) {
 func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, lazyFormula func() string) (ret costVer2) {
 	ret.cost = cost
 	if traceCost(option) {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		ret.trace.factorCosts[factor.Name] = cost
 		ret.trace.formula = lazyFormula()
 	}
@@ -1044,7 +1049,7 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 		ret.cost += c.cost
 		if c.trace != nil {
 			if i == 0 { // init
-				ret.trace = &costTrace{make(map[string]float64), ""}
+				ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 			}
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
@@ -1061,7 +1066,7 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 	ret.cost = cost.cost / denominator
 	if cost.trace != nil {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c / denominator
 		}
@@ -1073,7 +1078,7 @@ func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 func mulCostVer2(cost costVer2, scale float64) (ret costVer2) {
 	ret.cost = cost.cost * scale
 	if cost.trace != nil {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c * scale
 		}
