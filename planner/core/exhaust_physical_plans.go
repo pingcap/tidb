@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -1284,7 +1283,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 	}
 	if rowCountUpperBound > 0 {
-		rowCount = mathutil.Min(rowCount, rowCountUpperBound)
+		rowCount = math.Min(rowCount, rowCountUpperBound)
 	}
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
@@ -1309,7 +1308,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
 		cnt := rowCount / selectivity
 		if rowCountUpperBound > 0 {
-			cnt = mathutil.Min(cnt, rowCountUpperBound)
+			cnt = math.Min(cnt, rowCountUpperBound)
 		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
@@ -1325,7 +1324,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
 		if rowCountUpperBound > 0 {
-			cnt = mathutil.Min(cnt, rowCountUpperBound)
+			cnt = math.Min(cnt, rowCountUpperBound)
 		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
