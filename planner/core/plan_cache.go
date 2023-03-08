@@ -126,7 +126,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx.UseCache = stmt.StmtCacheable
 	stmtCtx.CacheType = stmt.CacheType
 	if !stmt.StmtCacheable {
-		stmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, errors.New(stmt.UncacheableReason))
+		stmtCtx.SetSkipPlanCache(stmtCtx.CacheType, errors.New(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
@@ -134,7 +134,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = GetBindSQL4PlanCache(sctx, stmt)
 		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, errors.Errorf("ignore plan cache by binding"))
+			stmtCtx.SetSkipPlanCache(stmtCtx.CacheType, errors.Errorf("ignore plan cache by binding"))
 		}
 	}
 
@@ -280,7 +280,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
 		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount)); !cacheable {
-			stmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, errors.Errorf(reason))
+			stmtCtx.SetSkipPlanCache(stmtCtx.CacheType, errors.Errorf(reason))
 		}
 	}
 

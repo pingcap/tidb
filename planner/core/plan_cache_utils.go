@@ -502,7 +502,7 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, erro
 		return nil, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(stmtctx.SessionPrepared, errors.New(checker.unCacheableReason))
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(sctx.GetSessionVars().StmtCtx.CacheType, errors.New(checker.unCacheableReason))
 	}
 	return checker.offsetAndCount, nil
 }
