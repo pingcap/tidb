@@ -543,12 +543,12 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1.1' may be converted to INT`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1.1' may be converted to INT`))
 
 	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1' may be converted to INT`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -892,20 +892,20 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, key(a), key(b))")
 
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: ignore plan cache by hint"))
 
 	tk.MustExec("prepare stmt from 'select * from t order by ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'order by ?' is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has 'order by ?' is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'select * from t where a=?'")
 	tk.MustExec("set @a='123'")
 	tk.MustExec("execute stmt using @a") // '123' -> 123
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '123' may be converted to INT"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '123' may be converted to INT"))
 
 	tk.MustExec("prepare stmt from 'select * from t where a=? and a=?'")
 	tk.MustExec("set @a=1, @b=1")
 	tk.MustExec("execute stmt using @a, @b") // a=1 and a=1 -> a=1
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: some parameters may be overwritten"))
 }
 
 func TestIssue40224(t *testing.T) {
@@ -948,10 +948,10 @@ func TestIssue40225(t *testing.T) {
 	tk.MustExec("prepare st from 'select * from t where a<?'")
 	tk.MustExec("set @a='1'")
 	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: '1' may be converted to INT")) // plan-cache limitation
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1' may be converted to INT")) // plan-cache limitation
 	tk.MustExec("create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1")
 	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by binding"))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip prepared plan-cache: ignore plan cache by binding"))
 	// no warning about plan-cache limitations('1' -> INT) since plan-cache is totally disabled.
 
 	tk.MustExec("prepare st from 'select * from t where a>?'")
@@ -982,7 +982,7 @@ func TestIssue40679(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
 
 	tk.MustExec("execute st using @a1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1.1' may be converted to INT"))
 }
 
 func TestIssue38335(t *testing.T) {
@@ -1077,7 +1077,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count more than 10000"))
 }
 
 func TestPlanCacheMemoryTable(t *testing.T) {
@@ -1170,7 +1170,7 @@ func TestIssue41828(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'`)
 	tk.MustExec(`set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: IndexMerge plan with full-scan is un-cacheable`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: IndexMerge plan with full-scan is un-cacheable`))
 	tk.MustExec(`set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
 }

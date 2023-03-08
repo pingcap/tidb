@@ -465,11 +465,11 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalTableScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalApply:
 		return false, "PhysicalApply plan is un-cacheable"
