@@ -1063,6 +1063,12 @@ func (p *LogicalCTE) recursiveDeriveStats(colGroups [][]*expression.Column) (*pr
 		return p.DeriveStats(nil, p.self.Schema(), nil, colGroups)
 	}
 	var err error
+	if len(p.cte.pushDownPredicates) > 0 {
+		newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
+		sel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.ctx, p.blockOffset)
+		sel.SetChildren(p.children[0])
+		p.SetChildren(sel)
+	}
 	p.children[0], err = logicalOptimize(context.TODO(), p.cte.optFlag, p.children[0])
 	if err != nil {
 		return nil, err

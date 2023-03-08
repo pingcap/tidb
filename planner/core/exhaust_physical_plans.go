@@ -2260,8 +2260,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			lPartitionKeys = choosePartitionKeys(lPartitionKeys, matches)
 			rPartitionKeys = choosePartitionKeys(rPartitionKeys, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, RejectSort: true}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTECanMPP: prop.CTECanMPP}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin:  baseJoin,
@@ -2923,7 +2923,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 
 		// 2-phase agg
 		// no partition property down，record partition cols inside agg itself, enforce shuffler latter.
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -2932,7 +2932,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = MppTiDB
@@ -2940,7 +2940,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTECanMPP: prop.CTECanMPP}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
@@ -3270,28 +3270,32 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 
 func (p *LogicalCTE) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.ctx, p.stats)
+	pcte.SetSchema(p.schema)
 	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
 	return []PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 
 func (p *LogicalSequence) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	possibleChildrenProps := make([]*property.PhysicalProperty, 0, 2)
+	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
-	possibleChildrenProps = append(possibleChildrenProps, childProp)
+	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTECanMPP: prop.CTECanMPP}
+	if prop.TaskTp == property.MppTaskType {
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType.CloneEssentialFields(), childProp})
+	} else {
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxInt64}, childProp})
+	}
 
 	if prop.TaskTp != property.MppTaskType &&
-		p.SCtx().GetSessionVars().IsMPPAllowed() {
-		childPropMpp := prop.CloneEssentialFields()
-		childPropMpp.TaskTp = property.MppTaskType
-		possibleChildrenProps = append(possibleChildrenProps, childPropMpp)
+		p.SCtx().GetSessionVars().IsMPPAllowed() && prop.IsSortItemEmpty() {
+		possibleChildrenProps = append(possibleChildrenProps, []*property.PhysicalProperty{anyType.CloneEssentialFields(), anyType.CloneEssentialFields()})
 	}
 	seqs := make([]PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
 		childReqs := make([]*property.PhysicalProperty, 0, len(p.children))
 		for i := 0; i < len(p.children)-1; i++ {
-			childReqs = append(childReqs, propChoice)
+			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
-		childReqs = append(childReqs, propChoice)
+		childReqs = append(childReqs, propChoice[1])
 		seq := PhysicalSequence{}.Init(p.ctx, p.stats, p.blockOffset, childReqs...)
 		seq.SetSchema(p.children[len(p.children)-1].Schema())
 		seqs = append(seqs, seq)

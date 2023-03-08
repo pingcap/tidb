@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -157,13 +158,24 @@ func (m *mppAddr) GetAddress() string {
 
 // for the task without table scan, we construct tasks according to the children's tasks.
 // That's for avoiding assigning to the failed node repeatly. We assumes that the chilren node must be workable.
-func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask) []*kv.MPPTask {
+func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask, cteProducerTasks []*kv.MPPTask) []*kv.MPPTask {
 	addressMap := make(map[string]struct{})
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
+	cteAddrMap := make(map[string]struct{})
+	for _, task := range cteProducerTasks {
+		addr := task.Meta.GetAddress()
+		if _, ok := cteAddrMap[addr]; !ok {
+			cteAddrMap[addr] = struct{}{}
+		}
+	}
 	for _, task := range tasks {
 		addr := task.Meta.GetAddress()
 		// for upper fragment, the task num is equal to address num covered by lower tasks
 		_, ok := addressMap[addr]
+		if _, okk := cteAddrMap[addr]; !okk && len(cteAddrMap) > 0 {
+			// If we have cte producer, we reject other possible addresses.
+			continue
+		}
 		if !ok {
 			mppTask := &kv.MPPTask{
 				Meta:       &mppAddr{addr: addr},
@@ -217,6 +229,9 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
+		if x.ID() == 359 {
+			logutil.BgLogger().Warn("1")
+		}
 		p, err := stack[0].Clone()
 		if err != nil {
 			return errors.Trace(err)
@@ -353,13 +368,19 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
+		cteProducerTasks := make([]*kv.MPPTask, 0)
 		for _, cteR := range f.CTEReaders {
-			childrenTasks = append(childrenTasks, cteR.children[0].(*PhysicalExchangeReceiver).Tasks...)
+			child := cteR.children[0]
+			if _, ok := child.(*PhysicalProjection); ok {
+				child = child.Children()[0]
+			}
+			cteProducerTasks = append(cteProducerTasks, child.(*PhysicalExchangeReceiver).Tasks...)
+			childrenTasks = append(childrenTasks, child.(*PhysicalExchangeReceiver).Tasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
 		}
-		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
+		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks, cteProducerTasks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -384,8 +405,6 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 		newChildren[i] = child
 		if cteR, ok := child.(*PhysicalCTE); ok {
 			receiver := cteR.Children()[0]
-			receiver.SetChildren(cteR)
-			cteR.SetChildren(nil)
 			newChildren[i] = receiver
 		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
 			// The receiver is the leaf of the fragment though it has child, we need break it.
@@ -396,6 +415,9 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 }
 
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
+	if cteReader.CTE.IDForStorage == 2 {
+		logutil.BgLogger().Warn("1")
+	}
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StroageFragments == nil {
 		exchangeSender := PhysicalExchangeSender{
@@ -407,10 +429,28 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 			return err
 		}
 	}
-	receiver := PhysicalExchangeReceiver{}.Init(cteReader.SCtx(), group.CTEStorage.statsInfo())
+	receiver := PhysicalExchangeReceiver{IsCTEReader: true}.Init(cteReader.SCtx(), group.CTEStorage.statsInfo())
 	receiver.Tasks = group.StroageTasks
 	receiver.frags = group.StroageFragments
 	cteReader.SetChildren(receiver)
+	receiver.SetChildren(group.CTEStorage.children[0])
+	inconsistenceNullable := false
+	for i, col := range cteReader.schema.Columns {
+		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.children[0].Schema().Columns[i].RetType.GetFlag()) {
+			inconsistenceNullable = true
+			break
+		}
+	}
+	if inconsistenceNullable {
+		cols := group.CTEStorage.children[0].Schema().Clone().Columns
+		for i, col := range cols {
+			col.Index = i
+		}
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.ctx, cteReader.stats, 0, nil)
+		proj.SetSchema(cteReader.schema.Clone())
+		proj.SetChildren(receiver)
+		cteReader.SetChildren(proj)
+	}
 	return nil
 }
 

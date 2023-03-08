@@ -329,6 +329,11 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			_, isMpp := childTask.(*mppTask)
 			allMpp = allMpp && isMpp
 		}
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children)-1 {
+			continue
+		}
+
 		lastChildProp := pp.GetChildReqProps(lastIdx).CloneEssentialFields()
 		lastChildProp.CTECanMPP = allMpp
 		lastChildTask, cnt, err := p.Children()[lastIdx].findBestTask(lastChildProp, &PlanCounterDisabled, opt)
@@ -338,14 +343,14 @@ func (p *LogicalSequence) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		curCntPlan = curCntPlan * cnt
 		if lastChildTask != nil && lastChildTask.invalid() {
-			break
-		}
-		childTasks = append(childTasks, lastChildTask)
-
-		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != len(p.children) {
 			continue
 		}
+
+		if _, ok := lastChildTask.(*mppTask); !ok && allMpp {
+			continue
+		}
+
+		childTasks = append(childTasks, lastChildTask)
 
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {

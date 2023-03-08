@@ -4276,6 +4276,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) Logical
 			cteName:   cte.def.Name,
 			seedStat:  cte.seedStat,
 		}.Init(b.ctx, b.getSelectOffset())
+		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 		lctes = append(lctes, lcte)
 		lcte.SetChildren(cte.seedLP)
 	}

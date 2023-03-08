@@ -748,6 +748,21 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 	return p.planCostVer2, nil
 }
 
+func (p *PhysicalCTE) getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
+	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
+		return p.planCostVer2, nil
+	}
+
+	inputRows := getCardinality(p, option.CostFlag)
+	cpuFactor := getTaskCPUFactorVer2(p, taskType)
+
+	projCost := filterCostVer2(option, inputRows, expression.Column2Exprs(p.schema.Columns), cpuFactor)
+
+	p.planCostVer2 = projCost
+	p.planCostInit = true
+	return p.planCostVer2, nil
+}
+
 func scanCostVer2(option *PlanCostOption, rows, rowSize float64, scanFactor costVer2Factor) costVer2 {
 	if rowSize < 1 {
 		rowSize = 1

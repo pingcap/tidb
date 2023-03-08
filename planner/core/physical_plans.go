@@ -1478,6 +1478,8 @@ type PhysicalExchangeReceiver struct {
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
+
+	IsCTEReader bool
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1488,6 +1490,8 @@ func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	np.basePhysicalPlan = *base
+
+	np.IsCTEReader = p.IsCTEReader
 	return np, nil
 }
 

@@ -384,6 +384,11 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, _ kv.StoreType) 
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
 	}
+	if e.IsCTEReader {
+		encodedTaskShallowCopy := make([][]byte, len(e.Tasks))
+		copy(encodedTaskShallowCopy, encodedTask)
+		ecExec.OriginalCtePrdocuerTaskMeta = encodedTaskShallowCopy
+	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeExchangeReceiver,
