@@ -7839,7 +7839,7 @@
               "expr": "tidb_server_plan_cache_instance_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}}{{type}}",
               "refId": "A"
             }
           ],
@@ -7945,11 +7945,11 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_server_plan_cache_instance_plan_num_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}\n",
+              "expr": "tidb_server_plan_cache_instance_plan_num_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}}{{type}}",
               "refId": "A",
               "step": 30
             }
