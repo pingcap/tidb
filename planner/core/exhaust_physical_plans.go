@@ -2047,9 +2047,9 @@ func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
-		return szBC < szHash
+		return szBC <= szHash
 	}
-	return rowBC < rowHash
+	return rowBC <= rowHash
 }
 
 // If we can use mpp broadcast join, that's our first choice.
@@ -2066,7 +2066,8 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 
 	mppStoreCnt, ok := p.ctx.GetMPPClient().GetMPPStoreCount()
 
-	// if there is only ONE store, maybe other special way can be used for optimization
+	// No need to exchange data between stores if there is only ONE store.
+	// Maybe other special way can be used for optimization.
 	if ok && mppStoreCnt > 1 {
 		return isJoinFitMPPBCJ(p, mppStoreCnt)
 	}
