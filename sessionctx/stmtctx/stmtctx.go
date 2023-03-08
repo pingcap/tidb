@@ -633,10 +633,10 @@ func (sc *StatementContext) SetSkipPlanCache(cacheType PlanCacheType, reason err
 		sc.UseCache = false
 		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
-		if !sc.UseNonPrepCache {
+		if !sc.UseCache {
 			return // avoid unnecessary warnings
 		}
-		sc.UseNonPrepCache = false
+		sc.UseCache = false
 		if sc.InExplainStmt {
 			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
