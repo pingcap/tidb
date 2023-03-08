@@ -169,6 +169,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	UseNonPrepCache               bool
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
@@ -624,6 +625,7 @@ const (
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(cacheType PlanCacheType, reason error) {
+
 	switch cacheType {
 	case SessionPrepared:
 		if !sc.UseCache {
@@ -632,7 +634,13 @@ func (sc *StatementContext) SetSkipPlanCache(cacheType PlanCacheType, reason err
 		sc.UseCache = false
 		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
-		sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+		if !sc.UseNonPrepCache {
+			return // avoid unnecessary warnings
+		}
+		sc.UseNonPrepCache = false
+		if sc.InExplainStmt {
+			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+		}
 	}
 }
 
