@@ -1214,7 +1214,7 @@ const (
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                           = true
+	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBEnablePlanCacheForSubquery                      = true

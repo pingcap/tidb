@@ -639,6 +639,24 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 	return err
 }
 
+func IsResourceGroupInInsufficient(name string) ([]bool, error) {
+	controller := tikv.GetResourceControlInterceptor()
+	if controller == nil {
+		return nil, nil
+	}
+
+	return controller.IsInsufficientResource(name)
+}
+
+func GetResourceGroupConsumption(name string) ([]float64, error) {
+	controller := tikv.GetResourceControlInterceptor()
+	if controller == nil {
+		return nil, nil
+	}
+
+	return controller.GetConsumption(name)
+}
+
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
 	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)

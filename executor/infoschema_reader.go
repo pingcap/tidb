@@ -3344,10 +3344,24 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
 				burstable = "YES"
 			}
+			low := "NO"
+			lows, _ := infosync.IsResourceGroupInInsufficient(group.Name)
+			if len(lows) > 0 {
+				if lows[0] {
+					low = "YES"
+				}
+			}
+			ruConsumtion := uint64(0)
+			consumptions, _ := infosync.GetResourceGroupConsumption(group.Name)
+			if len(consumptions) > 0 {
+				ruConsumtion = uint64(consumptions[0])
+			}
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
 				burstable,
+				low,
+				ruConsumtion,
 			)
 			rows = append(rows, row)
 		default:
