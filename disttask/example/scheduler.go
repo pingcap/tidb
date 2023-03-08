@@ -19,11 +19,10 @@ import (
 	"encoding/json"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/util/logutil"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 var globalNumberCounter atomic.Int64
