@@ -244,7 +244,7 @@ func main() {
 	svr := createServer(storage, dom)
 	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
+		terror.MustNil(errors.Wrap(err, "failed to setup global resource controller"))
 	}
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.

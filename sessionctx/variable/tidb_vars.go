@@ -1295,8 +1295,9 @@ var (
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
 	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	EnableResourceControl = atomic.NewBool(false)
 )
 
 var (
