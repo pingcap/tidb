@@ -83,7 +83,7 @@ The *data parser* output the data of one row in the type of `[]types.Datum`, the
 
 ### KV encoder
 
-The *load data worker* owns a `InsertValues`, which can be used to encode the data to KV pairs. `InsertValues` is also used by other INSERT-like statements, it has more maintenance that lightning's separated KV encoder. Reusing it rather than lightning's one can prevent bugs that caused by lightning's encoding behaviour is outdated, for example, [#41454](https://github.com/pingcap/tidb/issues/41454).
+The *load data worker* owns a `InsertValues`, which can be used to encode the data to KV pairs. `InsertValues` is also used by other INSERT-like statements, it has more maintenance that lightning's separated KV encoder. Reusing it rather than lightning's one can prevent bugs that caused by lightning's encoding behaviour is outdated, for example, [#41454](https://github.com/pingcap/tidb/issues/41454) and [#42012](https://github.com/pingcap/tidb/issues/42012).
 
 The *KV encoder* receives the data from *data parser* in the type of `[]types.Datum`, converts it to table data under the table schema, and encoding it to KV pairs. After encoding, *KV encoder* will save the result in the type of `[]byte` in the memory buffer of current session's active transaction.
 
