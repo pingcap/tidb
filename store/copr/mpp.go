@@ -575,6 +575,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	return iter
 }
 
+// GetMPPStoreCount returns number of TiFlash stores
 func (c *MPPClient) GetMPPStoreCount() (int, bool) {
 	cnt := len(c.store.GetRegionCache().GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode))
 	if cnt > 0 {
