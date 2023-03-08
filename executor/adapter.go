@@ -35,6 +35,7 @@ import (
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -1506,8 +1507,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      keyspaceName,
+		KeyspaceID:        keyspaceID,
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
@@ -1821,6 +1833,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
+
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:          strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:         sql,
@@ -1853,6 +1874,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		ResultRows:          resultRows,
 		TiKVExecDetails:     tikvExecDetail,
 		Prepared:            a.isPreparedStmt,
+		KeyspaceName:        keyspaceName,
+		KeyspaceID:          keyspaceID,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

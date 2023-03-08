@@ -154,6 +154,7 @@ type StatementContext struct {
 	InSelectStmt                  bool
 	InLoadDataStmt                bool
 	InExplainStmt                 bool
+	ExplainFormat                 string
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
@@ -406,7 +407,8 @@ type StmtHints struct {
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
 	// -1 for disable.
-	ForceNthPlan int64
+	ForceNthPlan  int64
+	ResourceGroup string
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -414,6 +416,7 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+	HasResourceGroup               bool
 	SetVars                        map[string]string
 
 	// the original table hints

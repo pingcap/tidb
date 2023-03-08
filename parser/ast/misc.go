@@ -58,6 +58,7 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &SetResourceGroupStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -3766,6 +3767,8 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	switch n.HintName.L {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.HintData.(uint64))
+	case "resource_group":
+		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
@@ -3860,3 +3863,25 @@ var NewHexLiteral func(string) (interface{}, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
 var NewBitLiteral func(string) (interface{}, error)
+
+// SetResourceGroupStmt is a statement to set the resource group name for current session.
+type SetResourceGroupStmt struct {
+	stmtNode
+	Name model.CIStr
+}
+
+func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET RESOURCE GROUP ")
+	ctx.WriteName(n.Name.O)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetResourceGroupStmt)
+	return v.Leave(n)
+}

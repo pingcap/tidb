@@ -669,3 +669,27 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleColumnIndexNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Sort().Rows()
+	expectedResults := [][]string{
+		{"a", "2", "0"}, {"b", "3", "0"}, {"c", "2", "32"}, {"d", "1", "0"},
+		{"idx_a", "2", "0"}, {"idx_b", "3", "0"}, {"idx_c", "2", "32"}, {"idx_d", "1", "0"},
+	}
+	for i, row := range rows {
+		require.Equal(t, expectedResults[i][0], row[3]) // column_name
+		require.Equal(t, expectedResults[i][1], row[6]) // distinct_count
+		require.Equal(t, expectedResults[i][2], row[7]) // null_count
+	}
+}

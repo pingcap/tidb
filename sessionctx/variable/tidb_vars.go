@@ -214,6 +214,9 @@ const (
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
+	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
+	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
+
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
 
@@ -1211,7 +1214,7 @@ const (
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                           = false
+	DefTiDBEnableResourceControl                           = true
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBEnablePlanCacheForSubquery                      = true
