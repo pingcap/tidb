@@ -7159,42 +7159,36 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(v2, qb), leading(t2@qb), merge_join(t@qb) */ * from v2",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb, v2), leading(t2@qb), merge_join(t@qb) */ * from v2",
         "Plan": [
-          "HashJoin 15609.38 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "MergeJoin 15609.38 root  inner join, left key:test.t1.a, right key:test.t.a",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "│ └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
-          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
+          "└─Sort(Probe) 12487.50 root  test.t1.a",
+          "  └─HashJoin 12487.50 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Hint leading(`t2`@`qb`) is ignored due to unknown query block name",
-          "Hint merge_join(`t`@`qb`) is ignored due to unknown query block name",
-          "The qb_name hint v2 is unused, please check whether the table list in the qb_name hint v2 is correct"
-        ]
+        "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ qb_name(v2, qb), leading(t1@qb), inl_join(t1@qb) */ * from v2",
+        "SQL": "explain format = 'brief' select /*+ qb_name(qb, v2), leading(t1@qb), inl_join(t1@qb) */ * from v2",
         "Plan": [
           "HashJoin 15609.38 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "└─IndexJoin(Probe) 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t2.b, inner key:test.t1.b, equal cond:eq(test.t2.b, test.t1.b)",
           "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─IndexLookUp(Probe) 12487.50 root  ",
+          "    ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t1.b))",
+          "    │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Hint leading(`t1`@`qb`) is ignored due to unknown query block name",
-          "Hint inl_join(`t1`@`qb`) is ignored due to unknown query block name",
-          "The qb_name hint v2 is unused, please check whether the table list in the qb_name hint v2 is correct"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain with tt as (select /*+ leading(t3), merge_join(t1) */ t1.a from t1 join t2 join t3 where t1.a = t2.a and t2.b=t3.b) select * from tt t1 join tt t2 on t1.a=t2.a",
@@ -7386,7 +7380,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ leading(t2) */ sum(t2.a) from t2 where t2.b = t1.b);",
+        "SQL": "explain format = 'brief' select /*+ leading(t2@sel_2) merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t2.b)], other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
@@ -7431,7 +7425,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE(), leading(t2) */ sum(t2.a) from t2 where t2.b = t1.b);",
+        "SQL": "explain format = 'brief' select /*+leading(t2@sel_2)  merge_join(t) */ * from t join t1 on t.a = t1.a where t1.a < (select /*+ NO_DECORRELATE() */ sum(t2.a) from t2 where t2.b = t1.b);",
         "Plan": [
           "Projection 12500.00 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
           "└─Apply 12500.00 root  CARTESIAN inner join, other cond:lt(cast(test.t1.a, decimal(10,0) BINARY), Column#10)",
