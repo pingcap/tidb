@@ -1,0 +1,160 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package scheduler
+
+import (
+	"context"
+
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/stretchr/testify/mock"
+)
+
+type MockTaskTable struct {
+	mock.Mock
+}
+
+func (t *MockTaskTable) GetTasksInStates(states ...interface{}) ([]*proto.Task, error) {
+	args := t.Called(states...)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	} else if args.Get(0) == nil {
+		return nil, nil
+	} else {
+		return args.Get(0).([]*proto.Task), nil
+	}
+}
+
+func (t *MockTaskTable) GetTaskByID(id int64) (*proto.Task, error) {
+	args := t.Called(id)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	} else if args.Get(0) == nil {
+		return nil, nil
+	} else {
+		return args.Get(0).(*proto.Task), nil
+	}
+}
+
+type MockSubtaskTable struct {
+	mock.Mock
+}
+
+func (m *MockSubtaskTable) GetSubtaskInStates(instanceID string, taskID int64, states ...interface{}) (*proto.Subtask, error) {
+	args := m.Called(instanceID, taskID, states)
+	if args.Error(1) != nil {
+		return nil, args.Error(1)
+	} else if args.Get(0) == nil {
+		return nil, nil
+	} else {
+		return args.Get(0).(*proto.Subtask), nil
+	}
+}
+
+func (m *MockSubtaskTable) UpdateSubtaskState(id int64, state string) error {
+	args := m.Called(id, state)
+	return args.Error(0)
+}
+
+func (m *MockSubtaskTable) HasSubtasksInStates(instanceID string, taskID int64, states ...interface{}) (bool, error) {
+	args := m.Called(instanceID, taskID, states)
+	return args.Bool(0), args.Error(1)
+}
+
+type MockPool struct {
+	mock.Mock
+}
+
+func NewMockPool(int) Pool {
+	return &MockPool{}
+}
+
+func (m *MockPool) Run(f func()) error {
+	args := m.Called()
+	if args.Error(0) == nil {
+		go f()
+	}
+	return args.Error(0)
+}
+
+func (m *MockPool) RunWithConcurrency(funcs chan func(), concurrency uint64) error {
+	args := m.Called()
+	if args.Error(0) == nil {
+		go func() {
+			for f := range funcs {
+				go f()
+			}
+		}()
+	}
+	return args.Error(0)
+}
+
+func (m *MockPool) ReleaseAndWait() {
+	m.Called()
+}
+
+type MockScheduler struct {
+	mock.Mock
+}
+
+func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockScheduler) SplitSubtask(subtasks *proto.Subtask) []proto.MinimalTask {
+	args := m.Called(subtasks)
+	return args.Get(0).([]proto.MinimalTask)
+}
+
+func (m *MockScheduler) CleanupSubtaskExecEnv(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockScheduler) Rollback(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+type MockInternalScheduler struct {
+	mock.Mock
+}
+
+func (m *MockInternalScheduler) Start() {
+	m.Called()
+}
+
+func (m *MockInternalScheduler) Stop() {
+	m.Called()
+}
+
+func (m *MockInternalScheduler) Run(ctx context.Context, task *proto.Task) error {
+	args := m.Called(ctx, task)
+	return args.Error(0)
+}
+
+func (m *MockInternalScheduler) Rollback(ctx context.Context, task *proto.Task) error {
+	args := m.Called(ctx, task)
+	return args.Error(0)
+}
+
+type MockSubtaskExecutor struct {
+	mock.Mock
+}
+
+func (m *MockSubtaskExecutor) Run(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}

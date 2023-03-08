@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package proto
+package example
 
 // TaskStep of Example.
 const (
@@ -29,7 +29,9 @@ const (
 type TaskExample struct{}
 
 // SubtaskExample is the example subtask.
-type SubtaskExample struct{}
+type SubtaskExample struct {
+	Numbers []int
+}
 
 // MinimalTaskExample is the minimal example task.
 type MinimalTaskExample struct{}
