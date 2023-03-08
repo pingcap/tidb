@@ -291,7 +291,7 @@ func NewLoadDataWorker(
 		InsertValues:       insertVal,
 		Path:               plan.Path,
 		format:             plan.Format,
-		schemaName:         plan.SchemaName,
+		schemaName:         plan.Table.Schema.O,
 		table:              tbl,
 		FieldsInfo:         plan.FieldsInfo,
 		LinesInfo:          plan.LinesInfo,
@@ -800,6 +800,7 @@ func (e *LoadDataWorker) processStream(
 	checkKilled := time.NewTicker(30 * time.Second)
 	defer checkKilled.Stop()
 
+	loggedError := false
 	for {
 		// prepare batch and enqueue task
 		if err = e.ReadRows(ctx, parser); err != nil {
@@ -811,7 +812,12 @@ func (e *LoadDataWorker) processStream(
 		}
 
 	TrySendTask:
-		pos, _ := seeker.Seek(0, io.SeekCurrent)
+		pos, err2 := seeker.Seek(0, io.SeekCurrent)
+		if err2 != nil && !loggedError {
+			loggedError = true
+			logutil.Logger(ctx).Error(" LOAD DATA failed to read current file offset by seek",
+				zap.Error(err2))
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

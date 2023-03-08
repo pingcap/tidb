@@ -4200,7 +4200,6 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		OnDuplicate:        ld.OnDuplicate,
 		Path:               ld.Path,
 		Format:             ld.Format,
-		SchemaName:         ld.Table.Schema.O,
 		Table:              ld.Table,
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
