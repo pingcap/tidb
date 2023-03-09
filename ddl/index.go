@@ -1712,6 +1712,11 @@ func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (ba
 	if err != nil {
 		return taskCtx, err
 	}
+	taskCtx.nextKey = nextKey
+	taskCtx.done = taskDone
+	if copChunk == nil {
+		return taskCtx, nil
+	}
 	defer w.copReqSenderPool.recycleChunk(copChunk)
 
 	copCtx := w.copReqSenderPool.copCtx
@@ -1722,8 +1727,6 @@ func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (ba
 	}
 	taskCtx.scanCount = count
 	taskCtx.addedCount = count
-	taskCtx.nextKey = nextKey
-	taskCtx.done = taskDone
 	return taskCtx, nil
 }
 
