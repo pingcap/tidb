@@ -558,10 +558,11 @@ const (
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		end_time TIMESTAMP,
+		state_update_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
-		step INT(11)
+		step INT(11),
+		key(state)
 	);`
 )
 
@@ -818,12 +819,15 @@ const (
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
 	version134 = 134
+	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
 	version135 = 135
+	// version136 prepare the tables for the distributed task.
+	version136 = 136
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version135
+var currentBootstrapVersion int64 = version136
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -946,6 +950,7 @@ var (
 		upgradeToVer133,
 		upgradeToVer134,
 		upgradeToVer135,
+		upgradeToVer136,
 	}
 )
 
@@ -2332,12 +2337,34 @@ func upgradeToVer134(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
 }
 
+// For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
 func upgradeToVer135(s Session, ver int64) {
 	if ver >= version135 {
 		return
 	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+}
+
+func upgradeToVer136(s Session, ver int64) {
+	if ver >= version136 {
+		return
+	}
 	mustExecute(s, CreateGlobalTask)
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {
