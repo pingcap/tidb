@@ -130,7 +130,7 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 		return zeroCostVer2, err
 	}
 
-	p.planCostVer2 = sumCostVer2([]costVer2{childCost, divCostVer2(projCost, concurrency)})
+	p.planCostVer2 = sumCostVer2([]costVer2{childCost, divCostVer2(projCost, concurrency).setName("projCost")})
 	p.initCostVer2(option)
 	return p.planCostVer2, nil
 }
@@ -1110,10 +1110,10 @@ func sumCostVer2(costs []costVer2, opts ...costVer2Option) (ret costVer2) {
 	if len(costs) == 0 {
 		return
 	}
-	for i, c := range costs {
+	for _, c := range costs {
 		ret.cost += c.cost
 		if c.trace != nil {
-			if i == 0 { // init
+			if ret.trace == nil { // init
 				ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 			}
 			for factor, factorCost := range c.trace.factorCosts {
