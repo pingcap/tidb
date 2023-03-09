@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -631,14 +632,18 @@ ChunkLoop:
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
 	totalSQLSize := int64(0)
+	typ := "bytes"
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			typ = "rows"
+		}
 	}
 
 	err = chunkErr.Get()
 	logTask.End(zap.ErrorLevel, err,
-		zap.Int64("read", totalSQLSize),
+		zap.Int64(fmt.Sprintf("read(%s)", typ), totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
 

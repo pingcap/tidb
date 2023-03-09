@@ -919,14 +919,10 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 	estimatedChunkCount := 0.0
 	estimatedEngineCnt := int64(0)
-	batchSize := rc.cfg.Mydumper.BatchSize
-	if batchSize <= 0 {
-		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
-		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
-		batchSize = config.DefaultBatchSize
-	}
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
+			batchSize := mydump.CalculateBatchSize(float64(rc.cfg.Mydumper.BatchSize),
+				tableMeta.IsRowOrdered, float64(tableMeta.TotalSize))
 			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
 			dbCp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
@@ -1206,6 +1202,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					nanoseconds := float64(time.Since(start).Nanoseconds())
 					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
 					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
+					totalRestoreRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.BytesStateTotalRestore))
+					restoredRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.BytesStateRestored))
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
@@ -1255,10 +1253,20 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					// total progress.
 					restoreBytesField := zap.Skip()
 					importBytesField := zap.Skip()
+					restoreRowsField := zap.Skip()
 					remaining = zap.Skip()
 					totalPercent := 0.0
-					if restoredBytes > 0 {
-						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
+					if restoredBytes > 0 || restoredRows > 0 {
+						var restorePercent float64
+						if totalRestoreRows > 0 {
+							restorePercent = math.Min(restoredRows/totalRestoreRows, 1.0)
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%s/%s",
+								units.BytesSize(restoredRows), units.BytesSize(totalRestoreRows)))
+						} else {
+							restorePercent = math.Min(restoredBytes/totalRestoreBytes, 1.0)
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%s/%s(estimated)",
+								units.BytesSize(restoredRows), units.BytesSize(restoredRows/restorePercent)))
+						}
 						metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 							var importPercent float64
@@ -1308,7 +1316,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
 						zap.String("chunks", fmt.Sprintf("%.0f/%.0f%s", finished, estimated, formatPercent(finished, estimated))),
 						zap.String("engines", fmt.Sprintf("%.f/%.f%s", engineFinished, engineEstimated, formatPercent(engineFinished, engineEstimated))),
-						restoreBytesField, importBytesField,
+						restoreBytesField, restoreRowsField, importBytesField,
 						encodeSpeedField,
 						zap.String("state", state),
 						remaining,
@@ -1596,7 +1604,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	}
 
 	var allTasks []task
-	var totalDataSizeToRestore int64
+	var totalDataSizeToRestore, totalRowsToRestore int64
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo := rc.dbInfos[dbMeta.Name]
 		for _, tableMeta := range dbMeta.Tables {
@@ -1621,13 +1629,29 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for _, fi := range tableMeta.DataFiles {
+				for i, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
+					if fi.FileMeta.Type == mydump.SourceTypeParquet {
+						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						totalRowsToRestore += numberRows
+						fi.FileMeta.Rows = numberRows
+						tableMeta.DataFiles[i] = fi
+					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
 					for _, chunk := range eng.Chunks {
-						totalDataSizeToRestore += chunk.UnfinishedSize()
+						// for parquet files filesize is more accurate, we can calculate correct unfinished bytes unless
+						//  we set up the reader, so we directly use filesize here
+						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+							totalDataSizeToRestore += chunk.FileMeta.FileSize
+							totalRowsToRestore += chunk.UnfinishedSize()
+						} else {
+							totalDataSizeToRestore += chunk.UnfinishedSize()
+						}
 					}
 				}
 			}
@@ -1636,6 +1660,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 
 	if m, ok := metric.FromContext(ctx); ok {
 		m.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+		if totalRowsToRestore > 0 {
+			m.RowsCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalRowsToRestore))
+		}
 	}
 
 	for i := range allTasks {
@@ -2460,7 +2487,15 @@ func (cr *chunkRestore) deliverLoop(
 			}
 			delta := highOffset - lowOffset
 			if delta >= 0 {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+					if currRealOffset > startRealOffset {
+						m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currRealOffset - startRealOffset))
+					}
+					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				} else {
+					m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(dataChecksum.SumKVS()))
+				}
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
@@ -2647,7 +2682,8 @@ func (cr *chunkRestore) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID, realOffset int64
+		var newOffset, rowID, newRealOffset int64
+		var realOffset int64 = -1
 		var kvSize uint64
 		var realOffsetErr error
 	outLoop:
@@ -2656,11 +2692,14 @@ func (cr *chunkRestore) encodeLoop(
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				realOffset, realOffsetErr = cr.parser.RealPos()
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				newRealOffset, realOffsetErr = cr.parser.RealPos()
 				if realOffsetErr != nil {
 					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
 						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+				if realOffset == -1 {
+					realOffset = newRealOffset
 				}
 			}
 
@@ -2725,7 +2764,7 @@ func (cr *chunkRestore) encodeLoop(
 			}
 
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
-				rowID: rowID, realOffset: realOffset})
+				rowID: rowID, realOffset: newRealOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -2743,7 +2782,11 @@ func (cr *chunkRestore) encodeLoop(
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				m.RowReadBytesHistogram.Observe(float64(newRealOffset - realOffset))
+			} else {
+				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			}
 		}
 
 		if len(kvPacket) != 0 {
