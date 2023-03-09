@@ -1070,43 +1070,24 @@ func traceCost(option *PlanCostOption) bool {
 	return false
 }
 
-type costVer2Op struct {
-	name string
-}
-
-// RegionsOption configures RegionsOp
-type costVer2Option func(op *costVer2Op)
-
-func newZeroCostVer2(trace bool, opts ...costVer2Option) (ret costVer2) {
-	costVer2Opt := &costVer2Op{}
-	for _, opt := range opts {
-		opt(costVer2Opt)
-	}
+func newZeroCostVer2(trace bool) (ret costVer2) {
 	if trace {
-		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{"", make(map[string]interface{}), "", make(map[string]float64)}
 	}
 	return
 }
 
-func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, lazyFormula func() string, opts ...costVer2Option) (ret costVer2) {
-	costVer2Opt := &costVer2Op{}
-	for _, opt := range opts {
-		opt(costVer2Opt)
-	}
+func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, lazyFormula func() string) (ret costVer2) {
 	ret.cost = cost
 	if traceCost(option) {
-		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{"", make(map[string]interface{}), "", make(map[string]float64)}
 		ret.trace.CostParams[factor.Name] = cost
 		ret.trace.Formula = lazyFormula()
 	}
 	return ret
 }
 
-func sumCostVer2(costs []costVer2, opts ...costVer2Option) (ret costVer2) {
-	costVer2Opt := &costVer2Op{}
-	for _, opt := range opts {
-		opt(costVer2Opt)
-	}
+func sumCostVer2(costs []costVer2) (ret costVer2) {
 	if len(costs) == 0 {
 		return
 	}
@@ -1114,7 +1095,7 @@ func sumCostVer2(costs []costVer2, opts ...costVer2Option) (ret costVer2) {
 		ret.cost += c.cost
 		if c.trace != nil {
 			if ret.trace == nil { // init
-				ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+				ret.trace = &CostTrace{"", make(map[string]interface{}), "", make(map[string]float64)}
 			}
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
@@ -1131,14 +1112,10 @@ func sumCostVer2(costs []costVer2, opts ...costVer2Option) (ret costVer2) {
 	return ret
 }
 
-func divCostVer2(cost costVer2, denominator float64, opts ...costVer2Option) (ret costVer2) {
-	costVer2Opt := &costVer2Op{}
-	for _, opt := range opts {
-		opt(costVer2Opt)
-	}
+func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 	ret.cost = cost.cost / denominator
 	if cost.trace != nil {
-		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{"", make(map[string]interface{}), "", make(map[string]float64)}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c / denominator
 		}
@@ -1150,14 +1127,10 @@ func divCostVer2(cost costVer2, denominator float64, opts ...costVer2Option) (re
 	return ret
 }
 
-func mulCostVer2(cost costVer2, scale float64, opts ...costVer2Option) (ret costVer2) {
-	costVer2Opt := &costVer2Op{}
-	for _, opt := range opts {
-		opt(costVer2Opt)
-	}
+func mulCostVer2(cost costVer2, scale float64) (ret costVer2) {
 	ret.cost = cost.cost * scale
 	if cost.trace != nil {
-		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{"", make(map[string]interface{}), "", make(map[string]float64)}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c * scale
 		}
