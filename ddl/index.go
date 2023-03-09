@@ -1716,10 +1716,12 @@ func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (ba
 
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	err = writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
+	count, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
 	if err != nil {
 		return taskCtx, err
 	}
+	taskCtx.scanCount = count
+	taskCtx.addedCount = count
 	taskCtx.nextKey = nextKey
 	taskCtx.done = taskDone
 	return taskCtx, nil
@@ -1727,26 +1729,28 @@ func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (ba
 
 func writeChunkToLocal(writerCtx *ingest.WriterContext,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) error {
+	copChunk *chunk.Chunk) (int, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
+	count := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
 		err = writeOneKVToLocal(writerCtx, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
+		count++
 	}
-	return nil
+	return count, nil
 }
 
 func writeOneKVToLocal(writerCtx *ingest.WriterContext,
