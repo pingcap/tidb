@@ -1880,7 +1880,9 @@ func checkCases(
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
+	origin := ld.IgnoreLines
 	for _, tt := range tests {
+		ld.IgnoreLines = origin
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
