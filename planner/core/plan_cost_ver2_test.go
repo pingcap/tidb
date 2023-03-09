@@ -23,12 +23,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -308,4 +311,49 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, core.NewDefaultPlanCostOption().WithCostFlag(core.CostFlagRecalculate))
 	}
+}
+
+func TestPlanCostDetailInTracer(t *testing.T) {
+	p := parser.New()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+	testcases := []struct {
+		sql           string
+		assertFormula string
+		assertID      int
+	}{
+		{
+			sql: "select * from t where b > 3 and d > 1",
+			// Selection Operator
+			assertID:      6,
+			assertFormula: "(cpu(10000*filters(2)*tikv_cpu_factor(49.9))) + (TableScan_5)",
+		},
+	}
+	for _, testcase := range testcases {
+		sql := testcase.sql
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		require.NoError(t, err)
+		sctx := core.MockContext()
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().CostModelVersion = 2
+		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+		plan, err := builder.Build(context.TODO(), stmt)
+		require.NoError(t, err)
+		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+		require.NoError(t, err)
+		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+		require.NotNil(t, otrace)
+		assertDetail := otrace.PhysicalPlanCostDetails[testcase.assertID]
+		require.NotNil(t, assertDetail)
+		require.Equal(t, assertDetail.Desc, testcase.assertFormula)
+	}
+
 }

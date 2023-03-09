@@ -801,7 +801,7 @@ func (e *Explain) RenderResult() error {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
 				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 				trace := cost.trace
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.Formula))
 				data, err := json.Marshal(trace.factorCosts)
 				if err != nil {
 					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
@@ -1073,7 +1073,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
 			if costVer2.trace != nil {
-				costFormula = costVer2.trace.formula
+				costFormula = costVer2.trace.Formula
 			}
 		} else {
 			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
