@@ -3185,9 +3185,6 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 
-	// Disable resource group.
-	require.Equal(t, "", tk.Session().GetSessionVars().ResourceGroupName)
-
 	// Enable resource group.
 	variable.EnableResourceControl.Store(true)
 	err = tk.Session().Auth(user, tokenBytes, nil)

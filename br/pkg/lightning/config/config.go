@@ -218,7 +218,7 @@ func (t PostOpLevel) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-// parser command line parameter
+// FromStringValue parse command line parameter.
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	//nolint:goconst // This 'false' and other 'false's aren't the same.
@@ -680,6 +680,7 @@ type TikvImporter struct {
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`

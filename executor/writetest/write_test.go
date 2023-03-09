@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1905,7 +1904,7 @@ func checkCases(
 		require.NoError(t, err1)
 		ld.ResetBatch()
 		ld.SetMessage()
-		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		ctx.StmtCommit(context.Background())
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
@@ -1950,7 +1949,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeHour := curTime.Hour()
 	timeMinute := curTime.Minute()
 	tests := []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
@@ -1960,7 +1959,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	timeMinute = curTime.Minute()
 	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
@@ -2030,7 +2029,7 @@ func TestIssue34358(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, ld)
 	checkCases([]testCase{
-		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
 }
 
@@ -2082,19 +2081,20 @@ func TestLoadData(t *testing.T) {
 	sc.IgnoreTruncate = false
 	// fields and lines are default, ReadRows returns data is nil
 	tests := []testCase{
-		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\t\n"), []string{"2|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"
+		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("\t\n"), []string{"2|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, trivialMsg},
 		{[]byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, trivialMsg},
-		{[]byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("6\t2\t3\n"), []string{"6|2|3|<nil>"}, trivialMsg},
+		{[]byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("6\t2\t3\n"), []string{"6|2|3|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{"7|2|3|4", "8|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{"7|2|3|4"}, "Records: 2  Deleted: 0  Skipped: 1  Warnings: 1"},
 
 		// outdated test but still increase AUTO_INCREMENT
 		{[]byte("\t2\t3\t4"), []string{"9|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("\t2\t3\t4\t5\n"), []string{"10|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("\t2\t3\t4\t5\n"), []string{"10|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("\t2\t34\t5\n"), []string{"11|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
@@ -2102,14 +2102,14 @@ func TestLoadData(t *testing.T) {
 	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
 	ld.LinesInfo.Terminated = "||"
 	tests = []testCase{
-		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, trivialMsg},
-		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, trivialMsg},
+		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("2\t2\t3\t4\t5||3\t22\t33\t44\t55||"),
-			[]string{"2|2|3|4", "3|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"2|2|3|4", "3|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("3\t2\t3\t4\t5||4\t22\t33||"), []string{
-			"3|2|3|4", "4|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+			"3|2|3|4", "4|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("4\t2\t3\t4\t5||5\t22\t33||6\t222||"),
-			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("6\t2\t34\t5||"), []string{"6|2|34|5"}, trivialMsg},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
@@ -2119,12 +2119,12 @@ func TestLoadData(t *testing.T) {
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
 	tests = []testCase{
-		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, trivialMsg},
-		{[]byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, trivialMsg},
-		{[]byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		{[]byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, trivialMsg},
+		{[]byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
 			"16|2|3|4",
 			"17|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -2139,17 +2139,17 @@ func TestLoadData(t *testing.T) {
 		{[]byte("xxx10\\2\\3\\4|!#^"),
 			[]string{"10|2|3|4"}, trivialMsg},
 		{[]byte("10\\2\\3xxx11\\4\\5|!#^"),
-			[]string{"11|4|5|<nil>"}, trivialMsg},
+			[]string{"11|4|5|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("xxx21\\2\\3\\4\\5|!#^"),
-			[]string{"21|2|3|4"}, trivialMsg},
+			[]string{"21|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("xxx22\\2\\3\\4\\5|!#^xxx23\\22\\33\\44\\55|!#^"),
-			[]string{"22|2|3|4", "23|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"22|2|3|4", "23|22|33|44"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx23\\2\\3\\4\\5|!#^xxx24\\22\\33|!#^"),
-			[]string{"23|2|3|4", "24|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"23|2|3|4", "24|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx24\\2\\3\\4\\5|!#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
-			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("xxx25\\2\\3\\4\\5|!#^26\\22\\33|!#^xxx27\\222|!#^"),
-			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\2\\34\\5|!#^"), []string{"28|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
@@ -2202,7 +2202,7 @@ func TestLoadData(t *testing.T) {
 	ld.LinesInfo.Terminated = "#\n"
 	ld.FieldsInfo.Terminated = "#"
 	tests = []testCase{
-		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), []string{"1|2|3#|4", "2|3|#4#\n|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
@@ -2321,8 +2321,7 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
 \N,"\N"
 "\\N"`),
 			[]string{"<nil>|NULL", "<nil>|<nil>", "\\N|<nil>"},
-			// TODO: Warnings should be 1, "Row 3 doesn't contain data for all columns"
-			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0",
+			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 1",
 		},
 	}
 	deleteSQL := "delete from load_data_test"
@@ -3970,34 +3969,6 @@ func TestIssue22496(t *testing.T) {
 	tk.MustExec("drop table t12")
 }
 
-func TestEqualDatumsAsBinary(t *testing.T) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatumsAsBinary(t, tt.a, tt.b, tt.same)
-	}
-}
-
 func TestIssue21232(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4016,15 +3987,6 @@ func TestIssue21232(t *testing.T) {
 	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
-}
-
-func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	re := new(executor.ReplaceExec)
-	sc.IgnoreTruncate = true
-	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
-	require.NoError(t, err)
-	require.Equal(t, same, res, "a: %v, b: %v", a, b)
 }
 
 func TestUpdate(t *testing.T) {

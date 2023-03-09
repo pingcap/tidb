@@ -319,13 +319,12 @@ func TestSplitLargeFile(t *testing.T) {
 		{19, [][]int64{{6, 30}}},
 	} {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
-		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 		store, err := storage.NewLocalStorage(".")
 		assert.NoError(t, err)
 
-		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+		regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 		assert.NoError(t, err)
 		assert.Len(t, regions, len(tc.offsets))
 		for i := range tc.offsets {
@@ -375,7 +374,6 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
 	columns := []string{"a", "b"}
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -383,7 +381,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 
 	offsets := [][]int64{{4, 13}, {13, 21}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -425,7 +423,6 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(3)
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -433,7 +430,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 
 	offsets := [][]int64{{0, 23}, {23, 38}, {38, 47}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -481,7 +478,6 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
 	columns := []string{"field1", "field2"}
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -489,7 +485,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 
 	offsets := [][]int64{{14, 24}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
