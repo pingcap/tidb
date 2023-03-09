@@ -28,23 +28,23 @@ import (
 func TestManageTask(t *testing.T) {
 	m := NewManager(context.Background(), "test", nil, nil)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
-	new_tasks := m.filterAlreadyHandlingTasks(tasks)
-	require.Equal(t, tasks, new_tasks)
+	newTasks := m.filterAlreadyHandlingTasks(tasks)
+	require.Equal(t, tasks, newTasks)
 
 	m.addHandlingTask(1)
 	tasks = []*proto.Task{{ID: 1}, {ID: 2}}
-	new_tasks = m.filterAlreadyHandlingTasks(tasks)
-	require.Equal(t, []*proto.Task{{ID: 2}}, new_tasks)
+	newTasks = m.filterAlreadyHandlingTasks(tasks)
+	require.Equal(t, []*proto.Task{{ID: 2}}, newTasks)
 
 	m.addHandlingTask(2)
 	tasks = []*proto.Task{{ID: 1}, {ID: 2}}
-	new_tasks = m.filterAlreadyHandlingTasks(tasks)
-	require.Equal(t, []*proto.Task{}, new_tasks)
+	newTasks = m.filterAlreadyHandlingTasks(tasks)
+	require.Equal(t, []*proto.Task{}, newTasks)
 
 	m.removeHandlingTask(1)
 	tasks = []*proto.Task{{ID: 1}, {ID: 2}}
-	new_tasks = m.filterAlreadyHandlingTasks(tasks)
-	require.Equal(t, []*proto.Task{{ID: 1}}, new_tasks)
+	newTasks = m.filterAlreadyHandlingTasks(tasks)
+	require.Equal(t, []*proto.Task{{ID: 1}}, newTasks)
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	m.registerCancelFunc(2, cancel1)
