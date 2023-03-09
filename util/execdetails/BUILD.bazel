@@ -22,6 +22,7 @@ go_test(
     ],
     embed = [":execdetails"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit/testsetup",
         "@com_github_pingcap_tipb//go-tipb",
