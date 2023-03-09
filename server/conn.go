@@ -1135,7 +1135,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			for _, dbName := range GetDBNames(cc.getCtx()) {
+			for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
 			}
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
@@ -1224,7 +1224,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
-	for _, dbName := range GetDBNames(cc.getCtx()) {
+	for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
 	}
 }
@@ -2555,25 +2555,4 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	default:
 		return ""
 	}
-}
-
-// GetDBNames gets the sql layer database names from the context.
-func GetDBNames(ctx *TiDBContext) []string {
-	dbNames := make(map[string]struct{})
-	if ctx == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
-		return []string{""}
-	}
-	if ctx.GetSessionVars().StmtCtx != nil {
-		for _, t := range ctx.GetSessionVars().StmtCtx.Tables {
-			dbNames[t.DB] = struct{}{}
-		}
-	}
-	if len(dbNames) == 0 {
-		dbNames[ctx.GetSessionVars().CurrentDB] = struct{}{}
-	}
-	ns := make([]string, 0, len(dbNames))
-	for n := range dbNames {
-		ns = append(ns, n)
-	}
-	return ns
 }
