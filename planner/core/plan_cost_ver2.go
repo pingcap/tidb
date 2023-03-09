@@ -1055,10 +1055,6 @@ type costVer2 struct {
 	trace *CostTrace
 }
 
-func (c costVer2) GetTrace() *CostTrace {
-	return c.trace
-}
-
 func (c costVer2) setName(name string) costVer2 {
 	if c.trace != nil {
 		c.trace.Name = name
