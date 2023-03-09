@@ -754,6 +754,7 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
+	// non overlapping sst is grouped, and ingested in that order
 	metaLevels := make([][]*sstMeta, 0)
 	for _, meta := range metas {
 		inserted := false

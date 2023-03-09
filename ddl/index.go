@@ -1324,6 +1324,7 @@ type addIndexWorker struct {
 	batchCheckKeys     []kv.Key
 	batchCheckValues   [][]byte
 	distinctCheckFlags []bool
+	recordIdx          []int
 }
 
 func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexWorker, error) {
@@ -1586,6 +1587,7 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.batchCheckKeys = w.batchCheckKeys[:0]
 	w.batchCheckValues = w.batchCheckValues[:0]
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+	w.recordIdx = w.recordIdx[:0]
 }
 
 func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
@@ -1650,6 +1652,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 	cnt := 0
 	for i, record := range idxRecords {
+		// skip by default.
+		idxRecords[i].skip = true
 		iter := w.index.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData)
 		for iter.Valid() {
 			var buf []byte
@@ -1669,6 +1673,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			w.batchCheckKeys = append(w.batchCheckKeys, key)
 			w.batchCheckValues = append(w.batchCheckValues, val)
 			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+			w.recordIdx = append(w.recordIdx, i)
 		}
 	}
 
@@ -1681,18 +1686,19 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
 	for i, key := range w.batchCheckKeys {
-		if val, found := batchVals[string(key)]; found {
+		val, found := batchVals[string(key)]
+		if found {
 			if w.distinctCheckFlags[i] {
-				if err := w.checkHandleExists(key, val, idxRecords[i].handle); err != nil {
+				if err := w.checkHandleExists(key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
 					return errors.Trace(err)
 				}
 			}
-			idxRecords[i].skip = true
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			batchVals[string(key)] = w.batchCheckValues[i]
 		}
+		idxRecords[w.recordIdx[i]].skip = found && idxRecords[w.recordIdx[i]].skip
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
@@ -1870,7 +1876,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		// During index re-creation, process data from partitions to be added
 		nextPartitionDefs = pi.AddingDefinitions
 	}
-	if nextPartitionDefs == nil {
+	if len(nextPartitionDefs) == 0 {
 		nextPartitionDefs = pi.Definitions
 	}
 	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)

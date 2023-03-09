@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -3970,34 +3969,6 @@ func TestIssue22496(t *testing.T) {
 	tk.MustExec("drop table t12")
 }
 
-func TestEqualDatumsAsBinary(t *testing.T) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatumsAsBinary(t, tt.a, tt.b, tt.same)
-	}
-}
-
 func TestIssue21232(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4016,15 +3987,6 @@ func TestIssue21232(t *testing.T) {
 	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
-}
-
-func testEqualDatumsAsBinary(t *testing.T, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	re := new(executor.ReplaceExec)
-	sc.IgnoreTruncate = true
-	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
-	require.NoError(t, err)
-	require.Equal(t, same, res, "a: %v, b: %v", a, b)
 }
 
 func TestUpdate(t *testing.T) {
