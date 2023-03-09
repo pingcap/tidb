@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package importer
 
 import (
 	"fmt"
@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadDataWorkerInitDefaultOptions(t *testing.T) {
-	e := LoadDataWorker{}
+func TestInitDefaultOptions(t *testing.T) {
+	e := LoadDataController{}
 	e.initDefaultOptions()
 	require.Equal(t, logicalImportMode, e.importMode)
 	require.Equal(t, config.ByteSize(50<<30), e.diskQuota)
@@ -45,13 +45,13 @@ func TestLoadDataWorkerInitDefaultOptions(t *testing.T) {
 	require.Equal(t, int64(100), e.maxRecordedErrors)
 	require.Equal(t, false, e.detached)
 
-	e = LoadDataWorker{format: LoadDataFormatParquet}
+	e = LoadDataController{Format: LoadDataFormatParquet}
 	e.initDefaultOptions()
 	require.Greater(t, e.threadCnt, int64(0))
 	require.Equal(t, int64(math.Max(1, float64(runtime.NumCPU())*0.75)), e.threadCnt)
 }
 
-func TestLoadDataWorkerInitOptions(t *testing.T) {
+func TestInitOptions(t *testing.T) {
 	cases := []struct {
 		OptionStr string
 		Err       error
@@ -139,11 +139,11 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 		sql := fmt.Sprintf(sqlTemplate, c.OptionStr)
 		stmt, err2 := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err2, sql)
-		e := LoadDataWorker{Ctx: ctx}
-		err := e.initOptions(convertOptions(stmt.(*ast.LoadDataStmt).Options))
+		e := LoadDataController{}
+		err := e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
 		require.ErrorIs(t, err, c.Err, sql)
 	}
-	e := LoadDataWorker{Ctx: ctx}
+	e := LoadDataController{}
 	sql := fmt.Sprintf(sqlTemplate, importModeOption+"='physical', "+
 		diskQuotaOption+"='100gib', "+
 		checksumOption+"='optional', "+
@@ -157,7 +157,7 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 		detachedOption)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
-	err = e.initOptions(convertOptions(stmt.(*ast.LoadDataStmt).Options))
+	err = e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, physicalImportMode, e.importMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), e.diskQuota, sql)
@@ -172,8 +172,8 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 	require.True(t, e.detached, sql)
 }
 
-func TestLoadDataWorkerAdjustOptions(t *testing.T) {
-	e := LoadDataWorker{
+func TestAdjustOptions(t *testing.T) {
+	e := LoadDataController{
 		diskQuota:     1,
 		threadCnt:     100000000,
 		batchSize:     1,

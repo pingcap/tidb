@@ -213,6 +213,7 @@ func NewLoadDataWorker(
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
+		Table:              tbl,
 	}
 	if err := controller.Init(sctx, plan.Options); err != nil {
 		return nil, err
@@ -816,6 +817,12 @@ func (e *LoadDataWorker) GetCurBatchCnt() uint64 {
 // GetInfilePath get infile path.
 func (e *LoadDataWorker) GetInfilePath() string {
 	return e.controller.Path
+}
+
+// GetController get load data controller.
+// used in unit test.
+func (e *LoadDataWorker) GetController() *importer.LoadDataController {
+	return e.controller
 }
 
 var _ io.ReadSeekCloser = (*SimpleSeekerOnReadCloser)(nil)

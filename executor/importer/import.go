@@ -105,7 +105,7 @@ type LoadDataController struct {
 	ColumnAssignments  []*ast.Assignment
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 
-	table table.Table
+	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's column
@@ -369,7 +369,7 @@ func (e *LoadDataController) adjustOptions() {
 // Returns a slice of same ordered column names without user defined variable names.
 func (e *LoadDataController) initFieldMappings() []string {
 	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.table.Cols()
+	tableCols := e.Table.Cols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
@@ -408,7 +408,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
-	tableCols := e.table.Cols()
+	tableCols := e.Table.Cols()
 
 	if len(columnNames) != len(tableCols) {
 		for _, v := range e.ColumnAssignments {
@@ -416,7 +416,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 		}
 	}
 
-	cols, missingColName = table.FindCols(tableCols, columnNames, e.table.Meta().PKIsHandle)
+	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
 	if missingColName != "" {
 		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
 	}
