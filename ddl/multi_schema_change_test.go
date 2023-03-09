@@ -576,12 +576,12 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
-		// Cancel the job when index 't2' is in write-reorg.
+		// Cancel the job when index is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 4)
-		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(cancelHook)
 	tk.MustGetErrCode("alter table t "+
@@ -602,8 +602,8 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 4)
-		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(cancelHook)
 	tk.MustExec("alter table t add index t(a, b), add index t1(a), " +

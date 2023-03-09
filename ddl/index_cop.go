@@ -266,27 +266,30 @@ func (c *copReqSenderPool) recycleIdxRecordsAndChunk(idxRecs []*indexRecord, chk
 // It is unchanged after initialization.
 type copContext struct {
 	tblInfo  *model.TableInfo
-	idxInfo  *model.IndexInfo
+	idxInfo  []*model.IndexInfo
 	pkInfo   *model.IndexInfo
 	colInfos []*model.ColumnInfo
 	fieldTps []*types.FieldType
 	sessCtx  sessionctx.Context
 
 	expColInfos         []*expression.Column
-	idxColOutputOffsets []int
+	idxColOutputOffsets [][]int
 	handleOutputOffsets []int
 	virtualColOffsets   []int
 	virtualColFieldTps  []*types.FieldType
 }
 
-func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
+func newCopContext(tblInfo *model.TableInfo, indexesInfo []*model.IndexInfo, sessCtx sessionctx.Context) (*copContext, error) {
 	var err error
-	usedColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns))
-	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
 	var handleIDs []int64
-	if err != nil {
-		return nil, err
+	usedColumnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+	for _, idxInfo := range indexesInfo {
+		usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxInfo, tblInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	var primaryIdx *model.IndexInfo
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
@@ -306,8 +309,8 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	}
 
 	// Only collect the columns that are used by the index.
-	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
-	fieldTps := make([]*types.FieldType, 0, len(idxInfo.Columns))
+	colInfos := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	fieldTps := make([]*types.FieldType, 0, len(tblInfo.Columns))
 	for i := range tblInfo.Columns {
 		col := tblInfo.Columns[i]
 		if _, found := usedColumnIDs[col.ID]; found {
@@ -329,13 +332,17 @@ func newCopContext(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sessCtx s
 	if err != nil {
 		return nil, err
 	}
-	idxOffsets := resolveIndicesForIndex(expColInfos, idxInfo, tblInfo)
+
+	var idxOffsets [][]int
+	for _, idxInfo := range indexesInfo {
+		idxOffsets = append(idxOffsets, resolveIndicesForIndex(expColInfos, idxInfo, tblInfo))
+	}
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
 	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
 
 	copCtx := &copContext{
 		tblInfo:  tblInfo,
-		idxInfo:  idxInfo,
+		idxInfo:  indexesInfo,
 		pkInfo:   primaryIdx,
 		colInfos: colInfos,
 		fieldTps: fieldTps,
@@ -452,14 +459,16 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		return nil, false, errors.Trace(err)
 	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		idxDt := extractDatumByOffsets(row, c.idxColOutputOffsets, c.expColInfos)
 		hdDt := extractDatumByOffsets(row, c.handleOutputOffsets, c.expColInfos)
 		handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		rsData := getRestoreData(c.tblInfo, c.idxInfo, c.pkInfo, hdDt)
-		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
+		for i, idxInfo := range c.idxInfo {
+			idxDt := extractDatumByOffsets(row, c.idxColOutputOffsets[i], c.expColInfos)
+			rsData := getRestoreData(c.tblInfo, idxInfo, c.pkInfo, hdDt)
+			buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
+		}
 	}
 	return buf, false, nil
 }
