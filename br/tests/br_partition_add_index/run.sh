@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# https://github.com/pingcap/tidb/issues/41559
+
 set -eu
 DB="$TEST_NAME"
-TABLE="usertable"
 
 run_sql "CREATE DATABASE $DB;"
 
@@ -54,8 +55,8 @@ run_sql "ALTER TABLE $DB.t0 ADD INDEX idx(data);"
 
 result=$(run_sql "ADMIN SHOW DDL JOBS 1 WHERE job_type LIKE '%ingest%';")
 
-echo $(run_sql "ADMIN SHOW DDL JOBS 1;")
+run_sql "ADMIN SHOW DDL JOBS 1;"
 
-[ ! -z "$result" ] || { echo "adding index does not use ingest mode"; exit 1; }
+[ -n "$result" ] || { echo "adding index does not use ingest mode"; exit 1; }
 
 run_sql "DROP DATABASE $DB;"
