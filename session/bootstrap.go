@@ -561,7 +561,8 @@ const (
 		state_update_time TIMESTAMP,
 		meta LONGBLOB,
 		concurrency INT(11),
-		step INT(11)
+		step INT(11),
+		key(state)
 	);`
 )
 
