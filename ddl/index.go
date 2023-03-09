@@ -1726,7 +1726,12 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	var txnStr string
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		txnStr = fmt.Sprintf("txn ts:%d, copPool is nil:%v, needMergeTmpIdx:%v, writerCtx is nil:%v,", txn.StartTS(), w.copReqSenderPool == nil, needMergeTmpIdx, w.writerCtx == nil)
+		pid := int64(0)
+		if w.copReqSenderPool != nil {
+			pid = w.copReqSenderPool.copCtx.physicalTableID
+		}
+		txnStr = fmt.Sprintf("txn ts:%d, copPool is nil:%v, pid:%d, needMergeTmpIdx:%v, writerCtx is nil:%v,",
+			txn.StartTS(), w.copReqSenderPool == nil, pid, needMergeTmpIdx, w.writerCtx == nil)
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0

@@ -975,6 +975,7 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 func initCopReqSenderPool(ctx context.Context, store kv.Storage,
 	tbl table.PhysicalTable, eleID int64, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) *copReqSenderPool {
 	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eleID)
+	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), indexInfo)
 	if indexInfo == nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eleID))
@@ -985,7 +986,7 @@ func initCopReqSenderPool(ctx context.Context, store kv.Storage,
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil
 	}
-	copCtx, err := newCopContext(tbl, indexInfo, sessCtx)
+	copCtx, err := newCopContext(tbl, index.Meta(), sessCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return nil

@@ -1628,6 +1628,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+		log.FromContext(ctx).Info("zzz ---------- start import engine, end", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer lf.unlock()

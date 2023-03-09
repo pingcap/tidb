@@ -77,7 +77,7 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 			}
 			if rs.done {
 				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
-					zap.Int("id", rs.id), zap.Int("total", rs.total))
+					zap.Int("id", rs.id), zap.Int("total", rs.total), zap.String("task", handleRange.String()))
 				c.results.Store(rs.id, struct{}{})
 			}
 			if _, found := c.results.Load(handleRange.id); found {

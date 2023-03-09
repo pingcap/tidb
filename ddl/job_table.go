@@ -947,7 +947,7 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := "delete from mysql.tidb_background_subtask"
 	if !isOneEle {
-		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%d\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
+		sql += fmt.Sprintf(" where task_key = \"%d_%s_%d_%d\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
 	} else {
 		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%%\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID)
 	}
