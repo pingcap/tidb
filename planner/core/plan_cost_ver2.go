@@ -1034,6 +1034,7 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 	return exprs
 }
 
+// CostTrace indicates trace for cost detail
 type CostTrace struct {
 	// name indicates a short name which represents the formula calculation itself
 	Name       string                 `json:"name"`
