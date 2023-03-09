@@ -3384,7 +3384,7 @@ func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs"))
 	}()
 	ch := mustQueryAsync(tk, "select * from t where a = 1 for update")
-	mustTimeout(t, ch, time.Millisecond*50)
+	mustTimeout(t, ch, time.Millisecond*100)
 
 	tk2.MustExec("commit")
 	mustRecv(t, ch).Check(testkit.Rows("1 2"))
@@ -3397,7 +3397,7 @@ func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("delete from t where a = 1")
 	ch = mustQueryAsync(tk, "select * from t where a = 1 for update")
-	mustTimeout(t, ch, time.Millisecond*50)
+	mustTimeout(t, ch, time.Millisecond*100)
 
 	tk2.MustExec("commit")
 	mustRecv(t, ch).Check(testkit.Rows())
