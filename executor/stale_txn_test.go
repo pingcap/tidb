@@ -514,15 +514,15 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 
 	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// schema changed back to the newest
 	tk.MustExec("commit")
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// select does not affect the infoschema
 	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 }
 
 func TestSetTransactionReadOnlyAsOf(t *testing.T) {
