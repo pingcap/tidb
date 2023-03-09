@@ -832,7 +832,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.NoError(s.T(), err)
 }
 
@@ -864,7 +864,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.Regexp(s.T(), "fake import error.*", err.Error())
 }
 
