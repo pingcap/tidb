@@ -1146,7 +1146,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
-func getColsNDVFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
+func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
 	if len(cols) == 0 || histColl == nil {
 		return -1
 	}
@@ -1155,7 +1155,7 @@ func getColsNDVFromHistColl(cols []*expression.Column, histColl *statistics.Hist
 		colUIDs[i] = col.UniqueID
 	}
 
-	// Try to get NDV from column stats if it's a single column.
+	// 1. Try to get NDV from column stats if it's a single column.
 	if len(colUIDs) == 1 && histColl.Columns != nil {
 		uid := colUIDs[0]
 		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
@@ -1168,7 +1168,7 @@ func getColsNDVFromHistColl(cols []*expression.Column, histColl *statistics.Hist
 		return -1
 	}
 
-	// Try to get NDV from index stats.
+	// 2. Try to get NDV from index stats.
 	for idxID, idxCols := range histColl.Idx2ColumnIDs {
 		if len(idxCols) != len(colUIDs) {
 			continue
@@ -1183,7 +1183,24 @@ func getColsNDVFromHistColl(cols []*expression.Column, histColl *statistics.Hist
 			return idxStats.NDV
 		}
 	}
-	return -1
+
+	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
+	// This would happen when len(cols) > 0 and no proper index stats are available.
+	minNDV := int64(-1)
+	for _, colStats := range histColl.Columns {
+		if colStats == nil || colStats.Info == nil {
+			continue
+		}
+		col := colStats.Info
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
+		if (colStats.NDV > 0 && minNDV <= 0) ||
+			colStats.NDV < minNDV {
+			minNDV = colStats.NDV
+		}
+	}
+	return minNDV
 }
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -1285,7 +1302,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// We use it as an upper bound here.
 	rowCountUpperBound := -1.0
 	if ds.tableStats != nil {
-		joinKeyNDV := getColsNDVFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
+		joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
 		if joinKeyNDV > 0 {
 			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
 		}
