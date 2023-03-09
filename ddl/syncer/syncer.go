@@ -305,6 +305,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			continue
 		}
 
+		logutil.BgLogger().Info("[ddl] syncer check all versions", zap.Int64("jobID", jobID), zap.Int64("latestVer", latestVer), zap.Int("schema version count", len(resp.Kvs)))
 		// Check all schema versions.
 		succ := true
 		if variable.EnableMDL.Load() {
@@ -325,12 +326,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 					notMatchVerCnt++
 					break
 				}
-				delete(updatedMap, key[strings.LastIndex(key, "/")+1:])
+				k := key[strings.LastIndex(key, "/")+1:]
+				logutil.BgLogger().Info("[ddl] syncer check all versions, someone is synced", zap.String("ddl", key), zap.String("id", k), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+				delete(updatedMap, k)
 			}
 			if len(updatedMap) > 0 {
 				succ = false
-				for _, info := range updatedMap {
-					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced", zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer))
+				for k, info := range updatedMap {
+					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced", zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer), zap.String("id", k))
 				}
 			}
 		} else {

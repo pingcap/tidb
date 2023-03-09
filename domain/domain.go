@@ -749,6 +749,7 @@ func (do *Domain) mdlCheckLoop() {
 		} else if !jobNeedToSync {
 			// Schema doesn't change, and no job to check in the last run.
 			do.mdlCheckTableInfo.mu.Unlock()
+			logutil.BgLogger().Info("mdl check loop skip", zap.Int64("maxVer", maxVer), zap.Int64("saveMaxSchemaVersion", saveMaxSchemaVersion))
 			continue
 		}
 
@@ -756,6 +757,7 @@ func (do *Domain) mdlCheckLoop() {
 		if jobNeedToCheckCnt == 0 {
 			jobNeedToSync = false
 			do.mdlCheckTableInfo.mu.Unlock()
+			logutil.BgLogger().Info("mdl check loop skip", zap.Int("jobNeedToCheckCnt", jobNeedToCheckCnt))
 			continue
 		}
 
@@ -787,9 +789,11 @@ func (do *Domain) mdlCheckLoop() {
 			jobCache = make(map[int64]int64, 1000)
 		}
 
+		logutil.BgLogger().Info("mdl check loop", zap.Int("jobNeedToCheckCnt", jobNeedToCheckCnt), zap.Int("jobNeedToSyncCnt", len(jobsVerMap)), zap.Any("jobCache", jobCache), zap.Any("jobsVerMap", jobsVerMap))
 		for jobID, ver := range jobsVerMap {
 			if cver, ok := jobCache[jobID]; ok && cver >= ver {
 				// Already update, skip it.
+				logutil.BgLogger().Info("mdl skip update", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 				continue
 			}
 			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
