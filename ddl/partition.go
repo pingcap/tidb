@@ -358,6 +358,11 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 			failpoint.Return(true, nil)
 		}
 	})
+	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, nil)
+		}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -1848,6 +1853,22 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				}
 				return ver, errors.Trace(err)
 			}
+		}
+		if tblInfo.TiFlashReplica != nil {
+			// Remove the partitions
+			ids := tblInfo.TiFlashReplica.AvailablePartitionIDs
+			// Rarely called, so OK to take some time, to make it easy
+			for _, id := range physicalTableIDs {
+				for i, avail := range ids {
+					if id == avail {
+						tmp := ids[:i]
+						tmp = append(tmp, ids[i+1:]...)
+						ids = tmp
+						break
+					}
+				}
+			}
+			tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
