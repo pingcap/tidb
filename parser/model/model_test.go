@@ -805,3 +805,16 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, 5, ttlInfo.IntervalTimeUnit)
 	require.Equal(t, true, ttlInfo.Enable)
 }
+
+func TestTTLJobInterval(t *testing.T) {
+	ttlInfo := &TTLInfo{}
+
+	interval, err := ttlInfo.GetJobInterval()
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, interval)
+
+	ttlInfo = &TTLInfo{JobInterval: "200h"}
+	interval, err = ttlInfo.GetJobInterval()
+	require.NoError(t, err)
+	require.Equal(t, time.Hour*200, interval)
+}
