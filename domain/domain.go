@@ -721,6 +721,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
+	logutil.BgLogger().Info("refresh mdl check table info", zap.Any("verMap", do.mdlCheckTableInfo.jobsVerMap), zap.Any("idsMap", do.mdlCheckTableInfo.jobsIdsMap))
 }
 
 func (do *Domain) mdlCheckLoop() {
@@ -773,6 +774,7 @@ func (do *Domain) mdlCheckLoop() {
 
 		jobNeedToSync = true
 
+		logutil.BgLogger().Info("mdl check loop", zap.Any("jobCache", jobCache), zap.Any("jobsVerMap", jobsVerMap))
 		sm := do.InfoSyncer().GetSessionManager()
 		if sm == nil {
 			logutil.BgLogger().Info("session manager is nil")
