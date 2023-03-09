@@ -475,6 +475,7 @@ func (en engine) unsafeClose(ctx context.Context, cfg *EngineConfig) (*ClosedEng
 	return &ClosedEngine{engine: en}, nil
 }
 
+// GetID get engine id.
 func (en engine) GetID() int32 {
 	return en.id
 }

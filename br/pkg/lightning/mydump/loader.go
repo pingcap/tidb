@@ -122,6 +122,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	return string(schema), nil
 }
 
+// FullTableName return FQDN of the table.
 func (m *MDTableMeta) FullTableName() string {
 	return common.UniqueTable(m.DB, m.Name)
 }
