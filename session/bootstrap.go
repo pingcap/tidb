@@ -804,11 +804,13 @@ const (
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
 	version134 = 134
+	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
+	version135 = 135
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version134
+var currentBootstrapVersion int64 = version135
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -930,6 +932,7 @@ var (
 		upgradeToVer132,
 		upgradeToVer133,
 		upgradeToVer134,
+		upgradeToVer135,
 	}
 )
 
@@ -2316,6 +2319,26 @@ func upgradeToVer134(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
 }
 
+// For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
+func upgradeToVer135(s Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2430,19 +2453,25 @@ func doDDLWorks(s Session) {
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
-func doBootstrapSQLFile(s Session) {
+func doBootstrapSQLFile(s Session) error {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
-		return
+		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
 	}
 	for _, stmt := range stmts {
@@ -2458,6 +2487,7 @@ func doBootstrapSQLFile(s Session) {
 			}
 		}
 	}
+	return nil
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

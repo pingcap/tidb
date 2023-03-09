@@ -170,7 +170,7 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	var genCols []genCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, false)
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
 			if err != nil {
 				return nil, err
 			}
@@ -383,6 +383,7 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		if kvcodec.isAutoRandomCol(col.ToInfo()) {
 			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
+			// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
 			if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 				return nil, errors.Trace(err)
@@ -481,7 +482,7 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 		if err != nil {
 			return value, err
 		}
-		if err := col.CheckNotNull(&value); err == nil {
+		if err := col.CheckNotNull(&value, 0); err == nil {
 			return value, nil // the most normal case
 		}
 		isBadNullValue = true
@@ -505,7 +506,7 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
+		err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx, 0)
 	default:
 		value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 	}

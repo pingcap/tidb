@@ -24,3 +24,7 @@ CREATE_SQL_CONTAINS="/*T${TTL_MARK} TTL=\`t\` + INTERVAL 1 DAY */ /*T${TTL_MARK}
 
 run_sql 'show create table ttldb.t1'
 check_contains "$CREATE_SQL_CONTAINS"
+
+run_sql 'select count(1) from ttldb.t1'
+check_contains 'count(1): 3'
+
