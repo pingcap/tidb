@@ -46,11 +46,11 @@ func (b *builtinIlikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIlikeSig) canMemorize(param *regexpParam) bool {
+func (b *builtinIlikeSig) canMemorize(param *funcParam) bool {
 	return param.getCol() == nil
 }
 
-func (b *builtinIlikeSig) tryToMemorize(param *regexpParam, escape int64) {
+func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
 	if !b.canMemorize(param) {
 		return
 	}
@@ -85,7 +85,7 @@ func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (i
 	return escape, false, nil
 }
 
-func (b *builtinIlikeSig) lowerExpr(param *regexpParam, rowNum int) {
+func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
@@ -100,7 +100,7 @@ func (b *builtinIlikeSig) lowerExpr(param *regexpParam, rowNum int) {
 	param.setCol(tmpExprCol)
 }
 
-func (b *builtinIlikeSig) lowerPattern(param *regexpParam, rowNum int, escape int64) int64 {
+func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int64) int64 {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
@@ -117,7 +117,7 @@ func (b *builtinIlikeSig) lowerPattern(param *regexpParam, rowNum int, escape in
 	return escape
 }
 
-func (b *builtinIlikeSig) vecVec(params []*regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) vecVec(params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(params[0].getCol(), params[1].getCol())
 	i64s := result.Int64s()
@@ -132,7 +132,7 @@ func (b *builtinIlikeSig) vecVec(params []*regexpParam, rowNum int, escape int64
 	return nil
 }
 
-func (b *builtinIlikeSig) constVec(expr string, param *regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) constVec(expr string, param *funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(param.getCol())
 	i64s := result.Int64s()
@@ -147,7 +147,7 @@ func (b *builtinIlikeSig) constVec(expr string, param *regexpParam, rowNum int, 
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(exprParam.getCol())
 	i64s := result.Int64s()
@@ -161,7 +161,7 @@ func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *regexpParam, rowNum i
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*regexpParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	if params[0].getCol() == nil {
 		return b.constVec(params[0].getStringVal(0), params[1], rowNum, escape, result)
 	}
@@ -171,7 +171,7 @@ func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*regexpParam, rowNum
 
 func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
-	params := make([]*regexpParam, 0, 3)
+	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&b.baseBuiltinFunc, params)
 
 	for i := 0; i < 2; i++ {
