@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//config",
         "//executor",
+        "//executor/exeerrors",
         "//infoschema",
         "//kv",
         "//meta/autoid",

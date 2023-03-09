@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
@@ -220,7 +221,7 @@ func TestRevokeDynamicPrivs(t *testing.T) {
 
 	// try revoking only on test.* - should fail:
 	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrIllegalPrivilegeLevel))
 
 	// privs should still be intact:
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))

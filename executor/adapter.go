@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -660,7 +661,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
-		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+		return errors2.ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
 	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
 	defer func() {
@@ -989,7 +990,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			)
 			sctx.GetSessionVars().SetInTxn(false)
-			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+			err = errors2.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
 		}
 	}()
 
@@ -1030,7 +1031,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
-				if ErrDeadlock.Equal(err) {
+				if errors2.ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
 				return err
@@ -1066,7 +1067,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			// todo: Report deadlock
-			if ErrDeadlock.Equal(err) {
+			if errors2.ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
 			return err
@@ -1089,7 +1090,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
-			err = ErrDeadlock
+			err = errors2.ErrDeadlock
 		}
 	}()
 

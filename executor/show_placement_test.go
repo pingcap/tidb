@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -323,7 +323,7 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 
 	// before grant
 	err := tk1.QueryToErr("show placement for database db2")
-	require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+	require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",
@@ -345,12 +345,12 @@ func TestShowPlacementForDBPrivilege(t *testing.T) {
 		))
 
 		err = tk1.QueryToErr("show placement for database test")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
+		require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "test").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.QueryToErr("show placement for database db2")
-		require.EqualError(t, err, executor.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
+		require.EqualError(t, err, exeerrors.ErrDBaccessDenied.GenWithStackByArgs("user1", "%", "db2").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL",

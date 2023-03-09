@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -81,11 +82,11 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, p := range e.Privs {
 			if len(p.Cols) == 0 {
 				if !mysql.AllTablePrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv && p.Priv != mysql.GrantPriv && p.Priv != mysql.ExtendedPriv {
-					return ErrIllegalGrantForTable
+					return errors2.ErrIllegalGrantForTable
 				}
 			} else {
 				if !mysql.AllColumnPrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv {
-					return ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
+					return errors2.ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
 				}
 			}
 		}
@@ -156,7 +157,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		if !exists && e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return ErrCantCreateUserWithGrant
+			return errors2.ErrCantCreateUserWithGrant
 		} else if !exists {
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
@@ -164,7 +165,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			// spelling errors will create users with no passwords.
 			pwd, ok := user.EncodedPassword()
 			if !ok {
-				return errors.Trace(ErrPasswordFormat)
+				return errors.Trace(errors2.ErrPasswordFormat)
 			}
 			authPlugin := mysql.AuthNativePassword
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
@@ -474,14 +475,14 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
-		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
+		return errors2.ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
 	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) {
 		// In GRANT context, MySQL returns a syntax error if the privilege has not been registered with the server:
 		// ERROR 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 		// But in REVOKE context, it returns a warning ErrDynamicPrivilegeNotRegistered. It is not strictly compatible,
 		// but TiDB returns the more useful ErrDynamicPrivilegeNotRegistered instead of a parse error.
-		return ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName)
+		return errors2.ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName)
 	}
 	grantOption := "N"
 	if e.WithGrant {
@@ -511,7 +512,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	for _, v := range mysql.StaticGlobalOnlyPrivs {
 		if v == priv.Priv {
-			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+			return errors2.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 		}
 	}
 
@@ -588,7 +589,7 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
 		if priv != mysql.GrantPriv && !mysql.AllGlobalPrivs.Has(priv) {
-			return ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
+			return errors2.ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
 		}
 		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil
@@ -607,7 +608,7 @@ func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, val
 func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
 		if priv != mysql.GrantPriv && !mysql.AllDBPrivs.Has(priv) {
-			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
+			return errors2.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
 		}
 		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil

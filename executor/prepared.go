@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -106,7 +107,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
-		return ErrPrepareMulti
+		return errors2.ErrPrepareMulti
 	}
 	stmt0 := stmts[0]
 	if e.needReset {

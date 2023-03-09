@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -325,8 +326,8 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
-			return errors.Trace(ErrQueryInterrupted)
+			finishJobWithLog(e.ctx, results.Job, errors2.ErrQueryInterrupted)
+			return errors.Trace(errors2.ErrQueryInterrupted)
 		}
 	}
 	// Dump stats to historical storage.
@@ -360,7 +361,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	for panicCnt < statsConcurrency {
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			close(saveResultsCh)
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(errors2.ErrQueryInterrupted)
 		}
 		results, ok := <-resultsCh
 		if !ok {

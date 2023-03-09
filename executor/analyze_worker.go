@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -56,7 +57,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 	}()
 	for results := range worker.resultsCh {
 		if atomic.LoadUint32(worker.killed) == 1 {
-			worker.errCh <- errors.Trace(ErrQueryInterrupted)
+			worker.errCh <- errors.Trace(errors2.ErrQueryInterrupted)
 			return
 		}
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot, handle.StatsMetaHistorySourceAnalyze)

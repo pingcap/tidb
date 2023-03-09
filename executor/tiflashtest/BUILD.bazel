@@ -13,7 +13,7 @@ go_test(
     deps = [
         "//config",
         "//domain",
-        "//executor",
+        "//executor/exeerrors",
         "//kv",
         "//meta/autoid",
         "//parser/terror",

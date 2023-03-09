@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -312,7 +313,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		return ErrQueryInterrupted
+		return errors2.ErrQueryInterrupted
 	}
 
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
@@ -328,7 +329,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	// recheck whether the session/query is killed during the Next()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		err = ErrQueryInterrupted
+		err = errors2.ErrQueryInterrupted
 	}
 	return err
 }
@@ -1793,7 +1794,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return ErrSubqueryMoreThan1Row
+		return errors2.ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := tryNewCacheChunk(e.children[0])
@@ -1802,7 +1803,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return ErrSubqueryMoreThan1Row
+		return errors2.ErrSubqueryMoreThan1Row
 	}
 
 	return nil

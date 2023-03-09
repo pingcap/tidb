@@ -14,6 +14,7 @@ go_test(
         "//autoid_service",
         "//config",
         "//executor",
+        "//executor/exeerrors",
         "//infoschema",
         "//meta/autoid",
         "//parser/auth",

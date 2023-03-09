@@ -16,7 +16,7 @@ go_test(
         "//config",
         "//domain",
         "//errno",
-        "//executor",
+        "//executor/exeerrors",
         "//kv",
         "//parser/auth",
         "//parser/model",

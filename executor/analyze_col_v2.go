@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -819,7 +820,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(errors2.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

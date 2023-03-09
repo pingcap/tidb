@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -55,64 +56,64 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 		OptionStr string
 		Err       error
 	}{
-		{OptionStr: "xx=1", Err: ErrUnknownOption},
-		{OptionStr: detachedOption + "=1", Err: ErrInvalidOptionVal},
-		{OptionStr: addIndexOption, Err: ErrInvalidOptionVal},
-		{OptionStr: detachedOption + ", " + detachedOption, Err: ErrDuplicateOption},
-		{OptionStr: importModeOption + "='logical', " + diskQuotaOption + "='100GiB'", Err: ErrLoadDataUnsupportedOption},
-		{OptionStr: importModeOption + "='logical', " + checksumOption + "='optional'", Err: ErrLoadDataUnsupportedOption},
-		{OptionStr: importModeOption + "='logical', " + addIndexOption + "=false", Err: ErrLoadDataUnsupportedOption},
-		{OptionStr: importModeOption + "='logical', " + analyzeOption + "='optional'", Err: ErrLoadDataUnsupportedOption},
+		{OptionStr: "xx=1", Err: exeerrors.ErrUnknownOption},
+		{OptionStr: detachedOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: addIndexOption, Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: detachedOption + ", " + detachedOption, Err: exeerrors.ErrDuplicateOption},
+		{OptionStr: importModeOption + "='logical', " + diskQuotaOption + "='100GiB'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: importModeOption + "='logical', " + checksumOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: importModeOption + "='logical', " + addIndexOption + "=false", Err: exeerrors.ErrLoadDataUnsupportedOption},
+		{OptionStr: importModeOption + "='logical', " + analyzeOption + "='optional'", Err: exeerrors.ErrLoadDataUnsupportedOption},
 
-		{OptionStr: importModeOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "=1", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "=1", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "='220MiBxxx'", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "='220MiBxxx'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + diskQuotaOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: importModeOption + "='physical', " + checksumOption + "=''", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + checksumOption + "=123", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + checksumOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + checksumOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + checksumOption + "=''", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + checksumOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + checksumOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + checksumOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: importModeOption + "='physical', " + addIndexOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=123", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + addIndexOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + addIndexOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=123", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: importModeOption + "='physical', " + analyzeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: threadOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=0", Err: ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=-100", Err: ErrInvalidOptionVal},
-		{OptionStr: threadOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: threadOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: threadOption + "=0", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: threadOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: threadOption + "=-100", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: threadOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: batchSizeOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "='11aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: batchSizeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: batchSizeOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: batchSizeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: batchSizeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: maxWriteSpeedOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=false", Err: ErrInvalidOptionVal},
-		{OptionStr: maxWriteSpeedOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: maxWriteSpeedOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: splitFileOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: splitFileOption + "=111", Err: ErrInvalidOptionVal},
-		{OptionStr: splitFileOption + "='false'", Err: ErrInvalidOptionVal},
-		{OptionStr: splitFileOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: splitFileOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: splitFileOption + "=111", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: splitFileOption + "='false'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: splitFileOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
-		{OptionStr: recordErrorsOption + "='aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "='111aa'", Err: ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "=-123", Err: ErrInvalidOptionVal},
-		{OptionStr: recordErrorsOption + "=null", Err: ErrInvalidOptionVal},
+		{OptionStr: recordErrorsOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: recordErrorsOption + "='111aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: recordErrorsOption + "=-123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: recordErrorsOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 	}
 
 	ctx := mock.NewContext()

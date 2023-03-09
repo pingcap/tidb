@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2593,7 +2593,7 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
 	plannercore.ForceUseOuterBuild4Test.Store(true)
 	defer func() {
@@ -2603,7 +2603,7 @@ func TestIssue20270(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
 	require.NoError(t, err)
 }

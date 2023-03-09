@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -2250,7 +2251,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", errors2.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2323,7 +2324,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", errors2.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()

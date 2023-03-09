@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -693,7 +693,7 @@ func TestCancelMppTasks(t *testing.T) {
 		defer wg.Done()
 		err := tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
 		require.Error(t, err)
-		require.Equal(t, int(executor.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		require.Equal(t, int(errors2.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)

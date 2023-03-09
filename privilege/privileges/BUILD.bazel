@@ -58,7 +58,7 @@ go_test(
     deps = [
         "//config",
         "//errno",
-        "//executor",
+        "//executor/exeerrors",
         "//kv",
         "//parser/auth",
         "//parser/mysql",

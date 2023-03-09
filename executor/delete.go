@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	errors2 "github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -150,13 +151,13 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return errors2.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+		return errors2.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil
 }

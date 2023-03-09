@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -774,7 +774,7 @@ func TestShutDown(t *testing.T) {
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 }
 
 type snapshotCache interface {
