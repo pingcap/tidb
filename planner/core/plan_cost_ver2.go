@@ -538,11 +538,11 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
-	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
-	buildHashCost := hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(buildKeys)), cpuFactor, memFactor)
+	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor).setName("buildFilterCost")
+	buildHashCost := hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(buildKeys)), cpuFactor, memFactor).setName("buildHashCost")
 
-	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
-	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
+	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor).setName("probeFilterCost")
+	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor).setName("probeHashCost")
 
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -559,7 +559,7 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	} else { // TiDB HashJoin
 		startCost := newCostVer2(option, cpuFactor,
 			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
-			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) }).setName("startCost")
 		p.planCostVer2 = sumCostVer2([]costVer2{startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
 			divCostVer2(sumCostVer2([]costVer2{probeFilterCost, probeHashCost}), tidbConcurrency)})
 	}
@@ -1034,7 +1034,7 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 	return exprs
 }
 
-type costTrace struct {
+type CostTrace struct {
 	// name indicates a short name which represents the formula calculation itself
 	Name       string                 `json:"name"`
 	CostParams map[string]interface{} `json:"costParams"`
@@ -1043,7 +1043,7 @@ type costTrace struct {
 	factorCosts map[string]float64 // map[factorName]cost, used to calibrate the cost model
 }
 
-func (t *costTrace) asFormula() string {
+func (t *CostTrace) asFormula() string {
 	if len(t.Name) > 0 {
 		return t.Name
 	}
@@ -1052,13 +1052,18 @@ func (t *costTrace) asFormula() string {
 
 type costVer2 struct {
 	cost  float64
-	trace *costTrace
+	trace *CostTrace
 }
 
-func (c costVer2) setName(name string) {
+func (c costVer2) GetTrace() *CostTrace {
+	return c.trace
+}
+
+func (c costVer2) setName(name string) costVer2 {
 	if c.trace != nil {
 		c.trace.Name = name
 	}
+	return c
 }
 
 func traceCost(option *PlanCostOption) bool {
@@ -1081,7 +1086,7 @@ func newZeroCostVer2(trace bool, opts ...costVer2Option) (ret costVer2) {
 		opt(costVer2Opt)
 	}
 	if trace {
-		ret.trace = &costTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 	}
 	return
 }
@@ -1093,7 +1098,7 @@ func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, la
 	}
 	ret.cost = cost
 	if traceCost(option) {
-		ret.trace = &costTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 		ret.trace.CostParams[factor.Name] = cost
 		ret.trace.Formula = lazyFormula()
 	}
@@ -1112,7 +1117,7 @@ func sumCostVer2(costs []costVer2, opts ...costVer2Option) (ret costVer2) {
 		ret.cost += c.cost
 		if c.trace != nil {
 			if i == 0 { // init
-				ret.trace = &costTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+				ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 			}
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
@@ -1136,7 +1141,7 @@ func divCostVer2(cost costVer2, denominator float64, opts ...costVer2Option) (re
 	}
 	ret.cost = cost.cost / denominator
 	if cost.trace != nil {
-		ret.trace = &costTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c / denominator
 		}
@@ -1155,7 +1160,7 @@ func mulCostVer2(cost costVer2, scale float64, opts ...costVer2Option) (ret cost
 	}
 	ret.cost = cost.cost * scale
 	if cost.trace != nil {
-		ret.trace = &costTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
+		ret.trace = &CostTrace{costVer2Opt.name, make(map[string]interface{}), "", make(map[string]float64)}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c * scale
 		}

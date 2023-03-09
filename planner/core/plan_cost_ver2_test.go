@@ -321,17 +321,29 @@ func TestPlanCostDetailInTracer(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
 	tk.MustExec("set @@tidb_cost_model_version=2")
 	testcases := []struct {
-		sql           string
-		assertFormula string
-		assertID      int
+		sql                string
+		assertFormula      string
+		assertID           int
+		assertChildName    string
+		assertChildFormula string
 	}{
 		{
 			sql: "select * from t where b > 3 and d > 1",
 			// Selection Operator
 			assertID:      6,
 			assertFormula: "(cpu(10000*filters(2)*tikv_cpu_factor(49.9))) + (TableScan_5)",
+		},
+		{
+			sql: "select * from t1,t2 where t1.a = t2.a",
+			// HashJoin
+			assertID:           8,
+			assertFormula:      "(startCost) + (TableReader_15) + (TableReader_12) + (buildHashCost) + (buildFilterCost) + (((probeFilterCost) + (probeHashCost))/5.00)",
+			assertChildFormula: "cpu(10*3*tidb_cpu_factor(49.9))",
+			assertChildName:    "startCost",
 		},
 	}
 	for _, testcase := range testcases {
@@ -354,6 +366,9 @@ func TestPlanCostDetailInTracer(t *testing.T) {
 		assertDetail := otrace.PhysicalPlanCostDetails[testcase.assertID]
 		require.NotNil(t, assertDetail)
 		require.Equal(t, assertDetail.Desc, testcase.assertFormula)
+		if len(testcase.assertChildName) > 0 {
+			require.NotNil(t, assertDetail.Params[testcase.assertChildName])
+			require.Equal(t, assertDetail.Params[testcase.assertChildName].(*core.CostTrace).Formula, testcase.assertChildFormula)
+		}
 	}
-
 }
