@@ -124,6 +124,16 @@
       "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
       "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
     ]
+  }, 
+  {
+    "name": "TestMPPBCJModel",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_broadcast_join_cost_model_version=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_broadcast_join_cost_model_version=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
   },
   {
     "name": "TestIssue37520",
