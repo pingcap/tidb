@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -46,7 +47,14 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *kvStore
+	store       *kvStore
+	mppStoreCnt mppStoreCnt
+}
+
+type mppStoreCnt struct {
+	cnt        int32
+	lastUpdate int64
+	initFlag   int32
 }
 
 // GetAddress returns the network address.
@@ -575,21 +583,49 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	return iter
 }
 
-// GetMPPStoreCount returns number of TiFlash stores
-func (c *MPPClient) GetMPPStoreCount() (int, bool) {
-	cnt := len(c.store.GetRegionCache().GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode))
-	if cnt > 0 {
-		return cnt, true
-	}
-	{
-		stores, err := c.store.GetRegionCache().PDClient().GetAllStores(c.store.store.Ctx())
-		if err != nil {
-			return 0, false
+func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error) {
+	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
+	oriMPPStoreCnt := atomic.LoadInt32(&c.cnt)
+	now := time.Now().UnixMicro()
+	isInit := atomic.LoadInt32(&c.initFlag) != 0
+
+	if now-lastUpdate < TTL {
+		if isInit {
+			return int(oriMPPStoreCnt), nil
 		}
+	}
+	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
+		if isInit {
+			return int(oriMPPStoreCnt), nil
+		}
+		// if has't initialized, always fetch latest mpp store info
+	}
+
+	// update mpp store cache
+	cnt := 0
+	stores, err := storeCtx.GetRegionCache().PDClient().GetAllStores(storeCtx.store.Ctx(), pd.WithExcludeTombstone())
+	if err == nil {
 		for _, s := range stores {
-			c.store.GetRegionCache().SetRegionCacheStore(s.GetId(), s.GetAddress(), s.GetPeerAddress(), tikvrpc.GetStoreTypeByMeta(s), 0, s.GetLabels())
+			if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
+				continue
+			}
+			cnt += 1
 		}
+	} else {
+		// always to update cache next time
+		atomic.StoreInt32(&c.initFlag, 0)
+		return 0, err
 	}
-	cnt = len(c.store.GetRegionCache().GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode))
-	return cnt, true
+
+	if atomic.LoadInt64(&c.lastUpdate) == now {
+		atomic.StoreInt32(&c.cnt, int32(cnt))
+		atomic.StoreInt32(&c.initFlag, 1)
+	}
+
+	return cnt, nil
+}
+
+// GetMPPStoreCount returns number of TiFlash stores
+func (c *MPPClient) GetMPPStoreCount() (int, error) {
+	return c.mppStoreCnt.getMPPStoreCount(c.store, 120*1e6 /* TTL 120sec */)
 }

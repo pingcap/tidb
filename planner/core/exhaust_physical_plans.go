@@ -2064,12 +2064,14 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		return checkChildFitBC(p.children[0])
 	}
 
-	mppStoreCnt, ok := p.ctx.GetMPPClient().GetMPPStoreCount()
+	if p.ctx.GetSessionVars().BroadcastJoinCostModelVersion > 0 {
+		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
 
-	// No need to exchange data between stores if there is only ONE store.
-	// Maybe other special way can be used for optimization.
-	if ok && mppStoreCnt > 1 {
-		return isJoinFitMPPBCJ(p, mppStoreCnt)
+		// No need to exchange data if there is only ONE mpp store.
+		// Maybe other special way can be used to optimize such case.
+		if err == nil && mppStoreCnt > 1 {
+			return isJoinFitMPPBCJ(p, mppStoreCnt)
+		}
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
