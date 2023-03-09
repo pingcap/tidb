@@ -756,9 +756,9 @@ func (e *LoadDataWorker) Load(
 	failpoint.Inject("AfterStartJob", nil)
 
 	group, groupCtx := errgroup.WithContext(ctx)
-	// progressDone is used to let commitWork goroutine notify UpdateJobProgress
+	// done is used to let commitWork goroutine notify UpdateJobProgress
 	// goroutine that the job is finished.
-	progressDone := make(chan struct{})
+	done := make(chan struct{})
 
 	// processStream goroutine.
 	group.Go(func() error {
@@ -787,7 +787,7 @@ func (e *LoadDataWorker) Load(
 	group.Go(func() error {
 		err2 := e.commitWork(groupCtx)
 		if err2 == nil {
-			close(progressDone)
+			close(done)
 		}
 		return err2
 	})
@@ -798,7 +798,7 @@ func (e *LoadDataWorker) Load(
 
 		for {
 			select {
-			case <-progressDone:
+			case <-done:
 				// try to update progress to set 100% progress
 				p := e.progress.Load()
 				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, p.String())
@@ -1084,10 +1084,7 @@ func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) err
 // will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataWorker) ReadRows(
-	ctx context.Context,
-	parser mydump.Parser,
-) error {
+func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) error {
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
 		ignoreOneLineFn = func() error {
