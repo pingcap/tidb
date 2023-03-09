@@ -123,7 +123,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 	}
 	// TODO: convert to local time.
 	task.StartTime, _ = r.GetTime(4).GoTime(time.UTC)
-	task.EndTime, _ = r.GetTime(5).GoTime(time.UTC)
+	task.StateUpdateTime, _ = r.GetTime(5).GoTime(time.UTC)
 	return task
 }
 
@@ -132,7 +132,7 @@ func (stm *GlobalTaskManager) AddNewTask(tp string, concurrency int, meta []byte
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, concurrency, meta) values (%?, %?, %?, %?)", tp, proto.TaskStatePending, concurrency, meta)
+	_, err := execSQL(stm.ctx, stm.se, "insert into mysql.tidb_global_task(type, state, concurrency, meta, state_update_time) values (%?, %?, %?, %?, %?)", tp, proto.TaskStatePending, concurrency, meta, time.Now().UTC().String())
 	if err != nil {
 		return 0, err
 	}
@@ -167,7 +167,7 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %? where id = %?", task.State, task.DispatcherID, task.Step, task.ID)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %? where id = %?", task.State, task.DispatcherID, task.Step, task.StateUpdateTime.UTC().String(), task.ID)
 	if err != nil {
 		return err
 	}

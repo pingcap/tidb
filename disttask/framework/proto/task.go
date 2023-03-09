@@ -50,15 +50,15 @@ const (
 
 // Task represents the task of distribute framework.
 type Task struct {
-	ID           int64
-	Type         string
-	State        string
-	Step         int64
-	DispatcherID string
-	Concurrency  uint64
-	StartTime    time.Time
-	EndTime      time.Time
-	Meta         []byte
+	ID              int64
+	Type            string
+	State           string
+	Step            int64
+	DispatcherID    string
+	Concurrency     uint64
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	Meta            []byte
 }
 
 // Subtask represents the subtask of distribute framework.
