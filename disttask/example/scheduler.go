@@ -27,26 +27,26 @@ import (
 
 var globalNumberCounter atomic.Int64
 
-// ExampleStepOneScheduler is a scheduler for step one.
-type ExampleStepOneScheduler struct {
+// StepOneScheduler is a scheduler for step one.
+type StepOneScheduler struct {
 	task *proto.Task
 }
 
-// ExampleStepTwoScheduler is a scheduler for step two.
-type ExampleStepTwoScheduler struct {
+// StepTwoScheduler is a scheduler for step two.
+type StepTwoScheduler struct {
 	task *proto.Task
 }
 
 // InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
-func (s *ExampleStepOneScheduler) InitSubtaskExecEnv(ctx context.Context) error {
+func (*StepOneScheduler) InitSubtaskExecEnv(context.Context) error {
 	return nil
 }
 
 // CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
-func (s *ExampleStepOneScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
+func (*StepOneScheduler) CleanupSubtaskExecEnv(context.Context) error { return nil }
 
 // SplitSubtask is used to split the subtask into multiple minimal tasks.
-func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
+func (*StepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
 	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskExample.Numbers))
@@ -57,19 +57,19 @@ func (s *ExampleStepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 }
 
 // Rollback is used to rollback all subtasks.
-func (s *ExampleStepOneScheduler) Rollback(ctx context.Context) error {
+func (*StepOneScheduler) Rollback(context.Context) error {
 	logutil.BgLogger().Info("rollback step one")
 	return nil
 }
 
 // InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
-func (s *ExampleStepTwoScheduler) InitSubtaskExecEnv(ctx context.Context) error { return nil }
+func (*StepTwoScheduler) InitSubtaskExecEnv(context.Context) error { return nil }
 
 // CleanupSubtaskExecEnv is used to clean up the environment for the subtask executor.
-func (s *ExampleStepTwoScheduler) CleanupSubtaskExecEnv(ctx context.Context) error { return nil }
+func (*StepTwoScheduler) CleanupSubtaskExecEnv(context.Context) error { return nil }
 
 // SplitSubtask is used to split the subtask into multiple minimal tasks.
-func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
+func (*StepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
 	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskExample.Numbers))
@@ -80,7 +80,7 @@ func (s *ExampleStepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.M
 }
 
 // Rollback is used to rollback all subtasks.
-func (s *ExampleStepTwoScheduler) Rollback(ctx context.Context) error {
+func (*StepTwoScheduler) Rollback(context.Context) error {
 	logutil.BgLogger().Info("rollback step two")
 	return nil
 }
@@ -92,9 +92,9 @@ func init() {
 		func(task *proto.Task, step int64) (scheduler.Scheduler, error) {
 			switch step {
 			case StepOne:
-				return &ExampleStepOneScheduler{task: task}, nil
+				return &StepOneScheduler{task: task}, nil
 			case StepTwo:
-				return &ExampleStepTwoScheduler{task: task}, nil
+				return &StepTwoScheduler{task: task}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)
 		},

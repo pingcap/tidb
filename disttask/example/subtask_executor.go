@@ -24,18 +24,18 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 )
 
-// ExampleStepOneSubtaskExecutor is an example subtask executor.
-type ExampleStepOneSubtaskExecutor struct {
+// StepOneSubtaskExecutor is an example subtask executor.
+type StepOneSubtaskExecutor struct {
 	minimalTask proto.MinimalTask
 }
 
-// ExampleStepTwoSubtaskExecutor is an example subtask executor.
-type ExampleStepTwoSubtaskExecutor struct {
+// StepTwoSubtaskExecutor is an example subtask executor.
+type StepTwoSubtaskExecutor struct {
 	minimalTask proto.MinimalTask
 }
 
 // Run implements the SubtaskExecutor interface.
-func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
+func (e *StepOneSubtaskExecutor) Run(context.Context) error {
 	logutil.BgLogger().Info("sub task executor run step one")
 
 	failpoint.Inject("mockStepOneError", func() {
@@ -48,7 +48,7 @@ func (e *ExampleStepOneSubtaskExecutor) Run(ctx context.Context) error {
 }
 
 // Run implements the SubtaskExecutor interface.
-func (e *ExampleStepTwoSubtaskExecutor) Run(ctx context.Context) error {
+func (e *StepTwoSubtaskExecutor) Run(context.Context) error {
 	logutil.BgLogger().Info("sub task executor run step two")
 
 	failpoint.Inject("mockStepTwoError", func() {
@@ -67,9 +67,9 @@ func init() {
 		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
 			switch step {
 			case StepOne:
-				return &ExampleStepOneSubtaskExecutor{minimalTask: minimalTask}, nil
+				return &StepOneSubtaskExecutor{minimalTask: minimalTask}, nil
 			case StepTwo:
-				return &ExampleStepTwoSubtaskExecutor{minimalTask: minimalTask}, nil
+				return &StepTwoSubtaskExecutor{minimalTask: minimalTask}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)
 		},
