@@ -153,16 +153,16 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	for c.NumRows() < c.RequiredRows() {
 		minSelectResultIdx := -1
 		for i := range ssr.cachedChunks {
-			if ssr.cachedChunkIdx[i] >= ssr.cachedChunks[i].NumRows() {
+			if ssr.cachedChunkIdx[i] == ssr.cachedChunks[i].NumRows() {
 				prevMemUsage := ssr.cachedChunks[i].MemoryUsage()
 				if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
 					return err
 				}
+				ssr.cachedChunkIdx[i] = 0
+				ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage() - prevMemUsage)
 				if ssr.cachedChunks[i].NumRows() == 0 {
 					continue
 				}
-				ssr.cachedChunkIdx[i] = 0
-				ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage() - prevMemUsage)
 			}
 			idx := ssr.cachedChunkIdx[i]
 			row := ssr.cachedChunks[i].GetRow(idx)

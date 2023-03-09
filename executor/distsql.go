@@ -194,7 +194,8 @@ type IndexReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
-	byItems   []*plannerutil.ByItems
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems []*plannerutil.ByItems
 
 	corColInFilter bool
 	corColInAccess bool

@@ -106,6 +106,7 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	// byItems only for partition table with orderBy + pushedLimit
 	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType

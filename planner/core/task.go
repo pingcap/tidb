@@ -1233,13 +1233,14 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			if _, ok := rootTask.p.(*PhysicalIndexLookUpReader); !ok {
+			// only support IndexReader now.
+			if _, ok := rootTask.p.(*PhysicalIndexReader); ok {
 				rootLimit := PhysicalLimit{
 					Count:       p.Count,
 					Offset:      p.Offset,
 					PartitionBy: newPartitionBy,
 				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-				rootLimit.SetSchema(copTsk.indexPlan.Schema())
+				rootLimit.SetSchema(rootTask.plan().Schema())
 				return attachPlan2Task(rootLimit, rootTask), true
 			}
 		}
@@ -1285,13 +1286,13 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
 		}
 
+		rootTask := copTsk.convertToRootTask(p.ctx)
 		rootLimit := PhysicalLimit{
 			Count:       p.Count,
 			Offset:      p.Offset,
 			PartitionBy: newPartitionBy,
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		rootLimit.SetSchema(copTsk.tablePlan.Schema())
-		rootTask := copTsk.convertToRootTask(p.ctx)
+		rootLimit.SetSchema(rootTask.plan().Schema())
 		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
