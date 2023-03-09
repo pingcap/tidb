@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -521,13 +520,12 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	interval := table.TTLInfo.JobInterval
-	d, err := duration.ParseDuration(interval)
+	interval, err := table.TTLInfo.GetJobInterval()
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("illegal job interval", zap.String("interval", interval))
+		logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
 		return false
 	}
-	return startTime.Add(d).Before(now)
+	return startTime.Add(interval).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
