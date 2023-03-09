@@ -38,7 +38,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)
-		copCtx, err := ddl.NewCopContext4Test(tblInfo, idxInfo, tk.Session())
+		copCtx, err := ddl.NewCopContext4Test(tblInfo, []*model.IndexInfo{idxInfo}, tk.Session())
 		require.NoError(t, err)
 		startKey := tbl.RecordPrefix()
 		endKey := startKey.PrefixNext()

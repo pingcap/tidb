@@ -856,8 +856,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		switch b.tp {
 		case typeAddIndexWorker:
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
-			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
-				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx, jc, job.ID, reorgInfo.elements)
 			if err != nil {
 				if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
 					continue
@@ -914,18 +913,24 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
-	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
-	if indexInfo == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
-			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return
+
+	indexesInfo := make([]*model.IndexInfo, 0, len(b.reorgInfo.elements))
+
+	for _, ele := range b.reorgInfo.elements {
+		indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, ele.ID)
+		if indexInfo == nil {
+			logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
+				zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
+			return
+		}
+		indexesInfo = append(indexesInfo, indexInfo)
 	}
 	sessCtx, err := b.newSessCtx()
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	copCtx, err := newCopContext(b.tbl.Meta(), indexesInfo, sessCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
