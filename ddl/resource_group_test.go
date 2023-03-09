@@ -135,8 +135,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
-	tk.MustExec("create resource group x RU_PER_SEC=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 0 NO"))
+	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=1")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 1 NO"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 0 YES"))
 	tk.MustExec("alter resource group x BURSTABLE RU_PER_SEC=3000")
