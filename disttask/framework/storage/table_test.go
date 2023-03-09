@@ -109,6 +109,10 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb1", task.SchedulerID)
 	require.Equal(t, []byte("test"), task.Meta)
 
+	task2, err := sm.GetSubtaskInStates("tidb1", 1, proto.TaskStatePending, proto.TaskStateReverted)
+	require.NoError(t, err)
+	require.Equal(t, task, task2)
+
 	ids, err := sm.GetSchedulerIDs(1)
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
@@ -119,6 +123,10 @@ func TestSubTaskTable(t *testing.T) {
 	require.Len(t, ids, 0)
 
 	cnt, err := sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
