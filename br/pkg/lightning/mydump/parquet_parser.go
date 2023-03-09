@@ -174,6 +174,7 @@ func readParquetFileRowCount(
 	return numRows, nil
 }
 
+// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,

@@ -1250,12 +1250,12 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						var restorePercent float64
 						if totalRestoreRows > 0 {
 							restorePercent = math.Min(restoredRows/totalRestoreRows, 1.0)
-							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%s/%s",
-								units.BytesSize(restoredRows), units.BytesSize(totalRestoreRows)))
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f",
+								restoredRows, totalRestoreRows))
 						} else {
 							restorePercent = math.Min(restoredBytes/totalRestoreBytes, 1.0)
-							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%s/%s(estimated)",
-								units.BytesSize(restoredRows), units.BytesSize(restoredRows/restorePercent)))
+							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f(estimated)",
+								restoredRows, restoredRows/restorePercent))
 						}
 						metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
