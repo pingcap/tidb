@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	ScanRegionAttemptTimes = 128
+	ScanRegionAttemptTimes = 150
 )
 
 // Constants for split retry machinery.
@@ -180,21 +180,30 @@ func ScanRegionsWithRetry(
 }
 
 type scanRegionBackoffer struct {
-	attempt int
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
 }
 
 func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: ScanRegionAttemptTimes,
+		attempt:      ScanRegionAttemptTimes,
+		delayTime:    time.Millisecond * 10,
+		maxDelayTime: time.Second * 2,
 	}
 }
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 1s * 60 could be enough for splitting remain regions in the hole.
+		// it needs more time to wait splitting the regions that contains data in PITR.
+		// 2s * 150
 		b.attempt--
-		return time.Second
+		b.delayTime *= 2
+		if b.delayTime > b.maxDelayTime {
+			b.delayTime = b.maxDelayTime
+		}
+		return b.delayTime
 	}
 	b.attempt = 0
 	return 0
