@@ -349,7 +349,8 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 		opt = &WalkOption{}
 	}
 	if len(opt.ObjPrefix) != 0 {
-		return errors.New("azure storage not support ObjPrefix for now")
+		log.Warn("azure storage does not support ObjPrefix for now",
+			zap.String("ObjPrefix", opt.ObjPrefix))
 	}
 	prefix := path.Join(s.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
