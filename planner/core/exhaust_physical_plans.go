@@ -2052,17 +2052,24 @@ func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	return rowBC <= rowHash
 }
 
+func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.children[childIndexToBC], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+
+	if hasSizeBC && hasSizeHash {
+		return szBC <= szHash
+	}
+	return rowBC <= rowHash
+}
+
 // If we can use mpp broadcast join, that's our first choice.
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
 
-	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		return checkChildFitBC(p.children[1])
-	} else if p.JoinType == RightOuterJoin {
-		return checkChildFitBC(p.children[0])
-	}
+	onlyCheckChild1 := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
+	onlyCheckChild0 := p.JoinType == RightOuterJoin
 
 	if p.ctx.GetSessionVars().BroadcastJoinCostModelVersion > 0 {
 		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
@@ -2070,8 +2077,19 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 		// No need to exchange data if there is only ONE mpp store.
 		// Maybe other special way can be used to optimize such case.
 		if err == nil && mppStoreCnt > 1 {
+			if onlyCheckChild1 {
+				return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+			} else if onlyCheckChild0 {
+				return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+			}
 			return isJoinFitMPPBCJ(p, mppStoreCnt)
 		}
+	}
+
+	if onlyCheckChild1 {
+		return checkChildFitBC(p.children[1])
+	} else if onlyCheckChild0 {
+		return checkChildFitBC(p.children[0])
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
