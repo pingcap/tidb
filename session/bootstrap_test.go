@@ -1970,5 +1970,8 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV135)
+	require.NoError(t, err)
+	require.Less(t, int64(ver135), ver)
 	dom.Close()
 }
