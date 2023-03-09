@@ -50,7 +50,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		OpenEngine(ctx, &backend.EngineConfig{}, engineUUID).
 		Return(nil)
 	closeCall := s.mockBackend.EXPECT().
-		CloseEngine(ctx, nil, engineUUID).
+		CloseEngine(ctx, &backend.EngineConfig{}, engineUUID).
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
