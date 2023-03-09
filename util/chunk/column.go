@@ -60,13 +60,12 @@ func (c *Column) AppendSet(set types.Set) {
 // Column stores one column of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
-	length     int
-	nullBitmap []byte  // bit 0 is null, 1 is not null
-	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
-	data       []byte
-	elemBuf    []byte
-
-	avoidReusing bool // avoid reusing the Column by allocator
+	nullBitmap   []byte
+	offsets      []int64
+	data         []byte
+	elemBuf      []byte
+	length       int
+	avoidReusing bool
 }
 
 // ColumnAllocator defines an allocator for Column.

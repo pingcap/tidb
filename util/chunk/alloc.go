@@ -63,9 +63,9 @@ var MaxCachedLen = 16 * 1024
 // After Reset(), those chunks are decoupled into chunk column objects and get
 // into `poolColumnAllocator` again for reuse.
 type allocator struct {
+	columnAlloc poolColumnAllocator
 	allocated   []*Chunk
 	free        []*Chunk
-	columnAlloc poolColumnAllocator
 	freeChunk   int
 }
 

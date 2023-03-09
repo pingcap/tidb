@@ -37,19 +37,10 @@ type rowContainerRecord struct {
 }
 
 type mutexForRowContainer struct {
-	// Add cache padding to avoid false sharing issue.
-	_ cpu.CacheLinePad
-	// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
-	// `rLock` and `wLocks` is introduced to reduce the contention when multiple
-	// goroutine touch the same rowContainer concurrently. If there are multiple
-	// goroutines touch the same rowContainer concurrently, it's recommended to
-	// use RowContainer.ShallowCopyWithNewMutex to build a new RowContainer for
-	// each goroutine. Thus each goroutine holds its own rLock but share the same
-	// underlying data, which can reduce the contention on m.rLock remarkably and
-	// get better performance.
-	rLock   sync.RWMutex
-	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
+	wLocks  []*sync.RWMutex
+	rLock   sync.RWMutex
+	_       cpu.CacheLinePad
 	_       cpu.CacheLinePad
 }
 
@@ -325,16 +316,14 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
 type SpillDiskAction struct {
-	memory.BaseOOMAction
-	c    *RowContainer
-	m    sync.Mutex
-	once sync.Once
-	cond spillStatusCond
-
-	// test function only used for test sync.
+	c                  *RowContainer
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
-	testWg             sync.WaitGroup
+	memory.BaseOOMAction
+	cond   spillStatusCond
+	testWg sync.WaitGroup
+	once   sync.Once
+	m      sync.Mutex
 }
 
 type spillStatusCond struct {
@@ -428,25 +417,18 @@ var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
 	*RowContainer
-	ptrM struct {
-		sync.RWMutex
-		// rowPtrs store the chunk index and row index for each row.
-		// rowPtrs != nil indicates the pointer is initialized and sorted.
-		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
-		rowPtrs []RowPtr
-	}
-
-	ByItemsDesc []bool
-	// keyColumns is the column index of the by items.
-	keyColumns []int
-	// keyCmpFuncs is used to compare each ByItem.
-	keyCmpFuncs []CompareFunc
-
 	actionSpill *SortAndSpillDiskAction
 	memTracker  *memory.Tracker
+	ptrM        struct {
+		sync.RWMutex
+		rowPtrs []RowPtr // rowPtrs store the chunk index and row index for each row.
+		// rowPtrs != nil indicates the pointer is initialized and sorted.
+		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
 
-	// Sort is a time-consuming operation, we need to set a checkpoint to detect
-	// the outside signal periodically.
+	}
+	ByItemsDesc       []bool
+	keyColumns        []int
+	keyCmpFuncs       []CompareFunc
 	timesOfRowCompare uint
 }
 

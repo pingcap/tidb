@@ -23,13 +23,12 @@ import (
 // Pool is the Column pool.
 // NOTE: Pool is non-copyable.
 type Pool struct {
-	initCap int
-
 	varLenColPool   *sync.Pool
 	fixLenColPool4  *sync.Pool
 	fixLenColPool8  *sync.Pool
 	fixLenColPool16 *sync.Pool
 	fixLenColPool40 *sync.Pool
+	initCap         int
 }
 
 // NewPool creates a new Pool.

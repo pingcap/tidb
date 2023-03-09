@@ -60,9 +60,9 @@ func NewIterator4Slice(rows []Row) Iterator {
 
 // Iterator4Slice is used to iterate rows inside a slice.
 type Iterator4Slice struct {
-	_      cpu.CacheLinePad
 	rows   []Row
 	cursor int
+	_      cpu.CacheLinePad
 	_      cpu.CacheLinePad
 }
 
@@ -328,10 +328,10 @@ func NewIterator4RowContainer(c *RowContainer) *iterator4RowContainer {
 }
 
 type iterator4RowContainer struct {
+	err    error
 	c      *RowContainer
 	chkIdx int
 	rowIdx int
-	err    error
 }
 
 // Len implements the Iterator interface.
@@ -394,12 +394,12 @@ func (it *iterator4RowContainer) Error() error {
 
 // multiIterator joins several iterators together to form a new iterator
 type multiIterator struct {
+	curIter Iterator
+	err     error
 	iters   []Iterator
 	numIter int
 	length  int
 	curPtr  int
-	curIter Iterator
-	err     error
 }
 
 // NewMultiIterator creates a new multiIterator

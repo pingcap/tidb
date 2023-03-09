@@ -31,28 +31,23 @@ import (
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
 type ListInDisk struct {
+	dataFile                  diskFileReaderWriter
+	offsetFile                diskFileReaderWriter
+	diskTracker               *disk.Tracker
 	fieldTypes                []*types.FieldType
 	numRowsOfEachChunk        []int
 	rowNumOfEachChunkFirstRow []int
 	totalNumRows              int
-	diskTracker               *disk.Tracker // track disk usage.
-
-	dataFile   diskFileReaderWriter
-	offsetFile diskFileReaderWriter
 }
 
 // diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
 type diskFileReaderWriter struct {
-	disk *os.File
-	w    io.WriteCloser
-	// offWrite is the current offset for writing.
-	offWrite int64
-
+	w              io.WriteCloser
+	disk           *os.File
 	checksumWriter *checksum.Writer
-	cipherWriter   *encrypt.Writer // cipherWriter is only enable when config SpilledFileEncryptionMethod is "aes128-ctr"
-
-	// ctrCipher stores the key and nonce using by aes encrypt io layer
-	ctrCipher *encrypt.CtrCipher
+	cipherWriter   *encrypt.Writer
+	ctrCipher      *encrypt.CtrCipher
+	offWrite       int64
 }
 
 func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
@@ -257,10 +252,8 @@ func (l *ListInDisk) Close() error {
 // If a column of a row is null, the size of it is -1 and the data is empty.
 type chunkInDisk struct {
 	*Chunk
-	// offWrite is the current offset for writing.
-	offWrite int64
-	// offsetsOfRows stores the offset of each row.
 	offsetsOfRows offsetsOfRows
+	offWrite      int64
 }
 
 type offsetsOfRows []int64
@@ -296,8 +289,8 @@ func (chk *chunkInDisk) getOffsetsOfRows() offsetsOfRows { return chk.offsetsOfR
 
 // rowInDisk represents a Row in format of diskFormatRow.
 type rowInDisk struct {
-	numCol int
 	diskFormatRow
+	numCol int
 }
 
 // WriteTo serializes a row of the chunk into the format of
@@ -411,8 +404,8 @@ func (format *diskFormatRow) toRow(fields []*types.FieldType, chk *Chunk) (Row, 
 // By using ReaderWithCache, user can still write data into ListInDisk even after reading.
 type ReaderWithCache struct {
 	r        io.ReaderAt
-	cacheOff int64
 	cache    []byte
+	cacheOff int64
 }
 
 // NewReaderWithCache returns a ReaderWithCache.
