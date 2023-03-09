@@ -73,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"golang.org/x/exp/slices"
 )
 
@@ -1197,9 +1198,66 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
+		// Register the RU runtime stats for analyze executor.
+		store, ok := b.ctx.GetStore().(interface {
+			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+		})
+		if ok {
+			// StartTS will be used to identify this SQL, so that the runtime stats could
+			// aggregate the RU stats beneath the KV storage client.
+			startTS, err := b.getSnapshotTS()
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(v.TargetPlan.ID(), &ruRuntimeStats{store.CreateRURuntimeStats(startTS)})
+		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec
+}
+
+// ruRuntimeStats is a wrapper of clientutil.RURuntimeStats,
+// which implements the RuntimeStats interface.
+type ruRuntimeStats struct {
+	*clientutil.RURuntimeStats
+}
+
+// String implements the RuntimeStats interface.
+func (e *ruRuntimeStats) String() string {
+	if e.RURuntimeStats != nil {
+		return e.RURuntimeStats.String()
+	}
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &ruRuntimeStats{}
+	if e.RURuntimeStats != nil {
+		newRs.RURuntimeStats = e.RURuntimeStats.Clone()
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*ruRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.RURuntimeStats != nil {
+		if e.RURuntimeStats == nil {
+			e.RURuntimeStats = tmp.RURuntimeStats.Clone()
+			return
+		}
+		e.RURuntimeStats.Merge(tmp.RURuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Tp() int {
+	return execdetails.TpRURuntimeStats
 }
 
 func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
