@@ -256,7 +256,8 @@ func (cr *chunkProcessor) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID, realOffset int64
+		var newOffset, rowID, newRealOffset int64
+		var realOffset int64 = -1
 		var kvSize uint64
 		var realOffsetErr error
 	outLoop:
@@ -265,11 +266,14 @@ func (cr *chunkProcessor) encodeLoop(
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				realOffset, realOffsetErr = cr.parser.RealPos()
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				newRealOffset, realOffsetErr = cr.parser.RealPos()
 				if realOffsetErr != nil {
 					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
 						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+				if realOffset == -1 {
+					realOffset = newRealOffset
 				}
 			}
 
@@ -334,7 +338,7 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
-				rowID: rowID, realOffset: realOffset})
+				rowID: rowID, realOffset: newRealOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -352,7 +356,11 @@ func (cr *chunkProcessor) encodeLoop(
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				m.RowReadBytesHistogram.Observe(float64(newRealOffset - realOffset))
+			} else {
+				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+			}
 		}
 
 		if len(kvPacket) != 0 {
@@ -514,7 +522,15 @@ func (cr *chunkProcessor) deliverLoop(
 			}
 			delta := highOffset - lowOffset
 			if delta >= 0 {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
+					if currRealOffset > startRealOffset {
+						m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currRealOffset - startRealOffset))
+					}
+					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				} else {
+					m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(dataChecksum.SumKVS()))
+				}
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
