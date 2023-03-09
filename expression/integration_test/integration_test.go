@@ -7922,3 +7922,36 @@ func TestIssue40015(t *testing.T) {
 		"<nil>",
 	))
 }
+
+func TestIssue41733(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database testIssue41733")
+	defer tk.MustExec("drop database testIssue41733")
+	tk.MustExec("use testIssue41733")
+
+	tk.MustExec("create table t_tiny (c0 TINYINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_tiny(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_tiny;").Check(testkit.Rows("255"))
+
+	tk.MustExec("create table t_small (c0 SMALLINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_small(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_small;").Check(testkit.Rows("65535"))
+
+	tk.MustExec("create table t_medium (c0 MEDIUMINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_medium(c0) VALUES (1E9)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_medium;").Check(testkit.Rows("16777215"))
+
+	tk.MustExec("create table t_int (c0 INT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_int(c0) VALUES (1E20)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_int;").Check(testkit.Rows("4294967295"))
+
+	tk.MustExec("create table t_big (c0 BIGINT UNSIGNED)")
+	tk.MustExec("INSERT IGNORE INTO t_big(c0) VALUES (1E20)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c0' at row 1"))
+	tk.MustQuery("select * from t_big;").Check(testkit.Rows("18446744073709551615"))
+}
