@@ -3375,7 +3375,7 @@ func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
 	// Test key exist + write conflict, and locking with conflict takes effect.
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
-	tk2.MustExec("insert into t (1, 2)")
+	tk2.MustExec("insert into t values (1, 2)")
 	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
 		lockedWithConflictCounter++
 		return nil

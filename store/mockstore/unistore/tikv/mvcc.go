@@ -673,15 +673,14 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 			}
 		}
 		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
-			if lockedWithConflictTS == 0 {
-				return nil, 0, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
-			} else {
+			if lockedWithConflictTS != 0 {
 				// If constraint is violated, disable locking with conflict behavior.
 				if writeConflictError == nil {
 					panic("unreachable")
 				}
 				return nil, 0, writeConflictError
 			}
+			return nil, 0, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
 		}
 	}
 
