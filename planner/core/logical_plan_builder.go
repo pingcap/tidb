@@ -7066,8 +7066,8 @@ func hasMPPJoinHints(preferJoinType uint) bool {
 	return (preferJoinType&preferBCJoin > 0) || (preferJoinType&preferShuffleJoin > 0)
 }
 
-// checkHint4MPPModeAvailable is used to check if the specified join hint is available under MPP mode.
-func checkHint4MPPModeAvailable(preferJoinType uint) bool {
+// isJoinHintSupportedInMPPMode is used to check if the specified join hint is available under MPP mode.
+func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	if preferJoinType == 0 {
 		return true
 	}
