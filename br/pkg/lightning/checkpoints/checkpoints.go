@@ -285,6 +285,10 @@ func (ccp *ChunkCheckpoint) FinishedSize() int64 {
 	return ccp.Chunk.RealOffset - ccp.Key.Offset
 }
 
+func (ccp *ChunkCheckpoint) GetKey() string {
+	return ccp.Key.String()
+}
+
 type EngineCheckpoint struct {
 	Status CheckpointStatus
 	Chunks []*ChunkCheckpoint // a sorted array

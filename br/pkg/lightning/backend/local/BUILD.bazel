@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/manual",
         "//br/pkg/lightning/metric",
+        "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/tikv",
         "//br/pkg/logutil",
         "//br/pkg/membuf",

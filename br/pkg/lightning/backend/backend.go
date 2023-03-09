@@ -107,7 +107,7 @@ type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
-	Local *LocalEngineConfig
+	Local LocalEngineConfig
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.
@@ -229,6 +229,9 @@ type engine struct {
 	backend AbstractBackend
 	logger  log.Logger
 	uuid    uuid.UUID
+	// id of the engine, used to generate uuid and stored in checkpoint
+	// for index engine it's -1
+	id int32
 }
 
 // OpenedEngine is an opened engine, allowing data to be written via WriteRows.
@@ -237,6 +240,7 @@ type engine struct {
 type OpenedEngine struct {
 	engine
 	tableName string
+	config    *EngineConfig
 }
 
 // // import_ the data written to the engine into the target.
@@ -377,8 +381,10 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 			backend: be.abstract,
 			logger:  logger,
 			uuid:    engineUUID,
+			id:      engineID,
 		},
 		tableName: tableName,
+		config:    config,
 	}, nil
 }
 
@@ -395,8 +401,8 @@ func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tab
 }
 
 // Close the opened engine to prepare it for importing.
-func (engine *OpenedEngine) Close(ctx context.Context, cfg *EngineConfig) (*ClosedEngine, error) {
-	closedEngine, err := engine.unsafeClose(ctx, cfg)
+func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
+	closedEngine, err := engine.unsafeClose(ctx, engine.config)
 	if err == nil {
 		if m, ok := metric.FromContext(ctx); ok {
 			m.ImporterEngineCounter.WithLabelValues("closed").Inc()
@@ -442,7 +448,7 @@ func (w *LocalEngineWriter) IsSynced() bool {
 // resuming from a checkpoint.
 func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tableName string, engineID int32) (*ClosedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
-	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID)
+	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID, engineID)
 }
 
 // UnsafeCloseEngineWithUUID closes the engine without first opening it.
@@ -450,11 +456,12 @@ func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tabl
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.abstract,
 		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
 		uuid:    engineUUID,
+		id:      id,
 	}.unsafeClose(ctx, cfg)
 }
 
@@ -466,6 +473,11 @@ func (en engine) unsafeClose(ctx context.Context, cfg *EngineConfig) (*ClosedEng
 		return nil, err
 	}
 	return &ClosedEngine{engine: en}, nil
+}
+
+// GetID get engine id.
+func (en engine) GetID() int32 {
+	return en.id
 }
 
 // Import the data written to the engine into the target.

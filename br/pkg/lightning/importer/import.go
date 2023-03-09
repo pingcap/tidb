@@ -77,10 +77,6 @@ const (
 )
 
 const (
-	indexEngineID = -1
-)
-
-const (
 	compactStateIdle int32 = iota
 	compactStateDoing
 )
@@ -115,9 +111,6 @@ const (
 		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
-
-	compactionLowerThreshold = 512 * units.MiB
-	compactionUpperThreshold = 32 * units.GiB
 )
 
 var (
@@ -935,7 +928,7 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 				if eCp.Status < checkpoints.CheckpointStatusImported {
 					estimatedEngineCnt++
 				}
-				if engineID == indexEngineID {
+				if engineID == common.IndexEngineID {
 					continue
 				}
 				for _, c := range eCp.Chunks {

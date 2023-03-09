@@ -827,10 +827,6 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 
 // OpenEngine must be called with holding mutex of Engine.
 func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	engineCfg := backend.LocalEngineConfig{}
-	if cfg.Local != nil {
-		engineCfg = *cfg.Local
-	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
@@ -853,7 +849,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		sstMetasChan:       make(chan metaOrFlush, 64),
 		ctx:                engineCtx,
 		cancel:             cancel,
-		config:             engineCfg,
+		config:             cfg.Local,
 		tableInfo:          cfg.TableInfo,
 		duplicateDetection: local.duplicateDetection,
 		dupDetectOpt:       local.duplicateDetectOpt,

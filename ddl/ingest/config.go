@@ -80,7 +80,7 @@ var (
 
 func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineConfig {
 	return &backend.EngineConfig{
-		Local: &backend.LocalEngineConfig{
+		Local: backend.LocalEngineConfig{
 			Compact:            true,
 			CompactThreshold:   int64(compactMemory),
 			CompactConcurrency: compactConcurrency,
