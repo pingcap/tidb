@@ -429,8 +429,8 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 			rightJoinKeys = append(rightJoinKeys, rightKey)
 		}
 	} else {
-		leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
-		rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
+		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftJoinKeys))
+		rightJoinKeys = make([]expression.Expression, 0, len(p.RightJoinKeys))
 		for _, leftKey := range p.LeftJoinKeys {
 			leftJoinKeys = append(leftJoinKeys, leftKey)
 		}
