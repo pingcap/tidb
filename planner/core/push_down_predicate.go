@@ -64,30 +64,38 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
  * @param: plan: the physical plan
  */
 func removeEmptySelection(plan PhysicalPlan) {
-	var newChildren []PhysicalPlan
-	removed := false
-	for _, child := range plan.Children() {
-		switch x := child.(type) {
-		case *PhysicalSelection:
-			if len(x.Conditions) == 0 {
-				newChildren = append(newChildren, x.children...)
-				removed = true
+	if tableReader, isTableReader := plan.(*PhysicalTableReader); isTableReader && tableReader.StoreType == kv.TiFlash {
+		if selection, isSelection := tableReader.tablePlan.(*PhysicalSelection); isSelection && len(selection.Conditions) == 0 {
+			if len(tableReader.tablePlan.Children()) == 1 {
+				tableReader.tablePlan = tableReader.tablePlan.Children()[0]
 			} else {
-				newChildren = append(newChildren, x)
+				logutil.BgLogger().Warn("invalid table plan", zap.String("plan", plan.ExplainID().String()))
 			}
-		default:
-			newChildren = append(newChildren, x)
-			removeEmptySelection(child)
 		}
-	}
-	if removed && len(newChildren) > 0 {
-		plan.SetChildren(newChildren...)
-	}
-	// remove empty selections in a coprocessor/MPP task of TiFlash
-	tableReader, isTableReader := plan.(*PhysicalTableReader)
-	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		removeEmptySelection(tableReader.tablePlan)
 		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+	} else {
+		var newChildren []PhysicalPlan
+		removed := false
+		for _, child := range plan.Children() {
+			switch x := child.(type) {
+			case *PhysicalSelection:
+				if len(x.Conditions) == 0 {
+					newChildren = append(newChildren, x.children...)
+					removed = true
+				} else {
+					newChildren = append(newChildren, x)
+				}
+			default:
+				newChildren = append(newChildren, x)
+			}
+		}
+		if removed && len(newChildren) > 0 {
+			plan.SetChildren(newChildren...)
+		}
+		for _, child := range plan.Children() {
+			removeEmptySelection(child)
+		}
 	}
 }
 
@@ -175,7 +183,22 @@ func withHeavyCostFunction(cond expression.Expression) bool {
 	if binop, ok := cond.(*expression.ScalarFunction); ok {
 		switch binop.FuncName.L {
 		// JSON functions
-		case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid, ast.JSONSearch, ast.JSONContains, ast.JSONContainsPath, ast.JSONKeys, ast.JSONLength, ast.JSONDepth, ast.JSONQuote, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONMerge, ast.JSONArrayAppend, ast.JSONArrayInsert, ast.JSONMergePatch, ast.JSONMergePreserve, ast.JSONPretty, ast.JSONStorageSize:
+		case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONObject, ast.JSONMerge, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONOverlaps, ast.JSONContains:
+			return true
+		case ast.JSONMemberOf, ast.JSONContainsPath, ast.JSONValid, ast.JSONArrayAppend, ast.JSONArrayInsert, ast.JSONMergePatch, ast.JSONMergePreserve, ast.JSONPretty, ast.JSONQuote, ast.JSONSearch:
+			return true
+		case ast.JSONStorageFree, ast.JSONStorageSize, ast.JSONDepth, ast.JSONKeys, ast.JSONLength:
+			return true
+		// time functions
+		case ast.AddDate, ast.AddTime, ast.ConvertTz, ast.Curdate, ast.CurrentDate, ast.CurrentTime, ast.CurrentTimestamp, ast.Curtime, ast.Date, ast.DateLiteral, ast.DateAdd, ast.DateFormat:
+			return true
+		case ast.DateSub, ast.DateDiff, ast.Day, ast.DayName, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.FromDays, ast.FromUnixTime, ast.GetFormat, ast.Hour, ast.LocalTime:
+			return true
+		case ast.LocalTimestamp, ast.MakeDate, ast.MakeTime, ast.MicroSecond, ast.Minute, ast.Month, ast.MonthName, ast.Now, ast.PeriodAdd, ast.PeriodDiff, ast.Quarter, ast.SecToTime, ast.Second:
+			return true
+		case ast.StrToDate, ast.SubDate, ast.SubTime, ast.Sysdate, ast.Time, ast.TimeLiteral, ast.TimeFormat, ast.TimeToSec, ast.TimeDiff, ast.Timestamp, ast.TimestampLiteral, ast.TimestampAdd:
+			return true
+		case ast.TimestampDiff, ast.ToDays, ast.ToSeconds, ast.UnixTimestamp, ast.UTCDate, ast.UTCTime, ast.UTCTimestamp, ast.Week, ast.Weekday, ast.WeekOfYear, ast.Year, ast.YearWeek, ast.LastDay:
 			return true
 			// TODO: add more heavy cost functions
 		}
