@@ -173,7 +173,7 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp mod
 }
 
 type backfiller interface {
-	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
+	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetTasks() ([]*BackfillJob, error)
 	UpdateTask(bfJob *BackfillJob) error
@@ -314,7 +314,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	}
 	for {
 		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
+		// if there is panic in bf.BackfillData we will never cancel the job.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(jobID, isDistReorg)
@@ -323,7 +323,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillDataInTxn(handleRange)
+		taskCtx, err := bf.BackfillData(handleRange)
 		if err != nil {
 			result.err = err
 			return result

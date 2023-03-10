@@ -1725,15 +1725,12 @@ func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jc *JobC
 	}, nil
 }
 
-func (w *addIndexIngestWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (backfillTaskContext, error) {
-	return w.writeIndexKVsToLocal(handleRange)
-}
-
 func (*addIndexIngestWorker) String() string {
 	return typeAddIndexIngestWorker.String()
 }
 
-func (w *addIndexIngestWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (backfillTaskContext, error) {
+// BackfillData will ingest index records through lightning engine.
+func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (backfillTaskContext, error) {
 	var taskCtx backfillTaskContext
 	oprStartTime := time.Now()
 	defer func() {
@@ -1805,10 +1802,10 @@ func writeOneKVToLocal(writerCtx *ingest.WriterContext,
 	return nil
 }
 
-// BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
+// BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
-// BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexTxnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+// BackfillData will add w.batchCnt indices once, default value of w.batchCnt is 128.
+func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1868,7 +1865,7 @@ func (w *addIndexTxnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 
 		return nil
 	})
-	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
+	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
 	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecution != nil {
@@ -2082,7 +2079,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 }
 
-func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
