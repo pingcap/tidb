@@ -229,7 +229,7 @@ func testTunePool(t *testing.T, name string) {
 	pool.Tune(pool.Cap() + 1)
 	time.Sleep(1 * time.Second)
 	require.Equal(t, size, pool.Cap())
-	require.Equal(t, int32(size), pool.taskManager.Running(tid))
+	require.Equal(t, size, pool.taskManager.Running(tid))
 
 	for n := pool.Cap(); n > 1; n-- {
 		downclockPool(t, pool, tid)
@@ -251,7 +251,7 @@ func overclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *test
 	pool.Tune(newSize)
 	time.Sleep(1 * time.Second)
 	require.Equal(t, newSize, pool.Cap())
-	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+	require.Equal(t, newSize, pool.taskManager.Running(tid))
 }
 
 func downclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *testing.T, pool *Pool[T, U, C, CT, TF], tid uint64) {
@@ -259,7 +259,7 @@ func downclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *test
 	pool.Tune(newSize)
 	time.Sleep(1 * time.Second)
 	require.Equal(t, newSize, pool.Cap())
-	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+	require.Equal(t, newSize, pool.taskManager.Running(tid))
 }
 
 func TestPoolWithEnoughCapacity(t *testing.T) {

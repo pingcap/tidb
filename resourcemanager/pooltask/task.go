@@ -122,7 +122,7 @@ func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
 
 // GPool is a goroutine pool.
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
-	Tune(size int)
+	Tune(size int32)
 	DeleteTask(id uint64)
 	StopTask(id uint64)
 }

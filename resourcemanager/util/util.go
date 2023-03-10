@@ -31,10 +31,10 @@ var (
 // GoroutinePool is a pool interface
 type GoroutinePool interface {
 	ReleaseAndWait()
-	Tune(size int)
+	Tune(size int32)
 	LastTunerTs() time.Time
-	Cap() int
-	Running() int
+	Cap() int32
+	Running() int32
 	Name() string
 }
 
