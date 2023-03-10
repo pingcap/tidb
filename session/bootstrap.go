@@ -791,6 +791,8 @@ const (
 	// ...
 	// [version110, version129] is the version range reserved for patches of 6.5.x
 	// ...
+	// version110 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
 	// version130 add column source to mysql.stats_meta_history
 	version130 = 130
 	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
@@ -927,6 +929,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 		upgradeToVer130,
 		upgradeToVer131,
 		upgradeToVer132,
@@ -2276,6 +2279,15 @@ func upgradeToVer109(s Session, ver int64) {
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+}
+
+// For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
 }
 
 func upgradeToVer130(s Session, ver int64) {

@@ -339,10 +339,23 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// 2. this column is not handle, and:
 		// 3. the column doesn't has any statistics before, and:
 		// 4. loadAll is false.
+		//
+		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
+		// For one column:
+		// 1. If there is no stats for it in the storage(i.e., analyze has never been executed before), then its stats status
+		//    would be `!col.IsStatsInitialized()`. In this case we should go the `notNeedLoad` path.
+		// 2. If there exists stats for it in the storage but its stats status is `col.IsAllEvicted()`, there are two
+		//    sub cases for this case. One is that the column stats have never been used/needed by the optimizer so they have
+		//    never been loaded. The other is that the column stats were loaded and then evicted. For the both sub cases,
+		//    we should go the `notNeedLoad` path.
+		// 3. If some parts(Histogram/TopN/CMSketch) of stats for it exist in TiDB memory currently, we choose to load all of
+		//    its new stats once we find stats version is updated.
 		notNeedLoad := lease > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
+			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
+		// Here is
+		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
 			count, err := ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
