@@ -105,13 +105,13 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, 2, p.Running())
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, int32(2), p.Running())
 	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
 	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, 0, p.Running())
+	require.Equal(t, int32(0), p.Running())
 
 	// test with RunWithConcurrency
 	var cnt atomic.Int32
@@ -122,16 +122,16 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	wg.Wait()
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
-	require.Equal(t, 2, p.Running())
+	require.Equal(t, int32(2), p.Running())
 	for i := 0; i < 10; i++ {
 		fnChan <- workerFn
 	}
 	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, int32(10), cnt.Load())
-	require.Equal(t, 2, p.Running())
+	require.Equal(t, int32(2), p.Running())
 	close(fnChan)
 	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, 0, p.Running())
+	require.Equal(t, int32(0), p.Running())
 	p.ReleaseAndWait()
 }
 
@@ -168,12 +168,12 @@ func TestRunWithNotEnough(t *testing.T) {
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
 	require.NoError(t, p.RunWithConcurrency(fnChan, uint32(poolSize+100)), "submit when pool is not full shouldn't return error")
-	require.Equal(t, 10, p.Running())
+	require.Equal(t, int32(10), p.Running())
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
 	close(fnChan)
 	time.Sleep(1 * time.Second)
-	require.Equal(t, 0, p.Running())
+	require.Equal(t, int32(0), p.Running())
 }
 
 func TestRunWithNotEnough2(t *testing.T) {

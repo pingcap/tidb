@@ -66,14 +66,14 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 }
 
 // Tune changes the pool size.
-func (p *Pool) Tune(size int) {
+func (p *Pool) Tune(size int32) {
 	if size == 0 {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.SetLastTuneTs(time.Now())
-	p.capacity = int32(size)
+	p.capacity = size
 	p.concurrencyMetrics.Set(float64(size))
 }
 
@@ -92,17 +92,17 @@ func (p *Pool) Run(fn func()) error {
 }
 
 // Cap returns the capacity of the pool.
-func (p *Pool) Cap() int {
+func (p *Pool) Cap() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return int(p.capacity)
+	return p.capacity
 }
 
 // Running returns the number of running goroutines.
-func (p *Pool) Running() int {
+func (p *Pool) Running() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return int(p.running.Load())
+	return p.running.Load()
 }
 
 func (p *Pool) run(fn func()) {
