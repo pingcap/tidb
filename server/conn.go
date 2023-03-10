@@ -853,7 +853,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	}
 	cc.ctx.SetPort(port)
 	if cc.dbname != "" {
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}
@@ -1364,7 +1364,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComQuit:
 		return io.EOF
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+		node, err := cc.useDB(ctx, dataStr)
+		cc.onExtensionStmtEnd(node, false, err)
+		if err != nil {
 			return err
 		}
 		return cc.writeOK(ctx)
@@ -1447,19 +1449,19 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	return cc.flush(ctx)
 }
 
-func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
+func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cc.dbname = db
-	return
+	return stmts[0], err
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
@@ -2458,7 +2460,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB
-		err = cc.useDB(context.Background(), cc.dbname)
+		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return err
 		}
