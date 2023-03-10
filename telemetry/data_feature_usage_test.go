@@ -959,6 +959,6 @@ func TestAggressiveLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(4), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
 	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
 }
