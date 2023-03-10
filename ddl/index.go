@@ -1876,7 +1876,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		// During index re-creation, process data from partitions to be added
 		nextPartitionDefs = pi.AddingDefinitions
 	}
-	if nextPartitionDefs == nil {
+	if len(nextPartitionDefs) == 0 {
 		nextPartitionDefs = pi.Definitions
 	}
 	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
