@@ -108,9 +108,13 @@ type LoadDataController struct {
 	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
-	// if there's NO column list clause in load data statement, then it's table's column
+	// if there's NO column list clause in load data statement, then it's table's columns
 	// else it's user defined list.
 	fieldMappings []*FieldMapping
+	// see InsertValues.insertColumns
+	// todo: our behavior is different with mysql. such as for table t(a,b)
+	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
+	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	insertColumns []*table.Column
 
 	fieldNullDef     []string
