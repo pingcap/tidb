@@ -246,17 +246,17 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed               bool                            `json:"asyncCommitUsed"`
-	OnePCUsed                     bool                            `json:"onePCUsed"`
-	TxnCommitCounter              metrics.TxnCommitCounter        `json:"txnCommitCounter"`
-	MutationCheckerUsed           bool                            `json:"mutationCheckerUsed"`
-	AssertionLevel                string                          `json:"assertionLevel"`
-	RcCheckTS                     bool                            `json:"rcCheckTS"`
-	RCWriteCheckTS                bool                            `json:"rcWriteCheckTS"`
-	AggressiveLocking             bool                            `json:"aggressiveLocking"`
-	SavepointCounter              int64                           `json:"SavepointCounter"`
-	LazyUniqueCheckSetCounter     int64                           `json:"lazyUniqueCheckSetCounter"`
-	AggressiveLockingUsageCounter m.AggressiveLockingUsageCounter `json:"AggressiveLockingUsageCounter"`
+	AsyncCommitUsed           bool                      `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                      `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter  `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                      `json:"mutationCheckerUsed"`
+	AssertionLevel            string                    `json:"assertionLevel"`
+	RcCheckTS                 bool                      `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                      `json:"rcWriteCheckTS"`
+	FairLocking               bool                      `json:"fairLocking"`
+	SavepointCounter          int64                     `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                     `json:"lazyUniqueCheckSetCounter"`
+	FairLockingUsageCounter   m.FairLockingUsageCounter `json:"FairLockingUsageCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -271,7 +271,7 @@ var initialLazyPessimisticUniqueCheckSetCount int64
 var initialDDLUsageCounter m.DDLUsageCounter
 var initialIndexMergeCounter m.IndexMergeUsageCounter
 var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
-var initialAggressiveLockingUsageCounter m.AggressiveLockingUsageCounter
+var initialFairLockingUsageCounter m.FairLockingUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -301,9 +301,9 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
 		rcWriteCheckTSUsed = val == variable.On
 	}
-	aggressiveLockingUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionAggressiveLocking); err == nil {
-		aggressiveLockingUsed = val == variable.On
+	fairLockingUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionFairLocking); err == nil {
+		fairLockingUsed = val == variable.On
 	}
 
 	currSavepointCount := m.GetSavepointStmtCounter()
@@ -312,12 +312,12 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
 	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
 
-	currAggressiveLockingUsageCounter := m.GetAggressiveLockingUsageCounter()
-	diffAggressiveLockingUsageCounter := currAggressiveLockingUsageCounter.Sub(initialAggressiveLockingUsageCounter)
+	currFairLockingUsageCounter := m.GetFairLockingUsageCounter()
+	diffFairLockingUsageCounter := currFairLockingUsageCounter.Sub(initialFairLockingUsageCounter)
 
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
 		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
-		aggressiveLockingUsed, diffSavepointCount, diffLazyUniqueCheckSetCount, diffAggressiveLockingUsageCounter,
+		fairLockingUsed, diffSavepointCount, diffLazyUniqueCheckSetCount, diffFairLockingUsageCounter,
 	}
 }
 
@@ -342,8 +342,8 @@ func postReportLazyPessimisticUniqueCheckSetCount() {
 	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
 }
 
-func postReportAggressiveLockingUsageCounter() {
-	initialAggressiveLockingUsageCounter = m.GetAggressiveLockingUsageCounter()
+func postReportFairLockingUsageCounter() {
+	initialFairLockingUsageCounter = m.GetFairLockingUsageCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.

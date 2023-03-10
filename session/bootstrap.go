@@ -2562,7 +2562,7 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
-		case variable.TiDBPessimisticTransactionAggressiveLocking:
+		case variable.TiDBPessimisticTransactionFairLocking:
 			vVal = variable.On
 		}
 

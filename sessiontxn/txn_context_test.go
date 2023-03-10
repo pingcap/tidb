@@ -739,13 +739,13 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
 		// Fair locking avoids conflicting again after retry in this case. Disable it for this test.
-		tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2 := testkit.NewSteppedTestKit(t, store)
 		defer tk2.MustExec("rollback")
 
 		tk2.MustExec("use test")
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-		tk2.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
 		autocommit := testfork.PickEnum(t, 0, 1)
 		tk2.MustExec(fmt.Sprintf("set autocommit=%d", autocommit))
@@ -828,10 +828,10 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 			return
 		}
 
-		// If `tidb_pessimistic_txn_aggressive_locking` is enabled, the double conflict case is
+		// If `tidb_pessimistic_txn_fair_locking` is enabled, the double conflict case is
 		// avoided. Disable it to run this test.
 		if doubleConflictAfterTransfer {
-			tk2.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+			tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		}
 
 		tk2.SetBreakPoints(

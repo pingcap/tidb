@@ -292,8 +292,8 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 		// Unistore doesn't write lock records on secondary keys with value unchanged, causing it incorrectly ignores
 		// conflicts between transactions on these kinds of keys. This may make the test fail if fair locking is
 		// enabled. So disable it if it's not running with real tikv.
-		tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
-		tk2.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 0")
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	}
 
 	cases := []struct {
