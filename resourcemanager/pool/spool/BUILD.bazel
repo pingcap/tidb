@@ -17,6 +17,7 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_sasha_s_go_deadlock//:go-deadlock",
         "@org_uber_go_zap//:zap",
     ],
 )
