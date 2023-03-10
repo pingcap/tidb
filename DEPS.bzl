@@ -445,8 +445,8 @@ def go_deps():
         name = "com_github_census_instrumentation_opencensus_proto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/census-instrumentation/opencensus-proto",
-        sum = "h1:glEXhBS5PSLLv4IXzLA5yPRVX4bilULVyxxbrfOtDAk=",
-        version = "v0.2.1",
+        sum = "h1:t/LhUZLVitR1Ow2YOnduCsavhwFUklBMoGVYUCqmCqk=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "com_github_certifi_gocertifi",
@@ -3373,8 +3373,9 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:AfIJz8UV2wTsmyX0fgZ230P3hTWdiENCu6ZgQflSXhg=",
-        version = "v0.0.0-20230309134254-145f0534a0eb",
+        replace = "github.com/iosmanthus/kvproto",
+        sum = "h1:J+XztbJwVgmwg9umpJIbnyrPf1P17QQk/WNsX6YGhMQ=",
+        version = "v0.0.0-20230310162856-04bef527513d",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4102,8 +4103,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/iosmanthus/client-go/v2",
-        sum = "h1:6zaKiZ8ZJqRxKeOCowi9lfH58dv13DvvWqdTmv1EBcs=",
-        version = "v2.0.0-alpha.0.20230310055137-97d66d33e74a",
+        sum = "h1:X51A7pgqGa54m7u1Gyi3hmLKEGEMRychCYTPBJvRLFk=",
+        version = "v2.0.0-alpha.0.20230310172912-75c8d11b2365",
     )
     go_repository(
         name = "com_github_tikv_pd",
