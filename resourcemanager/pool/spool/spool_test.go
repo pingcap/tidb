@@ -186,7 +186,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
-	require.Equal(t, 1, p.Running())
+	require.Equal(t, int32(1), p.Running())
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
 	for i := 0; i < 100; i++ {
@@ -194,6 +194,6 @@ func TestRunWithNotEnough2(t *testing.T) {
 	}
 	close(fnChan)
 	time.Sleep(100 * time.Microsecond)
-	require.Equal(t, 0, p.Running())
+	require.Equal(t, int32(0), p.Running())
 	require.Equal(t, int32(100), cnt.Load())
 }
