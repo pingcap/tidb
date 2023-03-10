@@ -253,7 +253,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -279,9 +279,14 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			if err != nil {
 				return errors.Trace(err)
 			}
-			fmSketch, err := FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			idx = &Index{
 				Histogram:  *hg,
@@ -467,7 +472,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}
