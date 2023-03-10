@@ -1574,3 +1574,48 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	test1(false)
 	test2()
 }
+
+func TestMppStoreCntWithErrors(t *testing.T) {
+	// mock non-root tasks return error
+	var mppStoreCountPDError = "github.com/pingcap/tidb/store/copr/mppStoreCountPDError"
+	var mppStoreCountSetMPPCnt = "github.com/pingcap/tidb/store/copr/mppStoreCountSetMPPCnt"
+	var mppStoreCountSetLastUpdateTime = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTime"
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(3))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(1000)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// meet cache
+		require.Equal(t, mppCnt, 3)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("0")`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// update cache
+		require.Equal(t, mppCnt, 1000)
+	}
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		_, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Error(t, err)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
+	require.Nil(t, failpoint.Enable(mppStoreCountSetMPPCnt, `return(2222)`))
+	// set last update time to the latest
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, fmt.Sprintf(`return("%d")`, time.Now().UnixMicro())))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		// still update cache
+		require.Equal(t, mppCnt, 2222)
+	}
+	require.Nil(t, failpoint.Disable(mppStoreCountSetMPPCnt))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
+}

@@ -783,6 +783,11 @@ func TestMPPBCJModel(t *testing.T) {
 			exchange size: Build + Probe = 4/3 * sizeof(Data)
 	*/
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	{
+		cnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Equal(t, cnt, 3)
+		require.Nil(t, err)
+	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")

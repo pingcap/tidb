@@ -47,8 +47,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store       *kvStore
-	mppStoreCnt mppStoreCnt
+	store *kvStore
 }
 
 type mppStoreCnt struct {
@@ -589,6 +588,12 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 	now := time.Now().UnixMicro()
 	isInit := atomic.LoadInt32(&c.initFlag) != 0
 
+	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		lastUpdate = v
+		c.lastUpdate = lastUpdate
+	})
+
 	if now-lastUpdate < TTL {
 		if isInit {
 			return int(oriMPPStoreCnt), nil
@@ -604,6 +609,13 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 	// update mpp store cache
 	cnt := 0
 	stores, err := storeCtx.GetRegionCache().PDClient().GetAllStores(storeCtx.store.Ctx(), pd.WithExcludeTombstone())
+
+	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
+		if value.(bool) {
+			err = errors.New("failed to get mpp store count")
+		}
+	})
+
 	if err == nil {
 		for _, s := range stores {
 			if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
@@ -617,6 +629,10 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 		return 0, err
 	}
 
+	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
+		cnt = value.(int)
+	})
+
 	if atomic.LoadInt64(&c.lastUpdate) == now {
 		atomic.StoreInt32(&c.cnt, int32(cnt))
 		atomic.StoreInt32(&c.initFlag, 1)
@@ -627,5 +643,5 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 
 // GetMPPStoreCount returns number of TiFlash stores
 func (c *MPPClient) GetMPPStoreCount() (int, error) {
-	return c.mppStoreCnt.getMPPStoreCount(c.store, 120*1e6 /* TTL 120sec */)
+	return c.store.mppStoreCnt.getMPPStoreCount(c.store, 120*1e6 /* TTL 120sec */)
 }
