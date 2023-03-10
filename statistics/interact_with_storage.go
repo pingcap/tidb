@@ -253,7 +253,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo) error {
+func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -279,9 +279,14 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 			if err != nil {
 				return errors.Trace(err)
 			}
-			fmSketch, err := FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
-			if err != nil {
-				return errors.Trace(err)
+			var fmSketch *FMSketch
+			if loadAll {
+				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+				// we load all the statistics, i.e., loadAll is true.
+				fmSketch, err = FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			idx = &Index{
 				Histogram:  *hg,
@@ -334,10 +339,23 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// 2. this column is not handle, and:
 		// 3. the column doesn't has any statistics before, and:
 		// 4. loadAll is false.
+		//
+		// Here is the explanation of the condition `!col.IsStatsInitialized() || col.IsAllEvicted()`.
+		// For one column:
+		// 1. If there is no stats for it in the storage(i.e., analyze has never been executed before), then its stats status
+		//    would be `!col.IsStatsInitialized()`. In this case we should go the `notNeedLoad` path.
+		// 2. If there exists stats for it in the storage but its stats status is `col.IsAllEvicted()`, there are two
+		//    sub cases for this case. One is that the column stats have never been used/needed by the optimizer so they have
+		//    never been loaded. The other is that the column stats were loaded and then evicted. For the both sub cases,
+		//    we should go the `notNeedLoad` path.
+		// 3. If some parts(Histogram/TopN/CMSketch) of stats for it exist in TiDB memory currently, we choose to load all of
+		//    its new stats once we find stats version is updated.
 		notNeedLoad := lease > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
+			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
+		// Here is
+		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
 			count, err := ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
@@ -454,7 +472,7 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo)
+			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll)
 		} else {
 			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
 		}
