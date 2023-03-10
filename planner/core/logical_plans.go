@@ -1236,6 +1236,8 @@ type DataSource struct {
 	// colsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
+
+	indexMinSelectivity float64
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1582,6 +1584,8 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		} else {
 			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
 		}
+	} else {
+		path.CountAfterIndex = path.CountAfterAccess
 	}
 }
 
