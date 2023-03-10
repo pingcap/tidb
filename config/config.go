@@ -1071,26 +1071,6 @@ func StoreGlobalConfig(config *Config) {
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
-// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
-func GetAutoScalerClusterID() (string, error) {
-	c := GetGlobalConfig()
-	keyspaceName := c.KeyspaceName
-	clusterID := c.AutoScalerClusterID
-
-	if keyspaceName != "" && clusterID != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
-	}
-	if keyspaceName == "" && clusterID == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
-	}
-
-	res := keyspaceName
-	if res == "" {
-		res = clusterID
-	}
-	return res, nil
-}
-
 // removedConfig contains items that are no longer supported.
 // they might still be in the config struct to support import,
 // but are not actively used.
