@@ -1106,6 +1106,67 @@ func TestAllViewHintType(t *testing.T) {
 	}
 }
 
+func TestJoinHintCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash, tikv'")
+	tk.MustExec("drop view if exists v, v1, v2")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8, t9;")
+	tk.MustExec("create table t(a int not null, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t1(a int not null, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t2(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t3(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t4(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t5(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t6(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t7(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t8(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t9(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t7, t8, t9")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		name := tblInfo.Name.L
+		if name == "t4" || name == "t5" || name == "t6" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t2), merge_join(t) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+	tk.MustExec("create definer='root'@'localhost' view v2 as select t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
 func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

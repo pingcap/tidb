@@ -33,15 +33,16 @@ var NonPreparedPlanCacheableOp = map[string]struct{}{
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
 var UnCacheableFunctions = map[string]struct{}{
-	ast.Database:     {},
-	ast.CurrentUser:  {},
-	ast.CurrentRole:  {},
-	ast.User:         {},
-	ast.ConnectionID: {},
-	ast.LastInsertId: {},
-	ast.RowCount:     {},
-	ast.Version:      {},
-	ast.Like:         {},
+	ast.Database:             {},
+	ast.CurrentUser:          {},
+	ast.CurrentRole:          {},
+	ast.CurrentResourceGroup: {},
+	ast.User:                 {},
+	ast.ConnectionID:         {},
+	ast.LastInsertId:         {},
+	ast.RowCount:             {},
+	ast.Version:              {},
+	ast.Like:                 {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.

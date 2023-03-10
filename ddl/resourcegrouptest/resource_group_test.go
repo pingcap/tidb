@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package resourcegrouptest_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -74,11 +77,11 @@ func TestResourceGroupBasic(t *testing.T) {
 	res := tk.MustQuery("show warnings")
 	res.Check(testkit.Rows("Note 8248 Resource group 'x' already exists"))
 
-	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
+	tk.MustExec("set global tidb_enable_resource_control = off")
 	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
 
-	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
 
@@ -175,4 +178,144 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 	require.NoError(t, err)
 	g, _ := dom.InfoSchema().ResourceGroupByName(model.NewCIStr(name))
 	return g
+}
+
+func TestResourceGroupHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int)")
+	tk.MustExec("insert into t1 values(1)")
+
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("create resource group rg1 ru_per_sec=1000")
+	tk.MustQuery("select /*+ resource_group(default) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg1) */ * from t1")
+	tk.MustQuery("select /*+ resource_group(rg1) resource_group(default) */ * from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(default)"))
+	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test rg1"))
+	tk.MustQuery("select DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustExec("set global tidb_enable_resource_control='off'")
+	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8250 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature"))
+}
+
+func TestNewResourceGroupFromOptions(t *testing.T) {
+	type TestCase struct {
+		name      string
+		groupName string
+		input     *model.ResourceGroupSettings
+		output    *rmpb.ResourceGroup
+		err       error
+	}
+	var tests []TestCase
+	groupName := "test"
+	tests = append(tests, TestCase{
+		name:  "empty 1",
+		input: &model.ResourceGroupSettings{},
+		err:   resourcegroup.ErrUnknownResourceGroupMode,
+	})
+
+	tests = append(tests, TestCase{
+		name:  "empty 2",
+		input: nil,
+		err:   resourcegroup.ErrInvalidGroupSettings,
+	})
+
+	tests = append(tests, TestCase{
+		name: "normal case: ru case 1",
+		input: &model.ResourceGroupSettings{
+			RURate: 2000,
+		},
+		output: &rmpb.ResourceGroup{
+			Name: groupName,
+			Mode: rmpb.GroupMode_RUMode,
+			RUSettings: &rmpb.GroupRequestUnitSettings{
+				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 2000}},
+			},
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "normal case: ru case 2",
+		input: &model.ResourceGroupSettings{
+			RURate: 5000,
+		},
+		output: &rmpb.ResourceGroup{
+			Name: groupName,
+			Mode: rmpb.GroupMode_RUMode,
+			RUSettings: &rmpb.GroupRequestUnitSettings{
+				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 5000}},
+			},
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "error case: native case 1",
+		input: &model.ResourceGroupSettings{
+			CPULimiter:       "8",
+			IOReadBandwidth:  "3000MB/s",
+			IOWriteBandwidth: "3000Mi",
+		},
+		err: resourcegroup.ErrUnknownResourceGroupMode,
+	})
+
+	tests = append(tests, TestCase{
+		name: "error case: native case 2",
+		input: &model.ResourceGroupSettings{
+			CPULimiter:       "8c",
+			IOReadBandwidth:  "3000Mi",
+			IOWriteBandwidth: "3000Mi",
+		},
+		err: resourcegroup.ErrUnknownResourceGroupMode,
+	})
+
+	tests = append(tests, TestCase{
+		name: "error case: native case 3",
+		input: &model.ResourceGroupSettings{
+			CPULimiter:       "8",
+			IOReadBandwidth:  "3000G",
+			IOWriteBandwidth: "3000MB",
+		},
+		err: resourcegroup.ErrUnknownResourceGroupMode,
+	})
+
+	tests = append(tests, TestCase{
+		name: "error case: duplicated mode",
+		input: &model.ResourceGroupSettings{
+			CPULimiter:       "8",
+			IOReadBandwidth:  "3000Mi",
+			IOWriteBandwidth: "3000Mi",
+			RURate:           1000,
+		},
+		err: resourcegroup.ErrInvalidResourceGroupDuplicatedMode,
+	})
+
+	tests = append(tests, TestCase{
+		name:      "error case: duplicated mode",
+		groupName: "test_group_too_looooooooooooooooooooooooooooooooooooooooooooooooong",
+		input: &model.ResourceGroupSettings{
+			CPULimiter:       "8",
+			IOReadBandwidth:  "3000Mi",
+			IOWriteBandwidth: "3000Mi",
+			RURate:           1000,
+		},
+		err: resourcegroup.ErrTooLongResourceGroupName,
+	})
+
+	for _, test := range tests {
+		name := groupName
+		if len(test.groupName) > 0 {
+			name = test.groupName
+		}
+		group, err := resourcegroup.NewGroupFromOptions(name, test.input)
+		comment := fmt.Sprintf("[%s]\nerr1 %s\nerr2 %s", test.name, err, test.err)
+		if test.err != nil {
+			require.ErrorIs(t, err, test.err, comment)
+		} else {
+			require.NoError(t, err, comment)
+			require.Equal(t, test.output, group)
+		}
+	}
 }

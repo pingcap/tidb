@@ -791,6 +791,8 @@ const (
 	// ...
 	// [version110, version129] is the version range reserved for patches of 6.5.x
 	// ...
+	// version110 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
 	// version130 add column source to mysql.stats_meta_history
 	version130 = 130
 	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
@@ -804,11 +806,13 @@ const (
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
 	version134 = 134
+	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
+	version135 = 135
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version134
+var currentBootstrapVersion int64 = version135
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -925,11 +929,13 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 		upgradeToVer130,
 		upgradeToVer131,
 		upgradeToVer132,
 		upgradeToVer133,
 		upgradeToVer134,
+		upgradeToVer135,
 	}
 )
 
@@ -2275,6 +2281,15 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
+// For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
+}
+
 func upgradeToVer130(s Session, ver int64) {
 	if ver >= version130 {
 		return
@@ -2314,6 +2329,26 @@ func upgradeToVer134(s Session, ver int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
+}
+
+// For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
+func upgradeToVer135(s Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
 }
 
 func writeOOMAction(s Session) {

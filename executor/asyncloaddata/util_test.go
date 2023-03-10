@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package asyncloaddata
+package asyncloaddata_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -168,7 +169,8 @@ func TestKeepAlive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expected, info)
 
-	// can change expected status.
+	// when worker fails to keepalive, before it calls FailJob, it still can
+	// change expected status to some extent.
 
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
 	require.NoError(t, err)
@@ -186,7 +188,18 @@ func TestKeepAlive(t *testing.T) {
 	require.NoError(t, err)
 	info, err = GetJobInfo(ctx, tk.Session(), id)
 	require.NoError(t, err)
-	expected.StatusMessage = "job expected canceled but the node is timeout"
+	expected.Status = JobCanceled
+	expected.StatusMessage = ""
+	require.Equal(t, expected, info)
+
+	// Now the worker calls FailJob
+
+	err = FailJob(ctx, tk.Session(), id, "failed to keepalive")
+	require.NoError(t, err)
+	info, err = GetJobInfo(ctx, tk.Session(), id)
+	require.NoError(t, err)
+	expected.Status = JobFailed
+	expected.StatusMessage = "failed to keepalive"
 	require.Equal(t, expected, info)
 }
 
@@ -201,7 +214,7 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 
 	id, expected := createJob(t, tk.Session(), "user")
 
-	// job can be failed directly when it's pending, although it's not possible
+	// job can be failed directly when it's pending
 
 	err := FailJob(ctx, tk.Session(), id, "failed message")
 	require.NoError(t, err)

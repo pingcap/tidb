@@ -16,9 +16,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -255,10 +252,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if curStatus == metaStatusInitial {
 				if needAutoID {
 					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
-					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+					if err := common.RebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
 						return errors.Trace(err)
 					}
-					newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+					newRowIDBase, newRowIDMax, err = common.AllocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1166,55 +1163,4 @@ func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
 }
 
 func (m *singleTaskMetaMgr) Close() {
-}
-
-func allocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
-	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
-	if err != nil {
-		return 0, 0, err
-	}
-	return alloc.Alloc(ctx, uint64(n), 1, 1)
-}
-
-func rebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) error {
-	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
-	if err != nil {
-		return err
-	}
-	return alloc.Rebase(ctx, newBase, false)
-}
-
-func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoid.Allocator, error) {
-	if store == nil {
-		return nil, errors.New("internal error: kv store should not be nil")
-	}
-	if dbID == 0 {
-		return nil, errors.New("internal error: dbID should not be 0")
-	}
-
-	// We don't need autoid cache here because we allocate all IDs at once.
-	// The argument for CustomAutoIncCacheOption is the cache step. Step 1 means no cache,
-	// but step 1 will enable an experimental feature, so we use step 2 here.
-	//
-	// See https://github.com/pingcap/tidb/issues/38442 for more details.
-	noCache := autoid.CustomAutoIncCacheOption(2)
-	tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
-
-	hasRowID := common.TableHasAutoRowID(tblInfo)
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
-
-	// Current TiDB has some limitations for auto ID.
-	// 1. Auto increment ID and auto row ID are using the same RowID allocator. See https://github.com/pingcap/tidb/issues/982.
-	// 2. Auto random column must be a clustered primary key. That is to say, there is no implicit row ID for tables with auto random column.
-	// 3. There is at most one auto column in a table.
-	// Therefore, we assume there is only one auto column in a table and use RowID allocator if possible.
-	switch {
-	case hasRowID || hasAutoIncID:
-		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, noCache, tblVer), nil
-	case hasAutoRandID:
-		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, noCache, tblVer), nil
-	default:
-		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)
-	}
 }

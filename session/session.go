@@ -421,7 +421,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -432,7 +432,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.preparedPlanCache
 }
@@ -1889,12 +1889,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	var dbName string
-	if config.GetGlobalConfig().Status.RecordDBLabel {
-		dbName = se.GetSessionVars().CurrentDB
+	for _, dbName := range GetDBNames(se.GetSessionVars()) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	}
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2067,11 +2064,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		var dbName string
-		if config.GetGlobalConfig().Status.RecordDBLabel {
-			dbName = se.GetSessionVars().CurrentDB
+		for _, dbName := range GetDBNames(se.GetSessionVars()) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -2137,9 +2132,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
+	// Backup the original resource group name since sql hint might change it during optimization
+	originalResourceGroup := s.GetSessionVars().ResourceGroupName
+
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// the execution finished.
+	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+		defer func() {
+			// Restore the resource group for the session
+			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+		}()
+	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2556,6 +2562,9 @@ func (s *session) Close() {
 	s.ClearDiskFullOpt()
 	if s.preparedPlanCache != nil {
 		s.preparedPlanCache.Close()
+	}
+	if s.nonPreparedPlanCache != nil {
+		s.nonPreparedPlanCache.Close()
 	}
 }
 
@@ -3702,7 +3711,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
 	})
@@ -4268,4 +4277,25 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
+}
+
+// GetDBNames gets the sql layer database names from the session.
+func GetDBNames(seVar *variable.SessionVars) []string {
+	dbNames := make(map[string]struct{})
+	if seVar == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
+		return []string{""}
+	}
+	if seVar.StmtCtx != nil {
+		for _, t := range seVar.StmtCtx.Tables {
+			dbNames[t.DB] = struct{}{}
+		}
+	}
+	if len(dbNames) == 0 {
+		dbNames[seVar.CurrentDB] = struct{}{}
+	}
+	ns := make([]string, 0, len(dbNames))
+	for n := range dbNames {
+		ns = append(ns, n)
+	}
+	return ns
 }
