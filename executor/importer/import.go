@@ -105,7 +105,8 @@ type LoadDataController struct {
 	ColumnAssignments  []*ast.Assignment
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 
-	Table table.Table
+	Table      table.Table
+	SchemaName string
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
@@ -134,6 +135,22 @@ type LoadDataController struct {
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
 	detached          bool
+}
+
+func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
+	return &LoadDataController{
+		Path:               plan.Path,
+		FieldsInfo:         plan.FieldsInfo,
+		LinesInfo:          plan.LinesInfo,
+		NullInfo:           plan.NullInfo,
+		IgnoreLines:        plan.IgnoreLines,
+		Format:             plan.Format,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        plan.OnDuplicate,
+		SchemaName:         plan.Table.Schema.O,
+		Table:              tbl,
+	}
 }
 
 // Init inner params, should call this before use.

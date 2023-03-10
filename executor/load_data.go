@@ -164,8 +164,7 @@ type loadRemoteInfo struct {
 type LoadDataWorker struct {
 	*InsertValues
 
-	Ctx        sessionctx.Context
-	schemaName string
+	Ctx sessionctx.Context
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
 	// operation.
@@ -203,18 +202,7 @@ func NewLoadDataWorker(
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	controller := &importer.LoadDataController{
-		Path:               plan.Path,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
-		NullInfo:           plan.NullInfo,
-		IgnoreLines:        plan.IgnoreLines,
-		Format:             plan.Format,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        plan.OnDuplicate,
-		Table:              tbl,
-	}
+	controller := importer.NewLoadDataController(plan, tbl)
 	if err := controller.Init(sctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -286,7 +274,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
-		ctx, sqlExec, e.GetInfilePath(), e.schemaName, e.table.Meta().Name.O,
+		ctx, sqlExec, e.GetInfilePath(), e.controller.SchemaName, e.table.Meta().Name.O,
 		"logical", e.Ctx.GetSessionVars().User.String())
 	if err != nil {
 		return err
