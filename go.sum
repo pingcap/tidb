@@ -528,8 +528,8 @@ github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANyt
 github.com/inconshreveable/mousetrap v1.0.1 h1:U3uMjPSQEBMNp1lFxmllqCPM6P5u/Xq7Pgzkat/bFNc=
 github.com/inconshreveable/mousetrap v1.0.1/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/influxdata/influxdb v0.0.0-20170331210902-15e594fc09f1/go.mod h1:qZna6X/4elxqT3yI9iZYdZrWWdeFOOprn86kgg4+IzY=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230307141124-6b1baae7ef56 h1:rk2oMV9qGhROMXQtdtfngPEIkxCVj6zzb6HxjGVrwZQ=
-github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230307141124-6b1baae7ef56/go.mod h1:zgHprl3PB82QhxIVkcJdybIIBwWoqMB93f76nn0k/e0=
+github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230310055137-97d66d33e74a h1:6zaKiZ8ZJqRxKeOCowi9lfH58dv13DvvWqdTmv1EBcs=
+github.com/iosmanthus/client-go/v2 v2.0.0-alpha.0.20230310055137-97d66d33e74a/go.mod h1:THRvsM1Y/7+mcjXIHvlHBshEq7ZgGygLqnR7W3I5BCY=
 github.com/iris-contrib/blackfriday v2.0.0+incompatible/go.mod h1:UzZ2bDEoaSGPbkg6SAB4att1aAwTmVIx/5gCVqeyUdI=
 github.com/iris-contrib/go.uuid v2.0.0+incompatible/go.mod h1:iz2lgM/1UnEf1kP0L/+fafWORmlnuysV2EMP8MW+qe0=
 github.com/iris-contrib/i18n v0.0.0-20171121225848-987a633949d0/go.mod h1:pMCz62A0xJL6I+umB2YTlFRwWXaDFA0jy+5HzGiJjqI=
