@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -2139,12 +2140,12 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
-// fetchLoadDataJobs fills the schema
+// fetchShowLoadDataJobs fills the result with the schema
 // {"Job_ID", "Create_Time", "Start_Time", "End_Time",
 // "Data_Source", "Target_Table", "Import_Mode", "Created_By",
 // "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
 // "Result_Code", "Result_Message"}.
-func (e *ShowExec) fetchLoadDataJobs(ctx context.Context) error {
+func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
 	if e.LoadDataJobID != nil {
 		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID)
@@ -2162,7 +2163,19 @@ func (e *ShowExec) fetchLoadDataJobs(ctx context.Context) error {
 		e.result.AppendString(7, info.User)
 		e.result.AppendString(8, "loading")
 		e.result.AppendString(9, info.Status.String())
-		here
+		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
+		if err2 != nil {
+			// maybe empty progress
+			e.result.AppendNull(10)
+			e.result.AppendNull(11)
+		} else {
+			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
+			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
+		}
+		switch info.Status {
+		case asyncloaddata.JobFailed:
+			
+		}
 	}
 
 	// TODO: does not support filtering for now
