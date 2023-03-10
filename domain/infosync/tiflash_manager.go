@@ -54,7 +54,7 @@ type TiFlashReplicaManager interface {
 	// SetTiFlashGroupConfig sets the group index of the tiflash placement rule
 	SetTiFlashGroupConfig(ctx context.Context) error
 	// SetPlacementRule is a helper function to set placement rule.
-	SetPlacementRule(ctx context.Context, rule placement.TiFlashRawRule) error
+	SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error
 	// DeletePlacementRule is to delete placement rule for certain group.
 	DeletePlacementRule(ctx context.Context, group string, ruleID string) error
 	// GetGroupRules to get all placement rule in a certain group.
@@ -151,10 +151,10 @@ func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replica
 	return progress, nil
 }
 
-func encodeRule(c tikv.Codec, rule *placement.TiFlashRawRule) placement.TiFlashRule {
+func encodeRule(c tikv.Codec, rule *placement.TiFlashRule) placement.TiFlashRule {
 	rule.StartKey, rule.EndKey = c.EncodeRange(rule.StartKey, rule.EndKey)
 	rule.ID = encodeRuleID(c, rule.ID)
-	return rule.Build()
+	return *rule
 }
 
 func encodeRuleID(c tikv.Codec, ruleID string) string {
@@ -250,7 +250,7 @@ func (m *TiFlashReplicaManagerCtx) SetTiFlashGroupConfig(ctx context.Context) er
 }
 
 // SetPlacementRule is a helper function to set placement rule.
-func (m *TiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRawRule) error {
+func (m *TiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	r := encodeRule(m.codec, &rule)
 	return m.doSetPlacementRule(ctx, r)
 }
@@ -264,7 +264,10 @@ func (m *TiFlashReplicaManagerCtx) doSetPlacementRule(ctx context.Context, rule 
 		return m.doDeletePlacementRule(ctx, rule.GroupID, rule.ID)
 	}
 
-	j, _ := json.Marshal(rule)
+	j, err := rule.MarshalJSON()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	buf := bytes.NewBuffer(j)
 	res, err := doRequest(ctx, "SetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule"), "POST", buf)
 	if err != nil {
@@ -388,8 +391,8 @@ type mockTiFlashReplicaManagerCtx struct {
 	tiflashProgressCache map[int64]float64
 }
 
-func makeBaseRule() placement.TiFlashRawRule {
-	return placement.TiFlashRawRule{
+func makeBaseRule() placement.TiFlashRule {
+	return placement.TiFlashRule{
 		GroupID:  placement.TiFlashRuleGroupID,
 		ID:       "",
 		Index:    placement.RuleIndexTiFlash,
@@ -407,7 +410,7 @@ func makeBaseRule() placement.TiFlashRawRule {
 }
 
 // MakeNewRule creates a pd rule for TiFlash.
-func MakeNewRule(id int64, count uint64, locationLabels []string) placement.TiFlashRawRule {
+func MakeNewRule(id int64, count uint64, locationLabels []string) placement.TiFlashRule {
 	ruleID := MakeRuleID(id)
 	startKey := tablecodec.GenTableRecordPrefix(id)
 	endKey := tablecodec.EncodeTablePrefix(id + 1)
@@ -699,9 +702,9 @@ func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
 }
 
 // Compare supposed rule, and we actually get from TableInfo
-func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
+func isRuleMatch(rule placement.TiFlashRule, startKey []byte, endKey []byte, count int, labels []string) bool {
 	// Compute startKey
-	if rule.StartKeyHex == startKey && rule.EndKeyHex == endKey {
+	if bytes.Compare(rule.StartKey, startKey) == 0 && bytes.Compare(rule.EndKey, endKey) == 0 {
 		ok := false
 		for _, c := range rule.Constraints {
 			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
@@ -740,7 +743,7 @@ func (tiflash *MockTiFlash) CheckPlacementRule(rule placement.TiFlashRule) bool 
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	for _, r := range tiflash.GlobalTiFlashPlacementRules {
-		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
+		if isRuleMatch(rule, r.StartKey, r.EndKey, r.Count, r.LocationLabels) {
 			return true
 		}
 	}
@@ -843,13 +846,13 @@ func (m *mockTiFlashReplicaManagerCtx) SetTiFlashGroupConfig(_ context.Context) 
 }
 
 // SetPlacementRule is a helper function to set placement rule.
-func (m *mockTiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRawRule) error {
+func (m *mockTiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
 		return nil
 	}
-	return m.tiflash.HandleSetPlacementRule(rule.Build())
+	return m.tiflash.HandleSetPlacementRule(rule)
 }
 
 // DeletePlacementRule is to delete placement rule for certain group.
