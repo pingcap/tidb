@@ -93,12 +93,10 @@ type FieldMapping struct {
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	// expose some fields for test
-	Path        string
-	FieldsInfo  *ast.FieldsClause
-	LinesInfo   *ast.LinesClause
-	NullInfo    *ast.NullDefinedBy
-	IgnoreLines uint64
+	Path       string
+	fieldsInfo *ast.FieldsClause
+	linesInfo  *ast.LinesClause
+	nullInfo   *ast.NullDefinedBy
 
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -120,8 +118,13 @@ type LoadDataController struct {
 
 	fieldNullDef     []string
 	quotedNullIsText bool
-	fieldEnclosedBy  string
-	fieldEscapedBy   string
+	// expose some fields for test
+	FieldsEnclosedBy   string
+	FieldsEscapedBy    string
+	FieldsTerminatedBy string
+	LinesTerminatedBy  string
+	LinesStartingBy    string
+	IgnoreLines        uint64
 
 	// import options
 	importMode        string
@@ -141,9 +144,9 @@ type LoadDataController struct {
 func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
 	return &LoadDataController{
 		Path:               plan.Path,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
-		NullInfo:           plan.NullInfo,
+		fieldsInfo:         plan.FieldsInfo,
+		linesInfo:          plan.LinesInfo,
+		nullInfo:           plan.NullInfo,
 		IgnoreLines:        plan.IgnoreLines,
 		Format:             strings.ToLower(plan.Format),
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
@@ -174,12 +177,12 @@ func (e *LoadDataController) initFieldParams() error {
 
 	// CSV-like
 	if e.Format == "" {
-		if e.NullInfo != nil && e.NullInfo.OptEnclosed &&
-			(e.FieldsInfo == nil || e.FieldsInfo.Enclosed == nil) {
+		if e.nullInfo != nil && e.nullInfo.OptEnclosed &&
+			(e.fieldsInfo == nil || e.fieldsInfo.Enclosed == nil) {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 		}
 		// TODO: support lines terminated is "".
-		if len(e.LinesInfo.Terminated) == 0 {
+		if len(e.linesInfo.Terminated) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 		}
 	}
@@ -197,29 +200,32 @@ func (e *LoadDataController) initFieldParams() error {
 		quotedNullIsText = true
 	)
 
-	if e.NullInfo != nil {
-		nullDef = append(nullDef, e.NullInfo.NullDef)
-		quotedNullIsText = !e.NullInfo.OptEnclosed
-	} else if e.FieldsInfo.Enclosed != nil {
+	if e.nullInfo != nil {
+		nullDef = append(nullDef, e.nullInfo.NullDef)
+		quotedNullIsText = !e.nullInfo.OptEnclosed
+	} else if e.fieldsInfo.Enclosed != nil {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.FieldsInfo.Escaped != nil {
-		nullDef = append(nullDef, string([]byte{*e.FieldsInfo.Escaped, 'N'}))
+	if e.fieldsInfo.Escaped != nil {
+		nullDef = append(nullDef, string([]byte{*e.fieldsInfo.Escaped, 'N'}))
 	}
 
 	enclosed := ""
-	if e.FieldsInfo.Enclosed != nil {
-		enclosed = string([]byte{*e.FieldsInfo.Enclosed})
+	if e.fieldsInfo.Enclosed != nil {
+		enclosed = string([]byte{*e.fieldsInfo.Enclosed})
 	}
 	escaped := ""
-	if e.FieldsInfo.Escaped != nil {
-		escaped = string([]byte{*e.FieldsInfo.Escaped})
+	if e.fieldsInfo.Escaped != nil {
+		escaped = string([]byte{*e.fieldsInfo.Escaped})
 	}
 
 	e.fieldNullDef = nullDef
 	e.quotedNullIsText = quotedNullIsText
-	e.fieldEnclosedBy = enclosed
-	e.fieldEscapedBy = escaped
+	e.FieldsEnclosedBy = enclosed
+	e.FieldsEscapedBy = escaped
+	e.FieldsTerminatedBy = e.fieldsInfo.Terminated
+	e.LinesTerminatedBy = e.linesInfo.Terminated
+	e.LinesStartingBy = e.linesInfo.Starting
 	return nil
 }
 
@@ -519,16 +525,16 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return &config.CSVConfig{
-		Separator: e.FieldsInfo.Terminated,
+		Separator: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		Delimiter:        e.fieldEnclosedBy,
-		Terminator:       e.LinesInfo.Terminated,
+		Delimiter:        e.FieldsEnclosedBy,
+		Terminator:       e.LinesTerminatedBy,
 		NotNull:          false,
 		Null:             e.fieldNullDef,
 		Header:           false,
 		TrimLastSep:      false,
-		EscapedBy:        e.fieldEscapedBy,
-		StartingBy:       e.LinesInfo.Starting,
+		EscapedBy:        e.FieldsEscapedBy,
+		StartingBy:       e.LinesStartingBy,
 		AllowEmptyLine:   true,
 		QuotedNullIsText: e.quotedNullIsText,
 		UnescapedQuote:   true,

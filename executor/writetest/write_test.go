@@ -2100,7 +2100,7 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
-	ld.GetController().LinesInfo.Terminated = "||"
+	ld.GetController().LinesTerminatedBy = "||"
 	tests = []testCase{
 		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -2115,9 +2115,9 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// fields and lines aren't default, ReadRows returns data is nil
-	ld.GetController().FieldsInfo.Terminated = "\\"
-	ld.GetController().LinesInfo.Starting = "xxx"
-	ld.GetController().LinesInfo.Terminated = "|!#^"
+	ld.GetController().FieldsTerminatedBy = "\\"
+	ld.GetController().LinesStartingBy = "xxx"
+	ld.GetController().LinesTerminatedBy = "|!#^"
 	tests = []testCase{
 		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
@@ -2191,16 +2191,15 @@ func TestLoadData(t *testing.T) {
 	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// test line terminator in field quoter
-	ld.GetController().LinesInfo.Terminated = "\n"
-	tt := byte('"')
-	ld.GetController().FieldsInfo.Enclosed = &tt
+	ld.GetController().LinesTerminatedBy = "\n"
+	ld.GetController().FieldsEnclosedBy = `"`
 	tests = []testCase{
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	ld.GetController().LinesInfo.Terminated = "#\n"
-	ld.GetController().FieldsInfo.Terminated = "#"
+	ld.GetController().LinesTerminatedBy = "#\n"
+	ld.GetController().FieldsTerminatedBy = "#"
 	tests = []testCase{
 		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
