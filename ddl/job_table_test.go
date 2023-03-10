@@ -586,10 +586,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta)
 	// test the BackfillJob's AbbrStr
-	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
-	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
-	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
-	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
+	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index in txn, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
+	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index in txn, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index in txn, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
+	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index in txn, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
 	// test select tidb_background_subtask
 	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(fmt.Sprintf("%s 0000-00-00 00:00:00", uuid)))
