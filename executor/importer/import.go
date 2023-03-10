@@ -137,6 +137,7 @@ type LoadDataController struct {
 	detached          bool
 }
 
+// NewLoadDataController create new controller.
 func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
 	return &LoadDataController{
 		Path:               plan.Path,
