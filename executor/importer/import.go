@@ -145,7 +145,7 @@ func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDat
 		LinesInfo:          plan.LinesInfo,
 		NullInfo:           plan.NullInfo,
 		IgnoreLines:        plan.IgnoreLines,
-		Format:             plan.Format,
+		Format:             strings.ToLower(plan.Format),
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
@@ -185,6 +185,11 @@ func (e *LoadDataController) initFieldParams() error {
 	}
 	if e.Format != "" && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
+	}
+
+	if e.Format != "" {
+		// no need to init those param for sql/parquet
+		return nil
 	}
 
 	var (
