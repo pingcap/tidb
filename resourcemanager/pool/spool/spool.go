@@ -33,10 +33,10 @@ import (
 // Pool is a single goroutine pool. it can not reuse the goroutine.
 type Pool struct {
 	wg                 sync.WaitGroup
-	mu                 sync.Mutex
+	mu                 sync.RWMutex
 	options            *Options
-	capacity           atomic.Int32
-	running            atomic.Int32
+	capacity           int32
+	running            int32
 	isStop             atomic.Bool
 	concurrencyMetrics prometheus.Gauge
 	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
@@ -55,7 +55,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		return nil, pool.ErrPoolParamsInvalid
 	}
 	result.SetName(name)
-	result.capacity.Store(size)
+	result.capacity = size
 	result.concurrencyMetrics.Set(float64(size))
 	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
@@ -72,7 +72,7 @@ func (p *Pool) Tune(size int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.SetLastTuneTs(time.Now())
-	p.capacity.Store(int32(size))
+	p.capacity = int32(size)
 	p.concurrencyMetrics.Set(float64(size))
 }
 
@@ -92,12 +92,16 @@ func (p *Pool) Run(fn func()) error {
 
 // Cap returns the capacity of the pool.
 func (p *Pool) Cap() int {
-	return int(p.capacity.Load())
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return int(p.capacity)
 }
 
 // Running returns the number of running goroutines.
 func (p *Pool) Running() int {
-	return int(p.running.Load())
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return int(p.running)
 }
 
 func (p *Pool) run(fn func()) {
@@ -108,7 +112,9 @@ func (p *Pool) run(fn func()) {
 				logutil.BgLogger().Error("recover panic", zap.Any("recover", r))
 			}
 			p.wg.Done()
-			p.running.Add(-1)
+			p.mu.Lock()
+			p.running = p.running - 1
+			p.mu.Unlock()
 		}()
 		fn()
 	}()
@@ -152,14 +158,14 @@ func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
 }
 
 func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bool) {
-	n := p.capacity.Load() - p.running.Load()
+	n := p.capacity - p.running
 	if n <= 0 {
 		return 0, false
 	}
 	// if concurrency is 1 , we must return a goroutine
 	// if concurrency is more than 1, we must return at least one goroutine.
 	result := mathutil.Min(n, concurrency)
-	p.running.Add(result)
+	p.running = p.running + result
 	return result, true
 }
 
