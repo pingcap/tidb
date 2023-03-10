@@ -1377,7 +1377,7 @@ type SessionVars struct {
 
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
-	TiFlashComputeDispatchPolicy int
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
 
 	// SlowTxnThreshold is the threshold of slow transaction logs
 	SlowTxnThreshold uint64

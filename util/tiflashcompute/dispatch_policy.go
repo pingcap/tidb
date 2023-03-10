@@ -18,10 +18,12 @@ import (
 	"github.com/pingcap/errors"
 )
 
+type DispatchPolicy int
+
 // Different policy to dispatching task to different tiflash_compute nods.
 const (
 	// DispatchPolicyRR means dispatching by RoundRobin.
-	DispatchPolicyRR = iota
+	DispatchPolicyRR DispatchPolicy = iota
 	// DispatchPolicyConsistentHash means dispatching by ConsistentHash.
 	DispatchPolicyConsistentHash
 	// DispatchPolicyInvalid is invalid policy.
@@ -43,7 +45,7 @@ func GetValidDispatchPolicy() []string {
 }
 
 // GetDispatchPolicyByStr return corresponding policy.
-func GetDispatchPolicyByStr(str string) (int, error) {
+func GetDispatchPolicyByStr(str string) (DispatchPolicy, error) {
 	switch str {
 	case DispatchPolicyConsistentHashStr:
 		return DispatchPolicyConsistentHash, nil
@@ -56,7 +58,7 @@ func GetDispatchPolicyByStr(str string) (int, error) {
 }
 
 // GetDispatchPolicy return corresponding policy string.
-func GetDispatchPolicy(p int) string {
+func GetDispatchPolicy(p DispatchPolicy) string {
 	switch p {
 	case DispatchPolicyConsistentHash:
 		return DispatchPolicyConsistentHashStr

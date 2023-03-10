@@ -1501,6 +1501,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 
 	useASs := []bool{true, false}
 	// Valid values.
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy")
 	for _, useAS := range useASs {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.UseAutoScaler = useAS
@@ -1511,7 +1512,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			tk1.MustQuery("select @@tiflash_compute_dispatch_policy").Check(testkit.Rows(p))
-			failpoint.Enable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy", fmt.Sprintf(`return("%s")`, p))
+			require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy", fmt.Sprintf(`return("%s")`, p)))
 			err = tk1.ExecToErr("select * from t;")
 			if useAS {
 				// Expect error, because TestAutoScaler return empty topo.
@@ -1520,9 +1521,9 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 				// This error message means we use PD instead of AutoScaler.
 				require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
 			}
+			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy"))
 		}
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/testWhichDispatchPolicy")
 }
 
 func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {

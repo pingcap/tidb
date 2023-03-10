@@ -494,7 +494,7 @@ func buildBatchCopTasksForNonPartitionedTable(
 	ttl time.Duration,
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64,
-	dispatchPolicy int) ([]*batchCopTask, error) {
+	dispatchPolicy tiflashcompute.DispatchPolicy) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
 			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
@@ -515,7 +515,7 @@ func buildBatchCopTasksForPartitionedTable(
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64,
 	partitionIDs []int64,
-	dispatchPolicy int) (batchTasks []*batchCopTask, err error) {
+	dispatchPolicy tiflashcompute.DispatchPolicy) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		if config.GetGlobalConfig().UseAutoScaler {
 			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
@@ -633,7 +633,7 @@ func buildBatchCopTasksConsistentHash(
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
 	ttl time.Duration,
-	dispatchPolicy int) (res []*batchCopTask, err error) {
+	dispatchPolicy tiflashcompute.DispatchPolicy) (res []*batchCopTask, err error) {
 	failpointCheckWhichPolicy(dispatchPolicy)
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -778,7 +778,7 @@ func failpointCheckForConsistentHash(tasks []*batchCopTask) {
 	})
 }
 
-func failpointCheckWhichPolicy(act int) {
+func failpointCheckWhichPolicy(act tiflashcompute.DispatchPolicy) {
 	failpoint.Inject("testWhichDispatchPolicy", func(exp failpoint.Value) {
 		expStr := exp.(string)
 		actStr := tiflashcompute.GetDispatchPolicy(act)
@@ -1256,7 +1256,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
 	ttl time.Duration,
-	dispatchPolicy int) (res []*batchCopTask, err error) {
+	dispatchPolicy tiflashcompute.DispatchPolicy) (res []*batchCopTask, err error) {
 	failpointCheckWhichPolicy(dispatchPolicy)
 	const cmdType = tikvrpc.CmdBatchCop
 	var (
