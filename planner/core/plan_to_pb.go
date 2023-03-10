@@ -418,6 +418,10 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	client := ctx.GetClient()
 	var leftJoinKeys, rightJoinKeys []expression.Expression
 
+	if len(p.LeftJoinKeys) > 0 && len(p.LeftNAJoinKeys) > 0 {
+		return nil, errors.Errorf("join key and na join key can not both exist")
+	}
+
 	isNullAwareSemiJoin := len(p.LeftNAJoinKeys) > 0
 	if isNullAwareSemiJoin {
 		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftNAJoinKeys))
