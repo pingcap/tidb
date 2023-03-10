@@ -218,7 +218,7 @@ func (t PostOpLevel) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-// parser command line parameter
+// FromStringValue parse command line parameter.
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	//nolint:goconst // This 'false' and other 'false's aren't the same.
@@ -529,20 +529,57 @@ type PostRestore struct {
 	Compact           bool        `toml:"compact" json:"compact"`
 }
 
+// StringOrStringSlice can unmarshal a TOML string as string slice with one element.
+type StringOrStringSlice []string
+
+func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
+	switch v := in.(type) {
+	case string:
+		*s = []string{v}
+	case []interface{}:
+		*s = make([]string, 0, len(v))
+		for _, vv := range v {
+			vs, ok := vv.(string)
+			if !ok {
+				return errors.Errorf("invalid string slice '%v'", in)
+			}
+			*s = append(*s, vs)
+		}
+	default:
+		return errors.Errorf("invalid string slice '%v'", in)
+	}
+	return nil
+}
+
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
-	Separator         string `toml:"separator" json:"separator"`
-	Delimiter         string `toml:"delimiter" json:"delimiter"`
-	Terminator        string `toml:"terminator" json:"terminator"`
-	Null              string `toml:"null" json:"null"`
-	Header            bool   `toml:"header" json:"header"`
-	HeaderSchemaMatch bool   `toml:"header-schema-match" json:"header-schema-match"`
-	TrimLastSep       bool   `toml:"trim-last-separator" json:"trim-last-separator"`
-	NotNull           bool   `toml:"not-null" json:"not-null"`
-	BackslashEscape   bool   `toml:"backslash-escape" json:"backslash-escape"`
+	Separator         string              `toml:"separator" json:"separator"`
+	Delimiter         string              `toml:"delimiter" json:"delimiter"`
+	Terminator        string              `toml:"terminator" json:"terminator"`
+	Null              StringOrStringSlice `toml:"null" json:"null"`
+	Header            bool                `toml:"header" json:"header"`
+	HeaderSchemaMatch bool                `toml:"header-schema-match" json:"header-schema-match"`
+	TrimLastSep       bool                `toml:"trim-last-separator" json:"trim-last-separator"`
+	NotNull           bool                `toml:"not-null" json:"not-null"`
+	// deprecated, use `escaped-by` instead.
+	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
+	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
+	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
+
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
-	StartingBy string `toml:"-" json:"-"`
+	StartingBy     string `toml:"-" json:"-"`
+	AllowEmptyLine bool   `toml:"-" json:"-"`
+	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
+	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
+	QuotedNullIsText bool `toml:"-" json:"-"`
+	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+	// > If the field begins with the ENCLOSED BY character, instances of that character are recognized as terminating a
+	// > field value only if followed by the field or line TERMINATED BY sequence.
+	// This means we will meet unescaped quote in a quoted field
+	// > The "BIG" boss      -> The "BIG" boss
+	// This means we will meet unescaped quote in a unquoted field
+	UnescapedQuote bool `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {
@@ -643,6 +680,7 @@ type TikvImporter struct {
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -802,8 +840,9 @@ func NewConfig() *Config {
 				Header:            true,
 				HeaderSchemaMatch: true,
 				NotNull:           false,
-				Null:              `\N`,
+				Null:              []string{`\N`},
 				BackslashEscape:   true,
+				EscapedBy:         `\`,
 				TrimLastSep:       false,
 			},
 			StrictFormat:           false,
@@ -935,15 +974,30 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
-	if csv.BackslashEscape {
-		if csv.Separator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
+	if len(csv.EscapedBy) > 1 {
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
+	}
+	if csv.BackslashEscape && csv.EscapedBy == "" {
+		csv.EscapedBy = `\`
+	}
+	if !csv.BackslashEscape && csv.EscapedBy == `\` {
+		csv.EscapedBy = ""
+	}
+
+	// keep compatibility with old behaviour
+	if !csv.NotNull && len(csv.Null) == 0 {
+		csv.Null = []string{""}
+	}
+
+	if len(csv.EscapedBy) > 0 {
+		if csv.Separator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
-		if csv.Delimiter == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
+		if csv.Delimiter == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
-		if csv.Terminator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
+		if csv.Terminator == csv.EscapedBy {
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
 	}
 

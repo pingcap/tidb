@@ -1007,6 +1007,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
+	//nolint: ineffassign
 	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
 	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip

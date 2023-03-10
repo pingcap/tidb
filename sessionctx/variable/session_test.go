@@ -54,6 +54,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDeriveTopN, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
@@ -206,6 +207,8 @@ func TestSlowLogFormat(t *testing.T) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
+# Keyspace_name: keyspace_a
+# Keyspace_ID: 1
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Exec_retry_time: 5.1 Exec_retry_count: 3
@@ -246,6 +249,8 @@ func TestSlowLogFormat(t *testing.T) {
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      "keyspace_a",
+		KeyspaceID:        1,
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
