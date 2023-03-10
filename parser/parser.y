@@ -502,6 +502,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	pause                 "PAUSE"
 	percent               "PERCENT"
 	per_db                "PER_DB"
 	per_table             "PER_TABLE"
@@ -881,7 +882,6 @@ import (
 	AlterDatabaseStmt          "Alter database statement"
 	AlterTableStmt             "Alter table statement"
 	AlterUserStmt              "Alter user statement"
-	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterResourceGroupStmt     "Alter Resource Group statement"
@@ -897,7 +897,6 @@ import (
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
 	CreateIndexStmt            "CREATE INDEX statement"
-	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
@@ -905,7 +904,6 @@ import (
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
-	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
 	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
@@ -944,14 +942,12 @@ import (
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
-	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
 	SelectStmtWithClause       "common table expression SELECT statement"
 	RenameTableStmt            "rename table statement"
 	RenameUserStmt             "rename user statement"
 	ReplaceIntoStmt            "REPLACE INTO statement"
 	RecoverTableStmt           "recover table statement"
-	ResumeImportStmt           "RESUME IMPORT statement"
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
@@ -963,10 +959,8 @@ import (
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
-	ShowImportStmt             "SHOW IMPORT statement"
 	ShowStmt                   "Show engines/databases/tables/user/columns/warnings/status statement"
 	Statement                  "statement"
-	StopImportStmt             "STOP IMPORT statement"
 	TraceStmt                  "TRACE statement"
 	TraceableStmt              "traceable statement"
 	TruncateTableStmt          "TRUNCATE TABLE statement"
@@ -983,6 +977,10 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
+	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
+	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
+	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
+	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1048,7 +1046,6 @@ import (
 	RequireClause                          "Encrypted connections options"
 	RequireClauseOpt                       "optional Encrypted connections options"
 	EqOpt                                  "= or empty"
-	ErrorHandling                          "specify exit, replace or skip when meet error"
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
@@ -1081,10 +1078,7 @@ import (
 	HandleRangeList                        "handle range list"
 	IfExists                               "If Exists"
 	IfNotExists                            "If Not Exists"
-	IfNotRunning                           "If Not Running"
-	IfRunning                              "If Running"
 	IgnoreOptional                         "IGNORE or empty"
-	ImportTruncate                         "truncate all data or data related to errors"
 	IndexHint                              "index hint"
 	IndexHintList                          "index hint list"
 	IndexHintListOpt                       "index hint list opt"
@@ -1133,7 +1127,6 @@ import (
 	OnCommitOpt                            "ON COMMIT DELETE |PRESERVE ROWS"
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
 	OfTablesOpt                            "OF table_name [, ...]"
-	OptErrors                              "ERRORS or empty"
 	OptFull                                "Full or empty"
 	OptTemporary                           "TEMPORARY or empty"
 	OptOrder                               "Optional ordering keyword: ASC/DESC. Default to ASC"
@@ -5386,160 +5379,39 @@ OptionLevel:
 		$$ = ast.BRIEOptionLevelRequired
 	}
 
-PurgeImportStmt:
-	"PURGE" "IMPORT" NUM
+PauseLoadDataStmt:
+	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.PurgeImportStmt{TaskID: getUint64FromNUM($3)}
-	}
-
-/*******************************************************************
- * import statements
- *
- *	CREATE IMPORT [IF NOT EXISTS] import_name
- *		FROM data_location [REPLACE | SKIP {ALL | CONSTRAINT | DUPLICATE ｜ STRICT}]
- *		[options_list]
- *	STOP IMPORT [IF RUNNING] import_name
- *	RESUME IMPORT [IF NOT RUNNING] import_name
- *	ALTER IMPORT import_name
- *		[REPLACE | SKIP {ALL | CONSTRAINT | DUPLICATE | STRICT}]
- *		[options_list]
- *		[TRUNCATE
- *			{ALL | ERRORS} [TABLE table_name [, table_name] ...]
- *		]
- *	DROP IMPORT [IF EXISTS] import_name
- *	SHOW IMPORT import_name [ERRORS] [TABLE table_name [, table_name] ...]
- */
-CreateImportStmt:
-	"CREATE" "IMPORT" IfNotExists Identifier "FROM" stringLit ErrorHandling BRIEOptions
-	{
-		$$ = &ast.CreateImportStmt{
-			IfNotExists:   $3.(bool),
-			Name:          $4,
-			Storage:       $6,
-			ErrorHandling: $7.(ast.ErrorHandlingOption),
-			Options:       $8.([]*ast.BRIEOption),
+		$$ = &ast.LoadDataActionStmt{
+			Tp: ast.LoadDataPause,
+			JobID: $5.(int64),
 		}
 	}
 
-StopImportStmt:
-	"STOP" "IMPORT" IfRunning Identifier
+ResumeLoadDataStmt:
+	"RESUME" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.StopImportStmt{
-			IfRunning: $3.(bool),
-			Name:      $4,
+		$$ = &ast.LoadDataActionStmt{
+			Tp: ast.LoadDataResume,
+			JobID: $5.(int64),
 		}
 	}
 
-ResumeImportStmt:
-	"RESUME" "IMPORT" IfNotRunning Identifier
+CancelLoadDataStmt:
+	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.ResumeImportStmt{
-			IfNotRunning: $3.(bool),
-			Name:         $4,
+		$$ = &ast.LoadDataActionStmt{
+			Tp: ast.LoadDataCancel,
+			JobID: $5.(int64),
 		}
 	}
 
-AlterImportStmt:
-	"ALTER" "IMPORT" Identifier ErrorHandling BRIEOptions ImportTruncate
+DropLoadDataStmt:
+	"DROP" "LOAD" "DATA" "JOB" Int64Num
 	{
-		s := &ast.AlterImportStmt{
-			Name:          $3,
-			ErrorHandling: $4.(ast.ErrorHandlingOption),
-			Options:       $5.([]*ast.BRIEOption),
-		}
-		if $6 != nil {
-			s.Truncate = $6.(*ast.ImportTruncate)
-		}
-		$$ = s
-	}
-
-DropImportStmt:
-	"DROP" "IMPORT" IfExists Identifier
-	{
-		$$ = &ast.DropImportStmt{
-			IfExists: $3.(bool),
-			Name:     $4,
-		}
-	}
-
-ShowImportStmt:
-	"SHOW" "IMPORT" Identifier OptErrors TableNameListOpt2
-	{
-		$$ = &ast.ShowImportStmt{
-			Name:       $3,
-			ErrorsOnly: $4.(bool),
-			TableNames: $5.([]*ast.TableName),
-		}
-	}
-
-IfRunning:
-	{
-		$$ = false
-	}
-|	"IF" "RUNNING"
-	{
-		$$ = true
-	}
-
-IfNotRunning:
-	{
-		$$ = false
-	}
-|	"IF" NotSym "RUNNING"
-	{
-		$$ = true
-	}
-
-OptErrors:
-	{
-		$$ = false
-	}
-|	"ERRORS"
-	{
-		$$ = true
-	}
-
-ErrorHandling:
-	{
-		$$ = ast.ErrorHandleError
-	}
-|	"REPLACE"
-	{
-		$$ = ast.ErrorHandleReplace
-	}
-|	"SKIP" "ALL"
-	{
-		$$ = ast.ErrorHandleSkipAll
-	}
-|	"SKIP" "CONSTRAINT"
-	{
-		$$ = ast.ErrorHandleSkipConstraint
-	}
-|	"SKIP" "DUPLICATE"
-	{
-		$$ = ast.ErrorHandleSkipDuplicate
-	}
-|	"SKIP" "STRICT"
-	{
-		$$ = ast.ErrorHandleSkipStrict
-	}
-
-ImportTruncate:
-	{
-		$$ = nil
-	}
-|	"TRUNCATE" "ALL" TableNameListOpt2
-	{
-		$$ = &ast.ImportTruncate{
-			IsErrorsOnly: false,
-			TableNames:   $3.([]*ast.TableName),
-		}
-	}
-|	"TRUNCATE" "ERRORS" TableNameListOpt2
-	{
-		$$ = &ast.ImportTruncate{
-			IsErrorsOnly: true,
-			TableNames:   $3.([]*ast.TableName),
+		$$ = &ast.LoadDataActionStmt{
+			Tp: ast.LoadDataDrop,
+			JobID: $5.(int64),
 		}
 	}
 
@@ -6480,6 +6352,7 @@ UnReservedKeyword:
 |	"BERNOULLI"
 |	"SYSTEM"
 |	"PERCENT"
+|	"PAUSE"
 |	"RESUME"
 |	"OFF"
 |	"OPTIONAL"
@@ -10797,13 +10670,6 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
-|	"SHOW" "CREATE" "IMPORT" Identifier
-	{
-		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowCreateImport,
-			DBName: $4, // we reuse DBName of ShowStmt
-		}
-	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -10908,6 +10774,14 @@ ShowStmt:
 |	"SHOW" "PLACEMENT" "FOR" ShowPlacementTarget
 	{
 		$$ = $4.(*ast.ShowStmt)
+	}
+|	"SHOW" "LOAD" "DATA" "JOB" Int64Num
+	{
+		v := $5.(int64)
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowLoadDataJobs,
+			LoadDataJobID: &v,
+		}
 	}
 
 ShowPlacementTarget:
@@ -11240,10 +11114,6 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowRestores}
 	}
-|	"IMPORTS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImports}
-	}
 |	"PLACEMENT"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacement}
@@ -11251,6 +11121,10 @@ ShowTargetFilterable:
 |	"PLACEMENT" "LABELS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
+	}
+|	"LOAD" "DATA" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowLoadDataJobs}
 	}
 
 ShowLikeOrWhereOpt:
@@ -11461,7 +11335,6 @@ Statement:
 |	AlterDatabaseStmt
 |	AlterTableStmt
 |	AlterUserStmt
-|	AlterImportStmt
 |	AlterInstanceStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
@@ -11477,7 +11350,6 @@ Statement:
 |	ExplainStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
-|	CreateImportStmt
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
@@ -11490,7 +11362,6 @@ Statement:
 |	CreateStatisticsStmt
 |	DoStmt
 |	DropDatabaseStmt
-|	DropImportStmt
 |	DropIndexStmt
 |	DropTableStmt
 |	DropPolicyStmt
@@ -11519,14 +11390,12 @@ Statement:
 |	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
-|	PurgeImportStmt
 |	RollbackStmt
 |	RenameTableStmt
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
 |	ReleaseSavepointStmt
-|	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
 |	SavepointStmt
@@ -11551,8 +11420,6 @@ Statement:
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
-|	StopImportStmt
-|	ShowImportStmt
 |	ShowStmt
 |	TraceStmt
 |	TruncateTableStmt
@@ -11564,6 +11431,10 @@ Statement:
 |	RestartStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
+|	PauseLoadDataStmt
+|	ResumeLoadDataStmt
+|	CancelLoadDataStmt
+|	DropLoadDataStmt
 
 TraceableStmt:
 	DeleteFromStmt

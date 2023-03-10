@@ -439,6 +439,43 @@ func TestLoadDataRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "show load data jobs",
+			expectSQL: "SHOW LOAD DATA JOBS",
+		},
+		{
+			sourceSQL: "show load data job 123",
+			expectSQL: "SHOW LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "show load data jobs where aa > 1",
+			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "pause load data job 123",
+			expectSQL: "PAUSE LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "resume load data job 123",
+			expectSQL: "RESUME LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "Cancel load data job 123",
+			expectSQL: "CANCEL LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "drop   load data job 123",
+			expectSQL: "DROP LOAD DATA JOB 123",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestFulltextSearchModifier(t *testing.T) {
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())

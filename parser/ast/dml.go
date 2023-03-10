@@ -2847,6 +2847,7 @@ const (
 	ShowPlacementLabels
 	ShowSessionStates
 	ShowCreateResourceGroup
+	ShowLoadDataJobs
 )
 
 const (
@@ -2892,6 +2893,8 @@ type ShowStmt struct {
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
+
+	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3080,9 +3083,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PRIVILEGES")
 	case ShowBuiltins:
 		ctx.WriteKeyWord("BUILTINS")
-	case ShowCreateImport:
-		ctx.WriteKeyWord("CREATE IMPORT ")
-		ctx.WriteName(n.DBName)
 	case ShowPlacementForDatabase:
 		ctx.WriteKeyWord("PLACEMENT FOR DATABASE ")
 		ctx.WriteName(n.DBName)
@@ -3098,6 +3098,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
+	case ShowLoadDataJobs:
+		if n.LoadDataJobID != nil {
+			ctx.WriteKeyWord("LOAD DATA JOB ")
+			ctx.WritePlainf("%d", *n.LoadDataJobID)
+		} else {
+			ctx.WriteKeyWord("LOAD DATA JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
