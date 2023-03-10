@@ -69,6 +69,8 @@ func (p *Pool) Tune(size int) {
 	if size == 0 {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	p.concurrencyMetrics.Set(float64(size))
