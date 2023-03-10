@@ -4,7 +4,8 @@ go 1.20
 
 replace (
 	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20230309094958-c2ae1b770df6
-	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20230309112023-40fa0e216ed1
+	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20230310071857-eca2a1337385
+	github.com/tikv/pd/client => github.com/JmPotato/pd/client v0.0.0-20230309083851-79cdaf82c8af
 )
 
 require (

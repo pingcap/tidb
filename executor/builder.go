@@ -1210,54 +1210,11 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 				b.err = err
 				return nil
 			}
-			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(v.TargetPlan.ID(), &ruRuntimeStats{store.CreateRURuntimeStats(startTS)})
+			explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec
-}
-
-// ruRuntimeStats is a wrapper of clientutil.RURuntimeStats,
-// which implements the RuntimeStats interface.
-type ruRuntimeStats struct {
-	*clientutil.RURuntimeStats
-}
-
-// String implements the RuntimeStats interface.
-func (e *ruRuntimeStats) String() string {
-	if e.RURuntimeStats != nil {
-		return e.RURuntimeStats.String()
-	}
-	return ""
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &ruRuntimeStats{}
-	if e.RURuntimeStats != nil {
-		newRs.RURuntimeStats = e.RURuntimeStats.Clone()
-	}
-	return newRs
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*ruRuntimeStats)
-	if !ok {
-		return
-	}
-	if tmp.RURuntimeStats != nil {
-		if e.RURuntimeStats == nil {
-			e.RURuntimeStats = tmp.RURuntimeStats.Clone()
-			return
-		}
-		e.RURuntimeStats.Merge(tmp.RURuntimeStats)
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Tp() int {
-	return execdetails.TpRURuntimeStats
 }
 
 func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
