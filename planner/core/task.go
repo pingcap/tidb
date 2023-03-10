@@ -819,6 +819,11 @@ func (t *rootTask) MemoryUsage() (sum int64) {
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.idxMergePartPlans) == 0 {
@@ -862,12 +867,17 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().statsInfo()
 		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.ctx, stats, p.blockOffset)
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
+		return t
+	}
+	// Skip limit with partition on the root. This is a derived topN and window function
+	// will take care of the filter.
+	if len(p.GetPartitionBy()) > 0 {
 		return t
 	}
 	return attachPlan2Task(p, t)
@@ -938,14 +948,19 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
 	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
 	newCount := p.Offset + p.Count
 	childProfile := childPlan.statsInfo()
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := deriveLimitStats(childProfile, float64(newCount))
 	topN := PhysicalTopN{
-		ByItems: newByItems,
-		Count:   newCount,
+		ByItems:     newByItems,
+		PartitionBy: newPartitionBy,
+		Count:       newCount,
 	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
@@ -1060,6 +1075,11 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
+	// Skip TopN with partition on the root. This is a derived topN and window function
+	// will take care of the filter.
+	if len(p.GetPartitionBy()) > 0 {
+		return t
+	}
 	return attachPlan2Task(p, rootTask)
 }
 
@@ -1162,6 +1182,10 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		return nil, false
 	}
 
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
@@ -1231,7 +1255,8 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
 		pushedLimit := PhysicalLimit{
-			Count: newCount,
+			Count:       newCount,
+			PartitionBy: newPartitionBy,
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
@@ -2718,7 +2743,19 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 	return
 }
 
+func tryExpandVirtualColumn(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		return
+	}
+	for _, child := range p.Children() {
+		tryExpandVirtualColumn(child)
+	}
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
+	// In disaggregated-tiflash mode, need to consider generated column.
+	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.statsInfo())

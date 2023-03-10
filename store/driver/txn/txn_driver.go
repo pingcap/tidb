@@ -18,8 +18,10 @@ import (
 	"bytes"
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
@@ -276,6 +278,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetTxnSource(val.(uint64))
 	case kv.ResourceGroupName:
 		txn.KVTxn.SetResourceGroupName(val.(string))
+	case kv.LoadBasedReplicaReadThreshold:
+		txn.KVTxn.GetSnapshot().SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	}
 }
 
@@ -367,6 +371,7 @@ func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, key
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
+		failpoint.Inject("lockedWithConflictOccurs", func() {})
 		var bufTableID, bufRest bytes.Buffer
 		foundKey := false
 		for k, v := range lockCtx.Values {

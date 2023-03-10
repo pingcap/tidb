@@ -1038,9 +1038,15 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems     []*util.ByItems
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1055,6 +1061,10 @@ func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
+	for _, it := range lt.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	return cloned, nil
 }
@@ -1077,6 +1087,9 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 	sum = lt.basePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
+	}
+	for _, item := range lt.PartitionBy {
+		sum += item.MemoryUsage()
 	}
 	return
 }
@@ -1643,8 +1656,14 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 type PhysicalLimit struct {
 	physicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	PartitionBy []property.SortItem
+	Offset      uint64
+	Count       uint64
+}
+
+// GetPartitionBy returns partition by fields
+func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1654,6 +1673,10 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
+	}
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
 	}
 	cloned.physicalSchemaProducer = *base
 	return cloned, nil
