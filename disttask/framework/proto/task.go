@@ -43,9 +43,14 @@ const (
 	TaskStateReverted      = "reverted"
 )
 
+const (
+	TaskTypeCreateIndex = "add_index"
+)
+
 // TaskStep is the step of task.
 const (
 	StepInit int64 = -1
+	StepOne  int64 = 1
 )
 
 // Task represents the task of distribute framework.
