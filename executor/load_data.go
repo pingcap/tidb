@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -154,7 +155,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
 		}
 		// try to find pattern error in advance
-		_, err = filepath.Match(path, "")
+		_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
 		}
@@ -222,16 +223,7 @@ func (e *LoadDataExec) loadFromRemote(
 	readerInfos := make([]LoadDataReaderInfo, 0, 8)
 	commonPrefix := path[:idx]
 	// we only support '*', in order to reuse glob library manually escape the path
-	var buf strings.Builder
-	buf.Grow(len(path))
-	for _, c := range path {
-		switch c {
-		case '?', '[', ']':
-			buf.WriteByte('\\')
-		}
-		buf.WriteRune(c)
-	}
-	escapedPath := buf.String()
+	escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
 
 	err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
 		func(remotePath string, size int64) error {
