@@ -51,14 +51,15 @@ const (
 	RegisterImportTaskPrefix = "/tidb/brie/import"
 
 	RegisterRetryInternal  = 10 * time.Second
-	defaultTaskRegisterTTL = 3 * 60 // 3 minutes
+	defaultTaskRegisterTTL = 3 * time.Minute // 3 minutes
 )
 
 // TaskRegister can register the task to PD with a lease, and keepalive it in the background
 type TaskRegister struct {
-	client *clientv3.Client
-	ttl    int64
-	key    string
+	client    *clientv3.Client
+	ttl       time.Duration
+	secondTTL int64
+	key       string
 
 	// leaseID used to revoke the lease
 	curLeaseID clientv3.LeaseID
@@ -67,11 +68,12 @@ type TaskRegister struct {
 }
 
 // NewTaskRegisterWithTTL build a TaskRegister with key format {RegisterTaskPrefix}/{RegisterTaskType}/{taskName}
-func NewTaskRegisterWithTTL(client *clientv3.Client, ttl int64, tp RegisterTaskType, taskName string) *TaskRegister {
+func NewTaskRegisterWithTTL(client *clientv3.Client, ttl time.Duration, tp RegisterTaskType, taskName string) *TaskRegister {
 	return &TaskRegister{
-		client: client,
-		ttl:    ttl,
-		key:    path.Join(RegisterImportTaskPrefix, tp.String(), taskName),
+		client:    client,
+		ttl:       ttl,
+		secondTTL: int64(ttl / time.Second),
+		key:       path.Join(RegisterImportTaskPrefix, tp.String(), taskName),
 
 		curLeaseID: clientv3.NoLease,
 	}
@@ -96,7 +98,7 @@ func (tr *TaskRegister) Close(ctx context.Context) (err error) {
 }
 
 func (tr *TaskRegister) grant(ctx context.Context) (*clientv3.LeaseGrantResponse, error) {
-	lease, err := tr.client.Lease.Grant(ctx, tr.ttl)
+	lease, err := tr.client.Lease.Grant(ctx, tr.secondTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +135,8 @@ func (tr *TaskRegister) RegisterTask(c context.Context) error {
 
 func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
 	defer tr.wg.Done()
-	const minTimeLeftThreshold int64 = 20
-	var timeLeftThreshold int64 = tr.ttl / 4
+	const minTimeLeftThreshold time.Duration = 20 * time.Second
+	var timeLeftThreshold time.Duration = tr.ttl / 4
 	if timeLeftThreshold < minTimeLeftThreshold {
 		timeLeftThreshold = minTimeLeftThreshold
 	}
@@ -165,7 +167,7 @@ func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 		needReputKV := false
 	RECREATE:
 		for {
-			timeGap := int64(time.Since(lastUpdateTime) / time.Second)
+			timeGap := time.Since(lastUpdateTime)
 			if tr.ttl-timeGap <= timeLeftThreshold {
 				lease, err := tr.grant(ctx)
 				failpoint.Inject("brie-task-register-failed-to-grant", func(_ failpoint.Value) {

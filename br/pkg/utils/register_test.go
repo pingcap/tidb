@@ -31,7 +31,7 @@ func TestTaskRegister(t *testing.T) {
 	ctx := context.Background()
 	client := testEtcdCluster.RandClient()
 
-	register := NewTaskRegisterWithTTL(client, 10, RegisterRestore, "test")
+	register := NewTaskRegisterWithTTL(client, 10*time.Second, RegisterRestore, "test")
 	err := register.RegisterTask(ctx)
 	require.NoError(t, err)
 
@@ -54,7 +54,7 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 	ctx := context.Background()
 	client := testEtcdCluster.RandClient()
 
-	register := NewTaskRegisterWithTTL(client, 3, RegisterRestore, "test")
+	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop", "return(true)"))
@@ -92,7 +92,7 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 	ctx := context.Background()
 	client := testEtcdCluster.RandClient()
 
-	register := NewTaskRegisterWithTTL(client, 3, RegisterRestore, "test")
+	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop", "return(true)"))
