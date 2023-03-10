@@ -647,7 +647,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
 		ctx, sqlExec, e.Path, e.schemaName, e.table.Meta().Name.O,
-		"logical", e.Ctx.GetSessionVars().User.String())
+		logicalImportMode, e.Ctx.GetSessionVars().User.String())
 	if err != nil {
 		return err
 	}

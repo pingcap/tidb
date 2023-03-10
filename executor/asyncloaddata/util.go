@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
@@ -45,6 +46,7 @@ const (
        result_message TEXT DEFAULT NULL,
        error_message TEXT DEFAULT NULL,
        PRIMARY KEY (job_id),
+       KEY (create_time),
        KEY (create_user));`
 )
 
@@ -52,16 +54,17 @@ const (
 func CreateLoadDataJob(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
-	source, db, table string,
+	dataSource, db, table string,
 	importMode string,
 	user string,
 ) (int64, error) {
+	// TODO: dataSource should be redact
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err := conn.ExecuteInternal(ctx,
 		`INSERT INTO mysql.load_data_jobs
     	(data_source, table_schema, table_name, import_mode, create_user)
 		VALUES (%?, %?, %?, %?, %?);`,
-		source, db, table, importMode, user)
+		dataSource, db, table, importMode, user)
 	if err != nil {
 		return 0, err
 	}
@@ -108,6 +111,7 @@ var (
 // periodically as heartbeat.
 // The returned bool indicates whether the keepalive is succeeded. If not, the
 // caller should call FailJob soon.
+// TODO: this is only called after StartJob. What if the node is crashed when pending?
 func UpdateJobProgress(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -222,6 +226,25 @@ const (
 	JobRunning
 )
 
+func (s JobStatus) String() string {
+	switch s {
+	case JobFailed:
+		return "failed"
+	case JobCanceled:
+		return "canceled"
+	case JobPaused:
+		return "paused"
+	case JobFinished:
+		return "finished"
+	case JobPending:
+		return "pending"
+	case JobRunning:
+		return "running"
+	default:
+		return "unknown JobStatus"
+	}
+}
+
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are
 // returned as JobFailed with message.
@@ -309,6 +332,9 @@ type JobInfo struct {
 	Progress      string
 	Status        JobStatus
 	StatusMessage string
+	CreateTime    types.Time
+	StartTime     types.Time
+	EndTime       types.Time
 }
 
 // GetJobInfo gets all needed information of a load data job.
@@ -333,7 +359,8 @@ func GetJobInfo(
 		table_name,
 		import_mode,
 		progress,
-		create_user
+		create_user,
+		create_time
 		FROM mysql.load_data_jobs
 		WHERE job_id = %?;`,
 		OfflineThresholdInSec, jobID)
@@ -346,6 +373,8 @@ func GetJobInfo(
 		return nil, err
 	}
 	if len(rows) != 1 {
+		// TODO: align error class
+		// better pass user here to simplify
 		return nil, fmt.Errorf("job %d not found", jobID)
 	}
 
@@ -366,6 +395,9 @@ func getJobInfo(row chunk.Row) (*JobInfo, error) {
 		ImportMode:  row.GetString(10),
 		Progress:    row.GetString(11),
 		User:        row.GetString(12),
+		CreateTime:  row.GetTime(13),
+		StartTime:   row.GetTime(5),
+		EndTime:     row.GetTime(2),
 	}
 	jobInfo.Status, jobInfo.StatusMessage, err = getJobStatus(row)
 	if err != nil {

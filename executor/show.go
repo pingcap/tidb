@@ -27,10 +27,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -103,6 +105,8 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+
+	LoadDataJobID *int64
 }
 
 type showTableRegionRowItem struct {
@@ -272,6 +276,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForPartition(ctx)
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
+	case ast.ShowLoadDataJobs:
+		return e.fetchShowLoadDataJobs(ctx)
 	}
 	return nil
 }
@@ -2131,6 +2137,35 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	}
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
+}
+
+// fetchLoadDataJobs fills the schema
+// {"Job_ID", "Create_Time", "Start_Time", "End_Time",
+// "Data_Source", "Target_Table", "Import_Mode", "Created_By",
+// "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+// "Result_Code", "Result_Message"}.
+func (e *ShowExec) fetchLoadDataJobs(ctx context.Context) error {
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	if e.LoadDataJobID != nil {
+		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID)
+		if err != nil || info.User != e.ctx.GetSessionVars().User.String() {
+			return err
+		}
+		e.result.AppendInt64(0, info.JobID)
+		e.result.AppendTime(1, info.CreateTime)
+		e.result.AppendTime(2, info.StartTime)
+		e.result.AppendTime(3, info.EndTime)
+		e.result.AppendString(4, info.DataSource)
+		table := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
+		e.result.AppendString(5, table)
+		e.result.AppendString(6, info.ImportMode)
+		e.result.AppendString(7, info.User)
+		e.result.AppendString(8, "loading")
+		e.result.AppendString(9, info.Status.String())
+		here
+	}
+
+	// TODO: does not support filtering for now
 }
 
 // tryFillViewColumnType fill the columns type info of a view.
