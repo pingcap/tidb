@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "importer",
@@ -15,5 +15,21 @@ go_library(
         "//table",
         "//util/chunk",
         "//util/dbterror",
+    ],
+)
+
+go_test(
+    name = "importer_test",
+    srcs = ["import_test.go"],
+    embed = [":importer"],
+    deps = [
+        "//br/pkg/lightning/config",
+        "//executor/exeerrors",
+        "//expression",
+        "//parser",
+        "//parser/ast",
+        "//planner/core",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )
