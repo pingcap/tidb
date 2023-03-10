@@ -1321,7 +1321,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
 	})
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1339,7 +1339,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
@@ -1358,7 +1358,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	})
 
 	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "", "", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
 	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1496,7 +1496,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	useASs := []bool{true, false}
