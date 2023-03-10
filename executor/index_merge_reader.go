@@ -973,7 +973,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		for _, h := range task.handles {
 			// Use *int to avoid Get() again.
 			if cntPtr, ok := hMap.Get(h); ok {
-				*cntPtr++
+				(*cntPtr)++
 			} else {
 				cnt := 1
 				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())

@@ -203,7 +203,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v' and value is not null and value>0",
 		pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
 	if n.condition != "" {
-		queryCondition += " and " + n.condition
+		queryCondition += (" and " + n.condition)
 	}
 
 	var query string
@@ -620,10 +620,10 @@ func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 
 	// Apply 'shift' to move scores away from 0.0 (grey).
 	if score > 0.0 {
-		score = math.Pow(score, 1.0-shift)
+		score = math.Pow(score, (1.0 - shift))
 	}
 	if score < 0.0 {
-		score = -math.Pow(-score, 1.0-shift)
+		score = -math.Pow(-score, (1.0 - shift))
 	}
 
 	var r, g, b float64 // red, green, blue
