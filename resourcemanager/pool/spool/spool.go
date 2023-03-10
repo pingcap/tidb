@@ -142,16 +142,18 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 
 // checkAndAddRunning is to check if a task can run. If can, add the running number.
 func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	for {
+		p.mu.Lock()
 		value, run := p.checkAndAddRunningInternal(int32(concurrency))
 		if run {
+			p.mu.Unlock()
 			return value, run
 		}
 		if !p.options.Blocking {
+			p.mu.Unlock()
 			return 0, false
 		}
+		p.mu.Unlock()
 		time.Sleep(5 * time.Millisecond)
 	}
 }
