@@ -1063,7 +1063,9 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	cfg.AdjustMydumper()
-	cfg.AdjustCheckPoint()
+	if err := cfg.AdjustCheckPoint(); err != nil {
+		return err
+	}
 	return cfg.CheckAndAdjustFilePath()
 }
 
@@ -1271,7 +1273,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 	return nil
 }
 
-func (cfg *Config) AdjustCheckPoint() {
+func (cfg *Config) AdjustCheckPoint() error {
 	if len(cfg.Checkpoint.Schema) == 0 {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
@@ -1281,6 +1283,9 @@ func (cfg *Config) AdjustCheckPoint() {
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
 		case CheckpointDriverMySQL:
+			if err := cfg.TiDB.Security.BuildTLSConfig(); err != nil {
+				return common.ErrInvalidTLSConfig.Wrap(err)
+			}
 			param := common.MySQLConnectParam{
 				Host:                     cfg.TiDB.Host,
 				Port:                     cfg.TiDB.Port,
@@ -1299,11 +1304,13 @@ func (cfg *Config) AdjustCheckPoint() {
 		// try to remove allowAllFiles
 		mysqlCfg, err := gomysql.ParseDSN(cfg.Checkpoint.DSN)
 		if err != nil {
-			return
+			return nil
 		}
 		mysqlCfg.AllowAllFiles = false
 		cfg.Checkpoint.DSN = mysqlCfg.FormatDSN()
 	}
+
+	return nil
 }
 
 func (cfg *Config) AdjustMydumper() {
