@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -77,16 +77,16 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.FileLocServerOrRemote:
 		u, err := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
 		if err != nil {
-			return errors2.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 		}
 		var filename string
 		u.Path, filename = filepath.Split(u.Path)
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
-			return errors2.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
 		}
 		if b.GetLocal() != nil {
-			return errors2.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
+			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
 		}
 		return e.loadFromRemote(ctx, b, filename)
 	case ast.FileLocClient:
@@ -113,11 +113,11 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return errors2.ErrLoadDataCantAccess
+		return exeerrors.ErrLoadDataCantAccess
 	}
 	fileReader, err := s.Open(ctx, filename)
 	if err != nil {
-		return errors2.ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
+		return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
 	}
 	defer fileReader.Close()
 
@@ -323,7 +323,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		)
 	case importer.LoadDataFormatParquet:
 		if e.loadRemoteInfo.store == nil {
-			return errors2.ErrLoadParquetFromLocal
+			return exeerrors.ErrLoadParquetFromLocal
 		}
 		parser, err = mydump.NewParquetParser(
 			ctx,
@@ -333,7 +333,7 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 		)
 	}
 	if err != nil {
-		return errors2.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
@@ -466,7 +466,7 @@ func (e *LoadDataWorker) processStream(
 			if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
 				close(e.commitTaskQueue)
-				return errors2.ErrQueryInterrupted
+				return exeerrors.ErrQueryInterrupted
 			}
 			goto TrySendTask
 		case e.commitTaskQueue <- commitTask{
@@ -674,7 +674,7 @@ func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) err
 			if errors.Cause(err) == io.EOF {
 				return nil
 			}
-			return errors2.ErrLoadDataCantRead.GenWithStackByArgs(
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
 				err.Error(),
 				"Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)",
 			)
@@ -704,9 +704,9 @@ func (e *LoadDataWorker) parserData2TableData(
 	var errColNumMismatch error
 	switch {
 	case len(parserData) < e.controller.GetFieldCount():
-		errColNumMismatch = errors2.ErrWarnTooFewRecords.GenWithStackByArgs(e.rowCount)
+		errColNumMismatch = exeerrors.ErrWarnTooFewRecords.GenWithStackByArgs(e.rowCount)
 	case len(parserData) > e.controller.GetFieldCount():
-		errColNumMismatch = errors2.ErrWarnTooManyRecords.GenWithStackByArgs(e.rowCount)
+		errColNumMismatch = exeerrors.ErrWarnTooManyRecords.GenWithStackByArgs(e.rowCount)
 	}
 
 	if errColNumMismatch != nil {

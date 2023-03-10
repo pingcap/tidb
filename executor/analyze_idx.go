@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -198,7 +198,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			return nil, nil, nil, nil, errors.Trace(errors2.ErrQueryInterrupted)
+			return nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
 			time.Sleep(1000 * time.Second)

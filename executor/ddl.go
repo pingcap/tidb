@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -302,7 +302,7 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return errors.Trace(err)
 	}
 	if ret.IsStaleness {
-		return errors2.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
 	return domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
@@ -532,7 +532,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	}
 	// Dropping local temporary tables won't appear in DDL jobs.
 	if tableInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil, errors2.ErrUnsupportedFlashbackTmpTable
+		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
 	return jobInfo, tableInfo, nil
 }
@@ -688,7 +688,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	if !config.TableLockEnabled() {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors2.ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 
@@ -703,7 +703,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors2.ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()

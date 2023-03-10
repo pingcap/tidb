@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
@@ -255,7 +255,7 @@ func TestKillTableReader(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		err := tk.QueryToErr("select * from t")
 		require.Error(t, err)
-		require.Equal(t, int(errors2.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
 	wg.Wait()

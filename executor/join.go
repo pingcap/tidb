@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -1008,7 +1008,7 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, j
 			}
 		})
 		if killed {
-			joinResult.err = errors2.ErrQueryInterrupted
+			joinResult.err = exeerrors.ErrQueryInterrupted
 			return false, joinResult
 		}
 		if isNAAJ {
@@ -1074,7 +1074,7 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 			}
 		})
 		if killed {
-			joinResult.err = errors2.ErrQueryInterrupted
+			joinResult.err = exeerrors.ErrQueryInterrupted
 			return false, joinResult
 		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
@@ -1592,7 +1592,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse)))
+		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable - e.hashStat.buildTableElapse))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
 		buf.WriteString("}")

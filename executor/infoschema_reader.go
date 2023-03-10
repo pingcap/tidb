@@ -941,7 +941,7 @@ ForColumnsTag:
 				colLen += len(ele)
 			}
 			if len(ft.GetElems()) != 0 {
-				colLen += (len(ft.GetElems()) - 1)
+				colLen += len(ft.GetElems()) - 1
 			}
 			charMaxLen = colLen
 			charOctLen = calcCharOctLength(colLen, ft.GetCharset())

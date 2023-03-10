@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	exeerrors "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"

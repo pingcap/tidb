@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	errors2 "github.com/pingcap/tidb/executor/exeerrors"
+	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -269,7 +269,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 	}
 
 	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-		return errors2.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+		return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 	}
 
 	if e.limitDone(e.resTbl) {
@@ -295,7 +295,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			e.curIter++
 			e.iterInTbl.SetIter(e.curIter)
 			if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
-				return errors2.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+				return exeerrors.ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
