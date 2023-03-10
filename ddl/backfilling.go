@@ -54,17 +54,18 @@ import (
 type backfillerType byte
 
 const (
-	typeAddIndexWorker         backfillerType = 0
+	typeAddIndexTxnWorker      backfillerType = 0
 	typeUpdateColumnWorker     backfillerType = 1
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
 	typeReorgPartitionWorker   backfillerType = 4
+	typeAddIndexIngestWorker   backfillerType = 5
 )
 
 func (bT backfillerType) String() string {
 	switch bT {
-	case typeAddIndexWorker:
-		return "add index"
+	case typeAddIndexTxnWorker:
+		return "add index in txn"
 	case typeUpdateColumnWorker:
 		return "update column"
 	case typeCleanUpIndexWorker:
@@ -73,6 +74,8 @@ func (bT backfillerType) String() string {
 		return "merge temporary index"
 	case typeReorgPartitionWorker:
 		return "reorganize partition"
+	case typeAddIndexIngestWorker:
+		return "ingest index"
 	default:
 		return "unknown"
 	}
@@ -382,7 +385,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) initPartitionIndexInfo(task *reorgBackfillTask) {
 	if pt, ok := w.GetCtx().table.(table.PartitionedTable); ok {
-		if addIdxWorker, ok := w.backfiller.(*addIndexWorker); ok {
+		if addIdxWorker, ok := w.backfiller.(*addIndexTxnWorker); ok {
 			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
 			addIdxWorker.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 		}
@@ -854,9 +857,18 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			worker backfiller
 		)
 		switch b.tp {
-		case typeAddIndexWorker:
+		case typeAddIndexTxnWorker:
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
-			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
+			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
+				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+			if err != nil {
+				return err
+			}
+			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
+			worker = idxWorker
+		case typeAddIndexIngestWorker:
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
+			idxWorker, err := newAddIndexIngestWorker(b.tbl, backfillCtx,
 				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 			if err != nil {
 				if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
@@ -910,7 +922,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 }
 
 func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.tp != typeAddIndexWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
+	if b.tp != typeAddIndexTxnWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
 		b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
@@ -998,7 +1010,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	defer scheduler.Close()
 
 	var ingestBeCtx *ingest.BackendContext
-	if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfWorkerType == typeAddIndexIngestWorker {
 		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 			ingestBeCtx = bc
 		} else {

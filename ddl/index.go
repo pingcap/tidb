@@ -1315,11 +1315,9 @@ type baseIndexWorker struct {
 	jobContext *JobContext
 }
 
-type addIndexWorker struct {
+type addIndexTxnWorker struct {
 	baseIndexWorker
-	index            table.Index
-	writerCtx        *ingest.WriterContext
-	copReqSenderPool *copReqSenderPool
+	index table.Index
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -1329,9 +1327,9 @@ type addIndexWorker struct {
 	recordIdx          []int
 }
 
-func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexWorker, error) {
+func newAddIndexTxnWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexTxnWorker, error) {
 	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
-		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", jc.cacheSQL),
+		logutil.BgLogger().Error("Element type for addIndexTxnWorker incorrect", zap.String("jobQuery", jc.cacheSQL),
 			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", eleID))
 		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
 	}
@@ -1339,23 +1337,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
-	var lwCtx *ingest.WriterContext
-	if bfCtx.reorgTp == model.ReorgTypeLitMerge {
-		bc, ok := ingest.LitBackCtxMgr.Load(jobID)
-		if !ok {
-			return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
-		}
-		ei, err := bc.EngMgr.Register(bc, jobID, eleID, bfCtx.schemaName, t.Meta().Name.O)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &addIndexWorker{
+	return &addIndexTxnWorker{
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx:   bfCtx,
 			indexes:       []table.Index{index},
@@ -1365,8 +1347,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 			metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("add_idx_rate", bfCtx.schemaName, t.Meta().Name.String())),
 			jobContext:    jc,
 		},
-		index:     index,
-		writerCtx: lwCtx,
+		index: index,
 	}, nil
 }
 
@@ -1437,7 +1418,7 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 				logutil.BgLogger().Error("[ddl] make up decode column map failed", zap.Error(err))
 				return nil, errors.Trace(err)
 			}
-			bf, err1 := newAddIndexWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
+			bf, err1 := newAddIndexTxnWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
 			return bf, err1
 		})
 }
@@ -1581,7 +1562,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	return w.idxRecords, w.getNextKey(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
-func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
+func (w *addIndexTxnWorker) initBatchCheckBufs(batchCount int) {
 	if len(w.idxKeyBufs) < batchCount {
 		w.idxKeyBufs = make([][]byte, batchCount)
 	}
@@ -1592,7 +1573,7 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.recordIdx = w.recordIdx[:0]
 }
 
-func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
+func (w *addIndexTxnWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
 	idxInfo := w.index.Meta()
 	tblInfo := w.table.Meta()
 	idxColLen := len(idxInfo.Columns)
@@ -1637,7 +1618,7 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
-func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
 		// non-unique key need not to check, just overwrite it,
@@ -1702,7 +1683,57 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	return nil
 }
 
-func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (backfillTaskContext, error) {
+type addIndexIngestWorker struct {
+	baseIndexWorker
+
+	index            table.Index
+	writerCtx        *ingest.WriterContext
+	copReqSenderPool *copReqSenderPool
+}
+
+func newAddIndexIngestWorker(t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexIngestWorker, error) {
+	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
+		logutil.BgLogger().Error("Element type for addIndexIngestWorker incorrect", zap.String("jobQuery", jc.cacheSQL),
+			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", eleID))
+		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
+	}
+	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+
+	var lwCtx *ingest.WriterContext
+	bc, ok := ingest.LitBackCtxMgr.Load(jobID)
+	if !ok {
+		return nil, errors.Trace(errors.New(ingest.LitErrGetBackendFail))
+	}
+	ei, err := bc.EngMgr.Register(bc, jobID, eleID, bfCtx.schemaName, t.Meta().Name.O)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
+	if err != nil {
+		return nil, err
+	}
+
+	return &addIndexIngestWorker{
+		baseIndexWorker: baseIndexWorker{
+			backfillCtx:   bfCtx,
+			metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("add_idx_rate", bfCtx.schemaName, t.Meta().Name.String())),
+			jobContext:    jc,
+		},
+		index:     index,
+		writerCtx: lwCtx,
+	}, nil
+}
+
+func (w *addIndexIngestWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (backfillTaskContext, error) {
+	return w.writeIndexKVsToLocal(handleRange)
+}
+
+func (w *addIndexIngestWorker) String() string {
+	return typeAddIndexIngestWorker.String()
+}
+
+func (w *addIndexIngestWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (backfillTaskContext, error) {
 	var taskCtx backfillTaskContext
 	oprStartTime := time.Now()
 	defer func() {
@@ -1777,17 +1808,13 @@ func writeOneKVToLocal(writerCtx *ingest.WriterContext,
 // BackfillDataInTxn will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
 // Note that index columns values may change, and an index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
-func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexTxnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			panic("panic test")
 		}
 	})
-
-	if w.copReqSenderPool != nil && w.writerCtx != nil {
-		return w.writeIndexKVsToLocal(handleRange)
-	}
 
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
@@ -1866,14 +1893,17 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 		return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
+	if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexIngestWorker, reorgInfo)
+	}
+	return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexTxnWorker, reorgInfo)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
+		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexTxnWorker, reorgInfo)
 	}
 
 	var err error
