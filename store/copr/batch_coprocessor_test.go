@@ -220,7 +220,7 @@ func TestDispatchPolicyRR(t *testing.T) {
 			regIDs = append(regIDs, tikv.NewRegionVerID(uint64(i), 0, 0))
 		}
 
-		rpcCtxs, err := getTiFlashComputeRPCContextByRoundRobinHelper(regIDs, allAddrs)
+		rpcCtxs, err := getTiFlashComputeRPCContextByRoundRobin(regIDs, allAddrs)
 		require.NoError(t, err)
 		require.Equal(t, len(rpcCtxs), len(regIDs))
 		checkMap := make(map[string]int, len(rpcCtxs))

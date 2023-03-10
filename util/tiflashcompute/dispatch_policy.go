@@ -20,6 +20,7 @@ import (
 
 // DispatchPolicy means different policy to dispatching task to tiflash_compute nods.
 type DispatchPolicy int
+
 const (
 	// DispatchPolicyRR means dispatching by RoundRobin.
 	DispatchPolicyRR DispatchPolicy = iota
