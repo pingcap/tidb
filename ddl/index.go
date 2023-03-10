@@ -1729,7 +1729,7 @@ func (w *addIndexIngestWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 	return w.writeIndexKVsToLocal(handleRange)
 }
 
-func (w *addIndexIngestWorker) String() string {
+func (*addIndexIngestWorker) String() string {
 	return typeAddIndexIngestWorker.String()
 }
 
