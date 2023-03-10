@@ -18,11 +18,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/pingcap/errors"
 	"net/url"
-	"strconv"
 	"time"
 
+	"github.com/akolb1/gometastore/hmsclient"
+	"github.com/apache/arrow/go/v12/parquet/pqarrow"
+	"github.com/colinmarc/hdfs/v2"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
@@ -45,9 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
-	"github.com/akolb1/gometastore/hmsclient"
-	"github.com/apache/arrow/go/v12/parquet/pqarrow"
-	"github.com/colinmarc/hdfs/v2"
 	"log"
 )
 
@@ -130,7 +130,7 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
-	cnt int
+	cnt   int
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -158,7 +158,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	if e.Table().Meta().Name.L == "stock_ticks_mor_ro"{
+	if e.Table().Meta().Name.L == "stock_ticks_mor_ro" {
 		return nil
 	}
 	var err error
@@ -248,7 +248,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *TableReaderExecutor)readFromHudi(req *chunk.Chunk) error{
+func (e *TableReaderExecutor) readFromHudi(req *chunk.Chunk) error {
 	// Connect to the Hive Metastore and retrieve the Parquet file URI
 	hiveClient, err := hmsclient.Open("127.0.0.1", 9083)
 	if err != nil {
@@ -302,28 +302,54 @@ func (e *TableReaderExecutor)readFromHudi(req *chunk.Chunk) error{
 	if int(arrowTable.NumCols()) != len(retTypes(e)) {
 		return errors.Errorf("hudi 列数对不上")
 	}
-	for i := 0; i < int(arrowTable.NumRows()); i++{
-		t := retTypes(e)
-		for j := 0; j < len(t); j ++{
-			s := arrowTable.Column(j).Data().Chunk(i).String()
-			switch t[j].EvalType(){
-			case types.ETInt:
-				i, err := strconv.Atoi(s)
-				if err != nil {
-					return err
+
+	//for i := 0; i < int(arrowTable.NumRows()); i++ {
+	//	t := retTypes(e)
+	//	for j := 0; j < len(t); j++ {
+	//		s := arrowTable.Column(j).Data().Chunk(0)
+	//		arrowType := arrowTable.Column(j).DataType()
+	//		switch arrowType {
+	//		case arrow.INT64:
+	//			req.AppendInt64(j, s.(*array.Int64).Value(i))
+	//		case arrow.STRING:
+	//			req.AppendString(j, s.(*array.String).Value(i))
+	//		case arrow.FLOAT64:
+	//			req.AppendFloat64(j, s.(*array.Float64).Value(i))
+	//		}
+	//	}
+	//}
+
+	t := retTypes(e)
+	for j := 0; j < len(t); j++ {
+		data := arrowTable.Column(j).Data().Chunk(0).Data()
+		fmt.Println(data.DataType())
+		fmt.Println(t[j].EvalType())
+		switch t[j].EvalType() {
+		case types.ETInt:
+			if data.DataType().Name() == "int64" {
+				int64s := array.NewInt64Data(data)
+				for i := 0; i < int(arrowTable.NumRows()); i++ {
+					req.AppendInt64(j, int64s.Value(i))
 				}
-				req.AppendInt64(j, int64(i))
-			case types.ETReal:
-				f, err := strconv.ParseFloat(s, 64)
-				if err != nil {
-					return err
+			} else {
+				int32s := array.NewInt32Data(data)
+				for i := 0; i < int(arrowTable.NumRows()); i++ {
+					req.AppendInt64(j, int64(int32s.Value(i)))
 				}
-				req.AppendFloat64(j, f)
-			case types.ETString:
-				req.AppendString(j, s)
+			}
+		case types.ETReal:
+			float64s := array.NewFloat64Data(data)
+			for i := 0; i < int(arrowTable.NumRows()); i++ {
+				req.AppendFloat64(j, float64s.Value(i))
+			}
+		case types.ETString:
+			strs := array.NewStringData(data)
+			for i := 0; i < int(arrowTable.NumRows()); i++ {
+				req.AppendString(j, strs.Value(i))
 			}
 		}
 	}
+
 	fmt.Println(arrowTable.Schema())
 	fmt.Println(arrowTable.Column(0).Data().Chunk(0).String())
 	return nil
@@ -332,7 +358,8 @@ func (e *TableReaderExecutor)readFromHudi(req *chunk.Chunk) error{
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.cnt == 1 {
+	req.Reset()
+	if e.cnt >= 1 {
 		return nil
 	}
 
