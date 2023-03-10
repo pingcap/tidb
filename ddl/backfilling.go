@@ -828,6 +828,16 @@ func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
 	b.maxSize = maxSize
 }
 
+func (b *backfillScheduler) expectedWorkerSize() int {
+	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	if b.tp == typeAddIndexIngestWorker {
+		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
+	} else {
+		workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	}
+	return workerCnt
+}
+
 func (b *backfillScheduler) workerSize() int {
 	return len(b.workers)
 }
@@ -840,12 +850,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
 		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 	}
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	if b.copReqSenderPool != nil {
-		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
-	} else {
-		workerCnt = mathutil.Min(workerCnt, b.maxSize)
-	}
+	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
 		sessCtx, err := b.newSessCtx()
@@ -922,8 +927,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 }
 
 func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.tp != typeAddIndexTxnWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
-		b.copReqSenderPool != nil || len(b.workers) > 0 {
+	if b.tp != typeAddIndexIngestWorker || b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
 	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
