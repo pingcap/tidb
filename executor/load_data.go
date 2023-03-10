@@ -138,6 +138,14 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
+	if strings.Contains(e.loadDataWorker.Path, "*") {
+		// try to find pattern error in advance
+		_, err := filepath.Match(e.loadDataWorker.Path, "")
+		if err != nil {
+			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
+		}
+	}
+
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
 		u, err := storage.ParseRawURL(e.loadDataWorker.Path)
@@ -192,6 +200,8 @@ func (e *LoadDataExec) loadFromRemote(
 			return fileReader, nil
 		}
 
+		// try to read the file size to report progress. Don't fail the main load
+		// if this fails to tolerate transient errors.
 		filesize := int64(-1)
 		reader, err2 := opener(ctx)
 		if err2 == nil {
@@ -214,17 +224,13 @@ func (e *LoadDataExec) loadFromRemote(
 	// when the INFILE represent multiple files
 	readerInfos := make([]LoadDataReaderInfo, 0, 8)
 	commonPrefix := path[:idx]
-	loggedError := false
 
 	err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
 		func(remotePath string, size int64) error {
-			match, err2 := filepath.Match(path, remotePath)
-			if err2 != nil && !loggedError {
-				loggedError = true
-				logutil.Logger(ctx).Warn("failed to build pattern for file matching",
-					zap.String("pattern", path), zap.Error(err2))
-			}
-			if !match || err2 != nil {
+			// we have checked in LoadDataExec.Next
+			//nolint: errcheck
+			match, _ := filepath.Match(path, remotePath)
+			if !match {
 				return nil
 			}
 			readerInfos = append(readerInfos, LoadDataReaderInfo{
@@ -869,6 +875,29 @@ func (e *LoadDataWorker) buildParser(
 		return nil, ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+
+	if e.IgnoreLines > 0 {
+		ignoreOneLineFn := parser.ReadRow
+		if csvParser, ok := parser.(*mydump.CSVParser); ok {
+			ignoreOneLineFn = func() error {
+				_, _, err := csvParser.ReadUntilTerminator()
+				return err
+			}
+		}
+
+		ignoreLineCnt := e.IgnoreLines
+		for ignoreLineCnt > 0 {
+			err = ignoreOneLineFn()
+			if err != nil {
+				if errors.Cause(err) == io.EOF {
+					return parser, nil
+				}
+				return nil, err
+			}
+
+			ignoreLineCnt--
+		}
+	}
 	return parser, nil
 }
 
@@ -893,21 +922,21 @@ func (e *LoadDataWorker) processStream(
 	defer checkKilled.Stop()
 
 	var (
-		loggedError = false
-		pos         = int64(0)
+		loggedError     = false
+		currScannedSize = int64(0)
 	)
 	for {
 		// prepare batch and enqueue task
-		if err = e.ReadRows(ctx, parser); err != nil {
+		if err = e.ReadOneBatchRows(ctx, parser); err != nil {
 			return
 		}
 		if e.curBatchCnt == 0 {
-			e.finishedSize += pos
+			e.finishedSize += currScannedSize
 			return
 		}
 
 	TrySendTask:
-		pos, err = seeker.Seek(0, io.SeekCurrent)
+		currScannedSize, err = seeker.Seek(0, io.SeekCurrent)
 		if err != nil && !loggedError {
 			loggedError = true
 			logutil.Logger(ctx).Error(" LOAD DATA failed to read current file offset by seek",
@@ -927,7 +956,7 @@ func (e *LoadDataWorker) processStream(
 			cnt:             e.curBatchCnt,
 			rows:            e.rows,
 			loadedRowCnt:    e.rowCount,
-			scannedFileSize: e.finishedSize + pos,
+			scannedFileSize: e.finishedSize + currScannedSize,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -1079,32 +1108,12 @@ func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) err
 	return nil
 }
 
-// ReadRows reads rows from parser. When parser's reader meet EOF, it will return
-// nil. For other errors it will return directly. When the rows batch is full it
-// will also return nil.
+// ReadOneBatchRows reads rows from parser. When parser's reader meet EOF, it
+// will return nil. For other errors it will return directly. When the rows
+// batch is full it will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) error {
-	ignoreOneLineFn := parser.ReadRow
-	if csvParser, ok := parser.(*mydump.CSVParser); ok {
-		ignoreOneLineFn = func() error {
-			_, _, err := csvParser.ReadUntilTerminator()
-			return err
-		}
-	}
-
-	ignoreLineCnt := e.IgnoreLines
-	for ignoreLineCnt > 0 {
-		err := ignoreOneLineFn()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				return nil
-			}
-			return err
-		}
-
-		ignoreLineCnt--
-	}
+func (e *LoadDataWorker) ReadOneBatchRows(ctx context.Context, parser mydump.Parser) error {
 	for {
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {

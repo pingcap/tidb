@@ -15,7 +15,9 @@
 package loadremotetest
 
 import (
+	"bytes"
 	"fmt"
+	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
@@ -80,5 +82,44 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6",
+	))
+}
+
+func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS multi_load;")
+	s.tk.MustExec("CREATE DATABASE multi_load;")
+	s.tk.MustExec("CREATE TABLE multi_load.t2 (i INT);")
+
+	// [start, end] is both inclusive
+	genData := func(start, end int) []byte {
+		buf := make([][]byte, 0, end-start+1)
+		for i := start; i <= end; i++ {
+			buf = append(buf, []byte(strconv.Itoa(i)))
+		}
+		return bytes.Join(buf, []byte("\n"))
+	}
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "multi-batch.001.tsv",
+		},
+		Content: genData(1, 10),
+	})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-multi-load",
+			Name:       "multi-batch.002.tsv",
+		},
+		Content: genData(11, 20),
+	})
+
+	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 3;")
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/multi-batch.*.tsv?endpoint=%s'
+		INTO TABLE multi_load.t2 IGNORE 2 LINES;`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM multi_load.t2;").Check(testkit.Rows(
+		"3", "4", "5", "6", "7", "8", "9", "10",
+		"13", "14", "15", "16", "17", "18", "19", "20",
 	))
 }
