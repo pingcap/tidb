@@ -1179,9 +1179,6 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
-		{"show imports", true, "SHOW IMPORTS"},
-		// for show create import
-		{"show create import test", true, "SHOW CREATE IMPORT `test`"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -6537,70 +6534,6 @@ func TestBRIE(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
-}
-
-func TestPurge(t *testing.T) {
-	cases := []testCase{
-		{"purge import 100", true, "PURGE IMPORT 100"},
-		{"purge import abc", false, ""},
-	}
-	RunTest(t, cases, false)
-}
-
-func TestAsyncImport(t *testing.T) {
-	cases := []testCase{
-		{"create import test from 'file:///d/'", true, "CREATE IMPORT `test` FROM 'file:///d/'"},
-		{
-			"create import if not exists test from 'file:///d/' skip all csv_header = columns strict_format = true csv_backslash_escape = true",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' SKIP ALL CSV_HEADER = COLUMNS STRICT_FORMAT = 1 CSV_BACKSLASH_ESCAPE = 1",
-		},
-		{
-			"create import if not exists test from 'file:///d/' replace SKIP_SCHEMA_FILES TRUE",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' REPLACE SKIP_SCHEMA_FILES = 1",
-		},
-		{"create import test from 'file:///d/' csv_header = 0", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 0"},
-		{"create import test from 'file:///d/' csv_header = 1", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 1"},
-		{"create import test from 'file:///d/' csv_header = 9001", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 9001"},
-		{"create import test from 'file:///d/' csv_header = fields", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = COLUMNS"},
-		{"create import test from 'file:///d/' csv_header = 'columns'", false, ""},
-		{"create import test from 'file:///d/' on_duplicate = ignore", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'ignore'"},
-		{"create import test from 'file:///d/' on_duplicate = replace", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'replace'"},
-		{"create import test from 'file:///d/' on_duplicate = error", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'error'"},
-		{"create import test from 'file:///d/' backend = local", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'local'"},
-		{"create import test from 'file:///d/' backend = tidb", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'tidb'"},
-		{"create import test from 'file:///d/' backend = importer", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'importer'"},
-		{"create import test from 'file:///d/' checkpoint = 'false'", false, ""},
-		{"create import test from 'file:///d/' checkpoint = 30", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKPOINT = 1"},
-		{"create import test from 'file:///d/' csv_null = null", false, ""},
-		{"create import test from 'file:///d/' csv_null = false", false, ""},
-		{"create import test from 'file:///d/' csv_null = 0", false, ""},
-		{"create import test from 'file:///d/' csv_null = abcdefgh", false, ""},
-		{"create import test from 'file:///d/' resume 1", true, "CREATE IMPORT `test` FROM 'file:///d/' RESUME = 1"},
-		{"create import test from 'file:///d/' resume abc", false, ""},
-		{"create import test from 'file:///d/' analyze = optional", true, "CREATE IMPORT `test` FROM 'file:///d/' ANALYZE = OPTIONAL"},
-		{"create import test from 'file:///d/' analyze = abc", false, ""},
-		// still support boolean checksum/analyze, non-zero represent true thus goes REQUIRED
-		{"create import test from 'file:///d/' checksum true analyze 2", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKSUM = REQUIRED ANALYZE = REQUIRED"},
-		{"stop import test", true, "STOP IMPORT `test`"},
-		{"stop import if running test", true, "STOP IMPORT IF RUNNING `test`"},
-		{"resume import test", true, "RESUME IMPORT `test`"},
-		{"resume import if not running test", true, "RESUME IMPORT IF NOT RUNNING `test`"},
-		// empty alter import is OK
-		{"alter import test", true, "ALTER IMPORT `test`"},
-		{"alter import test truncate all", true, "ALTER IMPORT `test` TRUNCATE ALL"},
-		{"alter import test skip duplicate csv_delimiter = '''' truncate errors table tbl", true, "ALTER IMPORT `test` SKIP DUPLICATE CSV_DELIMITER = '''' TRUNCATE ERRORS TABLE `tbl`"},
-		{"alter import test truncate errors table db.tbl", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tbl`"},
-		{"alter import test truncate errors table db.tb1, tb2", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tb1`, `tb2`"},
-		{"drop import test", true, "DROP IMPORT `test`"},
-		{"drop import if exists test", true, "DROP IMPORT IF EXISTS `test`"},
-		{"show import test", true, "SHOW IMPORT `test`"},
-		{"show import test table tbl", true, "SHOW IMPORT `test` TABLE `tbl`"},
-		{"show import test errors table tbl", true, "SHOW IMPORT `test` ERRORS TABLE `tbl`"},
-		{"show import test errors table tb1, db.tb2", true, "SHOW IMPORT `test` ERRORS TABLE `tb1`, `db`.`tb2`"},
-	}
-	RunTest(t, cases, false)
 }
 
 func TestStatisticsOps(t *testing.T) {
