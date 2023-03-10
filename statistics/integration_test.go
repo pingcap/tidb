@@ -684,3 +684,27 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
 	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
 }
+
+func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10),partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	p0 := tblInfo.Partition.Definitions[0]
+	p1 := tblInfo.Partition.Definitions[1]
+	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
+	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
+	h.Clear()
+	require.NoError(t, h.Update(is))
+	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
+	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
+}
