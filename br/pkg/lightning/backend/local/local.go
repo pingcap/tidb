@@ -75,7 +75,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -88,12 +87,10 @@ const (
 	// A large retry times is for tolerating tikv cluster failures.
 	maxWriteAndIngestRetryTimes = 30
 	maxRetryBackoffSecond       = 30
-	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
-	writeStallSleepTime  = 10 * time.Second
 
 	// The max ranges count in a batch to split and scatter.
 	maxBatchSplitRanges = 4096
@@ -183,9 +180,13 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	)
 	switch f.compressionType {
 	case config.CompressionNone:
-	// do nothing
+		// do nothing
 	case config.CompressionGzip:
-		opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)))
+		// Use custom compressor/decompressor to speed up compression/decompression.
+		// Note that here we don't use grpc.UseCompressor option although it's the recommended way.
+		// Because gprc-go uses a global registry to store compressor/decompressor, we can't make sure
+		// the compressor/decompressor is not registered by other components.
+		opts = append(opts, grpc.WithCompressor(&gzipCompressor{}), grpc.WithDecompressor(&gzipDecompressor{}))
 	default:
 		return nil, common.ErrInvalidConfig.GenWithStack("unsupported compression type %s", f.compressionType)
 	}
@@ -826,10 +827,6 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 
 // OpenEngine must be called with holding mutex of Engine.
 func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	engineCfg := backend.LocalEngineConfig{}
-	if cfg.Local != nil {
-		engineCfg = *cfg.Local
-	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
@@ -852,7 +849,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		sstMetasChan:       make(chan metaOrFlush, 64),
 		ctx:                engineCtx,
 		cancel:             cancel,
-		config:             engineCfg,
+		config:             cfg.Local,
 		tableInfo:          cfg.TableInfo,
 		duplicateDetection: local.duplicateDetection,
 		dupDetectOpt:       local.duplicateDetectOpt,
