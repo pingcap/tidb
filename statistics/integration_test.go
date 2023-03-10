@@ -743,4 +743,3 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
 	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
 }
-
