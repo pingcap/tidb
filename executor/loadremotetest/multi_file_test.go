@@ -55,7 +55,7 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-multi-load",
-			Name:       "not.me.001.tsv",
+			Name:       "not.me.[1-9].tsv",
 		},
 		Content: []byte("7\ttest7\n" +
 			"8\ttest8"),
@@ -82,6 +82,15 @@ func (s *mockGCSSuite) TestFilenameAsterisk() {
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
 		"2 test2", "4 test4", "6 test6",
+	))
+
+	// only '*' is supported in pattern matching
+	s.tk.MustExec("TRUNCATE TABLE multi_load.t;")
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/not.me.[1-9].tsv?endpoint=%s'
+		INTO TABLE multi_load.t;`, gcsEndpoint)
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("SELECT * FROM multi_load.t;").Check(testkit.Rows(
+		"7 test7", "8 test8",
 	))
 }
 

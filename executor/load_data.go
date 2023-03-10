@@ -138,14 +138,6 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	if strings.Contains(e.loadDataWorker.Path, "*") {
-		// try to find pattern error in advance
-		_, err := filepath.Match(e.loadDataWorker.Path, "")
-		if err != nil {
-			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
-		}
-	}
-
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
 		u, err := storage.ParseRawURL(e.loadDataWorker.Path)
@@ -160,6 +152,11 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if b.GetLocal() != nil {
 			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
+		}
+		// try to find pattern error in advance
+		_, err = filepath.Match(path, "")
+		if err != nil {
+			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
 		}
 		return e.loadFromRemote(ctx, b, path)
 	case ast.FileLocClient:
@@ -224,12 +221,23 @@ func (e *LoadDataExec) loadFromRemote(
 	// when the INFILE represent multiple files
 	readerInfos := make([]LoadDataReaderInfo, 0, 8)
 	commonPrefix := path[:idx]
+	// we only support '*', in order to reuse glob library manually escape the path
+	var buf strings.Builder
+	buf.Grow(len(path))
+	for _, c := range path {
+		switch c {
+		case '?', '[', ']':
+			buf.WriteByte('\\')
+		}
+		buf.WriteRune(c)
+	}
+	escapedPath := buf.String()
 
 	err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
 		func(remotePath string, size int64) error {
 			// we have checked in LoadDataExec.Next
 			//nolint: errcheck
-			match, _ := filepath.Match(path, remotePath)
+			match, _ := filepath.Match(escapedPath, remotePath)
 			if !match {
 				return nil
 			}
@@ -876,27 +884,26 @@ func (e *LoadDataWorker) buildParser(
 	}
 	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
-	if e.IgnoreLines > 0 {
-		ignoreOneLineFn := parser.ReadRow
-		if csvParser, ok := parser.(*mydump.CSVParser); ok {
-			ignoreOneLineFn = func() error {
-				_, _, err := csvParser.ReadUntilTerminator()
-				return err
+	// handle IGNORE N LINES
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
+	ignoreLineCnt := e.IgnoreLines
+	for ignoreLineCnt > 0 {
+		err = ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return parser, nil
 			}
+			return nil, err
 		}
 
-		ignoreLineCnt := e.IgnoreLines
-		for ignoreLineCnt > 0 {
-			err = ignoreOneLineFn()
-			if err != nil {
-				if errors.Cause(err) == io.EOF {
-					return parser, nil
-				}
-				return nil, err
-			}
-
-			ignoreLineCnt--
-		}
+		ignoreLineCnt--
 	}
 	return parser, nil
 }

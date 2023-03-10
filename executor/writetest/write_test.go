@@ -1899,6 +1899,12 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
+		for ld.IgnoreLines > 0 {
+			ld.IgnoreLines--
+			//nolint: errcheck
+			_ = parser.ReadRow()
+		}
+
 		err1 := ld.ReadOneBatchRows(context.Background(), parser)
 		require.NoError(t, err1)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
