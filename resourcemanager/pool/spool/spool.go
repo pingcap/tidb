@@ -113,11 +113,11 @@ func (p *Pool) run(fn func()) {
 }
 
 // RunWithConcurrency runs a function in the pool with concurrency.
-func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint) error {
+func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
 	}
-	conc, run := p.checkAndAddRunning(int32(concurrency))
+	conc, run := p.checkAndAddRunning(concurrency)
 	if !run {
 		return pool.ErrPoolOverload
 	}
@@ -138,7 +138,7 @@ func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for {
-		value, run := p.checkAndAddRunningInternal(concurrency)
+		value, run := p.checkAndAddRunningInternal(int32(concurrency))
 		if run {
 			return value, run
 		}
