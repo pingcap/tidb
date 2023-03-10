@@ -17,6 +17,10 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"github.com/pingcap/errors"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -41,6 +45,10 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
+	"github.com/akolb1/gometastore/hmsclient"
+	"github.com/apache/arrow/go/v12/parquet/pqarrow"
+	"github.com/colinmarc/hdfs/v2"
+	"log"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -122,6 +130,7 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+	cnt int
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -149,6 +158,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
+	if e.Table().Meta().Name.L == "stock_ticks_mor_ro"{
+		return nil
+	}
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
@@ -236,15 +248,103 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
+func (e *TableReaderExecutor)readFromHudi(req *chunk.Chunk) error{
+	// Connect to the Hive Metastore and retrieve the Parquet file URI
+	hiveClient, err := hmsclient.Open("127.0.0.1", 9083)
+	if err != nil {
+		log.Fatal("open hiveClient fail", err)
+	}
+	dbName := "default"
+	tableName := "stock_ticks_mor_ro"
+	table, err := hiveClient.GetTable(dbName, tableName)
+	if err != nil {
+		log.Fatal("gettable fail", err)
+	}
+	// Get a list of all partition locations for the table
+	partitionNames, err := hiveClient.GetPartitionNames(dbName, tableName, 100)
+	if err != nil {
+		log.Fatal("get all partition names fail", err)
+	}
+	partitionValues, err := hiveClient.GetPartitionsByNames(dbName, tableName, partitionNames)
+	if err != nil {
+		log.Fatal("get all partitionValues fail", err)
+	}
+	location := table.Sd.Location
+	for _, value := range partitionValues {
+		location = value.Sd.Location
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		log.Fatal(err)
+	}
+	hdfsClient, err := hdfs.New(u.Host)
+	fmt.Println("u.Host", u.Host)
+	if err != nil {
+		log.Fatal(err)
+	}
+	files, err := hdfsClient.ReadDir(u.Path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, file := range files {
+		fmt.Println(file.Name())
+	}
+	fmt.Println(u.Path + "/" + files[1].Name())
+	f, err := hdfsClient.Open(u.Path + "/" + files[1].Name())
+	if err != nil {
+		log.Fatal(err)
+	}
+	arrProps := pqarrow.ArrowReadProperties{}
+	arrowTable, err := pqarrow.ReadTable(context.Background(), f, nil, arrProps, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if int(arrowTable.NumCols()) != len(retTypes(e)) {
+		return errors.Errorf("hudi 列数对不上")
+	}
+	for i := 0; i < int(arrowTable.NumRows()); i++{
+		t := retTypes(e)
+		for j := 0; j < len(t); j ++{
+			s := arrowTable.Column(j).Data().Chunk(i).String()
+			switch t[j].EvalType(){
+			case types.ETInt:
+				i, err := strconv.Atoi(s)
+				if err != nil {
+					return err
+				}
+				req.AppendInt64(j, int64(i))
+			case types.ETReal:
+				f, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return err
+				}
+				req.AppendFloat64(j, f)
+			case types.ETString:
+				req.AppendString(j, s)
+			}
+		}
+	}
+	fmt.Println(arrowTable.Schema())
+	fmt.Println(arrowTable.Column(0).Data().Chunk(0).String())
+	return nil
+}
+
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.cnt == 1 {
+		return nil
+	}
+
+	if e.Table().Meta().Name.L == "stock_ticks_mor_ro" {
+		e.cnt++
+		return e.readFromHudi(req)
+	}
 	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
 	}
-
 	logutil.Eventf(ctx, "table scan table: %s, range: %v", stringutil.MemoizeStr(func() string {
 		var tableName string
 		if meta := e.table.Meta(); meta != nil {
