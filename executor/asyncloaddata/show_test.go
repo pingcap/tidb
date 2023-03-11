@@ -17,6 +17,7 @@ package asyncloaddata_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -79,6 +80,41 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 	})
 }
 
+type expectedRecord struct {
+	jobID          string
+	dataSource     string
+	targetTable    string
+	importMode     string
+	createdBy      string
+	jobState       string
+	jobStatus      string
+	sourceFileSize string
+	loadedFileSize string
+	resultCode     string
+	resultMessage  string
+}
+
+func (r *expectedRecord) checkIgnoreTimes(t *testing.T, row []interface{}) {
+	require.Equal(t, r.jobID, row[0])
+	require.Equal(t, r.dataSource, row[4])
+	require.Equal(t, r.targetTable, row[5])
+	require.Equal(t, r.importMode, row[6])
+	require.Equal(t, r.createdBy, row[7])
+	require.Equal(t, r.jobState, row[8])
+	require.Equal(t, r.jobStatus, row[9])
+	require.Equal(t, r.sourceFileSize, row[10])
+	require.Equal(t, r.loadedFileSize, row[11])
+	require.Equal(t, r.resultCode, row[12])
+	require.Equal(t, r.resultMessage, row[13])
+}
+
+func (r *expectedRecord) check(t *testing.T, row []interface{}) {
+	r.checkIgnoreTimes(t, row)
+	require.NotEmpty(t, row[1])
+	require.NotEmpty(t, row[2])
+	require.NotEmpty(t, row[3])
+}
+
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS test_show;")
 	s.tk.MustExec("CREATE DATABASE test_show;")
@@ -105,34 +141,20 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
-	// Job_ID
-	require.Equal(s.T(), "1", row[0])
-	// Create_Time
-	require.NotEmpty(s.T(), row[1])
-	// Start_Time
-	require.NotEmpty(s.T(), row[2])
-	// End_Time
-	require.NotEmpty(s.T(), row[3])
-	// Data_Source
-	require.Equal(s.T(), "gs://test-show/t.tsv", row[4])
-	// Target_Table
-	require.Equal(s.T(), "`test_show`.`t`", row[5])
-	// Import_Mode
-	require.Equal(s.T(), "logical", row[6])
-	// Created_By
-	require.Equal(s.T(), "test-load@test-host", row[7])
-	// Job_State
-	require.Equal(s.T(), "loading", row[8])
-	// Job_Status
-	require.Equal(s.T(), "finished", row[9])
-	// Source_File_Size
-	require.Equal(s.T(), "3B", row[10])
-	// Loaded_File_Size
-	require.Equal(s.T(), "3B", row[11])
-	// Result_Code
-	require.Equal(s.T(), "<nil>", row[12])
-	// Result_Message
-	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0", row[13])
+	r := expectedRecord{
+		jobID:          "1",
+		dataSource:     "gs://test-show/t.tsv",
+		targetTable:    "`test_show`.`t`",
+		importMode:     "logical",
+		createdBy:      "test-load@test-host",
+		jobState:       "loading",
+		jobStatus:      "finished",
+		sourceFileSize: "3B",
+		loadedFileSize: "3B",
+		resultCode:     "0",
+		resultMessage:  "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0",
+	}
+	r.check(s.T(), row)
 
 	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 100")
 	require.ErrorContains(s.T(), err, "Job ID 100 doesn't exist")
@@ -142,34 +164,14 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	rows = s.tk.MustQuery("SHOW LOAD DATA JOB 2;").Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
-	// Job_ID
-	require.Equal(s.T(), "2", row[0])
-	// Create_Time
-	require.NotEmpty(s.T(), row[1])
-	// Start_Time
-	require.NotEmpty(s.T(), row[2])
-	// End_Time
-	require.NotEmpty(s.T(), row[3])
-	// Data_Source
-	require.Equal(s.T(), "gs://test-show/t.tsv", row[4])
-	// Target_Table
-	require.Equal(s.T(), "`test_show`.`t`", row[5])
-	// Import_Mode
-	require.Equal(s.T(), "logical", row[6])
-	// Created_By
-	require.Equal(s.T(), "test-load@test-host", row[7])
-	// Job_State
-	require.Equal(s.T(), "loading", row[8])
-	// Job_Status
-	require.Equal(s.T(), "failed", row[9])
-	// Source_File_Size
-	require.Equal(s.T(), "<nil>", row[10])
-	// Loaded_File_Size
-	require.Equal(s.T(), "<nil>", row[11])
-	// Result_Code
-	require.Equal(s.T(), "1062", row[12])
-	// Result_Message
-	require.Equal(s.T(), "Duplicate entry '1' for key 't.PRIMARY'", row[13])
+
+	r.jobID = "2"
+	r.jobStatus = "failed"
+	r.sourceFileSize = "<nil>"
+	r.loadedFileSize = "<nil>"
+	r.resultCode = "1062"
+	r.resultMessage = "Duplicate entry '1' for key 't.PRIMARY'"
+	r.check(s.T(), row)
 }
 
 func (s *mockGCSSuite) TestInternalStatus() {
@@ -200,10 +202,13 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		tk2 := testkit.NewTestKit(s.T(), s.store)
 		tk2.Session().GetSessionVars().User = user
 		userStr := tk2.Session().GetSessionVars().User.String()
+
 		// tk @ 0:00
 		// create load data job record in the system table and sleep 3 seconds
+
 		time.Sleep(2 * time.Second)
 		// tk2 @ 0:02
+
 		jobInfos, err := GetAllJobInfo(ctx, tk2.Session(), userStr)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), jobInfos, 1)
@@ -212,49 +217,114 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		expected := &JobInfo{
 			JobID:         id,
 			User:          "test-load@test-host",
-			DataSource:    fmt.Sprintf("gs://test-tsv/t.tsv?endpoint=%s", gcsEndpoint),
+			DataSource:    fmt.Sprintf("gs://test-tsv/t.tsv"),
 			TableSchema:   "load_tsv",
 			TableName:     "t",
 			ImportMode:    "logical",
 			Progress:      "",
 			Status:        JobPending,
 			StatusMessage: "",
+			CreateTime:    info.CreateTime,
+			StartTime:     info.StartTime,
+			EndTime:       info.EndTime,
 		}
 		require.Equal(s.T(), expected, info)
+
+		rows := tk2.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+		require.Len(s.T(), rows, 1)
+		row := rows[0]
+		r := expectedRecord{
+			jobID:          strconv.Itoa(int(id)),
+			dataSource:     "gs://test-tsv/t.tsv",
+			targetTable:    "`load_tsv`.`t`",
+			importMode:     "logical",
+			createdBy:      "test-load@test-host",
+			jobState:       "loading",
+			jobStatus:      "pending",
+			sourceFileSize: "<nil>",
+			loadedFileSize: "<nil>",
+			resultCode:     "0",
+			resultMessage:  "",
+		}
+		r.checkIgnoreTimes(s.T(), row)
+
 		// tk @ 0:03
 		// start job and sleep 3 seconds
+
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:05
+
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
+		expected.StartTime = info.StartTime
 		expected.Status = JobRunning
 		require.Equal(s.T(), expected, info)
+
+		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		r.jobStatus = "running"
+		r.checkIgnoreTimes(s.T(), row)
+
 		// tk @ 0:06
 		// commit one task and sleep 3 seconds
+
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:08
+
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":0,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
+
+		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		r.sourceFileSize = "3B"
+		r.loadedFileSize = "0B"
+		r.checkIgnoreTimes(s.T(), row)
+
 		// tk @ 0:09
 		// commit one task and sleep 3 seconds
+
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:11
+
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
+
+		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		r.sourceFileSize = "3B"
+		r.loadedFileSize = "2B"
+		r.checkIgnoreTimes(s.T(), row)
+
 		// tk @ 0:12
 		// finish job
+
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:14
+
 		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Status = JobFinished
+		expected.EndTime = info.EndTime
 		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":3,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
+
+		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		r.sourceFileSize = "3B"
+		r.loadedFileSize = "3B"
+		r.jobStatus = "finished"
+		r.resultCode = "0"
+		r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
+		r.checkIgnoreTimes(s.T(), row)
 	}()
 
 	backup := HeartBeatInSec

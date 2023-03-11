@@ -337,3 +337,19 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, JobFailed, status)
 	require.Contains(t, msg, "not found")
 }
+
+func TestCreateLoadDataJobRedact(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(CreateLoadDataJobs)
+	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
+	ctx := context.Background()
+
+	_, err := CreateLoadDataJob(ctx, tk.Session(),
+		"s3://bucket/a.csv?access-key=hideme&secret-access-key=hideme",
+		"db", "table", "mode", "user")
+	require.NoError(t, err)
+	result := tk.MustQuery("SELECT * FROM mysql.load_data_jobs;")
+	result.CheckContain("a.csv")
+	result.CheckNotContain("hideme")
+}

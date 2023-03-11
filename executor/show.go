@@ -2180,7 +2180,7 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendString(13, terr.GetMsg())
 			return
 		}
-		e.result.AppendNull(12)
+		e.result.AppendInt64(12, 0)
 		e.result.AppendString(13, info.StatusMessage)
 	}
 

@@ -53,7 +53,8 @@ const (
        KEY (create_user));`
 )
 
-// CreateLoadDataJob creates a load data job.
+// CreateLoadDataJob creates a load data job by insert a record to system table.
+// The AUTO_INCREMENT value will be returned as jobID.
 func CreateLoadDataJob(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -62,7 +63,6 @@ func CreateLoadDataJob(
 	user string,
 ) (int64, error) {
 	// remove the params in data source URI because it may contains AK/SK
-	// TODO: add UT
 	u, err := url.Parse(dataSource)
 	if err == nil && u.Scheme != "" {
 		u.RawQuery = ""
@@ -94,7 +94,8 @@ func CreateLoadDataJob(
 	return rows[0].GetInt64(0), nil
 }
 
-// StartJob starts a load data job. A job can only be started once.
+// StartJob tries to start a not-yet-started job with jobID. It will not return
+// error when there's no matched job.
 func StartJob(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -118,10 +119,12 @@ var (
 )
 
 // UpdateJobProgress updates the progress of a load data job. It should be called
-// periodically as heartbeat.
+// periodically as heartbeat after StartJob.
 // The returned bool indicates whether the keepalive is succeeded. If not, the
 // caller should call FailJob soon.
-// TODO: this is only called after StartJob. What if the node is crashed when pending?
+// TODO: Currently if the node is crashed after CreateLoadDataJob and before StartJob,
+// it will always be in the status of pending. Maybe we should unify CreateLoadDataJob
+// and StartJob.
 func UpdateJobProgress(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
