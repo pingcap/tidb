@@ -17,6 +17,7 @@ package asyncloaddata
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -58,9 +59,16 @@ func CreateLoadDataJob(
 	importMode string,
 	user string,
 ) (int64, error) {
-	// TODO: dataSource should be redact
+	// remove the params in data source URI because it may contains AK/SK
+	// TODO: add UT
+	u, err := url.Parse(dataSource)
+	if err == nil && u.Scheme != "" {
+		u.RawQuery = ""
+		u.Fragment = ""
+		dataSource = u.String()
+	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	_, err := conn.ExecuteInternal(ctx,
+	_, err = conn.ExecuteInternal(ctx,
 		`INSERT INTO mysql.load_data_jobs
     	(data_source, table_schema, table_name, import_mode, create_user)
 		VALUES (%?, %?, %?, %?, %?);`,
@@ -94,7 +102,7 @@ func StartJob(
 	_, err := conn.ExecuteInternal(ctx,
 		`UPDATE mysql.load_data_jobs
 		SET start_time = CURRENT_TIMESTAMP(6), update_time = CURRENT_TIMESTAMP(6)
-		WHERE job_id = %? AND start_time IS NULL;`,
+		WHERE job_id = %? AND start_time IS NULL AND end_time IS NULL;`,
 		jobID)
 	return err
 }
@@ -342,6 +350,7 @@ func GetJobInfo(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
 	jobID int64,
+	user string,
 ) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	rs, err := conn.ExecuteInternal(ctx,
@@ -362,8 +371,8 @@ func GetJobInfo(
 		create_user,
 		create_time
 		FROM mysql.load_data_jobs
-		WHERE job_id = %?;`,
-		OfflineThresholdInSec, jobID)
+		WHERE job_id = %? AND create_user = %?;`,
+		OfflineThresholdInSec, jobID, user)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +437,8 @@ func GetAllJobInfo(
 		table_name,
 		import_mode,
 		progress,
-		create_user
+		create_user,
+		create_time
 		FROM mysql.load_data_jobs
 		WHERE create_user = %?;`,
 		OfflineThresholdInSec, user)

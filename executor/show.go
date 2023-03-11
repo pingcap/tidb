@@ -68,12 +68,14 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -2147,11 +2149,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 // "Result_Code", "Result_Message"}.
 func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.SQLExecutor)
-	if e.LoadDataJobID != nil {
-		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID)
-		if err != nil || info.User != e.ctx.GetSessionVars().User.String() {
-			return err
-		}
+	handleOneInfo := func(info *asyncloaddata.JobInfo) {
 		e.result.AppendInt64(0, info.JobID)
 		e.result.AppendTime(1, info.CreateTime)
 		e.result.AppendTime(2, info.StartTime)
@@ -2166,19 +2164,37 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
 		if err2 != nil {
 			// maybe empty progress
+			if info.Progress != "" {
+				logutil.Logger(ctx).Warn("invalid progress", zap.String("progress", info.Progress))
+			}
 			e.result.AppendNull(10)
 			e.result.AppendNull(11)
 		} else {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
 			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
 		}
-		switch info.Status {
-		case asyncloaddata.JobFailed:
-			
-		}
+		// TODO: find a way to extract error code
+		e.result.AppendNull(12)
+		e.result.AppendString(13, info.StatusMessage)
 	}
 
+	if e.LoadDataJobID != nil {
+		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID, e.ctx.GetSessionVars().User.String())
+		if err != nil {
+			return err
+		}
+		handleOneInfo(info)
+		return nil
+	}
+	infos, err := asyncloaddata.GetAllJobInfo(ctx, exec, e.ctx.GetSessionVars().User.String())
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		handleOneInfo(info)
+	}
 	// TODO: does not support filtering for now
+	return nil
 }
 
 // tryFillViewColumnType fill the columns type info of a view.

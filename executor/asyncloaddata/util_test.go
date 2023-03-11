@@ -25,10 +25,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func checkEqualIgnoreTimes(t *testing.T, expected, got *JobInfo) {
+	cloned := *expected
+	cloned.CreateTime = got.CreateTime
+	cloned.StartTime = got.StartTime
+	cloned.EndTime = got.EndTime
+	require.Equal(t, &cloned, got)
+}
+
 func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *JobInfo) {
 	id, err := CreateLoadDataJob(context.Background(), conn, "/tmp/test.csv", "test", "t", "logical", user)
 	require.NoError(t, err)
-	info, err := GetJobInfo(context.Background(), conn, id)
+	info, err := GetJobInfo(context.Background(), conn, id, user)
 	require.NoError(t, err)
 	expected := &JobInfo{
 		JobID:         id,
@@ -41,7 +49,7 @@ func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *Job
 		Status:        JobPending,
 		StatusMessage: "",
 	}
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 	return id, info
 }
 
@@ -66,58 +74,58 @@ func TestHappyPath(t *testing.T) {
 	})
 	err := StartJob(ctx, tk.Session(), id)
 	require.NoError(t, err)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is periodically updated by worker
 
 	ok, err := UpdateJobProgress(ctx, tk.Session(), id, "imported 10%")
 	require.NoError(t, err)
 	require.True(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Progress = "imported 10%"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is paused
 
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobPaused
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// worker still can update progress, maybe response to pausing is delayed
 
 	ok, err = UpdateJobProgress(ctx, tk.Session(), id, "imported 20%")
 	require.NoError(t, err)
 	require.True(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Progress = "imported 20%"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is resumed
 
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// job is finished
 
 	err = FinishJob(ctx, tk.Session(), id, "finished message")
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobFinished
 	expected.StatusMessage = "finished message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 }
 
 func TestKeepAlive(t *testing.T) {
@@ -138,69 +146,70 @@ func TestKeepAlive(t *testing.T) {
 	})
 
 	// before job is started, worker don't need to keepalive
+	// TODO:👆not correct!
 
 	time.Sleep(2 * time.Second)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	err = StartJob(ctx, tk.Session(), id)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// if worker failed to keepalive, job will fail
 
 	time.Sleep(2 * time.Second)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "job expected running but the node is timeout"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// after the worker is failed to keepalive, further keepalive will fail
 
 	ok, err := UpdateJobProgress(ctx, tk.Session(), id, "imported 20%")
 	require.NoError(t, err)
 	require.False(t, ok)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// when worker fails to keepalive, before it calls FailJob, it still can
 	// change expected status to some extent.
 
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.StatusMessage = "job expected paused but the node is timeout"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.StatusMessage = "job expected running but the node is timeout"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobCanceled
 	expected.StatusMessage = ""
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// Now the worker calls FailJob
 
 	err = FailJob(ctx, tk.Session(), id, "failed to keepalive")
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "failed to keepalive"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 }
 
 func TestJobIsFailedAndGetAllJobs(t *testing.T) {
@@ -218,11 +227,11 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 
 	err := FailJob(ctx, tk.Session(), id, "failed message")
 	require.NoError(t, err)
-	info, err := GetJobInfo(ctx, tk.Session(), id)
+	info, err := GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "failed message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// create another job and fail it
 
@@ -230,36 +239,36 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 
 	err = StartJob(ctx, tk.Session(), id)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobRunning
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	err = FailJob(ctx, tk.Session(), id, "failed message")
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	expected.Status = JobFailed
 	expected.StatusMessage = "failed message"
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// test change expected status of a failed job.
 
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedPaused)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedRunning)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
 	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id)
+	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	require.Equal(t, expected, info)
+	checkEqualIgnoreTimes(t, expected, info)
 
 	// add job of another user and test GetAllJobInfo
 
@@ -275,6 +284,9 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(jobs))
 	require.Equal(t, JobPending, jobs[0].Status)
+
+	_, err = GetJobInfo(ctx, tk.Session(), jobs[0].JobID, "wrong_user")
+	require.ErrorContains(t, err, "not found")
 }
 
 func TestGetJobStatus(t *testing.T) {

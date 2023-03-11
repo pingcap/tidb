@@ -79,6 +79,64 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 	})
 }
 
+func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS test_show;")
+	s.tk.MustExec("CREATE DATABASE test_show;")
+	s.tk.MustExec("CREATE TABLE test_show.t (i INT);")
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-show",
+			Name:       "t.tsv",
+		},
+		Content: []byte(`1
+2`),
+	})
+
+	user := &auth.UserIdentity{
+		AuthUsername: "test-load",
+		AuthHostname: "test-host",
+	}
+	s.tk.Session().GetSessionVars().User = user
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2.Session().GetSessionVars().User = user
+
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
+		INTO TABLE test_show.t;`, gcsEndpoint)
+	s.tk.MustExec(sql)
+
+	rows := tk2.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+	require.Len(s.T(), rows, 1)
+	row := rows[0]
+	// Job_ID
+	require.Equal(s.T(), "1", row[0])
+	// Create_Time
+	require.NotEmpty(s.T(), row[1])
+	// Start_Time
+	require.NotEmpty(s.T(), row[2])
+	// End_Time
+	require.NotEmpty(s.T(), row[3])
+	// Data_Source
+	require.Equal(s.T(), "gs://test-show/t.tsv", row[4])
+	// Target_Table
+	require.Equal(s.T(), "`test_show`.`t`", row[5])
+	// Import_Mode
+	require.Equal(s.T(), "logical", row[6])
+	// Created_By
+	require.Equal(s.T(), "test-load@test-host", row[7])
+	// Job_State
+	require.Equal(s.T(), "loading", row[8])
+	// Job_Status
+	require.Equal(s.T(), "finished", row[9])
+	// Source_File_Size
+	require.Equal(s.T(), "3B", row[10])
+	// Loaded_File_Size
+	require.Equal(s.T(), "3B", row[11])
+	// Result_Code
+	require.Equal(s.T(), "<nil>", row[12])
+	// Result_Message
+	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0", row[13])
+}
+
 func (s *mockGCSSuite) TestInternalStatus() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_tsv;")
 	s.tk.MustExec("CREATE DATABASE load_tsv;")
@@ -106,11 +164,12 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		defer wg.Done()
 		tk2 := testkit.NewTestKit(s.T(), s.store)
 		tk2.Session().GetSessionVars().User = user
+		userStr := tk2.Session().GetSessionVars().User.String()
 		// tk @ 0:00
 		// create load data job record in the system table and sleep 3 seconds
 		time.Sleep(2 * time.Second)
 		// tk2 @ 0:02
-		jobInfos, err := GetAllJobInfo(ctx, tk2.Session(), tk2.Session().GetSessionVars().User.String())
+		jobInfos, err := GetAllJobInfo(ctx, tk2.Session(), userStr)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), jobInfos, 1)
 		info := jobInfos[0]
@@ -131,7 +190,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// start job and sleep 3 seconds
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:05
-		info, err = GetJobInfo(ctx, tk2.Session(), id)
+		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Status = JobRunning
 		require.Equal(s.T(), expected, info)
@@ -139,7 +198,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// commit one task and sleep 3 seconds
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:08
-		info, err = GetJobInfo(ctx, tk2.Session(), id)
+		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":0,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
@@ -147,7 +206,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// commit one task and sleep 3 seconds
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:11
-		info, err = GetJobInfo(ctx, tk2.Session(), id)
+		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
@@ -155,7 +214,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// finish job
 		time.Sleep(3 * time.Second)
 		// tk2 @ 0:14
-		info, err = GetJobInfo(ctx, tk2.Session(), id)
+		info, err = GetJobInfo(ctx, tk2.Session(), id, userStr)
 		require.NoError(s.T(), err)
 		expected.Status = JobFinished
 		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
