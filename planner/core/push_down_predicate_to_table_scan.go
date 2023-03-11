@@ -25,11 +25,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// selectivity = (row count after filter) / (row count before filter), smaller is better
+// income = (1 - selectivity) * restColumnCount, greater is better
+// We use income is avoid the following case:
+// selectivity is 0.7, restColumnCount is 10, income is 3
+// after push down a predicate, selectivity becomes 0.6, restColumnCount becomes 7, income becomes 2.8, which is smaller than 3
+// but the predicate is not pushed down, which is not expected
+
 const (
-	// selectivity = (row count after filter) / (row count before filter), smaller is better
-	selectivityThreshold = 0.7
-	// income = (1 - selectivity) * restColumnCount, greater is better
-	incomeImproveThreshold = 0.3
+	selectivityThreshold        = 0.7
+	selectivityImproveThreshold = 0.1
+	// The default now of number of rows in a pack of TiFlash
+	tiflashDataPackSize  = 8192
+	columnCountThreshold = 3
 )
 
 // expressionGroup is used to store
@@ -48,6 +56,10 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
 			// Only when the table scan is a full scan and the store type is TiFlash,
 			// we will try to push down predicates.
 			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
+		} else {
+			for _, child := range plan.Children() {
+				predicatePushDownToTableScan(sctx, child)
+			}
 		}
 	case *PhysicalTableReader:
 		predicatePushDownToTableScan(sctx, p.tablePlan)
@@ -146,8 +158,13 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 		var code string
 		if len(columns) == 0 {
 			code = "0"
-		} else {
+		} else if len(columns) < columnCountThreshold {
 			code = transformColumnsToCode(columns, len(physicalTableScan.Columns))
+		} else {
+			// If the number of columns is larger than columnCountThreshold,
+			// the possibility of the selectivity of the condition is larger than the threshold is very small.
+			// So we skip it to reduce the cost of calculating the selectivity.
+			continue
 		}
 		groupMap[code] = append(groupMap[code], cond)
 	}
@@ -157,7 +174,7 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	for _, group := range groupMap {
 		selectivity, _, err := physicalTableScan.tblColHists.Selectivity(sctx, group, nil)
 		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		if selectivity <= selectivityThreshold {
@@ -228,6 +245,10 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
  * @param: physicalTableScan: the PhysicalTableScan to be pushed down to
  */
 func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+	// When the table is small, there is no need to push down the conditions.
+	if physicalTableScan.tblColHists.Count <= tiflashDataPackSize {
+		return
+	}
 	conds := physicalSelection.Conditions
 	if len(conds) == 0 {
 		return
@@ -239,13 +260,14 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	selectedConds := make([]expression.Expression, 0, len(conds))
 	selectedIncome := 0.0
 	selectedColumnCount := 0
+	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
 		selectivity, _, err := physicalTableScan.tblColHists.Selectivity(sctx, mergedConds, nil)
 		if err != nil {
-			logutil.BgLogger().Info("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		var cols []*expression.Column
@@ -259,10 +281,16 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		income := (1 - selectivity) * (float64(totalColumnCount) - float64(colCnt))
 		// If selectedColumnCount does not change,
 		// or the income increase larger than the threshold after pushing down the group, push down it.
-		if colCnt == selectedColumnCount || income-selectedIncome >= incomeImproveThreshold {
+		if colCnt == selectedColumnCount || income > selectedIncome {
 			selectedConds = mergedConds
 			selectedColumnCount = colCnt
 			selectedIncome = income
+			selectedSelectivity = selectivity
+		}
+		// If the selectivity improvement is small enough, break the loop
+		// to reduce the cost of calculating selectivity.
+		if selectedSelectivity-selectivity < selectivityImproveThreshold {
+			break
 		}
 	}
 
@@ -274,4 +302,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
 	physicalTableScan.prewhereFilterCondition = append(physicalTableScan.prewhereFilterCondition, selectedConds...)
+	//TODO: update the row count of the table scan
+	// Keep the row count unchanged for test now
+	// physicalTableScan.stats.RowCount *= float64(selectedSelectivity)
 }

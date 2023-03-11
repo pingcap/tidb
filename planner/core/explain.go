@@ -206,7 +206,11 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if len(p.prewhereFilterCondition) > 0 {
 		buffer.WriteString("pushed down filter:")
-		buffer.Write(expression.SortedExplainNormalizedExpressionList(p.prewhereFilterCondition))
+		if normalized {
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.prewhereFilterCondition))
+		} else {
+			buffer.Write(expression.SortedExplainExpressionList(p.prewhereFilterCondition))
+		}
 		buffer.WriteString(", ")
 	}
 	buffer.WriteString("keep order:")

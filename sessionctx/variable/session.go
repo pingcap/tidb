@@ -1376,6 +1376,7 @@ type SessionVars struct {
 
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
+
 	// SlowTxnThreshold is the threshold of slow transaction logs
 	SlowTxnThreshold uint64
 
