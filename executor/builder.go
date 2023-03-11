@@ -2498,6 +2498,24 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
+// heuristicNDVSampleRate is the heuristics strategy to decide whether to use sample-based ndv calculation and the sample rate to use.
+// TODO: refine the strategy according to experiments.
+func heuristicNDVSampleRate(ndv, count int64) float64 {
+	ratio := float64(ndv) / float64(count) * 20 // 20 is just a magic number
+	if ratio > 0.5 {
+		// If the sample rate is larger than 0.5, we assume that sample-based ndv may not be much faster than full-scan ndv.
+		// Sacrificing ndv accuracy for a small performance gain is not worth it.
+		// Hence, in this case we just use full-scan ndv.
+		ratio = 1.0
+	} else if ratio < 0.05 {
+		// When we change the sample rate from 1.0 to 0.05, the performance gain is significant. However, when we change
+		// the sample rate from 0.05 to a smaller value, the performance gain is small.
+		// Hence, we use 0.05 as the lower bound for the sample rate, which can help ensure ndv accuracy.
+		ratio = 0.05
+	}
+	return ratio
+}
+
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -2607,6 +2625,38 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		}
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
+	NDVSampleRates := make([]float64, len(task.ColsInfo)+len(task.Indexes))
+	for i := 0; i < len(task.ColsInfo)+len(task.Indexes); i++ {
+		NDVSampleRates[i] = 1.0
+	}
+	switch b.ctx.GetSessionVars().AllowSampleNDV {
+	case 1:
+		tblStats := statsHandle.GetPartitionStats(e.tableInfo, e.tableID.GetStatisticsID())
+		if e.analyzePB.ColReq.GetSampleRate() > 0 && e.analyzePB.ColReq.GetSampleRate() < 0.01 {
+			// Currently we only consider sample-based NDV calculation for bernoulli sampling.
+			// Note that if the sample rate for building histograms is high, using sample-based NDV calculation has little
+			// help to improving analyze performance. Hence, we only consider sample-based NDV calculation when the sample
+			// rate of building histograms is less than 0.01.
+			// TODO: consider sample-based NDV calculation for reservoir sampling
+			for i := 0; i < len(task.ColsInfo); i++ {
+				colStats := tblStats.Columns[task.ColsInfo[i].ID]
+				if colStats != nil && colStats.NDV > 0 {
+					NDVSampleRates[i] = heuristicNDVSampleRate(colStats.NDV, tblStats.Count)
+				}
+			}
+			for i := 0; i < len(task.Indexes); i++ {
+				idxStats := tblStats.Indices[task.Indexes[i].ID]
+				if idxStats != nil && idxStats.NDV > 0 {
+					NDVSampleRates[len(task.ColsInfo)+i] = heuristicNDVSampleRate(idxStats.NDV, tblStats.Count)
+				}
+			}
+		}
+	case 2:
+		for i := 0; i < len(task.ColsInfo)+len(task.Indexes); i++ {
+			NDVSampleRates[i] = b.ctx.GetSessionVars().NDVSampleRate
+		}
+	}
+	e.analyzePB.ColReq.NdvSampleRate = NDVSampleRates
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
