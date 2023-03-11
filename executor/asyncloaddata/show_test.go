@@ -82,7 +82,7 @@ func (s *mockGCSSuite) enableFailpoint(path, term string) {
 func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS test_show;")
 	s.tk.MustExec("CREATE DATABASE test_show;")
-	s.tk.MustExec("CREATE TABLE test_show.t (i INT);")
+	s.tk.MustExec("CREATE TABLE test_show.t (i INT PRIMARY KEY);")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-show",
@@ -97,14 +97,12 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 		AuthHostname: "test-host",
 	}
 	s.tk.Session().GetSessionVars().User = user
-	tk2 := testkit.NewTestKit(s.T(), s.store)
-	tk2.Session().GetSessionVars().User = user
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
 		INTO TABLE test_show.t;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 
-	rows := tk2.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
 	// Job_ID
@@ -135,6 +133,43 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	require.Equal(s.T(), "<nil>", row[12])
 	// Result_Message
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0", row[13])
+
+	err := s.tk.QueryToErr("SHOW LOAD DATA JOB 100")
+	require.ErrorContains(s.T(), err, "Job ID 100 doesn't exist")
+
+	// repeat LOAD DATA, will get duplicate entry error
+	s.tk.MustContainErrMsg(sql, "Duplicate entry '1' for key 't.PRIMARY'")
+	rows = s.tk.MustQuery("SHOW LOAD DATA JOB 2;").Rows()
+	require.Len(s.T(), rows, 1)
+	row = rows[0]
+	// Job_ID
+	require.Equal(s.T(), "2", row[0])
+	// Create_Time
+	require.NotEmpty(s.T(), row[1])
+	// Start_Time
+	require.NotEmpty(s.T(), row[2])
+	// End_Time
+	require.NotEmpty(s.T(), row[3])
+	// Data_Source
+	require.Equal(s.T(), "gs://test-show/t.tsv", row[4])
+	// Target_Table
+	require.Equal(s.T(), "`test_show`.`t`", row[5])
+	// Import_Mode
+	require.Equal(s.T(), "logical", row[6])
+	// Created_By
+	require.Equal(s.T(), "test-load@test-host", row[7])
+	// Job_State
+	require.Equal(s.T(), "loading", row[8])
+	// Job_Status
+	require.Equal(s.T(), "failed", row[9])
+	// Source_File_Size
+	require.Equal(s.T(), "<nil>", row[10])
+	// Loaded_File_Size
+	require.Equal(s.T(), "<nil>", row[11])
+	// Result_Code
+	require.Equal(s.T(), "1062", row[12])
+	// Result_Message
+	require.Equal(s.T(), "Duplicate entry '1' for key 't.PRIMARY'", row[13])
 }
 
 func (s *mockGCSSuite) TestInternalStatus() {

@@ -20,10 +20,12 @@ import (
 	"net/url"
 
 	"github.com/pingcap/errors"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -253,6 +255,10 @@ func (s JobStatus) String() string {
 	}
 }
 
+// ErrLoadDataJobIDNotFound is the error when the job ID is not found.
+// TODO: move to exeerrors after https://github.com/pingcap/tidb/pull/42075.
+var ErrLoadDataJobIDNotFound = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobIDNotFound)
+
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are
 // returned as JobFailed with message.
@@ -282,7 +288,7 @@ func GetJobStatus(
 		return JobFailed, "", err
 	}
 	if len(rows) != 1 {
-		return JobFailed, fmt.Sprintf("job %d not found", jobID), nil
+		return JobFailed, ErrLoadDataJobIDNotFound.GenWithStackByArgs(jobID).Error(), nil
 	}
 
 	return getJobStatus(rows[0])
@@ -382,9 +388,7 @@ func GetJobInfo(
 		return nil, err
 	}
 	if len(rows) != 1 {
-		// TODO: align error class
-		// better pass user here to simplify
-		return nil, fmt.Errorf("job %d not found", jobID)
+		return nil, ErrLoadDataJobIDNotFound.GenWithStackByArgs(jobID)
 	}
 
 	return getJobInfo(rows[0])

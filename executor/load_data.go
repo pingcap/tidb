@@ -663,8 +663,11 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			return
 		}
 		errMsg := err.Error()
-		if errImpl, ok := err.(*errors.Error); ok {
-			errMsg = terror.ToSQLError(errImpl).Error()
+		if errImpl, ok := errors.Cause(err).(*errors.Error); ok {
+			b, marshalErr := errImpl.MarshalJSON()
+			if marshalErr == nil {
+				errMsg = string(b)
+			}
 		}
 
 		err2 := asyncloaddata.FailJob(ctx, sqlExec, jobID, errMsg)

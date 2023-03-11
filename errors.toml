@@ -1721,6 +1721,11 @@ error = '''
 Unsupported option %s for %s import mode
 '''
 
+["executor:8170"]
+error = '''
+Job ID %d doesn't exist
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

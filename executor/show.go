@@ -2173,7 +2173,13 @@ func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
 			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
 			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
 		}
-		// TODO: find a way to extract error code
+		terr := new(terror.Error)
+		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
+		if err2 == nil {
+			e.result.AppendInt64(12, int64(terr.Code()))
+			e.result.AppendString(13, terr.GetMsg())
+			return
+		}
 		e.result.AppendNull(12)
 		e.result.AppendString(13, info.StatusMessage)
 	}
