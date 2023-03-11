@@ -256,6 +256,7 @@ else
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -test.run "$(case)" || { $(FAILPOINT_DISABLE); exit 1; }
 endif
+endif
 	@$(FAILPOINT_DISABLE)
 
 # Collect the daily benchmark data.
