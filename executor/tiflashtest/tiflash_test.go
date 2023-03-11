@@ -1580,6 +1580,7 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	var mppStoreCountPDError = "github.com/pingcap/tidb/store/copr/mppStoreCountPDError"
 	var mppStoreCountSetMPPCnt = "github.com/pingcap/tidb/store/copr/mppStoreCountSetMPPCnt"
 	var mppStoreCountSetLastUpdateTime = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTime"
+	var mppStoreCountSetLastUpdateTimeP2 = "github.com/pingcap/tidb/store/copr/mppStoreCountSetLastUpdateTimeP2"
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(3))
 	{
@@ -1616,6 +1617,17 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 		// still update cache
 		require.Equal(t, mppCnt, 2222)
 	}
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTime, `return("1")`))
+	// fail to get lock and old cache
+	require.Nil(t, failpoint.Enable(mppStoreCountSetLastUpdateTimeP2, `return("2")`))
+	require.Nil(t, failpoint.Enable(mppStoreCountPDError, `return(true)`))
+	{
+		mppCnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Nil(t, err)
+		require.Equal(t, mppCnt, 2222)
+	}
 	require.Nil(t, failpoint.Disable(mppStoreCountSetMPPCnt))
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTime))
+	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
+	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }

@@ -583,22 +583,27 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 }
 
 func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error) {
+	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
+
 	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
 	oriMPPStoreCnt := atomic.LoadInt32(&c.cnt)
 	now := time.Now().UnixMicro()
 	isInit := atomic.LoadInt32(&c.initFlag) != 0
-
-	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
-		v, _ := strconv.ParseInt(value.(string), 10, 0)
-		lastUpdate = v
-		c.lastUpdate = lastUpdate
-	})
 
 	if now-lastUpdate < TTL {
 		if isInit {
 			return int(oriMPPStoreCnt), nil
 		}
 	}
+
+	failpoint.Inject("mppStoreCountSetLastUpdateTimeP2", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
+
 	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
 		if isInit {
 			return int(oriMPPStoreCnt), nil
