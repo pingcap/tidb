@@ -3711,7 +3711,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
 	})
