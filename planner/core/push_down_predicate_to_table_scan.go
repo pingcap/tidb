@@ -158,7 +158,7 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 		var code string
 		if len(columns) == 0 {
 			code = "0"
-		} else if len(columns) < columnCountThreshold {
+		} else if len(columns) <= columnCountThreshold {
 			code = transformColumnsToCode(columns, len(physicalTableScan.Columns))
 		} else {
 			// If the number of columns is larger than columnCountThreshold,

@@ -32,12 +32,9 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
-	tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
+	}
 	tk.MustExec("analyze table t1;")
 
 	// Create virtual `tiflash` replica info.
