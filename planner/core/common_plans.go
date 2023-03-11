@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,9 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
-var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -564,8 +560,15 @@ type LoadData struct {
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+}
+
+// LoadDataOpt represents load data option.
+type LoadDataOpt struct {
+	Name  string
+	Value expression.Expression
 }
 
 // LoadStats represents a load stats plan.
@@ -737,7 +740,7 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
@@ -753,7 +756,7 @@ func (e *Explain) prepareSchema() error {
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
-	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
+	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -835,7 +838,7 @@ func (e *Explain) RenderResult() error {
 	}
 
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)

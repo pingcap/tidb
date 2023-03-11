@@ -668,7 +668,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
-	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)->Sel\(\[lt\(test.t1.c1, now\(3\)\)\]\)`
+	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)`
 
 	var cnt [2]float64
 	var planStr [2]string
@@ -1339,7 +1339,7 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 	// DB is not specified
 	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
+		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKitWithSession(t, store, se2)

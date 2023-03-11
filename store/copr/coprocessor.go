@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
+	copr_metrics "github.com/pingcap/tidb/store/copr/metrics"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
@@ -55,13 +56,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-)
-
-var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
-
-var (
-	coprCacheCounterHit  = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
-	coprCacheCounterMiss = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -127,16 +121,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			}
 		}
 	})
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
-		req.StoreBatchSize = 0
-	}
-	// TODO: support keep-order batch
-	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
-		// disable batch copr for follower read
-		req.StoreBatchSize = 0
-	}
-	// disable batch copr when paging is enabled.
-	if req.Paging.Enable {
+	if !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
 	}
 
@@ -1106,7 +1091,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		}
 	}
 	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
-		coprCacheCounterEvict.Add(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
+		copr_metrics.CoprCacheCounterEvict.Add(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 
@@ -1135,6 +1120,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
+	// TODO: Load-based replica read is currently not compatible with store batched tasks now.
+	// The batched tasks should be dispatched to their own followers, but it's not implemented yet.
+	// So, only enable load-based replica read when there is no batched tasks.
+	var busyThresholdMs uint32
+	if len(copReq.Tasks) == 0 {
+		busyThresholdMs = uint32(worker.req.StoreBusyThreshold.Milliseconds())
+	}
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:          priorityToPB(worker.req.Priority),
@@ -1144,6 +1136,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		TaskId:            worker.req.TaskID,
 		RequestSource:     task.requestSource.GetRequestSource(),
 		ResourceGroupName: worker.req.ResourceGroupName,
+		BusyThresholdMs:   busyThresholdMs,
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
@@ -1181,7 +1174,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
+	isInternal := util.IsRequestSourceInternal(&task.requestSource)
+	scope := metrics.LblGeneral
+	if isInternal {
+		scope = metrics.LblInternal
+	}
+	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead), scope).Observe(costTime.Seconds())
 	if copResp != nil {
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
@@ -1544,7 +1542,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		if cacheValue == nil {
 			return errors.New("Internal error: received illegal TiKV response")
 		}
-		coprCacheCounterHit.Add(1)
+		copr_metrics.CoprCacheCounterHit.Add(1)
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
@@ -1572,7 +1570,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		resp.detail.CoprCacheHit = true
 		return nil
 	}
-	coprCacheCounterMiss.Add(1)
+	copr_metrics.CoprCacheCounterMiss.Add(1)
 	// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 	if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 		if resp.detail != nil {
@@ -1952,4 +1950,24 @@ func optRowHint(req *kv.Request) bool {
 		opt = false
 	})
 	return opt
+}
+
+func checkStoreBatchCopr(req *kv.Request) bool {
+	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+		return false
+	}
+	// TODO: support keep-order batch
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
+		// Disable batch copr for follower read
+		return false
+	}
+	// Disable batch copr when paging is enabled.
+	if req.Paging.Enable {
+		return false
+	}
+	// Disable it for internal requests to avoid regression.
+	if req.RequestSource.RequestSourceInternal {
+		return false
+	}
+	return true
 }
