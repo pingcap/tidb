@@ -1373,6 +1373,16 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// AllowSampleNDV controls the way to collect NDV for each column/index when collecting statistics.
+	// 0 means scanning all rows to calculate NDV for each column/index.
+	// 1 means using a heuristic strategy to decide which columns/indexes use full-scan NDV calculation and which use sample-based NDV calculation.
+	// 2 means sampling some rows to calculate NDV for each column/index. The sample rate is decided by NDVSampleRate.
+	AllowSampleNDV int
+
+	// NDVSampleRate indicates the sample rate when sampling rows to calculate NDV for each column/index when collecting statistics.
+	// It is used only when AllowSampleNDV is 2.
+	NDVSampleRate float64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

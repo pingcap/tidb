@@ -821,6 +821,17 @@ const (
 
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBAllowSampleNDV controls the way to collect NDV for each column/index when collecting statistics.
+	// 0 means scanning all rows to calculate NDV for each column/index.
+	// 1 means using a heuristic strategy to decide which columns/indexes use full-scan NDV calculation and which use sample-based NDV calculation.
+	// 2 means sampling some rows to calculate NDV for each column/index. The sample rate is decided by tidb_ndv_sample_rate.
+	// The default value is 1.
+	TiDBAllowSampleNDV = "tidb_allow_sample_ndv"
+
+	// TiDBNDVSampleRate indicates the sample rate when sampling rows to calculate NDV for each column/index when collecting statistics.
+	// It is used only when tidb_allow_sample_ndv is 2.
+	TiDBNDVSampleRate = "tidb_ndv_sample_rate"
 )
 
 // TiDB vars that have only global scope
@@ -1212,6 +1223,8 @@ const (
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBAllowSampleNDV                                  = 2
+	DefTiDBNDVSampleRate                                   = 0.2
 )
 
 // Process global variables.

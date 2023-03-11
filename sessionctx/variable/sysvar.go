@@ -2303,6 +2303,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowSampleNDV, Value: strconv.Itoa(DefTiDBAllowSampleNDV), Type: TypeInt, MinValue: 0, MaxValue: 2,
+		SetSession: func(s *SessionVars, val string) error {
+			s.AllowSampleNDV = int(TidbOptInt64(val, DefTiDBAllowSampleNDV))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNDVSampleRate, Value: strconv.FormatFloat(DefTiDBNDVSampleRate, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
+		SetSession: func(s *SessionVars, val string) error {
+			s.NDVSampleRate = tidbOptFloat64(val, DefTiDBNDVSampleRate)
+			return nil
+		},
+	},
 	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
