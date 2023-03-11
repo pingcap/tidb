@@ -257,6 +257,7 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util",
+        "//util/chunk",
         "//util/codec",
         "//util/collate",
         "//util/dbterror",
