@@ -169,8 +169,8 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 	return DecodeFMSketch(rows[0].GetBytes(0))
 }
 
-// ColumnCountFromStorage reads column count from storage
-func ColumnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
+// columnCountFromStorage reads column count from storage
+func columnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
 	count := int64(0)
 	rows, _, err := reader.Read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
 	if err != nil {
@@ -357,7 +357,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// Here is
 		//For one column, if there is no stats for it in the storage(analyze is never)
 		if notNeedLoad {
-			count, err := ColumnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
+			count, err := columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
