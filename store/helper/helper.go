@@ -1213,7 +1213,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 // CollectTiFlashStatus query sync status of one table from TiFlash store.
 // `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
 func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
-	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/keyspace/%v/table/%d",
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/keyspace/%d/table/%d",
 		util.InternalHTTPSchema(),
 		statusAddress,
 		keyspaceID,
