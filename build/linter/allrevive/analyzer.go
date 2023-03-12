@@ -118,6 +118,8 @@ var allRules = append([]lint.Rule{
 	&rule.TimeEqualRule{},
 	//&rule.BannedCharsRule{},
 	&rule.OptimizeOperandsOrderRule{},
+	&rule.AtomicRule{},
+	&rule.WaitGroupByValueRule{},
 }, defaultRules...)
 
 func run(pass *analysis.Pass) (any, error) {
