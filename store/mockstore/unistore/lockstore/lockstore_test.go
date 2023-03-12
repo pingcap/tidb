@@ -158,10 +158,7 @@ func TestMemStoreConcurrent(t *testing.T) {
 	start := time.Now()
 	var totalInsert, totalDelete int
 	hint := new(Hint)
-	for {
-		if totalInsert%128 == 0 && time.Since(start) > time.Second*10 {
-			break
-		}
+	for totalInsert%128 == 0 && time.Since(start) > time.Second*10 {
 		n := ran.Intn(keyRange)
 		key := concurrentKeys[n]
 		lock.Lock()
