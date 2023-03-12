@@ -217,7 +217,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		expected := &JobInfo{
 			JobID:         id,
 			User:          "test-load@test-host",
-			DataSource:    fmt.Sprintf("gs://test-tsv/t.tsv"),
+			DataSource:    "gs://test-tsv/t.tsv",
 			TableSchema:   "load_tsv",
 			TableName:     "t",
 			ImportMode:    "logical",
