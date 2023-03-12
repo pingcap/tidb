@@ -17,6 +17,7 @@ package statistics
 import (
 	"container/heap"
 	"context"
+	"math"
 	"math/rand"
 	"unsafe"
 
@@ -35,7 +36,8 @@ import (
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
-	sampleRow(row []types.Datum, rng *rand.Rand)
+	pickSample(rng *rand.Rand) bool
+	pushSample(row []types.Datum)
 	Base() *baseCollector
 }
 
@@ -46,6 +48,13 @@ type baseCollector struct {
 	TotalSizes []int64
 	Count      int64
 	MemSize    int64
+	// SampleNDVOffsets, SampleFMSketches, SampleF1FMSketches are used for sample-based ndv calculation.
+	// SampleNDVOffsets indicates which columns/indexes use sample-based ndv calculation.
+	// SampleFMSketches is the fm_sketch of the all samples.
+	// SampleF1FMSketches is the fm_sketch of the samples whose value occurs exactly once.
+	SampleNDVOffsets   []int64
+	SampleFMSketches   []*FMSketch
+	SampleF1FMSketches []*FMSketch
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -61,6 +70,7 @@ type baseCollector struct {
 type ReservoirRowSampleCollector struct {
 	*baseCollector
 	MaxSampleSize int
+	CurrentWeight int64
 }
 
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
@@ -128,6 +138,7 @@ type RowSampleBuilder struct {
 	SampleRate      float64
 	MaxFMSketchSize int
 	Rng             *rand.Rand
+	NDVSampleRates  []float64
 }
 
 // NewRowSampleCollector creates a collector from the given inputs.
@@ -163,6 +174,12 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
+	useSampleNDV := make([]bool, len(s.NDVSampleRates))
+	for i, sampleRate := range s.NDVSampleRates {
+		if math.Abs(sampleRate-1.0) > 1e-6 {
+			useSampleNDV[i] = true
+		}
+	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(chk)
@@ -176,30 +193,64 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		}
 		collector.Base().Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := RowToDatums(row, s.RecordSet.Fields())
-			newCols := make([]types.Datum, len(datums))
-			// sizes are used to calculate the total size information. We calculate the sizes here because we need the
-			// length of the original bytes instead of the collate key when it's a new collation string.
-			sizes := make([]int64, 0, len(datums))
-			for i := range datums {
+			pick := collector.pickSample(s.Rng)
+			colsPick := make([]bool, len(s.ColsFieldType))
+			groupsPick := make([]bool, len(s.ColGroups))
+			if pick {
+				for i := 0; i < len(s.ColsFieldType); i++ {
+					colsPick[i] = true
+				}
+			} else {
+				for i := 0; i < len(s.ColsFieldType); i++ {
+					if !useSampleNDV[i] || s.Rng.Float64() < s.NDVSampleRates[i] {
+						colsPick[i] = true
+					}
+				}
+				for i := 0; i < len(s.ColGroups); i++ {
+					if useSampleNDV[i] && s.Rng.Float64() > s.NDVSampleRates[len(s.ColsFieldType)+i] {
+						continue
+					}
+					groupsPick[i] = true
+					for _, c := range s.ColGroups[i] {
+						colsPick[c] = true
+					}
+				}
+			}
+
+			datums := make([]types.Datum, len(s.ColsFieldType))
+			newCols := make([]types.Datum, len(s.ColsFieldType))
+			sizes := make([]int64, 0, len(s.ColsFieldType))
+			for i, f := range s.RecordSet.Fields() {
+				if !colsPick[i] {
+					continue
+				}
+				datums[i] = row.GetDatum(i, &f.Column.FieldType)
 				datums[i].Copy(&newCols[i])
-				sizes = append(sizes, int64(len(datums[i].GetBytes())))
+				if pick {
+					// sizes are used to calculate the total size information. We calculate the sizes here because we need the
+					// length of the original bytes instead of the collate key when it's a new collation string.
+					//
+					// Besides, we only calculate sizes when the row is sampled.
+					sizes = append(sizes, int64(len(datums[i].GetBytes())))
+				}
+
 			}
 
 			for i, val := range datums {
-				// For string values, we use the collation key instead of the original value.
-				if s.Collators[i] != nil && !val.IsNull() {
-					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
-					if err != nil {
-						return nil, err
-					}
-					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
-					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
-					if err != nil {
-						return nil, err
-					}
-					datums[i].SetBytes(encodedKey)
+				if !colsPick[i] || s.Collators[i] == nil || val.IsNull() {
+					continue
 				}
+				// For string values, we use the collation key instead of the original value.
+				decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
+				if err != nil {
+					return nil, err
+				}
+				decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
+				encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
+				if err != nil {
+					return nil, err
+				}
+				datums[i].SetBytes(encodedKey)
 			}
 			err := collector.Base().collectColumns(s.Sc, datums, sizes)
 			if err != nil {
@@ -209,22 +260,39 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			if err != nil {
 				return nil, err
 			}
-			collector.sampleRow(newCols, s.Rng)
+			if pick {
+				collector.pushSample(newCols)
+			}
 		}
 	}
 }
 
-func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
+func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64,
+	colsUseSampleNDV []bool, colsPick []bool, pick bool) error {
 	for i, col := range cols {
-		if col.IsNull() {
-			s.NullCount[i]++
+		if !colsPick[i] {
 			continue
 		}
-		// Minus one is to remove the flag byte.
-		s.TotalSizes[i] += sizes[i] - 1
-		err := s.FMSketches[i].InsertValue(sc, col)
-		if err != nil {
-			return err
+		if col.IsNull() {
+			if pick {
+				// We only accumulate NullCount when the row is sampled.
+				s.NullCount[i]++
+			}
+			continue
+		}
+		if pick {
+			// Minus one is to remove the flag byte.
+			//
+			// Besides, we only accumulate TotalSizes when the row is sampled
+			s.TotalSizes[i] += sizes[i] - 1
+		}
+		if colsUseSampleNDV[i] {
+
+		} else {
+			err := s.FMSketches[i].InsertValue(sc, col)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -256,16 +324,17 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 
 // ToProto converts the collector to pb struct.
 func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
-	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
-	for _, sketch := range s.FMSketches {
-		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
-	}
+	pbSampleNDVOffsets := make([]int64, len(s.SampleNDVOffsets))
+	copy(pbSampleNDVOffsets, s.SampleNDVOffsets)
 	collector := &tipb.RowSampleCollector{
-		Samples:    RowSamplesToProto(s.Samples),
-		NullCounts: s.NullCount,
-		Count:      s.Count,
-		FmSketch:   pbFMSketches,
-		TotalSize:  s.TotalSizes,
+		Samples:          RowSamplesToProto(s.Samples),
+		NullCounts:       s.NullCount,
+		Count:            s.Count,
+		FmSketch:         FMSketchesToProto(s.FMSketches),
+		TotalSize:        s.TotalSizes,
+		SampleNdvOffsets: pbSampleNDVOffsets,
+		SampleFmSketch:   FMSketchesToProto(s.SampleFMSketches),
+		SampleF1FmSketch: FMSketchesToProto(s.SampleF1FMSketches),
 	}
 	return collector
 }
@@ -326,25 +395,30 @@ func (s *ReservoirRowSampleCollector) sampleZippedRow(sample *ReservoirRowSample
 	}
 }
 
-func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
-	weight := rng.Int63()
+func (s *ReservoirRowSampleCollector) pickSample(rng *rand.Rand) bool {
+	s.CurrentWeight = rng.Int63()
+	if len(s.Samples) < s.MaxSampleSize {
+		return true
+	}
+	return s.Samples[0].Weight < s.CurrentWeight
+}
+
+func (s *ReservoirRowSampleCollector) pushSample(row []types.Datum) {
 	if len(s.Samples) < s.MaxSampleSize {
 		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
 			Columns: row,
-			Weight:  weight,
+			Weight:  s.CurrentWeight,
 		})
 		if len(s.Samples) == s.MaxSampleSize {
 			heap.Init(&s.Samples)
 		}
 		return
 	}
-	if s.Samples[0].Weight < weight {
-		s.Samples[0] = &ReservoirRowSampleItem{
-			Columns: row,
-			Weight:  weight,
-		}
-		heap.Fix(&s.Samples, 0)
+	s.Samples[0] = &ReservoirRowSampleItem{
+		Columns: row,
+		Weight:  s.CurrentWeight,
 	}
+	heap.Fix(&s.Samples, 0)
 }
 
 // MergeCollector merges the collectors to a final one.
@@ -426,10 +500,11 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 	}
 }
 
-func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
-	if rng.Float64() > s.SampleRate {
-		return
-	}
+func (s *BernoulliRowSampleCollector) pickSample(rng *rand.Rand) bool {
+	return rng.Float64() < s.SampleRate
+}
+
+func (s *BernoulliRowSampleCollector) pushSample(row []types.Datum) {
 	s.baseCollector.Samples = append(s.baseCollector.Samples, &ReservoirRowSampleItem{
 		Columns: row,
 		Weight:  0,

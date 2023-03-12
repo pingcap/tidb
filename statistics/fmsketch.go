@@ -146,6 +146,15 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	return protoSketch
 }
 
+// FMSketchesToProto converts FMSketches to its protobuf representation.
+func FMSketchesToProto(fmSketches []*FMSketch) []*tipb.FMSketch {
+	pbFMSketches := make([]*tipb.FMSketch, 0, len(fmSketches))
+	for _, sketch := range fmSketches {
+		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
+	}
+	return pbFMSketches
+}
+
 // FMSketchFromProto converts FMSketch from its protobuf representation.
 func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	if protoSketch == nil {

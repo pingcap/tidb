@@ -432,6 +432,8 @@ func handleAnalyzeFullSamplingReq(
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq
+	ndvSampleRates := make([]float64, len(colReq.NdvSampleRate))
+	copy(ndvSampleRates, colReq.NdvSampleRate)
 	/* #nosec G404 */
 	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
@@ -443,6 +445,7 @@ func handleAnalyzeFullSamplingReq(
 		MaxFMSketchSize: int(colReq.SketchSize),
 		SampleRate:      colReq.GetSampleRate(),
 		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		NDVSampleRates:  ndvSampleRates,
 	}
 	collector, err := builder.Collect()
 	if err != nil {
