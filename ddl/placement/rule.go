@@ -92,6 +92,7 @@ type tiFlashRule struct {
 	EndKeyHex      string       `json:"end_key"`
 }
 
+// MarshalJSON implements json.Marshaler interface for TiFlashRule.
 func (r *TiFlashRule) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&tiFlashRule{
 		GroupID:        r.GroupID,
@@ -108,6 +109,7 @@ func (r *TiFlashRule) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON implements json.Unmarshaler interface for TiFlashRule.
 func (r *TiFlashRule) UnmarshalJSON(bytes []byte) error {
 	var rule tiFlashRule
 	if err := json.Unmarshal(bytes, &rule); err != nil {
