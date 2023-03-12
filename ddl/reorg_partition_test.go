@@ -313,6 +313,48 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `p2` VALUES LESS THAN (35),\n" +
 		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `p4` VALUES LESS THAN (90))"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec(`create table t (a int PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (abs(a)) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (0,"0",0),(1,"1",1),(2,"2",-2),(-12,"12",21),(23,"23",32),(-34,"34",43),(45,"45",54),(56,"56",65)`)
+	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (ABS(`a`))\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `p2` VALUES LESS THAN (30),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t partition (p2)`).Sort().Check(testkit.Rows("" +
+		"23 23 32"))
+	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows("" +
+		"-34 34 43", "45 45 54", "56 56 65"))
+	tk.MustExec(`alter table t drop index b`)
+	tk.MustExec(`alter table t reorganize partition p0,p1,p2,pMax into (partition pAll values less than (maxvalue))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (ABS(`a`))\n" +
+		"(PARTITION `pAll` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t partition (pAll)`).Sort().Check(testkit.Rows("" +
+	"-12 12 21", "-34 34 43", "0 0 0", "1 1 1", "2 2 -2", "23 23 32", "45 45 54", "56 56 65"))
 }
 
 func TestReorganizeListPartition(t *testing.T) {
@@ -358,6 +400,48 @@ func TestReorganizeListPartition(t *testing.T) {
 		" PARTITION `pa` VALUES IN (45,23,15),\n" +
 		" PARTITION `p2` VALUES IN (24,63))"))
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("drop table t")
+	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (abs(a))
+		(partition p0 values in (-1,0,1),
+		partition p1 values in (12,23,51,14), 
+		partition p2 values in (24,63),
+		partition p3 values in (45))`)
+	tk.MustExec(`insert into t values 
+	        (-1,"-1",11),(1,"1",11),(0,"0",0),(-12,"-12",21), 
+			(-24,"-24",42),(51,"-51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
+	tk.MustExec(`alter table t reorganize partition p0, p1 into (partition p0 values in (0,1,2,12,51,13), partition p1 values in (23))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows(""+
+		"-1 -1 11", "-12 -12 21", "0 0 0", "1 1 11", "51 -51 15"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (ABS(`a`))\n" +
+		"(PARTITION `p0` VALUES IN (0,1,2,12,51,13),\n" +
+		" PARTITION `p1` VALUES IN (23),\n" +
+		" PARTITION `p2` VALUES IN (24,63),\n" +
+		" PARTITION `p3` VALUES IN (45))"))
+	tk.MustExec(`alter table t add primary key (a), add key (b), add key (c,b)`)
+
+	tk.MustExec(`alter table t reorganize partition p0,p1,p2,p3 into (partition paa values in (0,1,2,12,13,23,24,45,51,63,64))`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select * from t partition (paa)`).Sort().Check(testkit.Rows(""+
+		"-1 -1 11", "-12 -12 21", "-24 -24 42", "0 0 0", "1 1 11", "23 23 32", "45 45 54", "51 -51 15", "63 63 36"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(55) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (ABS(`a`))\n" +
+		"(PARTITION `paa` VALUES IN (0,1,2,12,13,23,24,45,51,63,64))"))
 }
 
 type TestReorgDDLCallback struct {
