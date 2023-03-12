@@ -932,5 +932,11 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
+  },
+  "QF1006": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
   }
 }
