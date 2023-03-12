@@ -29,10 +29,10 @@ const (
 	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
 
-	BytesStateTotalRestore   = "total_restore" // total source data bytes needs to restore
-	BytesStateRestored       = "restored"      // source data bytes restored during restore engine
-	BytesStateRestoreWritten = "written"       // bytes written during restore engine
-	BytesStateImported       = "imported"      // bytes imported during import engine
+	StateTotalRestore   = "total_restore" // total source data bytes needs to restore
+	StateRestored       = "restored"      // source data bytes restored during restore engine
+	StateRestoreWritten = "written"       // bytes written during restore engine
+	StateImported       = "imported"      // bytes imported during import engine
 
 	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
 	ProgressPhaseRestore = "restore" // restore engine progress

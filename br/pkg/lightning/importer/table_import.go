@@ -710,7 +710,7 @@ ChunkLoop:
 			if err == nil {
 				if metrics != nil {
 					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+					metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
@@ -744,18 +744,18 @@ ChunkLoop:
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
 	totalSQLSize := int64(0)
-	typ := "bytes"
+	logKeyName := "bytes"
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			typ = "rows"
+			logKeyName = "rows"
 		}
 	}
 
 	err = chunkErr.Get()
 	logTask.End(zap.ErrorLevel, err,
-		zap.Int64(fmt.Sprintf("read(%s)", typ), totalSQLSize),
+		zap.Int64(fmt.Sprintf("read(%s)", logKeyName), totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
 

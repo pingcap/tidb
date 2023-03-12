@@ -1190,10 +1190,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					}
 					// log the current progress periodically, so OPS will know that we're still working
 					nanoseconds := float64(time.Since(start).Nanoseconds())
-					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
-					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
-					totalRestoreRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.BytesStateTotalRestore))
-					restoredRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.BytesStateRestored))
+					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore))
+					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored))
+					totalRowsToRestore := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateTotalRestore))
+					restoredRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored))
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
@@ -1211,8 +1211,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						engineEstimated = enginePending
 					}
 					engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
-					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
-					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateImported))
+					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten))
+					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateImported))
 
 					var state string
 					var remaining zap.Field
@@ -1248,10 +1248,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					totalPercent := 0.0
 					if restoredBytes > 0 || restoredRows > 0 {
 						var restorePercent float64
-						if totalRestoreRows > 0 {
-							restorePercent = math.Min(restoredRows/totalRestoreRows, 1.0)
+						if totalRowsToRestore > 0 {
+							restorePercent = math.Min(restoredRows/totalRowsToRestore, 1.0)
 							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f",
-								restoredRows, totalRestoreRows))
+								restoredRows, totalRowsToRestore))
 						} else {
 							restorePercent = math.Min(restoredBytes/totalRestoreBytes, 1.0)
 							restoreRowsField = zap.String("restore-rows", fmt.Sprintf("%.0f/%.0f(estimated)",
@@ -1649,9 +1649,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	}
 
 	if m, ok := metric.FromContext(ctx); ok {
-		m.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+		m.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(totalDataSizeToRestore))
 		if totalRowsToRestore > 0 {
-			m.RowsCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalRowsToRestore))
+			m.RowsCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(totalRowsToRestore))
 		}
 	}
 

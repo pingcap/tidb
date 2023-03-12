@@ -524,12 +524,12 @@ func (cr *chunkProcessor) deliverLoop(
 			if delta >= 0 {
 				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
 					if currRealOffset > startRealOffset {
-						m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currRealOffset - startRealOffset))
+						m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(currRealOffset - startRealOffset))
 					}
-					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
 				} else {
-					m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
-					m.RowsCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(dataChecksum.SumKVS()))
+					m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.StateRestored).Add(float64(dataChecksum.SumKVS()))
 				}
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
