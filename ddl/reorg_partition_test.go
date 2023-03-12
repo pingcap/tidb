@@ -140,6 +140,208 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 	return all
 }
 
+func TestReorganizeRangeColumnsPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ReorgPartition")
+	tk.MustExec("use ReorgPartition")
+	tk.MustExec(`
+	CREATE TABLE t (
+		a INT,
+		b CHAR(3),
+		c INT
+	)
+	PARTITION BY RANGE COLUMNS(a,b) (
+		PARTITION p0 VALUES LESS THAN (5,'ggg'),
+		PARTITION p1 VALUES LESS THAN (10,'mmm'),
+		PARTITION p2 VALUES LESS THAN (15,'sss'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+	);
+	`)
+	tk.MustExec(`INSERT INTO t VALUES (1,'abc',1), (3,'ggg',3),(5,'ggg',5), (9,'ggg',9),(10,'mmm',10),(19,'xxx',19);`)
+	tk.MustQuery(`SELECT * FROM t PARTITION(p0)`).Sort().Check(testkit.Rows(""+
+		"1 abc 1",
+		"3 ggg 3"))
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN (2,'ggg'), PARTITION p01 VALUES LESS THAN (5,'ggg'));`)
+	tk.MustExec(`ADMIN CHECK TABLE t`)
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` int(11) DEFAULT NULL,\n" +
+	"  `b` char(3) DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+	"(PARTITION `p00` VALUES LESS THAN (2,'ggg'),\n" +
+	" PARTITION `p01` VALUES LESS THAN (5,'ggg'),\n" +
+ 	" PARTITION `p1` VALUES LESS THAN (10,'mmm'),\n" +
+ 	" PARTITION `p2` VALUES LESS THAN (15,'sss'),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Sort().Check(testkit.Rows("1 abc 1"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("3 ggg 3"))
+	
+	tk.MustExec("drop table t")
+	tk.MustExec(`
+	CREATE TABLE t (
+		a INT,
+		b CHAR(3),
+		c INT
+	)
+	PARTITION BY RANGE COLUMNS(b,a) (
+		PARTITION p0 VALUES LESS THAN ('ggg',5),
+		PARTITION p1 VALUES LESS THAN ('mmm',10),
+		PARTITION p2 VALUES LESS THAN ('sss',15),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+	);
+	`)
+	tk.MustExec(`INSERT INTO t VALUES (1,'abc',1), (3,'ccc',3),(5,'ggg',5), (9,'ggg',9),(10,'mmm',10),(19,'xxx',19);`)
+	tk.MustQuery(`SELECT * FROM t PARTITION(p0)`).Sort().Check(testkit.Rows(""+
+		"1 abc 1",
+		"3 ccc 3"))
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('ccc',2), PARTITION p01 VALUES LESS THAN ('ggg',5));`)
+	tk.MustExec(`ADMIN CHECK TABLE t`)
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` int(11) DEFAULT NULL,\n" +
+	"  `b` char(3) DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
+	"(PARTITION `p00` VALUES LESS THAN ('ccc',2),\n" +
+	" PARTITION `p01` VALUES LESS THAN ('ggg',5),\n" +
+ 	" PARTITION `p1` VALUES LESS THAN ('mmm',10),\n" +
+ 	" PARTITION `p2` VALUES LESS THAN ('sss',15),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Sort().Check(testkit.Rows("1 abc 1"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("3 ccc 3"))
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION p00,p01,p1 into (PARTITION p1 VALUES LESS THAN ('mmm',10));`)
+	tk.MustExec(`ADMIN CHECK TABLE t`)
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` int(11) DEFAULT NULL,\n" +
+	"  `b` char(3) DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
+ 	"(PARTITION `p1` VALUES LESS THAN ('mmm',10),\n" +
+ 	" PARTITION `p2` VALUES LESS THAN ('sss',15),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p1)`).Sort().Check(testkit.Rows(""+
+		"1 abc 1",
+		"3 ccc 3",
+		"5 ggg 5",
+		"9 ggg 9"))
+	
+	tk.MustExec("drop table t")
+	tk.MustExec(`
+	CREATE TABLE t (
+		a DATE,
+		b DATETIME,
+		c INT
+	)
+	PARTITION BY RANGE COLUMNS(a,b) (
+		PARTITION p0 VALUES LESS THAN ('2020-05-05','2020-05-05 10:10:10'),
+		PARTITION p1 VALUES LESS THAN ('2021-05-05','2021-05-05 10:10:10'),
+		PARTITION p2 VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+	);
+	`)
+	tk.MustExec("INSERT INTO t VALUES" +
+	"('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2)," +
+	"('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4)," +
+	"('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);")
+	tk.MustExec("ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10', '2020-04-10 10:10:10'), PARTITION p01 VALUES LESS THAN ('2020-05-05', '2020-05-05 10:10:10'));")
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` date DEFAULT NULL,\n" +
+	"  `b` datetime DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+ 	"(PARTITION `p00` VALUES LESS THAN ('2020-04-10','2020-04-10 10:10:10'),\n" +
+ 	" PARTITION `p01` VALUES LESS THAN ('2020-05-05','2020-05-05 10:10:10'),\n" +
+ 	" PARTITION `p1` VALUES LESS THAN ('2021-05-05','2021-05-05 10:10:10'),\n" +
+ 	" PARTITION `p2` VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("2020-04-10 2020-04-10 10:10:10 1", "2020-05-04 2020-05-04 10:10:10 2"))
+	//TODO(bb7133): different err message with MySQL
+	tk.MustContainErrMsg(
+		"ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05', '2022-05-05 10:10:11'))", 
+		"VALUES LESS THAN value must be strictly increasing for each partition")
+	tk.MustExec("ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05', '2022-05-05 10:10:10'))")
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` date DEFAULT NULL,\n" +
+	"  `b` datetime DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+ 	"(PARTITION `p0` VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SELECT * FROM t PARTITION(p0)`).Sort().Check(testkit.Rows(
+		"2020-04-10 2020-04-10 10:10:10 1", "2020-05-04 2020-05-04 10:10:10 2",
+		"2020-05-05 2020-05-05 10:10:10 3", "2021-05-04 2021-05-04 10:10:10 4"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(pMax)`).Sort().Check(testkit.Rows("2022-05-05 2022-05-05 10:10:10 5", "2023-05-05 2023-05-05 10:10:10 6"))
+	
+	tk.MustExec("drop table t")
+	tk.MustExec(`
+	CREATE TABLE t (
+		a DATE,
+		b DATETIME,
+		c INT
+	)
+	PARTITION BY RANGE COLUMNS(b,a) (
+		PARTITION p0 VALUES LESS THAN ('2020-05-05 10:10:10','2020-05-05'),
+		PARTITION p1 VALUES LESS THAN ('2021-05-05 10:10:10','2021-05-05'),
+		PARTITION p2 VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
+	);
+	`)
+	tk.MustExec("INSERT INTO t VALUES" +
+	"('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2)," +
+	"('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4)," +
+	"('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);")
+	tk.MustExec("ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10 10:10:10', '2020-04-10'), PARTITION p01 VALUES LESS THAN ('2020-05-05 10:10:10', '2020-05-05'));")
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` date DEFAULT NULL,\n" +
+	"  `b` datetime DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
+ 	"(PARTITION `p00` VALUES LESS THAN ('2020-04-10 10:10:10','2020-04-10'),\n" +
+ 	" PARTITION `p01` VALUES LESS THAN ('2020-05-05 10:10:10','2020-05-05'),\n" +
+ 	" PARTITION `p1` VALUES LESS THAN ('2021-05-05 10:10:10','2021-05-05'),\n" +
+ 	" PARTITION `p2` VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("2020-04-10 2020-04-10 10:10:10 1", "2020-05-04 2020-05-04 10:10:10 2"))
+	//TODO(bb7133): different err message with MySQL
+	tk.MustContainErrMsg(
+		"ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05 10:10:11', '2022-05-05'))", 
+		"VALUES LESS THAN value must be strictly increasing for each partition")
+	tk.MustExec("ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05 10:10:10', '2022-05-05'))")
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SHOW CREATE TABLE t`).Check(testkit.Rows("" +
+	"t CREATE TABLE `t` (\n" +
+	"  `a` date DEFAULT NULL,\n" +
+	"  `b` datetime DEFAULT NULL,\n" +
+  	"  `c` int(11) DEFAULT NULL\n" +
+	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+	"PARTITION BY RANGE COLUMNS(`b`,`a`)\n" +
+ 	"(PARTITION `p0` VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),\n" +
+ 	" PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery(`SELECT * FROM t PARTITION(p0)`).Sort().Check(testkit.Rows(
+		"2020-04-10 2020-04-10 10:10:10 1", "2020-05-04 2020-05-04 10:10:10 2",
+		"2020-05-05 2020-05-05 10:10:10 3", "2021-05-04 2021-05-04 10:10:10 4"))
+	tk.MustQuery(`SELECT * FROM t PARTITION(pMax)`).Sort().Check(testkit.Rows("2022-05-05 2022-05-05 10:10:10 5", "2023-05-05 2023-05-05 10:10:10 6"))
+}
+
 func TestReorganizeRangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
