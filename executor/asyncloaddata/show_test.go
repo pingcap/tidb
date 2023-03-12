@@ -129,7 +129,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	})
 
 	user := &auth.UserIdentity{
-		AuthUsername: "test-load",
+		AuthUsername: "test-load-2",
 		AuthHostname: "test-host",
 	}
 	s.tk.Session().GetSessionVars().User = user

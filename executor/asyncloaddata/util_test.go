@@ -286,7 +286,7 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	require.Equal(t, JobPending, jobs[0].Status)
 
 	_, err = GetJobInfo(ctx, tk.Session(), jobs[0].JobID, "wrong_user")
-	require.ErrorContains(t, err, "not found")
+	require.ErrorContains(t, err, "doesn't exist")
 }
 
 func TestGetJobStatus(t *testing.T) {
@@ -335,7 +335,7 @@ func TestGetJobStatus(t *testing.T) {
 	status, msg, err = GetJobStatus(ctx, tk.Session(), id+1)
 	require.NoError(t, err)
 	require.Equal(t, JobFailed, status)
-	require.Contains(t, msg, "not found")
+	require.Contains(t, msg, "doesn't exist")
 }
 
 func TestCreateLoadDataJobRedact(t *testing.T) {
