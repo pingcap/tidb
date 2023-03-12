@@ -161,6 +161,7 @@ ANALYZERS = [
     "ST1022",
     "ST1023",
     "U1000",
+    "QF1006",
 ]
 
 def staticcheck_analyzers(analyzers, prefix_path = "//build/linter/staticcheck"):
