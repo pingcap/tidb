@@ -704,7 +704,7 @@ func (tiflash *MockTiFlash) GetRuleGroupIndex() int {
 // Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.TiFlashRule, startKey []byte, endKey []byte, count int, labels []string) bool {
 	// Compute startKey
-	if bytes.Compare(rule.StartKey, startKey) == 0 && bytes.Compare(rule.EndKey, endKey) == 0 {
+	if bytes.Equal(rule.StartKey, startKey) && bytes.Equal(rule.EndKey, endKey) {
 		ok := false
 		for _, c := range rule.Constraints {
 			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
