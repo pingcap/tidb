@@ -45,7 +45,6 @@ func (a *mockAllocator) freeAll() {
 }
 
 func TestGlobalMemoryTuner(t *testing.T) {
-	t.Skip("broken")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner"))
