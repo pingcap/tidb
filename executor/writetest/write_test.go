@@ -1879,9 +1879,9 @@ func checkCases(
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
-	origin := ld.IgnoreLines
+	origin := ld.GetController().IgnoreLines
 	for _, tt := range tests {
-		ld.IgnoreLines = origin
+		ld.GetController().IgnoreLines = origin
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
@@ -1890,7 +1890,7 @@ func checkCases(
 
 		parser, err := mydump.NewCSVParser(
 			context.Background(),
-			ld.GenerateCSVConfig(),
+			ld.GetController().GenerateCSVConfig(),
 			mydump.NewStringReader(string(tt.data)),
 			1,
 			nil,
@@ -1898,8 +1898,8 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		for ld.IgnoreLines > 0 {
-			ld.IgnoreLines--
+		for ld.GetController().IgnoreLines > 0 {
+			ld.GetController().IgnoreLines--
 			//nolint: errcheck
 			_ = parser.ReadRow()
 		}
@@ -1938,7 +1938,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader(""),
 		1,
 		nil,
@@ -2064,7 +2064,7 @@ func TestLoadData(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader(""),
 		1,
 		nil,
@@ -2106,7 +2106,7 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, ReadOneBatchRows returns data is nil
-	ld.LinesInfo.Terminated = "||"
+	ld.GetController().LinesTerminatedBy = "||"
 	tests = []testCase{
 		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -2121,9 +2121,9 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// fields and lines aren't default, ReadOneBatchRows returns data is nil
-	ld.FieldsInfo.Terminated = "\\"
-	ld.LinesInfo.Starting = "xxx"
-	ld.LinesInfo.Terminated = "|!#^"
+	ld.GetController().FieldsTerminatedBy = "\\"
+	ld.GetController().LinesStartingBy = "xxx"
+	ld.GetController().LinesTerminatedBy = "|!#^"
 	tests = []testCase{
 		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
@@ -2197,16 +2197,15 @@ func TestLoadData(t *testing.T) {
 	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// test line terminator in field quoter
-	ld.LinesInfo.Terminated = "\n"
-	tt := byte('"')
-	ld.FieldsInfo.Enclosed = &tt
+	ld.GetController().LinesTerminatedBy = "\n"
+	ld.GetController().FieldsEnclosedBy = `"`
 	tests = []testCase{
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	ld.LinesInfo.Terminated = "#\n"
-	ld.FieldsInfo.Terminated = "#"
+	ld.GetController().LinesTerminatedBy = "#\n"
+	ld.GetController().FieldsTerminatedBy = "#"
 	tests = []testCase{
 		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
@@ -2412,7 +2411,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader("1,2\n3,4\n5,6\n7,8\n9,10\n"),
 		1,
 		nil,

@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "importer",
+    srcs = ["import.go"],
+    importpath = "github.com/pingcap/tidb/executor/importer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/config",
+        "//parser/ast",
+        "//parser/mysql",
+        "//planner/core",
+        "//sessionctx",
+        "//table",
+        "//util/chunk",
+        "//util/dbterror",
+        "//util/dbterror/exeerrors",
+    ],
+)
+
+go_test(
+    name = "importer_test",
+    srcs = ["import_test.go"],
+    embed = [":importer"],
+    deps = [
+        "//br/pkg/lightning/config",
+        "//expression",
+        "//parser",
+        "//parser/ast",
+        "//planner/core",
+        "//util/dbterror/exeerrors",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

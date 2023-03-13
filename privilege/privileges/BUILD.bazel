@@ -58,7 +58,6 @@ go_test(
     deps = [
         "//config",
         "//errno",
-        "//executor",
         "//kv",
         "//parser/auth",
         "//parser/mysql",
@@ -73,6 +72,7 @@ go_test(
         "//testkit/testsetup",
         "//testkit/testutil",
         "//util",
+        "//util/dbterror/exeerrors",
         "//util/hack",
         "//util/sem",
         "//util/sqlexec",

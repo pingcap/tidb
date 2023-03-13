@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -325,8 +326,8 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.ctx, results.Job, ErrQueryInterrupted)
-			return errors.Trace(ErrQueryInterrupted)
+			finishJobWithLog(e.ctx, results.Job, exeerrors.ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 	}
 	// Dump stats to historical storage.
@@ -360,7 +361,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	for panicCnt < statsConcurrency {
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			close(saveResultsCh)
-			return errors.Trace(ErrQueryInterrupted)
+			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
 		results, ok := <-resultsCh
 		if !ok {

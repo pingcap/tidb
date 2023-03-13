@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -106,7 +107,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
-		return ErrPrepareMulti
+		return exeerrors.ErrPrepareMulti
 	}
 	stmt0 := stmts[0]
 	if e.needReset {
