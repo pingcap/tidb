@@ -3205,3 +3205,11 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	err = tk.Session().Auth(user, nil, nil)
 	require.ErrorContains(t, err, "Access denied")
 }
+
+func TestNilHandleInConnectionVerification(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	privileges.SkipWithGrant = true
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil))
+}
