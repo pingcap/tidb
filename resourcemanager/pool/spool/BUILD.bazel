@@ -30,6 +30,7 @@ go_test(
         "spool_test.go",
     ],
     embed = [":spool"],
+    flaky = True,
     race = "on",
     shard_count = 2,
     deps = [
