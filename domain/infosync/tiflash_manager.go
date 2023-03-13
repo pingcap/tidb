@@ -157,6 +157,10 @@ func encodeRule(c tikv.Codec, rule *placement.TiFlashRule) placement.TiFlashRule
 	return *rule
 }
 
+// encodeRule encodes the rule ID by the following way:
+//  1. if the codec is in API V1 then the rule ID is not encoded, should be like "table-<tableID>-r".
+//  2. if the codec is in API V2 then the rule ID is encoded,
+//     should be like "keyspace-<keyspaceID>-table-<tableID>-r".
 func encodeRuleID(c tikv.Codec, ruleID string) string {
 	if c.GetAPIVersion() == kvrpcpb.APIVersion_V2 {
 		return fmt.Sprintf("keyspace-%v-%s", c.GetKeyspaceID(), ruleID)
