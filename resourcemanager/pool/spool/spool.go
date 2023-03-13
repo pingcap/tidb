@@ -189,9 +189,11 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
 	// wait for all the task in the pending to exit
+	p.cond.L.Lock()
 	for p.waiting.Load() > 0 {
 		p.cond.Wait()
 	}
+	p.cond.L.Unlock()
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
 }
