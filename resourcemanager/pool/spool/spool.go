@@ -40,6 +40,7 @@ type Pool struct {
 	options            *Options
 	capacity           int32
 	running            atomic.Int32
+	waiting            atomic.Int32
 	isStop             atomic.Bool
 	concurrencyMetrics prometheus.Gauge
 	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
@@ -144,6 +145,8 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 
 // checkAndAddRunning is to check if a task can run. If can, add the running number.
 func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
+	p.waiting.Add(1)
+	defer p.waiting.Add(-1)
 	for {
 		if p.isStop.Load() {
 			return 0, false
@@ -179,7 +182,9 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
 	// wait for all the task in the pending to exit
-	time.Sleep(2 * waitInterval)
+	for p.waiting.Load() > 0 {
+		time.Sleep(waitInterval)
+	}
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
 }
