@@ -21,25 +21,19 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/keyspace"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
-
-type chunkInfo struct {
-	FilePath string
-	Offset   int64
-	mydump.SourceFileMeta
-}
 
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
@@ -49,7 +43,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs    *KvPairs // if kvs is nil, this indicated we've got the last message.
+	kvs    *kv.KvPairs // if kvs is nil, this indicated we've got the last message.
 	offset int64
 	rowID  int64
 }
@@ -57,6 +51,53 @@ type deliveredKVs struct {
 type deliverResult struct {
 	totalDur time.Duration
 	err      error
+}
+
+type deliverKVBatch struct {
+	dataKVs  kv.KvPairs
+	indexKVs kv.KvPairs
+
+	dataChecksum  *verify.KVChecksum
+	indexChecksum *verify.KVChecksum
+
+	codec tikv.Codec
+}
+
+func newDeliverKVBatch(codec tikv.Codec) *deliverKVBatch {
+	return &deliverKVBatch{
+		dataChecksum:  verify.NewKVChecksumWithKeyspace(codec),
+		indexChecksum: verify.NewKVChecksumWithKeyspace(codec),
+		codec:         codec,
+	}
+}
+
+func (b *deliverKVBatch) reset() {
+	b.dataKVs.Clear()
+	b.indexKVs.Clear()
+	b.dataChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
+	b.indexChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
+}
+
+func (b *deliverKVBatch) size() uint64 {
+	return b.dataChecksum.SumSize() + b.indexChecksum.SumSize()
+}
+
+func (b *deliverKVBatch) add(kvs *kv.KvPairs) {
+	for _, pair := range kvs.Pairs {
+		if pair.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
+			b.dataKVs.Pairs = append(b.dataKVs.Pairs, pair)
+			b.dataChecksum.UpdateOne(pair)
+		} else {
+			b.indexKVs.Pairs = append(b.indexKVs.Pairs, pair)
+			b.indexChecksum.UpdateOne(pair)
+		}
+	}
+
+	// the related buf is shared, so we only need to set it into one of the kvs so it can be released
+	if kvs.BytesBuf != nil {
+		b.dataKVs.BytesBuf = kvs.BytesBuf
+		b.dataKVs.MemBuf = kvs.MemBuf
+	}
 }
 
 func firstErr(errors ...error) error {
@@ -79,6 +120,7 @@ type chunkProcessor struct {
 
 	checksum verify.KVChecksum
 	encoder  KVEncoder
+	kvStore  tidbkv.Storage
 }
 
 func (p *chunkProcessor) process(ctx context.Context) error {
@@ -134,8 +176,6 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 	var err error
 	reachEOF := false
 	for !reachEOF {
-		offset, _ := p.parser.Pos()
-
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, minDeliverKVPairCnt)
@@ -173,10 +213,7 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 			}
 
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID})
-			kvSize += kvs.Size() // todo: this size doesn't include keyspace prefix
-			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
-				kvSize += uint64(val.(int))
-			})
+			kvSize += kvs.Size()
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
@@ -185,19 +222,10 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 				kvSize = 0
 			}
 		}
-		if m, ok := metric.FromContext(ctx); ok {
-			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
-		}
 
 		if len(kvPacket) > 0 {
-			deliverKvStart := time.Now()
 			if err = send(kvPacket); err != nil {
 				return err
-			}
-			if m, ok := metric.FromContext(ctx); ok {
-				m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 			}
 		}
 	}
@@ -205,64 +233,14 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context, deliverCompleteCh <-cha
 	return nil
 }
 
-type deliverKVBatch struct {
-	dataKVs  KvPairs
-	indexKVs KvPairs
-
-	dataChecksum  *verify.KVChecksum
-	indexChecksum *verify.KVChecksum
-
-	codec tikv.Codec
-}
-
-func newDeliverKVBatch(codec tikv.Codec) *deliverKVBatch {
-	return &deliverKVBatch{
-		dataChecksum:  verify.NewKVChecksumWithKeyspace(codec),
-		indexChecksum: verify.NewKVChecksumWithKeyspace(codec),
-		codec:         codec,
-	}
-}
-
-func (b *deliverKVBatch) reset() {
-	b.dataKVs.Clear()
-	b.indexKVs.Clear()
-	b.dataChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
-	b.indexChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
-}
-
-func (b *deliverKVBatch) size() uint64 {
-	return b.dataChecksum.SumSize() + b.indexChecksum.SumSize()
-}
-
-func (b *deliverKVBatch) add(kvs *KvPairs) {
-	for _, pair := range kvs.pairs {
-		if pair.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
-			b.dataKVs.pairs = append(b.dataKVs.pairs, pair)
-			b.dataChecksum.UpdateOne(pair)
-		} else {
-			b.indexKVs.pairs = append(b.indexKVs.pairs, pair)
-			b.indexChecksum.UpdateOne(pair)
-		}
-	}
-
-	// the related buf is shared, so we only need to set it into one of the kvs so it can be released
-	if kvs.bytesBuf != nil {
-		b.dataKVs.bytesBuf = kvs.bytesBuf
-		b.dataKVs.memBuf = kvs.memBuf
-	}
-}
-
 func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
-	var (
-		err                     error
-		startOffset, currOffset int64
-	)
 	c := keyspace.CodecV1
-	// todo: use keyspace codec from table importer(not done yet)
+	if p.kvStore != nil {
+		c = p.kvStore.GetCodec()
+	}
 	kvBatch := newDeliverKVBatch(c)
 
 	for {
-		startOffset = currOffset
 	outer:
 		for kvBatch.size() < minDeliverBytes {
 			select {
@@ -272,7 +250,6 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 				}
 				for _, p := range kvPacket {
 					kvBatch.add(p.kvs)
-					currOffset = p.offset
 				}
 			case <-ctx.Done():
 				return ctx.Err()
@@ -283,30 +260,19 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 			break
 		}
 
-		err = func() error {
+		err := func() error {
 			// todo: disk quota related code from lightning, removed temporary
-			start := time.Now()
-
-			if err = p.dataWriter.WriteRows(ctx, nil, &kvBatch.dataKVs); err != nil {
+			if err := p.dataWriter.WriteRows(ctx, nil, &kvBatch.dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
-			if err = p.indexWriter.WriteRows(ctx, nil, &kvBatch.indexKVs); err != nil {
+			if err := p.indexWriter.WriteRows(ctx, nil, &kvBatch.indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
-			}
-
-			if m, ok := metric.FromContext(ctx); ok {
-				deliverDur := time.Since(start)
-				m.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(kvBatch.dataChecksum.SumSize()))
-				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(kvBatch.indexChecksum.SumSize()))
-				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(kvBatch.dataChecksum.SumKVS()))
-				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(kvBatch.indexChecksum.SumKVS()))
 			}
 			return nil
 		}()
@@ -314,24 +280,10 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 			return err
 		}
 
-		kvBatch.reset()
-
 		p.checksum.Add(kvBatch.dataChecksum)
 		p.checksum.Add(kvBatch.indexChecksum)
 
-		if m, ok := metric.FromContext(ctx); ok {
-			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
-			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
-			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
-			// TODO: reproduce and find the root cause and fix it completely
-			delta := currOffset - startOffset
-			if delta >= 0 {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
-			} else {
-				p.logger.Warn("offset go back", zap.Int64("curr", currOffset),
-					zap.Int64("start", startOffset))
-			}
-		}
+		kvBatch.reset()
 	}
 
 	return nil
