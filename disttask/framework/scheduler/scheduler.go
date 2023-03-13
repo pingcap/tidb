@@ -139,7 +139,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 			break
 		}
 
-		minimalTasks := scheduler.SplitSubtask(subtask)
+		minimalTasks := scheduler.SplitSubtask(subtask.Meta)
 		logutil.Logger(s.logCtx).Info("split subTask", zap.Any("cnt", len(minimalTasks)), zap.Any("subtask_id", subtask.ID))
 		for _, minimalTask := range minimalTasks {
 			minimalTaskWg.Add(1)

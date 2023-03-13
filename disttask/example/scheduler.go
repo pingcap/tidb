@@ -46,9 +46,9 @@ func (*StepOneScheduler) InitSubtaskExecEnv(context.Context) error {
 func (*StepOneScheduler) CleanupSubtaskExecEnv(context.Context) error { return nil }
 
 // SplitSubtask is used to split the subtask into multiple minimal tasks.
-func (*StepOneScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
+func (*StepOneScheduler) SplitSubtask(subtask []byte) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
-	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
+	_ = json.Unmarshal(subtask, &subtaskExample)
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskExample.Numbers))
 	for _, number := range subtaskExample.Numbers {
 		miniTask = append(miniTask, int64(number))
@@ -69,9 +69,9 @@ func (*StepTwoScheduler) InitSubtaskExecEnv(context.Context) error { return nil 
 func (*StepTwoScheduler) CleanupSubtaskExecEnv(context.Context) error { return nil }
 
 // SplitSubtask is used to split the subtask into multiple minimal tasks.
-func (*StepTwoScheduler) SplitSubtask(subtask *proto.Subtask) []proto.MinimalTask {
+func (*StepTwoScheduler) SplitSubtask(subtask []byte) []proto.MinimalTask {
 	var subtaskExample SubtaskExample
-	_ = json.Unmarshal(subtask.Meta, &subtaskExample)
+	_ = json.Unmarshal(subtask, &subtaskExample)
 	miniTask := make([]proto.MinimalTask, 0, len(subtaskExample.Numbers))
 	for _, number := range subtaskExample.Numbers {
 		miniTask = append(miniTask, int64(number))

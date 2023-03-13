@@ -53,7 +53,7 @@ type InternalScheduler interface {
 // User should implement this interface to define their own scheduler.
 type Scheduler interface {
 	InitSubtaskExecEnv(context.Context) error
-	SplitSubtask(*proto.Subtask) []proto.MinimalTask
+	SplitSubtask(subtask []byte) []proto.MinimalTask
 	CleanupSubtaskExecEnv(context.Context) error
 	Rollback(context.Context) error
 }

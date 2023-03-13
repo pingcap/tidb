@@ -128,8 +128,8 @@ func (m *MockScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 }
 
 // SplitSubtask implements Scheduler.SplitSubtask.
-func (m *MockScheduler) SplitSubtask(subtasks *proto.Subtask) []proto.MinimalTask {
-	args := m.Called(subtasks)
+func (m *MockScheduler) SplitSubtask(subtask []byte) []proto.MinimalTask {
+	args := m.Called(subtask)
 	return args.Get(0).([]proto.MinimalTask)
 }
 
