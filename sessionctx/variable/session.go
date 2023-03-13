@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -761,6 +762,9 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowDeriveTopN is used to enable/disable derived TopN optimization.
+	AllowDeriveTopN bool
+
 	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
 	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
 	// size exceeds the broadcast threshold
@@ -1370,6 +1374,17 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1773,6 +1788,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2700,6 +2716,10 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogKeyspaceName is slow log field name.
+	SlowLogKeyspaceName = "Keyspace_name"
+	// SlowLogKeyspaceID is slow log field name.
+	SlowLogKeyspaceID = "Keyspace_ID"
 	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
 	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
@@ -2830,6 +2850,8 @@ type JSONSQLWarnForSlowLog struct {
 // slow query log.
 type SlowQueryLogItems struct {
 	TxnTS             uint64
+	KeyspaceName      string
+	KeyspaceID        uint32
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -2872,6 +2894,8 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
+// # Keyspace_name: keyspace_a
+// # Keyspace_ID: 1
 // # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
@@ -2893,6 +2917,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
+	if logItems.KeyspaceName != "" {
+		writeSlowLogItem(&buf, SlowLogKeyspaceName, logItems.KeyspaceName)
+		writeSlowLogItem(&buf, SlowLogKeyspaceID, fmt.Sprintf("%d", logItems.KeyspaceID))
+	}
+
 	if s.User != nil {
 		hostAddress := s.User.Hostname
 		if s.ConnectionInfo != nil {

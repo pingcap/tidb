@@ -20,7 +20,9 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -68,7 +70,7 @@ func TestRun(t *testing.T) {
 		promFactory:  lightning.promFactory,
 		logger:       log.L(),
 	}
-	err = lightning.run(ctx, &config.Config{
+	cfgCheckpoint := config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -78,9 +80,28 @@ func TestRun(t *testing.T) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	}, o)
+	}
+	err = lightning.run(ctx, &cfgCheckpoint, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	o.glue = glue.NewExternalTiDBGlue(db, 0)
+	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
+	cfgKeyspaceName := config.NewConfig()
+	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal
+	cfgKeyspaceName.TikvImporter.LocalWriterMemCacheSize = config.SplitRegionSize
+	cfgKeyspaceName.Mydumper = cfgCheckpoint.Mydumper
+	cfgKeyspaceName.Checkpoint = cfgCheckpoint.Checkpoint
+	err = lightning.run(ctx, cfgKeyspaceName, o)
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+
+	err = lightning.run(ctx, cfgKeyspaceName, o)
+	cfgKeyspaceName.TikvImporter.KeyspaceName = "test"
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	o.glue = invalidGlue
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",

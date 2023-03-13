@@ -3356,3 +3356,51 @@ func TestIssue40114(t *testing.T) {
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
 }
+
+func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where a = 1 for update")
+	tk.MustExec("commit")
+
+	lockedWithConflictCounter := 0
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Test key exist + write conflict, and locking with conflict takes effect.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 2)")
+	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
+		lockedWithConflictCounter++
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs"))
+	}()
+	ch := mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows("1 2"))
+	require.Equal(t, lockedWithConflictCounter, 1)
+	tk.MustExec("commit")
+
+	// Test key not exist + write conflict, in which case locking with conflict is disabled.
+	lockedWithConflictCounter = 0
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t where a = 1")
+	ch = mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows())
+	require.Equal(t, lockedWithConflictCounter, 0)
+	tk.MustExec("commit")
+}

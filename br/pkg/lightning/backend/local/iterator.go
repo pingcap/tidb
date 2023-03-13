@@ -16,8 +16,6 @@ package local
 
 import (
 	"bytes"
-	"context"
-	"math"
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -71,7 +69,6 @@ var _ Iter = pebbleIter{}
 const maxDuplicateBatchSize = 4 << 20
 
 type dupDetectIter struct {
-	ctx       context.Context
 	iter      *pebble.Iterator
 	curKey    []byte
 	curRawKey []byte
@@ -91,7 +88,7 @@ type dupDetectOpt struct {
 }
 
 func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, 0)
+	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -144,7 +141,7 @@ func (d *dupDetectIter) record(rawKey, key, val []byte) {
 
 func (d *dupDetectIter) Next() bool {
 	recordFirst := false
-	for d.err == nil && d.ctx.Err() == nil && d.iter.Next() {
+	for d.err == nil && d.iter.Next() {
 		d.nextKey, d.err = d.keyAdapter.Decode(d.nextKey[:0], d.iter.Key())
 		if d.err != nil {
 			return false
@@ -168,9 +165,6 @@ func (d *dupDetectIter) Next() bool {
 			recordFirst = true
 		}
 		d.record(d.iter.Key(), d.nextKey, d.iter.Value())
-	}
-	if d.err == nil {
-		d.err = d.ctx.Err()
 	}
 	return false
 }
@@ -205,17 +199,16 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 
 var _ Iter = &dupDetectIter{}
 
-func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
+func newDupDetectIter(db *pebble.DB, keyAdapter KeyAdapter,
 	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger, dupOpt dupDetectOpt) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
 	}
 	return &dupDetectIter{
-		ctx:        ctx,
 		iter:       db.NewIter(newOpts),
 		keyAdapter: keyAdapter,
 		writeBatch: dupDB.NewBatch(),
@@ -232,7 +225,7 @@ type dupDBIter struct {
 }
 
 func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, 0)
+	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
 		return false
 	}
@@ -296,10 +289,10 @@ var _ Iter = &dupDBIter{}
 func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, math.MinInt64)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, MinRowID)
 	}
 	return &dupDBIter{
 		iter:       dupDB.NewIter(newOpts),

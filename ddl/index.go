@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -838,11 +840,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+				}
+				if kv.ErrKeyExists.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					if common.ErrFoundDuplicateKeys.Equal(err) {
-						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-					}
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
@@ -990,6 +992,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
 			job.ReorgMeta.IsDistReorg {
@@ -1078,7 +1083,13 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			// Global index key has t{tableID}_ prefix.
+			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
+			if indexInfo.Global {
+				job.Args = append(job.Args, indexInfo.ID, []int64{})
+			} else {
+				job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			}
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State))
@@ -1305,6 +1316,7 @@ type addIndexWorker struct {
 	batchCheckKeys     []kv.Key
 	batchCheckValues   [][]byte
 	distinctCheckFlags []bool
+	recordIdx          []int
 }
 
 func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexWorker, error) {
@@ -1567,6 +1579,7 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.batchCheckKeys = w.batchCheckKeys[:0]
 	w.batchCheckValues = w.batchCheckValues[:0]
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+	w.recordIdx = w.recordIdx[:0]
 }
 
 func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
@@ -1626,6 +1639,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 	cnt := 0
 	for i, record := range idxRecords {
+		// skip by default.
+		idxRecords[i].skip = true
 		iter := w.index.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData)
 		for iter.Valid() {
 			var buf []byte
@@ -1645,6 +1660,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			w.batchCheckKeys = append(w.batchCheckKeys, key)
 			w.batchCheckValues = append(w.batchCheckValues, val)
 			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+			w.recordIdx = append(w.recordIdx, i)
 		}
 	}
 
@@ -1657,21 +1673,94 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
 	for i, key := range w.batchCheckKeys {
-		if val, found := batchVals[string(key)]; found {
+		val, found := batchVals[string(key)]
+		if found {
 			if w.distinctCheckFlags[i] {
-				if err := w.checkHandleExists(key, val, idxRecords[i].handle); err != nil {
+				if err := w.checkHandleExists(key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
 					return errors.Trace(err)
 				}
 			}
-			idxRecords[i].skip = true
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			batchVals[string(key)] = w.batchCheckValues[i]
 		}
+		idxRecords[w.recordIdx[i]].skip = found && idxRecords[w.recordIdx[i]].skip
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
+	return nil
+}
+
+func (w *addIndexWorker) writeIndexKVsToLocal(handleRange reorgBackfillTask) (backfillTaskContext, error) {
+	var taskCtx backfillTaskContext
+	oprStartTime := time.Now()
+	defer func() {
+		logSlowOperations(time.Since(oprStartTime), "writeIndexKVsToLocal", 3000)
+	}()
+	copChunk, nextKey, taskDone, err := w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
+	if err != nil {
+		return taskCtx, err
+	}
+	taskCtx.nextKey = nextKey
+	taskCtx.done = taskDone
+	if copChunk == nil {
+		return taskCtx, nil
+	}
+	defer w.copReqSenderPool.recycleChunk(copChunk)
+
+	copCtx := w.copReqSenderPool.copCtx
+	vars := w.sessCtx.GetSessionVars()
+	count, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
+	if err != nil {
+		return taskCtx, err
+	}
+	taskCtx.scanCount = count
+	taskCtx.addedCount = count
+	return taskCtx, nil
+}
+
+func writeChunkToLocal(writerCtx *ingest.WriterContext,
+	index table.Index, copCtx *copContext, vars *variable.SessionVars,
+	copChunk *chunk.Chunk) (int, error) {
+	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
+	iter := chunk.NewIterator4Chunk(copChunk)
+	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
+	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
+	count := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
+		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
+		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
+		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
+		err = writeOneKVToLocal(writerCtx, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		count++
+	}
+	return count, nil
+}
+
+func writeOneKVToLocal(writerCtx *ingest.WriterContext,
+	index table.Index, sCtx *stmtctx.StatementContext, writeBufs *variable.WriteStmtBufs,
+	idxDt, rsData []types.Datum, handle kv.Handle) error {
+	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
+	for iter.Valid() {
+		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = writerCtx.WriteRow(key, idxVal, handle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		writeBufs.IndexKeyBuf = key
+	}
 	return nil
 }
 
@@ -1686,7 +1775,9 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 	})
 
-	needMergeTmpIdx := w.index.Meta().BackfillState != model.BackfillStateInapplicable
+	if w.copReqSenderPool != nil && w.writerCtx != nil {
+		return w.writeIndexKVsToLocal(handleRange)
+	}
 
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
@@ -1700,18 +1791,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		var (
-			idxRecords []*indexRecord
-			copChunk   *chunk.Chunk // only used by the coprocessor request sender.
-			nextKey    kv.Key
-			taskDone   bool
-		)
-		if w.copReqSenderPool != nil {
-			idxRecords, copChunk, nextKey, taskDone, err = w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
-			defer w.copReqSenderPool.recycleIdxRecordsAndChunk(idxRecords, copChunk)
-		} else {
-			idxRecords, nextKey, taskDone, err = w.fetchRowColVals(txn, handleRange)
-		}
+		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1731,43 +1811,20 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				continue
 			}
 
-			// When the backfill-merge process is used, the writes from DML are redirected to a temp index.
-			// The write-conflict will be handled by the merge worker. Thus, the locks are unnecessary.
-			if !needMergeTmpIdx {
-				// We need to add this lock to make sure pessimistic transaction can realize this operation.
-				// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
-				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-				if err != nil {
-					return errors.Trace(err)
-				}
+			// We need to add this lock to make sure pessimistic transaction can realize this operation.
+			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
-			// Create the index.
-			if w.writerCtx == nil {
-				handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
-				if err != nil {
-					if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
-						// Index already exists, skip it.
-						continue
-					}
-
-					return errors.Trace(err)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+			if err != nil {
+				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
+					// Index already exists, skip it.
+					continue
 				}
-			} else { // The lightning environment is ready.
-				vars := w.sessCtx.GetSessionVars()
-				sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-				iter := w.index.GenIndexKVIter(sCtx, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
-				for iter.Valid() {
-					key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					err = w.writerCtx.WriteRow(key, idxVal)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					writeBufs.IndexKeyBuf = key
-				}
+				return errors.Trace(err)
 			}
 			taskCtx.addedCount++
 		}
@@ -1846,7 +1903,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		// During index re-creation, process data from partitions to be added
 		nextPartitionDefs = pi.AddingDefinitions
 	}
-	if nextPartitionDefs == nil {
+	if len(nextPartitionDefs) == 0 {
 		nextPartitionDefs = pi.Definitions
 	}
 	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)

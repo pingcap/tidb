@@ -310,7 +310,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
+	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -456,7 +456,7 @@ func (t *Tracker) Consume(bs int64) {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
 					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-						zap.Uint64("connID", sessionRootTracker.SessionID))
+						zap.Uint64("conn", sessionRootTracker.SessionID))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}

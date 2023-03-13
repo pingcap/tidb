@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
 
@@ -48,6 +49,9 @@ const (
 
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
+
+	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
+	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
 
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
@@ -210,6 +214,9 @@ const (
 
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
+	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -816,8 +823,14 @@ const (
 	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
 	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 
+	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
+	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
+
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
+	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -938,6 +951,9 @@ const (
 	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
 	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
 	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
 )
 
 // TiDB intentional limits
@@ -968,6 +984,7 @@ const (
 	DefSkipUTF8Check                               = false
 	DefSkipASCIICheck                              = false
 	DefOptAggPushDown                              = false
+	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
 	DefOptWriteRowID                               = false
@@ -1165,7 +1182,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
-	DefTiDBOptAdvancedJoinHint                   = false
+	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1190,6 +1207,7 @@ const (
 	DefTiDBTTLDeleteBatchMaxSize                           = 10240
 	DefTiDBTTLDeleteBatchMinSize                           = 1
 	DefTiDBTTLDeleteRateLimit                              = 0
+	DefTiDBTTLRunningTasks                                 = -1
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
 	DefTiDBStoreBatchSize                                  = 4
@@ -1200,10 +1218,12 @@ const (
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                           = false
+	DefTiDBEnableResourceControl                           = true
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBLoadBasedReplicaReadThreshold                   = 0
 )
 
 // Process global variables.
@@ -1280,7 +1300,10 @@ var (
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl = atomic.NewBool(false)
 )
 
 var (

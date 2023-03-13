@@ -200,7 +200,7 @@
     "only_files": {
       "util/gctuner": "only for util/gctuner",
       "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "only for br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "only for br/pkg/lightning/importer/opts",
       "executor/aggregate.go": "only for executor/aggregate.go",
       "types/json_binary_functions.go": "only for types/json_binary_functions.go",
       "types/json_binary_test.go": "only for types/json_binary_test.go",
@@ -330,7 +330,7 @@
     },
     "only_files": {
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
       "kv/": "kv code",
       "util/memory": "util/memory",
       "ddl/": "ddl",
@@ -359,7 +359,7 @@
     },
     "only_files": {
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
+      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
@@ -375,6 +375,7 @@
       "server/conn_test.go": "server/conn_test.go",
       "planner/core/rule_partition_eliminate.go": "planner/core/rule_partition_eliminate code",
       "distsql/": "ignore distsql code",
+      "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
       "errno/": "errno code",
@@ -755,7 +756,9 @@
       "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
       "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
       "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
-      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated"
+      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
+      "br/pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
+      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
