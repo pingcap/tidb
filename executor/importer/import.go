@@ -117,13 +117,8 @@ type LoadDataController struct {
 	// used for DELIMITED DATA format
 	fieldNullDef     []string
 	quotedNullIsText bool
-	// expose some fields for test
-	FieldsEnclosedBy   string
-	FieldsEscapedBy    string
-	FieldsTerminatedBy string
-	LinesTerminatedBy  string
-	LinesStartingBy    string
-	IgnoreLines        uint64
+	plannercore.LineFieldsInfo
+	IgnoreLines uint64
 
 	// import options
 	importMode        string
@@ -157,6 +152,7 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		OnDuplicate:        plan.OnDuplicate,
 		SchemaName:         plan.Table.Schema.O,
 		Table:              tbl,
+		LineFieldsInfo:     plan.LineFieldsInfo,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -188,36 +184,9 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 		return nil
 	}
 
-	// default param for DELIMITED DATA
-	e.FieldsTerminatedBy = "\t"
-	e.FieldsEnclosedBy = ""
-	e.FieldsEscapedBy = "\\"
-	e.LinesStartingBy = ""
-	e.LinesTerminatedBy = "\n"
-
-	if plan.FieldsInfo != nil {
-		if plan.FieldsInfo.Terminated != nil {
-			e.FieldsTerminatedBy = *plan.FieldsInfo.Terminated
-		}
-		if plan.FieldsInfo.Enclosed != nil {
-			e.FieldsEnclosedBy = string([]byte{*plan.FieldsInfo.Enclosed})
-		}
-		if plan.FieldsInfo.Escaped != nil {
-			e.FieldsEscapedBy = string([]byte{*plan.FieldsInfo.Escaped})
-		}
-	}
-	if plan.LinesInfo != nil {
-		if plan.LinesInfo.Terminated != nil {
-			e.LinesTerminatedBy = *plan.LinesInfo.Terminated
-		}
-		if plan.LinesInfo.Starting != nil {
-			e.LinesStartingBy = *plan.LinesInfo.Starting
-		}
-	}
-
 	var (
 		nullDef              []string
-		nullValueOptEnclosed = true
+		nullValueOptEnclosed = false
 	)
 
 	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
