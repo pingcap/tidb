@@ -372,8 +372,6 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
-
-	waiting *atomicutil.Bool
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,

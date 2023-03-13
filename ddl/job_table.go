@@ -188,7 +188,7 @@ func (d *ddl) startDispatchLoop() {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !d.isOwner() || d.waiting.Load() {
+		if !d.isOwner() {
 			d.once.Store(true)
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
