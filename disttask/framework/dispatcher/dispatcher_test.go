@@ -145,8 +145,8 @@ func equalGTask(t *testing.T, expect, actual *proto.Task) {
 	require.Equal(t, expect.DispatcherID, actual.DispatcherID)
 	require.Equal(t, expect.Concurrency, actual.Concurrency)
 	// Delete the digit of fractional seconds part.
-	eTime := expect.StartTime.Format("2006-01-02 15:04:05")
-	aTime := actual.StartTime.Format("2006-01-02 15:04:05")
+	eTime := expect.StateUpdateTime.Format("2006-01-02 15:04:05")
+	aTime := actual.StateUpdateTime.Format("2006-01-02 15:04:05")
 	require.Equal(t, eTime, aTime)
 }
 
@@ -156,8 +156,7 @@ func TestSimple(t *testing.T) {
 	defer dsp.Stop()
 
 	RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
-	taskMeta := &proto.SimpleNumberGTaskMeta{}
-	taskID, err := dsp.gTaskMgr.AddNewTask(taskMeta.GetType(), 0, taskMeta.Serialize())
+	taskID, err := dsp.gTaskMgr.AddNewTask(taskTypeExample, 0, nil)
 	require.NoError(t, err)
 
 	// test DispatchTaskLoop

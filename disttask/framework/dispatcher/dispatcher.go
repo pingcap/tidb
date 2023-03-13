@@ -124,7 +124,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 			cnt := len(d.getRunningGlobalTasks())
 
 			for cnt < DefaultConcurrency {
-				// TODO: Consider get all unfinished task.
+				// TODO: Consider get all unfinished tasks.
 				gTask, err := d.gTaskMgr.GetNewTask()
 				if err != nil {
 					logutil.BgLogger().Warn("get new task failed", zap.Error(err))
@@ -158,7 +158,7 @@ func (d *dispatcher) detectionTask(gTask *proto.Task) (isFinished bool, subTaskE
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
-		cnt, err := d.subTaskMgr.CheckTaskState(gTask.ID, proto.TaskStateFailed, true)
+		cnt, err := d.subTaskMgr.GetSubtaskInStatesCnt(gTask.ID, proto.TaskStateFailed)
 		if err != nil {
 			logutil.BgLogger().Warn("check task failed", zap.Int64("task ID", gTask.ID), zap.Error(err))
 			return false, ""
@@ -287,9 +287,9 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 			SchedulerID: id,
 			Meta:        meta,
 		}
-		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), subtask.Type, true)
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, true)
 		if err != nil {
-			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
+			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
 		}
 	}
@@ -327,9 +327,11 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err
 		// TODO: Consider using TS.
 		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
+	} else {
+		gTask.StateUpdateTime = time.Now().UTC()
 	}
 
-	logutil.BgLogger().Info("load task and progress", zap.Uint64("con", gTask.Concurrency),
+	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
 		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Bool("pending", fromPending))
 	// TODO: UpdateTask and addSubtasks in a txn.
 	// Write the global task meta into the storage.
@@ -347,16 +349,16 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err
 	for _, subtask := range subtasks {
 		instanceID, err := d.GetEligibleInstance(d.ctx)
 		if err != nil {
-			logutil.BgLogger().Warn("get a eligible instance failed", zap.Stringer("subtask", subtask), zap.Error(err))
+			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
 		}
 		subtask.SchedulerID = instanceID
 
 		// TODO: Consider batch insert.
 		// TODO: Synchronization interruption problem, e.g. AddNewTask failed.
-		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta.Serialize(), subtask.Type, false)
+		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, false)
 		if err != nil {
-			logutil.BgLogger().Warn("add subtask failed", zap.Stringer("subtask", subtask), zap.Error(err))
+			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
 		}
 	}
