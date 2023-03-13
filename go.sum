@@ -414,10 +414,10 @@ github.com/HdrHistogram/hdrhistogram-go v1.1.2 h1:5IcZpTvzydCQeHzK4Ef/D5rrSqwxob
 github.com/HdrHistogram/hdrhistogram-go v1.1.2/go.mod h1:yDgFjdqOqDEKOvasDdhWNXYg9BVp4O+o5f6V/ehm6Oo=
 github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk=
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
-github.com/JmPotato/client-go/v2 v2.0.0-20230313085652-bd50ebb8cba4 h1:xLTw6ivZezgiowatNVSPVC+OWqZ4ZEDQXxQKuUfPQWM=
-github.com/JmPotato/client-go/v2 v2.0.0-20230313085652-bd50ebb8cba4/go.mod h1:he78MzFSySmFhXsBAr4xIwSzbq2EGccKDglsvDCFkOI=
-github.com/JmPotato/kvproto v0.0.0-20230309094958-c2ae1b770df6 h1:Ir3NQi3ucSyXEKj8EKC/lnitqD0bJ342c9ft+pmdSmo=
-github.com/JmPotato/kvproto v0.0.0-20230309094958-c2ae1b770df6/go.mod h1:KUrW1FGoznGMMTssYBu0czfAhn6vQcIrHyZoSC6T990=
+github.com/JmPotato/client-go/v2 v2.0.0-20230313100019-21aa2e2388db h1:hMF3aKA43CJgffmJ+D3uBXu8t5zdXPRIhGVrXsxyww8=
+github.com/JmPotato/client-go/v2 v2.0.0-20230313100019-21aa2e2388db/go.mod h1:PP9YBeJKb6nIaBSDDdoFhNmiQ9qr+fVaDHHPd88q/v4=
+github.com/JmPotato/kvproto v0.0.0-20230313095855-d6780293a06a h1:+2l2pgdv0mb+0MBqOpvIVdDaotn8lUz+AwMQwX54VGM=
+github.com/JmPotato/kvproto v0.0.0-20230313095855-d6780293a06a/go.mod h1:KUrW1FGoznGMMTssYBu0czfAhn6vQcIrHyZoSC6T990=
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
 github.com/Masterminds/goutils v1.1.1 h1:5nUrii3FMTL5diU80unEVvNevw1nH4+ZV4DSLVJLSYI=

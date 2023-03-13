@@ -3,8 +3,8 @@ module github.com/pingcap/tidb
 go 1.20
 
 replace (
-	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20230309094958-c2ae1b770df6
-	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20230313085652-bd50ebb8cba4
+	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20230313095855-d6780293a06a
+	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20230313100019-21aa2e2388db
 )
 
 require (
