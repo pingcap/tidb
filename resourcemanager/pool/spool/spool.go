@@ -31,6 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const waitInterval = 5 * time.Millisecond
+
 // Pool is a single goroutine pool. it can not reuse the goroutine.
 type Pool struct {
 	wg                 sync.WaitGroup
@@ -154,7 +156,10 @@ func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
 			return 0, false
 		}
 		p.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
+		if p.isStop.Load() {
+			return 0, false
+		}
+		time.Sleep(waitInterval)
 	}
 }
 
@@ -173,6 +178,8 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 // ReleaseAndWait releases the pool and waits for all tasks to be completed.
 func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
+	// wait for all the task in the pending to exit
+	time.Sleep(2 * waitInterval)
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
 }
