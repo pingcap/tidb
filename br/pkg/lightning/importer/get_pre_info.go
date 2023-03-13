@@ -538,7 +538,6 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 			continue
 		}
 		for _, tbl := range db.Tables {
-			// todo(okJiang): sourceTotalSize seems same as
 			sourceTotalSize += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
