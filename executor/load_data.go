@@ -1282,7 +1282,7 @@ func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	switch e.tp {
 	case ast.LoadDataCancel:
-		return asyncloaddata.UpdateJobExpectedStatus()
+		return asyncloaddata.CancelJob(ctx, sqlExec, e.jobID, user)
 	case ast.LoadDataDrop:
 		return asyncloaddata.DropJob(ctx, sqlExec, e.jobID, user)
 	default:

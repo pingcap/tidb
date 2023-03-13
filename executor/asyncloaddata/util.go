@@ -19,9 +19,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -178,9 +180,9 @@ func DropJob(
 		return err
 	}
 	if conn.GetSessionVars().StmtCtx.AffectedRows() < 1 {
-		return TODOErr
+		return ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
 	}
-	return err
+	return nil
 }
 
 // JobExpectedStatus is the expected status of a load data job. User can set the
@@ -243,6 +245,29 @@ const (
 	JobRunning
 )
 
+func (s JobStatus) String() string {
+	switch s {
+	case JobFailed:
+		return "failed"
+	case JobCanceled:
+		return "canceled"
+	case JobPaused:
+		return "paused"
+	case JobFinished:
+		return "finished"
+	case JobPending:
+		return "pending"
+	case JobRunning:
+		return "running"
+	default:
+		return "unknown JobStatus"
+	}
+}
+
+// ErrLoadDataJobNotFound is the error when the job ID is not found.
+// TODO: move to exeerrors after https://github.com/pingcap/tidb/pull/42075.
+var ErrLoadDataJobNotFound = dbterror.ClassExecutor.NewStd(errno.ErrLoadDataJobNotFound)
+
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are
 // returned as JobFailed with message.
@@ -272,7 +297,7 @@ func GetJobStatus(
 		return JobFailed, "", err
 	}
 	if len(rows) != 1 {
-		return JobFailed, fmt.Sprintf("job %d not found", jobID), nil
+		return JobFailed, ErrLoadDataJobNotFound.GenWithStackByArgs(jobID).Error(), nil
 	}
 
 	return getJobStatus(rows[0])
@@ -367,7 +392,7 @@ func GetJobInfo(
 		return nil, err
 	}
 	if len(rows) != 1 {
-		return nil, fmt.Errorf("job %d not found", jobID)
+		return nil, ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
 	}
 
 	return getJobInfo(rows[0])
