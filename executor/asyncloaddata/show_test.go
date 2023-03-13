@@ -291,7 +291,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.sourceFileSize = "3B"
+		r.sourceFileSize = "2B"
 		r.loadedFileSize = "0B"
 		r.checkIgnoreTimes(s.T(), row)
 
@@ -309,8 +309,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.sourceFileSize = "3B"
-		r.loadedFileSize = "2B"
+		r.loadedFileSize = "1B"
 		r.checkIgnoreTimes(s.T(), row)
 
 		// tk @ 0:12
@@ -330,8 +329,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		rows = tk2.MustQuery(fmt.Sprintf("SHOW LOAD DATA JOB %d;", id)).Rows()
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
-		r.sourceFileSize = "3B"
-		r.loadedFileSize = "3B"
+		r.loadedFileSize = "2B"
 		r.jobStatus = "finished"
 		r.resultCode = "0"
 		r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
