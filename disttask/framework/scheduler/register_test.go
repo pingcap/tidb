@@ -23,7 +23,7 @@ import (
 
 func mockSchedulerOptionFunc(op *schedulerRegisterOptions) {}
 
-func mockSchedulerConstructor(task *proto.Task, step int64) (Scheduler, error) {
+func mockSchedulerConstructor(task []byte, step int64) (Scheduler, error) {
 	return nil, nil
 }
 

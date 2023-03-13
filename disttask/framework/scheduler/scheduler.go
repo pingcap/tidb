@@ -229,7 +229,7 @@ func createScheduler(task *proto.Task) (Scheduler, error) {
 	if !ok {
 		return nil, errors.Errorf("constructor of scheduler for type %s not found", task.Type)
 	}
-	return constructor(task, task.Step)
+	return constructor(task.Meta, task.Step)
 }
 
 func createSubtaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (SubtaskExecutor, error) {

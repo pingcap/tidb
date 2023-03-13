@@ -29,12 +29,12 @@ var globalNumberCounter atomic.Int64
 
 // StepOneScheduler is a scheduler for step one.
 type StepOneScheduler struct {
-	task *proto.Task
+	task *TaskExample
 }
 
 // StepTwoScheduler is a scheduler for step two.
 type StepTwoScheduler struct {
-	task *proto.Task
+	task *TaskExample
 }
 
 // InitSubtaskExecEnv is used to initialize the environment for the subtask executor.
@@ -89,12 +89,16 @@ func init() {
 	scheduler.RegisterSchedulerConstructor(
 		proto.TaskTypeExample,
 		// The order of the scheduler is the same as the order of the subtasks.
-		func(task *proto.Task, step int64) (scheduler.Scheduler, error) {
+		func(taskMeta []byte, step int64) (scheduler.Scheduler, error) {
+			var task TaskExample
+			if err := json.Unmarshal(taskMeta, &task); err != nil {
+				return nil, err
+			}
 			switch step {
 			case StepOne:
-				return &StepOneScheduler{task: task}, nil
+				return &StepOneScheduler{task: &task}, nil
 			case StepTwo:
-				return &StepTwoScheduler{task: task}, nil
+				return &StepTwoScheduler{task: &task}, nil
 			}
 			return nil, errors.Errorf("unknown step %d", step)
 		},

@@ -43,7 +43,7 @@ func TestSchedulerRun(t *testing.T) {
 	err := scheduler.Run(runCtx, &proto.Task{Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, func(task *proto.Task, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -169,7 +169,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err := scheduler.Rollback(runCtx, &proto.Task{Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
 
-	RegisterSchedulerConstructor(tp, func(task *proto.Task, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 
@@ -227,7 +227,7 @@ func TestScheduler(t *testing.T) {
 	mockScheduler := &MockScheduler{}
 	mockSubtaskExecutor := &MockSubtaskExecutor{}
 
-	RegisterSchedulerConstructor(tp, func(task *proto.Task, step int64) (Scheduler, error) {
+	RegisterSchedulerConstructor(tp, func(task []byte, step int64) (Scheduler, error) {
 		return mockScheduler, nil
 	})
 	RegisterSubtaskExectorConstructor(tp, func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
