@@ -13,6 +13,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//disttask/framework/proto",
+        "//resourcemanager/pool/spool",
+        "//resourcemanager/util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//mock",
@@ -32,6 +34,8 @@ go_test(
     flaky = True,
     deps = [
         "//disttask/framework/proto",
+        "//resourcemanager/pool/spool",
+        "//resourcemanager/util",
         "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
