@@ -146,12 +146,12 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 	require.NotNil(t, tb)
 	if tb.Meta().Partition != nil {
 		for _, e := range tb.Meta().Partition.Definitions {
-			ruleName := fmt.Sprintf("table-%v-r", e.ID)
+			ruleName := infosync.MakeRuleID(e.ID)
 			_, ok := s.tiflash.GetPlacementRule(ruleName)
 			require.True(t, ok)
 		}
 	} else {
-		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
+		ruleName := infosync.MakeRuleID(tb.Meta().ID)
 		_, ok := s.tiflash.GetPlacementRule(ruleName)
 		require.True(t, ok)
 	}
@@ -368,7 +368,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	s.CheckFlashback(tk, t)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
-	r, ok := s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok := s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.NotNil(t, r)
 	require.True(t, ok)
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
@@ -377,7 +377,7 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.Nil(t, replica)
-	r, ok = s.tiflash.GetPlacementRule(fmt.Sprintf("table-%v-r", tb.Meta().ID))
+	r, ok = s.tiflash.GetPlacementRule(infosync.MakeRuleID(tb.Meta().ID))
 	require.Nil(t, r)
 	require.False(t, ok)
 }

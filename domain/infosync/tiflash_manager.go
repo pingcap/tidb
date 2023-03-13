@@ -430,6 +430,9 @@ func MakeNewRule(id int64, count uint64, locationLabels []string) placement.TiFl
 }
 
 // MakeRuleID creates a rule ID for TiFlash with given TableID.
+// This interface is exported for the module who wants to manipulate the TiFlash rule.
+// The rule ID is in the format of "table-<TableID>-r".
+// NOTE: PLEASE DO NOT write the rule ID manually, use this interface instead.
 func MakeRuleID(id int64) string {
 	return fmt.Sprintf("table-%v-r", id)
 }
