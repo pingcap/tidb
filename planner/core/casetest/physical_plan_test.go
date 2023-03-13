@@ -772,7 +772,7 @@ func TestMPPHintsScope(t *testing.T) {
 
 func TestMPPBCJModel(t *testing.T) {
 	/*
-		if there are 3 mpp stores, planner won't choose broadcast join enven if `tidb_broadcast_join_cost_model_version` EQ 1
+		if there are 3 mpp stores, planner won't choose broadcast join enven if `tidb_broadcast_join_cost_model_version` GE 1
 		broadcast exchange size:
 			Build: 2 * sizeof(Data)
 			Probe: 0
@@ -795,6 +795,64 @@ func TestMPPBCJModel(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestMPPBCJModelOneTiFlash(t *testing.T) {
+	/*
+		if there are 1 mpp stores, planner should choose broadcast join if `tidb_broadcast_join_cost_model_version` GE 1
+		broadcast exchange size:
+			Build: 0 * sizeof(Data)
+			Probe: 0
+			exchange size: Build = 0 * sizeof(Data)
+		hash exchange size:
+			Build: sizeof(Data) * 0 / 1
+			Probe: sizeof(Data) * 0 / 1
+			exchange size: Build + Probe = 0 * sizeof(Data)
+	*/
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	{
+		cnt, err := store.GetMPPClient().GetMPPStoreCount()
+		require.Equal(t, cnt, 1)
+		require.Nil(t, err)
+	}
+	{
+		// no BCJ if `tidb_broadcast_join_cost_model_version` EQ 0
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=0")
+		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=0")
+	}
 
 	var input []string
 	var output []struct {

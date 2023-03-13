@@ -1459,6 +1459,58 @@
     ]
   },
   {
+    "Name": "TestMPPBCJModelOneTiFlash",
+    "Cases": [
+      {
+        "SQL": "set @@session.tidb_allow_mpp=true",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_79 12487.50 root  MppVersion: 1, data:ExchangeSender_78",
+          "└─ExchangeSender_78 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_77 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver_48(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_47 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+          "        └─Selection_46 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "          └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t t1, t t2 where t1.a=t2.a",
+        "Plan": [
+          "TableReader_77 12487.50 root  MppVersion: 1, data:ExchangeSender_76",
+          "└─ExchangeSender_76 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_75 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver_44(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_43 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection_42 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "    │     └─TableFullScan_41 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    └─Selection_46(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
+          "      └─TableFullScan_45 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestIssue37520",
     "Cases": [
       {

@@ -136,6 +136,16 @@
     ]
   },
   {
+    "name": "TestMPPBCJModelOneTiFlash",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_broadcast_join_cost_model_version=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_broadcast_join_cost_model_version=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
     "name": "TestIssue37520",
     "cases": [
       "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",

@@ -2074,9 +2074,8 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinCostModelVersion > 0 {
 		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
 
-		// No need to exchange data if there is only ONE mpp store.
-		// Maybe other special way can be used to optimize such case.
-		if err == nil && mppStoreCnt > 1 {
+		// Use broadcast way to exchange data if there is only ONE mpp store.
+		if err == nil && mppStoreCnt > 0 {
 			if onlyCheckChild1 {
 				return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
 			} else if onlyCheckChild0 {
