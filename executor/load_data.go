@@ -350,8 +350,14 @@ func (e *LoadDataWorker) Load(
 	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
-		ctx, sqlExec, e.GetInfilePath(), e.controller.SchemaName, e.table.Meta().Name.O,
-		"logical", e.Ctx.GetSessionVars().User.String())
+		ctx,
+		sqlExec,
+		e.GetInfilePath(),
+		e.controller.SchemaName,
+		e.table.Meta().Name.O,
+		importer.LogicalImportMode,
+		e.Ctx.GetSessionVars().User.String(),
+	)
 	if err != nil {
 		return err
 	}
@@ -367,8 +373,11 @@ func (e *LoadDataWorker) Load(
 			return
 		}
 		errMsg := err.Error()
-		if errImpl, ok := err.(*errors.Error); ok {
-			errMsg = terror.ToSQLError(errImpl).Error()
+		if errImpl, ok := errors.Cause(err).(*errors.Error); ok {
+			b, marshalErr := errImpl.MarshalJSON()
+			if marshalErr == nil {
+				errMsg = string(b)
+			}
 		}
 
 		err2 := asyncloaddata.FailJob(ctx, sqlExec, jobID, errMsg)

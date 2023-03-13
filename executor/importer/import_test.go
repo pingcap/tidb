@@ -33,7 +33,7 @@ import (
 func TestInitDefaultOptions(t *testing.T) {
 	e := LoadDataController{}
 	e.initDefaultOptions()
-	require.Equal(t, logicalImportMode, e.importMode)
+	require.Equal(t, LogicalImportMode, e.importMode)
 	require.Equal(t, config.ByteSize(50<<30), e.diskQuota)
 	require.Equal(t, config.OpLevelRequired, e.checksum)
 	require.Equal(t, true, e.addIndex)
