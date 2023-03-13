@@ -19,7 +19,6 @@ go_library(
         "//config",
         "//ddl",
         "//ddl/placement",
-        "//ddl/resourcegroup",
         "//ddl/schematracker",
         "//domain",
         "//domain/infosync",
