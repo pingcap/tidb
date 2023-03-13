@@ -15,6 +15,7 @@
 package importer
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"strings"
@@ -31,11 +32,11 @@ import (
 )
 
 const (
-	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
-	// mydumper-format DML file
+	// LoadDataFormatDelimitedData delimited data.
+	LoadDataFormatDelimitedData = "delimited data"
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is mydumper-format DML file.
 	LoadDataFormatSQLDump = "sql file"
-	// LoadDataFormatParquet represents the data source file of LOAD DATA is
-	// parquet
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
 	LoadDataFormatParquet = "parquet"
 
 	logicalImportMode   = "logical"  // tidb backend
@@ -93,10 +94,7 @@ type FieldMapping struct {
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	Path       string
-	fieldsInfo *ast.FieldsClause
-	linesInfo  *ast.LinesClause
-	nullInfo   *ast.NullDefinedBy
+	Path string
 
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -116,6 +114,7 @@ type LoadDataController struct {
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	insertColumns []*table.Column
 
+	// used for DELIMITED DATA format
 	fieldNullDef     []string
 	quotedNullIsText bool
 	// expose some fields for test
@@ -141,91 +140,112 @@ type LoadDataController struct {
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
-	return &LoadDataController{
+func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
+	var format string
+	if plan.Format != nil {
+		format = strings.ToLower(*plan.Format)
+	} else {
+		// without FORMAT 'xxx' clause, default to DELIMITED DATA
+		format = LoadDataFormatDelimitedData
+	}
+	c := &LoadDataController{
 		Path:               plan.Path,
-		fieldsInfo:         plan.FieldsInfo,
-		linesInfo:          plan.LinesInfo,
-		nullInfo:           plan.NullInfo,
 		IgnoreLines:        plan.IgnoreLines,
-		Format:             strings.ToLower(plan.Format),
+		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
 		SchemaName:         plan.Table.Schema.O,
 		Table:              tbl,
 	}
-}
-
-// Init inner params, should call this before use.
-func (e *LoadDataController) Init(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	if err := e.initFieldParams(); err != nil {
-		return err
+	if err := c.initFieldParams(plan); err != nil {
+		return nil, err
 	}
-	if err := e.initOptions(seCtx, options); err != nil {
-		return err
+	if err := c.initOptions(sctx, plan.Options); err != nil {
+		return nil, err
 	}
 
-	columnNames := e.initFieldMappings()
-	return e.initLoadColumns(columnNames)
+	columnNames := c.initFieldMappings()
+	if err := c.initLoadColumns(columnNames); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-func (e *LoadDataController) initFieldParams() error {
+func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
-
-	// CSV-like
-	if e.Format == "" {
-		if e.nullInfo != nil && e.nullInfo.OptEnclosed &&
-			(e.fieldsInfo == nil || e.fieldsInfo.Enclosed == nil) {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
-		}
-		// TODO: support lines terminated is "".
-		if len(e.linesInfo.Terminated) == 0 {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
-		}
-	}
-	if e.Format != "" && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
+	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 	}
 
-	if e.Format != "" {
+	if e.Format != LoadDataFormatDelimitedData {
+		if plan.FieldsInfo != nil || plan.LinesInfo != nil {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... for format '%s'", e.Format))
+		}
 		// no need to init those param for sql/parquet
 		return nil
 	}
 
+	// default param for DELIMITED DATA
+	e.FieldsTerminatedBy = "\t"
+	e.FieldsEnclosedBy = ""
+	e.FieldsEscapedBy = "\\"
+	e.LinesStartingBy = ""
+	e.LinesTerminatedBy = "\n"
+
+	if plan.FieldsInfo != nil {
+		if plan.FieldsInfo.Terminated != nil {
+			e.FieldsTerminatedBy = *plan.FieldsInfo.Terminated
+		}
+		if plan.FieldsInfo.Enclosed != nil {
+			e.FieldsEnclosedBy = string([]byte{*plan.FieldsInfo.Enclosed})
+		}
+		if plan.FieldsInfo.Escaped != nil {
+			e.FieldsEscapedBy = string([]byte{*plan.FieldsInfo.Escaped})
+		}
+	}
+	if plan.LinesInfo != nil {
+		if plan.LinesInfo.Terminated != nil {
+			e.LinesTerminatedBy = *plan.LinesInfo.Terminated
+		}
+		if plan.LinesInfo.Starting != nil {
+			e.LinesStartingBy = *plan.LinesInfo.Starting
+		}
+	}
+
 	var (
-		nullDef          []string
-		quotedNullIsText = true
+		nullDef              []string
+		nullValueOptEnclosed = true
 	)
 
-	if e.nullInfo != nil {
-		nullDef = append(nullDef, e.nullInfo.NullDef)
-		quotedNullIsText = !e.nullInfo.OptEnclosed
-	} else if e.fieldsInfo.Enclosed != nil {
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(e.FieldsEnclosedBy) != 0 {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.fieldsInfo.Escaped != nil {
-		nullDef = append(nullDef, string([]byte{*e.fieldsInfo.Escaped, 'N'}))
-	}
-
-	enclosed := ""
-	if e.fieldsInfo.Enclosed != nil {
-		enclosed = string([]byte{*e.fieldsInfo.Enclosed})
-	}
-	escaped := ""
-	if e.fieldsInfo.Escaped != nil {
-		escaped = string([]byte{*e.fieldsInfo.Escaped})
+	if len(e.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{e.FieldsEscapedBy[0], 'N'}))
 	}
 
 	e.fieldNullDef = nullDef
-	e.quotedNullIsText = quotedNullIsText
-	e.FieldsEnclosedBy = enclosed
-	e.FieldsEscapedBy = escaped
-	e.FieldsTerminatedBy = e.fieldsInfo.Terminated
-	e.LinesTerminatedBy = e.linesInfo.Terminated
-	e.LinesStartingBy = e.linesInfo.Starting
+	e.quotedNullIsText = !nullValueOptEnclosed
+
+	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+	}
+	// TODO: support lines terminated is "".
+	// see https://github.com/pingcap/tidb/issues/33298
+	if len(e.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+	}
+	if len(e.FieldsEnclosedBy) > 0 &&
+		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
+	}
+
 	return nil
 }
 

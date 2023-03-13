@@ -266,8 +266,8 @@ func NewLoadDataWorker(
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	controller := importer.NewLoadDataController(plan, tbl)
-	if err := controller.Init(sctx, plan.Options); err != nil {
+	controller, err := importer.NewLoadDataController(sctx, plan, tbl)
+	if err != nil {
 		return nil, err
 	}
 	if !restrictive {
