@@ -239,15 +239,9 @@ func (ib *IntHandleCols) NumCols() int {
 
 // Compare implements the kv.HandleCols interface.
 func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
-	aInt := a[ib.col.Index].GetInt64()
-	bInt := b[ib.col.Index].GetInt64()
-	if aInt == bInt {
-		return 0, nil
-	}
-	if aInt < bInt {
-		return -1, nil
-	}
-	return 1, nil
+	aVal := &a[ib.col.Index]
+	bVal := &b[ib.col.Index]
+	return aVal.Compare(nil, bVal, ctors[ib.col.Index])
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.

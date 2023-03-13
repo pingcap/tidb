@@ -267,8 +267,10 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
+	check := ds.ctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+	check = check && ds.ctx.GetSessionVars().ConnectionID > 0
 	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
-	if ds.isForUpdateRead {
+	if check {
 		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
 		if err != nil {
 			return

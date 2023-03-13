@@ -28,4 +28,5 @@ header:
     - '.github/'
     - 'parser/'
     - 'dumpling/'
+    - '**/*.sql'
   comment: on-failure

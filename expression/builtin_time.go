@@ -5932,7 +5932,7 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 		}
 	}
 
-	t, err := dt.GoTime(fromTz)
+	t, err := dt.AdjustedGoTime(fromTz)
 	if err != nil {
 		return types.ZeroTime, true, nil
 	}
