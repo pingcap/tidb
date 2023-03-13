@@ -141,12 +141,13 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
+	id := row[0].(string)
 	r := expectedRecord{
-		jobID:          "1",
+		jobID:          id,
 		dataSource:     "gs://test-show/t.tsv",
 		targetTable:    "`test_show`.`t`",
 		importMode:     "logical",
-		createdBy:      "test-load@test-host",
+		createdBy:      "test-load-2@test-host",
 		jobState:       "loading",
 		jobStatus:      "finished",
 		sourceFileSize: "3B",
@@ -161,11 +162,14 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 
 	// repeat LOAD DATA, will get duplicate entry error
 	s.tk.MustContainErrMsg(sql, "Duplicate entry '1' for key 't.PRIMARY'")
-	rows = s.tk.MustQuery("SHOW LOAD DATA JOB 2;").Rows()
+	idNum, err := strconv.Atoi(id)
+	require.NoError(s.T(), err)
+	nextID := strconv.Itoa(idNum + 1)
+	rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + nextID + ";").Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
 
-	r.jobID = "2"
+	r.jobID = nextID
 	r.jobStatus = "failed"
 	r.sourceFileSize = "<nil>"
 	r.loadedFileSize = "<nil>"
