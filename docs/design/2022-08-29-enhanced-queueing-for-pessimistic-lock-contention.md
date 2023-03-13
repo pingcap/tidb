@@ -1,4 +1,4 @@
-# Aggressive Locking: Enhanced Queueing for Pessimistic Lock Contention
+# Fair Locking: Enhanced Queueing for Pessimistic Lock Contention
 
 - Author(s): [MyonKeminta](http://github.com/MyonKeminta)
 - Tracking Issue: https://github.com/tikv/tikv/issues/13298
@@ -20,11 +20,11 @@ The majority part of the change is in TiKV side, which is explained in detail in
 - By specifying a special parameter, a pessimistic lock request is allowed to lock a key even there is write conflict, in which case TiKV can return the value and `commit_ts` of the latest version, namely `locked_with_conflict_ts`. The actual lock written down in TiKV will have its `for_update_ts` field equal to the latest `commit_ts` on the key.
 - By specifying the parameter mentioned above, the pessimistic lock request is also allowed to continue locking the key after waiting for the lock of another transaction, instead of always reporting WriteConflict after being woken up.
 
-### Aggressive Locking
+### Fair Locking
 
 When a key is locked with conflict, the current statement becomes executing at a different snapshot. However, the statement may have already read data in the expired snapshot (as specified by the `for_update_ts` of the statement). In this case, we have no choice but retry the current statement with a new `for_update_ts`.
 
-In our original implementation, when retrying a statement, the pessimistic locks that were already acquired will be rolled back, since it's possible that the keys we need to lock may change after retrying. However, we will choose a different way to handle this case with our new locking mechanism. We expect that in most cases, the keys we need to lock won't change after retrying at a newer snapshot. Therefore, we adopt this way, namely *aggressive locking*:
+In our original implementation, when retrying a statement, the pessimistic locks that were already acquired will be rolled back, since it's possible that the keys we need to lock may change after retrying. However, we will choose a different way to handle this case with our new locking mechanism. We expect that in most cases, the keys we need to lock won't change after retrying at a newer snapshot. Therefore, we adopt this way, namely *fair locking*:
 
 - When performing statement retry, if there are already some keys locked during the previous attempt, do not roll them back immediately. We denote the set of the keys locked during previous attempt by $S_0$.
 - After executing the statement again, it might be found that some keys needs to be locked. We denote the set of the keys need to be locked by $S$.
@@ -37,32 +37,32 @@ We plan to support this kind of behavior only for simple point-get queries for n
 To support this behavior, we add some new methods to the `KVTxn` type in client-go:
 
 ```go
-// Start an aggressive locking session. Usually called when starting a DML statement.
-func (*KVTxn) StartAggressiveLocking()
+// Start an fair locking session. Usually called when starting a DML statement.
+func (*KVTxn) StartFairLocking()
 // Start (n+1)-th attempt of the statement (due to pessimistic retry); rollback unnecessary locks locked in (n-1)-th attempt. 
-func (*KVTxn) RetryAggressiveLocking()
-// Rollback all pessimistic locks acquired during the pessimistic locking session, and exit aggressive locking state.
-func (*KVTxn) CancelAggressiveLocking()
-// Record keys locked in current (n-th) attempt to MemDB, rollback locks locked in previous (n-1)-th attempt, and exit aggressive locking state.
-func (*KVTxn) DoneAggressiveLocking()
+func (*KVTxn) RetryFairLocking()
+// Rollback all pessimistic locks acquired during the pessimistic locking session, and exit fair locking state.
+func (*KVTxn) CancelFairLocking()
+// Record keys locked in current (n-th) attempt to MemDB, rollback locks locked in previous (n-1)-th attempt, and exit fair locking state.
+func (*KVTxn) DoneFairLocking()
 ```
 
 These functions will implement the behavior stated above, and the basic pattern of using these functions is like
-(pseudo code, the actual invocations of `(Retry|Cancel|Done)AggressiveLocking` are put in `OnStmtRetry`, `OnStmtRollback`, `OnStmtCommit` instead of the retry loop):
+(pseudo code, the actual invocations of `(Retry|Cancel|Done)FairLocking` are put in `OnStmtRetry`, `OnStmtRollback`, `OnStmtCommit` instead of the retry loop):
 
 ```go
-txn.StartAggressiveLocking()
+txn.StartFairLocking()
 for {
     result := tryExecuteStatement()
     switch result {
 	case PESSIMISTIC_RETRY:
-        txn.RetryAggressiveLocking()
+        txn.RetryFairLocking()
 		continue;
     case FAIL:
-        txn.CancelAggressiveLocking()
+        txn.CancelFairLocking()
 		break;
     case SUCCESS: {
-        txn.DoneAggressiveLocking()
+        txn.DoneFairLocking()
 		break;
     }
 }
@@ -78,7 +78,7 @@ It would be complicated to totally solve the problem, but we have a simpler idea
 
 We want to avoid introducing new configurations that user must know to make use of the new behavior, but it's a fact that the optimization is very complicated and there's known performance regression in a few scenarios. It would be risky if the new behavior is always enabled unconditionally. We can introduce a hidden system variable which can be used to disable the optimization in case there's any problem.
 
-#### `tidb_pessimistic_txn_aggressive_locking`
+#### `tidb_pessimistic_txn_fair_locking`
 
 Specifies whether the optimization stated above is enabled.
 
