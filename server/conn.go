@@ -1059,6 +1059,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		// Close connection between txn when we are going to shutdown server.
+		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
+		// consider provider a way to close the connection directly after sometime if we can not read any data.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
 				return
