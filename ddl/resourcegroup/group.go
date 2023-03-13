@@ -22,12 +22,6 @@ import (
 // MaxGroupNameLength is max length of the name of a resource group
 const MaxGroupNameLength = 32
 
-// MinRUFillRate defines the lower boundary of RU fill rate
-const MinRUFillRate = 1
-
-// MaxRUFillRate defines the higher boundary of RU fill rate
-const MaxRUFillRate = 10000000
-
 // NewGroupFromOptions creates a new resource group from the given options.
 func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings) (*rmpb.ResourceGroup, error) {
 	if options == nil {
@@ -41,9 +35,6 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		Name: groupName,
 	}
 	if options.RURate > 0 {
-		if options.RURate > MaxRUFillRate || options.RURate < MinRUFillRate {
-			return nil, ErrRUOutOfRang
-		}
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{

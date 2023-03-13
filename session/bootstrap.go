@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	resourcegroup "github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -565,11 +564,9 @@ const (
 		step INT(11),
 		key(state)
 	);`
-)
 
-var (
 	// CreateDefaultResourceGroup is the statement to create the default resource group
-	CreateDefaultResourceGroup = fmt.Sprintf("CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=%d BURSTABLE", resourcegroup.MaxRUFillRate)
+	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
 )
 
 // bootstrap initiates system DB for a store.
