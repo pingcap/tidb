@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -1176,18 +1175,14 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 
 type updateColumnWorker struct {
 	*backfillCtx
-	oldColInfo    *model.ColumnInfo
-	newColInfo    *model.ColumnInfo
-	metricCounter prometheus.Counter
+	oldColInfo *model.ColumnInfo
+	newColInfo *model.ColumnInfo
 
 	// The following attributes are used to reduce memory allocation.
 	rowRecords []*rowRecord
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
-
-	// For SQL Mode and warnings.
-	jobContext *JobContext
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
@@ -1206,13 +1201,11 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, false),
-		oldColInfo:    oldCol,
-		newColInfo:    newCol,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
-		rowDecoder:    rowDecoder,
-		rowMap:        make(map[int64]types.Datum, len(decodeColMap)),
-		jobContext:    jc,
+		backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
+		oldColInfo:  oldCol,
+		newColInfo:  newCol,
+		rowDecoder:  rowDecoder,
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -1265,7 +1258,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
 		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)

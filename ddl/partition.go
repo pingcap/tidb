@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -2572,8 +2571,6 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 
 type reorgPartitionWorker struct {
 	*backfillCtx
-	metricCounter prometheus.Counter
-
 	// Static allocated to limit memory allocations
 	rowRecords        []*rowRecord
 	rowDecoder        *decoder.RowDecoder
@@ -2581,8 +2578,6 @@ type reorgPartitionWorker struct {
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
-
-	jobContext *JobContext
 }
 
 func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
@@ -2612,11 +2607,9 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
 	}
 	return &reorgPartitionWorker{
-		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, false),
-		metricCounter:     metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
+		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false),
 		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
 		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
-		jobContext:        jc,
 		writeColOffsetMap: writeColOffsetMap,
 		maxOffset:         maxOffset,
 		reorgedTbl:        reorgedTbl,
@@ -2693,7 +2686,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	tmpRow := make([]types.Datum, w.maxOffset+1)
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)

@@ -126,10 +126,9 @@ type mergeIndexWorker struct {
 	tmpIdxRecords []*temporaryIndexRecord
 	originIdxKeys []kv.Key
 	tmpIdxKeys    []kv.Key
-	jobContext    *JobContext
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, id int, t table.PhysicalTable, eleID int64, jc *JobContext) *mergeIndexWorker {
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID int64) *mergeIndexWorker {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
 
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
@@ -137,7 +136,6 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, id int, t table.PhysicalTable, 
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
 		index:       index,
-		jobContext:  jc,
 	}
 }
 
@@ -242,7 +240,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	oprStartTime := startTime
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)

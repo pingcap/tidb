@@ -208,7 +208,7 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 		return errors.Trace(err)
 	}
 	var isUnique bool
-	if bfWorkerType == typeAddIndexTxnWorker {
+	if bfWorkerType == typeAddIndexWorker {
 		idxInfo := model.FindIndexInfoByID(t.Meta().Indices, currEle.ID)
 		isUnique = idxInfo.Unique
 	}
