@@ -1147,13 +1147,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableMDL.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLEnableDistributeReorg, Value: BoolToOnOff(DefTiDBDDLEnableDistributeReorg), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if DDLEnableDistributeReorg.Load() != TiDBOptOn(val) {
-			DDLEnableDistributeReorg.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal, Name: TiDBEnableDistTask, Value: BoolToOnOff(DefTiDBEnableDistTask), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if DistTask.Load() != TiDBOptOn(val) {
+			DistTask.Store(TiDBOptOn(val))
 		}
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(DDLEnableDistributeReorg.Load()), nil
+		return BoolToOnOff(DistTask.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))

@@ -682,16 +682,16 @@ func TestSetTIDBDistributeReorg(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 
 	// Set to on
-	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, On)
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, On)
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err := mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, On, val)
 
 	// Set to off
-	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, Off)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, Off)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err = mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
 }

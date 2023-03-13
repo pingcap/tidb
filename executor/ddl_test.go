@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -1322,14 +1322,14 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Equal(t, variable.DefTiDBDDLEnableDistributeReorg, distributereorg.TiDBEnableDistributeReorg)
+	require.Equal(t, variable.DefTiDBEnableDistTask, disttask.TiDBEnableDistTask)
 
-	tk.MustGetDBError("set @@global.tidb_ddl_distribute_reorg = invalid_val", variable.ErrWrongValueForVar)
-	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
-	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = 'on'")
-	require.Equal(t, true, variable.DDLEnableDistributeReorg.Load())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_distribute_reorg = %v", distributereorg.TiDBEnableDistributeReorg))
-	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
+	tk.MustGetDBError("set @@global.tidb_enable_dist_task = invalid_val", variable.ErrWrongValueForVar)
+	require.Equal(t, disttask.TiDBEnableDistTask, variable.DistTask.Load())
+	tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
+	require.Equal(t, true, variable.DistTask.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", disttask.TiDBEnableDistTask))
+	require.Equal(t, disttask.TiDBEnableDistTask, variable.DistTask.Load())
 }
 
 // Test issue #9205, fix the precision problem for time type default values
