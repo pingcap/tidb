@@ -270,8 +270,9 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
-	var kvRanges []kv.KeyRange
+	var kvRanges *kv.KeyRanges
 	if len(e.partitions) > 0 {
+		keyRanges := make([][]kv.KeyRange, 0, len(e.partitions))
 		for _, p := range e.partitions {
 			partRange := e.ranges
 			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
@@ -281,10 +282,15 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			kvRanges = append(kvRanges, kvRange...)
+			keyRanges = append(keyRanges, kvRange)
+			e.kvRanges = append(e.kvRanges, kvRange...)
 		}
+		kvRanges = kv.NewPartitionedKeyRanges(keyRanges)
 	} else {
-		kvRanges, err = e.buildKeyRanges(sc, e.ranges, e.physicalTableID)
+		var keyRanges []kv.KeyRange
+		keyRanges, err = e.buildKeyRanges(sc, e.ranges, e.physicalTableID)
+		kvRanges = kv.NewNonParitionedKeyRanges(keyRanges)
+		e.kvRanges = keyRanges
 	}
 	if err != nil {
 		return err
@@ -293,7 +299,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
-func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
+func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges *kv.KeyRanges) error {
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
@@ -306,7 +312,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
-	e.kvRanges = kvRanges
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// In a test case IndexReaderExecutor is mocked and e.table is nil.
 	// Avoid sending distsql request to TIKV.
@@ -320,11 +325,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.memTracker = memory.NewTracker(e.id, -1)
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+	kvRanges.SortByFunc(func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 	var builder distsql.RequestBuilder
-	builder.SetKeyRanges(kvRanges).
+	builder.SetWrappedKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
