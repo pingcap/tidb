@@ -246,7 +246,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		row := rows[0]
 		r := expectedRecord{
 			jobID:          strconv.Itoa(int(id)),
-			dataSource:     "gs://test-tsv/t.tsv",
+			dataSource:     "gs://test-tsv/t*.tsv",
 			targetTable:    "`load_tsv`.`t`",
 			importMode:     "logical",
 			createdBy:      "test-load@test-host",
