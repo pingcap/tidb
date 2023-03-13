@@ -105,11 +105,12 @@ type FullBackupType string
 const (
 	FullBackupTypeKV  FullBackupType = "kv" // default type
 	FullBackupTypeEBS FullBackupType = "aws-ebs"
+	FullBackupTypeGCP FullBackupType = "gcp"
 )
 
 // Valid whether the type is valid
 func (t FullBackupType) Valid() bool {
-	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS || t == FullBackupTypeGCP
 }
 
 // TLSConfig is the common configuration for TLS connection.

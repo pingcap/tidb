@@ -40,6 +40,14 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
+	if cfg.FullBackupType == task.FullBackupTypeGCP {
+		if err := task.RunBackupGCP(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.IgnoreStats {
 		// Do not run stat worker in BR.
 		session.DisableStats4Test()

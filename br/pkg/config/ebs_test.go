@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
-	cfg := &EBSBasedBRMeta{}
+	cfg := &VolSnapBackupMeta{}
 	curDir, err := os.Getwd()
 	require.NoError(t, err)
 	require.NoError(t, cfg.ConfigFromFile(filepath.Join(curDir, "ebs_backup.json")))

@@ -52,7 +52,7 @@ func NewEC2Session(concurrency uint) (*EC2Session, error) {
 // It will do the following works.
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
-func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, VolumeAZs, error) {
+func (e *EC2Session) CreateSnapshots(backupInfo *config.VolSnapBackupMeta) (map[string]string, VolumeAZs, error) {
 	snapIDMap := make(map[string]string)
 	volumeIDs := []*string{}
 
@@ -237,7 +237,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.VolSnapBackupMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 		TagSpecifications: []*ec2.TagSpecification{

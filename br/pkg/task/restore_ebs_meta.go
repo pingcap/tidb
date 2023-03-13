@@ -85,7 +85,7 @@ type restoreEBSMetaHelper struct {
 	cmdName string
 	cfg     *RestoreConfig
 
-	metaInfo *config.EBSBasedBRMeta
+	metaInfo *config.VolSnapBackupMeta
 	pdc      *pdutil.PdController
 }
 

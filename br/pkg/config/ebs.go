@@ -82,7 +82,7 @@ type TiDBComponent struct {
 	Replicas int `json:"replicas"`
 }
 
-type EBSBasedBRMeta struct {
+type VolSnapBackupMeta struct {
 	ClusterInfo    *ClusterInfo           `json:"cluster_info" toml:"cluster_info"`
 	TiKVComponent  *TiKVComponent         `json:"tikv" toml:"tikv"`
 	TiDBComponent  *TiDBComponent         `json:"tidb" toml:"tidb"`
@@ -92,14 +92,14 @@ type EBSBasedBRMeta struct {
 	Region         string                 `json:"region" toml:"region"`
 }
 
-func (c *EBSBasedBRMeta) GetStoreCount() uint64 {
+func (c *VolSnapBackupMeta) GetStoreCount() uint64 {
 	if c.TiKVComponent == nil {
 		return 0
 	}
 	return uint64(len(c.TiKVComponent.Stores))
 }
 
-func (c *EBSBasedBRMeta) String() string {
+func (c *VolSnapBackupMeta) String() string {
 	cfg, err := json.Marshal(c)
 	if err != nil {
 		return "<nil>"
@@ -108,7 +108,7 @@ func (c *EBSBasedBRMeta) String() string {
 }
 
 // ConfigFromFile loads config from file.
-func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
+func (c *VolSnapBackupMeta) ConfigFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return errors.Trace(err)
@@ -120,8 +120,8 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 	return nil
 }
 
-func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBasedBRMeta, error) {
-	metaInfo := &EBSBasedBRMeta{}
+func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*VolSnapBackupMeta, error) {
+	metaInfo := &VolSnapBackupMeta{}
 	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return metaInfo, errors.Trace(err)
@@ -137,13 +137,13 @@ func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBas
 	return metaInfo, nil
 }
 
-func (c *EBSBasedBRMeta) CheckClusterInfo() {
+func (c *VolSnapBackupMeta) CheckClusterInfo() {
 	if c.ClusterInfo == nil {
 		c.ClusterInfo = &ClusterInfo{}
 	}
 }
 
-func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
+func (c *VolSnapBackupMeta) checkEBSBRMeta() error {
 	if c.ClusterInfo == nil {
 		return errors.New("no cluster info")
 	}
@@ -159,30 +159,30 @@ func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
 	return nil
 }
 
-func (c *EBSBasedBRMeta) SetResolvedTS(id uint64) {
+func (c *VolSnapBackupMeta) SetResolvedTS(id uint64) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.ResolvedTS = id
 }
 
-func (c *EBSBasedBRMeta) GetResolvedTS() uint64 {
+func (c *VolSnapBackupMeta) GetResolvedTS() uint64 {
 	return c.ClusterInfo.ResolvedTS
 }
 
-func (c *EBSBasedBRMeta) SetFullBackupType(t string) {
+func (c *VolSnapBackupMeta) SetFullBackupType(t string) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.FullBackupType = t
 }
 
-func (c *EBSBasedBRMeta) GetFullBackupType() string {
+func (c *VolSnapBackupMeta) GetFullBackupType() string {
 	return c.ClusterInfo.FullBackupType
 }
 
-func (c *EBSBasedBRMeta) SetClusterVersion(version string) {
+func (c *VolSnapBackupMeta) SetClusterVersion(version string) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.Version = version
 }
 
-func (c *EBSBasedBRMeta) SetSnapshotIDs(idMap map[string]string) {
+func (c *VolSnapBackupMeta) SetSnapshotIDs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
 			volume.SnapshotID = idMap[volume.ID]
@@ -190,7 +190,7 @@ func (c *EBSBasedBRMeta) SetSnapshotIDs(idMap map[string]string) {
 	}
 }
 
-func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[string]string) {
+func (c *VolSnapBackupMeta) SetRestoreVolumeIDs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
 			volume.RestoreVolumeId = idMap[volume.ID]
@@ -198,7 +198,7 @@ func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[string]string) {
 	}
 }
 
-func (c *EBSBasedBRMeta) SetVolumeAZs(idMap map[string]string) {
+func (c *VolSnapBackupMeta) SetVolumeAZs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
 			volume.VolumeAZ = idMap[volume.ID]

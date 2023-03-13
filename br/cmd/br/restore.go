@@ -55,6 +55,21 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
+	if cfg.FullBackupType == task.FullBackupTypeGCP {
+		if cfg.Prepare {
+			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+				log.Error("failed to restore EBS meta", zap.Error(err))
+				return errors.Trace(err)
+			}
+		} else {
+			if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+				log.Error("failed to restore data", zap.Error(err))
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)
