@@ -308,6 +308,7 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 		bfJob:         bfJob,
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
+		id:         int(bfJob.ID),
 		sqlQuery:   bfJob.Meta.Query,
 		startKey:   bfJob.Meta.StartKey,
 		endKey:     bfJob.Meta.EndKey,
@@ -324,6 +325,10 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
+				if *runningPID != getJobWithoutPartition && *runningPID != 0 {
+					*runningPID = 0
+					continue
+				}
 				logutil.BgLogger().Info("no backfill job, handle backfill task finished")
 				return nil, gpool.ErrProducerClosed
 			}
