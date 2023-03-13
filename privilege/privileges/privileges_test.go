@@ -3209,6 +3209,10 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 func TestNilHandleInConnectionVerification(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	privileges.SkipWithGrant = true
+	defer func() {
+		config.GetGlobalConfig().Security.SkipGrantTable = false
+		privileges.SkipWithGrant = false
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil))
