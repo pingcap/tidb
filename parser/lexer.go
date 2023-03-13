@@ -20,7 +20,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	tidbfeature "github.com/pingcap/tidb/parser/tidb"
@@ -536,7 +535,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				isOptimizerHint = true
 			}
 		} else {
-			s.AppendWarn(errors.New("The hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+			s.AppendWarn(ErrWarnOptimizerHintWrongPos)
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.

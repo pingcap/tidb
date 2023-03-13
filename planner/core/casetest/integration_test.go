@@ -78,7 +78,7 @@ func TestHintInWrongPos(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("select count(*) /*+ stream_agg() */ from t where a > 1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use The hint can only be followed by certain keywords like SELECT, INSERT, etc."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc."))
 }
 
 func TestAggColumnPrune(t *testing.T) {
