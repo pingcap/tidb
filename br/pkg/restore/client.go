@@ -1191,7 +1191,7 @@ func (rc *Client) RestoreSSTFiles(
 				zap.Int("remained", len(leftFiles)),
 				logutil.ShortError(ectx.Err()))
 			// We will fetch the error from the errgroup then (If there were).
-			// Also note if the father context has been canceled or something,
+			// Also note if the parent context has been canceled or something,
 			// breaking here directly is also a reasonable behavior.
 			break
 		}
