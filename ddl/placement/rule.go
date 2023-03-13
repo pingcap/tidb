@@ -116,7 +116,7 @@ func (r *TiFlashRule) UnmarshalJSON(bytes []byte) error {
 		return err
 	}
 	*r = TiFlashRule{
-		// GroupID:        rule.GroupID,
+		GroupID:        rule.GroupID,
 		ID:             rule.ID,
 		Index:          rule.Index,
 		Override:       rule.Override,
