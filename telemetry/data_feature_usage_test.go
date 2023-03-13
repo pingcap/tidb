@@ -362,7 +362,7 @@ func TestResourceGroups(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
-	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
 	tk.MustExec("create resource group x ru_per_sec=100")

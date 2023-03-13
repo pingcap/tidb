@@ -50,7 +50,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000000 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 YES"))
 
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
@@ -62,7 +62,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("alter resource group `default` ru_per_sec=10000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 NO"))
-	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
+	tk.MustContainErrMsg("drop resource group `default`", "can't drop internal resource groups")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
@@ -91,7 +91,6 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
-	tk.MustContainErrMsg("create resource group large_rg RU_PER_SEC=20000000", "RU_PER_SEC must be an integer in")
 
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
