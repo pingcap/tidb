@@ -506,6 +506,14 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars) (info privilege.VerificationInfo, err error) {
+	if SkipWithGrant {
+		p.user = authUser
+		p.host = authHost
+		// special handling to existing users or root user initialized with insecure
+		info.ResourceGroupName = "default"
+		return
+	}
+
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -513,18 +521,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(authUser, authHost)
-
-	if SkipWithGrant {
-		p.user = authUser
-		p.host = authHost
-		// special handling to existing users or root user initialized with insecure
-		if record == nil || record.ResourceGroup == "" {
-			info.ResourceGroupName = "default"
-		} else {
-			info.ResourceGroupName = record.ResourceGroup
-		}
-		return
-	}
 
 	if record == nil {
 		logutil.BgLogger().Error("get authUser privilege record fail",
