@@ -576,6 +576,10 @@ REBUILD:
 	if containTableDual(p) && varsNum > 0 {
 		stmtCtx.SkipPlanCache = true
 	}
+	// plan has shuffle operator will not be cached.
+	if !stmtCtx.SkipPlanCache && containShuffleOperator(p) {
+		stmtCtx.SkipPlanCache = true
+	}
 	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
@@ -621,6 +625,27 @@ func containTableDual(p Plan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+func containShuffleOperator(p Plan) bool {
+	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
+		return true
+	}
+	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containShuffleOperator(child)
+		if childContainTableDual {
+			return true
+		}
+	}
+	return false
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
@@ -981,7 +1006,8 @@ type Simple struct {
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
-//   Used for simple statements executing in coprocessor.
+//
+//	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
