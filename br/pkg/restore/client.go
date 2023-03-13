@@ -1187,7 +1187,12 @@ func (rc *Client) RestoreSSTFiles(
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
 		if ectx.Err() != nil {
-			log.Warn("Restoring encountered error and already failed, give up remained files.", zap.Int("remained", len(leftFiles)))
+			log.Warn("Restoring encountered error and already stopped, give up remained files.",
+				zap.Int("remained", len(leftFiles)),
+				logutil.ShortError(ectx.Err()))
+			// We will fetch the error from the errgroup then (If there were).
+			// Also note if the father context has been canceled or something,
+			// breaking here directly is also a reasonable behavior.
 			break
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
