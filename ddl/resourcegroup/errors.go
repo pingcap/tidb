@@ -30,5 +30,5 @@ var (
 	// ErrUnknownResourceGroupMode is from group.go.
 	ErrUnknownResourceGroupMode = errors.New("unknown resource group mode")
 	// ErrDroppingInternalResourceGroup is from group.go
-	ErrDroppingInternalResourceGroup = errors.New("can't drop internal resource groups")
+	ErrDroppingInternalResourceGroup = errors.New("can't drop reserved resource group")
 )
