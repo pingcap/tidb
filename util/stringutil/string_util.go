@@ -406,3 +406,17 @@ func ConvertPosInUtf8(str *string, pos int64) int64 {
 	preStrNum := utf8.RuneCountInString(preStr)
 	return int64(preStrNum + 1)
 }
+
+// EscapeGlobExceptAsterisk escapes '?', '[', ']' for a glob path pattern.
+func EscapeGlobExceptAsterisk(s string) string {
+	var buf strings.Builder
+	buf.Grow(len(s))
+	for _, c := range s {
+		switch c {
+		case '?', '[', ']':
+			buf.WriteByte('\\')
+		}
+		buf.WriteRune(c)
+	}
+	return buf.String()
+}

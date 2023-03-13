@@ -33,8 +33,9 @@ const (
 type WalkOption struct {
 	// walk on SubDir of specify directory
 	SubDir string
-	// ObjPrefix used fo prefix search in storage.
-	// it can save lots of time when we want find specify prefix objects in storage.
+	// ObjPrefix used fo prefix search in storage. Note that only part of storage
+	// support it.
+	// It can save lots of time when we want find specify prefix objects in storage.
 	// For example. we have 10000 <Hash>.sst files and 10 backupmeta.(\d+) files.
 	// we can use ObjPrefix = "backupmeta" to retrieve all meta files quickly.
 	ObjPrefix string

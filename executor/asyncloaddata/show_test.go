@@ -87,10 +87,17 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{
 			BucketName: "test-tsv",
-			Name:       "t.tsv",
+			Name:       "t1.tsv",
 		},
-		Content: []byte(`1
-2`),
+		Content: []byte(`1`),
+	})
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "test-tsv",
+			Name:       "t2.tsv",
+		},
+		Content: []byte(`2`),
 	})
 
 	ctx := context.Background()
@@ -118,7 +125,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		expected := &JobInfo{
 			JobID:         id,
 			User:          "test-load@test-host",
-			DataSource:    fmt.Sprintf("gs://test-tsv/t.tsv?endpoint=%s", gcsEndpoint),
+			DataSource:    fmt.Sprintf("gs://test-tsv/t*.tsv?endpoint=%s", gcsEndpoint),
 			TableSchema:   "load_tsv",
 			TableName:     "t",
 			ImportMode:    "logical",
@@ -141,7 +148,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:08
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":0,"LoadedRowCnt":1}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":0,"LoadedRowCnt":1}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:09
 		// commit one task and sleep 3 seconds
@@ -149,7 +156,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		// tk2 @ 0:11
 		info, err = GetJobInfo(ctx, tk2.Session(), id)
 		require.NoError(s.T(), err)
-		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":2,"LoadedRowCnt":2}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":1,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 		// tk @ 0:12
 		// finish job
@@ -159,7 +166,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 		require.NoError(s.T(), err)
 		expected.Status = JobFinished
 		expected.StatusMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
-		expected.Progress = `{"SourceFileSize":3,"LoadedFileSize":3,"LoadedRowCnt":2}`
+		expected.Progress = `{"SourceFileSize":2,"LoadedFileSize":2,"LoadedRowCnt":2}`
 		require.Equal(s.T(), expected, info)
 	}()
 
@@ -183,7 +190,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(3000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(3000)`)
 	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 1;")
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t.tsv?endpoint=%s'
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
 		INTO TABLE load_tsv.t;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	wg.Wait()

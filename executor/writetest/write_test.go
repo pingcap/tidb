@@ -1898,7 +1898,13 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err1 := ld.ReadRows(context.Background(), parser)
+		for ld.IgnoreLines > 0 {
+			ld.IgnoreLines--
+			//nolint: errcheck
+			_ = parser.ReadRow()
+		}
+
+		err1 := ld.ReadOneBatchRows(context.Background(), parser)
 		require.NoError(t, err1)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		require.NoError(t, err1)
@@ -1939,7 +1945,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 		false,
 		nil)
 	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	require.Len(t, ld.GetRows(), 0)
 	r := tk.MustQuery(selectSQL)
@@ -2065,7 +2071,7 @@ func TestLoadData(t *testing.T) {
 		false,
 		nil)
 	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)
@@ -2079,7 +2085,7 @@ func TestLoadData(t *testing.T) {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
 	sc.IgnoreTruncate = false
-	// fields and lines are default, ReadRows returns data is nil
+	// fields and lines are default, ReadOneBatchRows returns data is nil
 	tests := []testCase{
 		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"
 		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -2099,7 +2105,7 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
+	// lines starting symbol is "" and terminated symbol length is 2, ReadOneBatchRows returns data is nil
 	ld.LinesInfo.Terminated = "||"
 	tests = []testCase{
 		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -2114,7 +2120,7 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// fields and lines aren't default, ReadRows returns data is nil
+	// fields and lines aren't default, ReadOneBatchRows returns data is nil
 	ld.FieldsInfo.Terminated = "\\"
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
@@ -2155,7 +2161,7 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// TODO: not support it now
-	// lines starting symbol is the same as terminated symbol, ReadRows returns data is nil
+	// lines starting symbol is the same as terminated symbol, ReadOneBatchRows returns data is nil
 	//ld.LinesInfo.Terminated = "xxx"
 	//tests = []testCase{
 	//	// data1 = nil, data2 != nil
@@ -2178,7 +2184,7 @@ func TestLoadData(t *testing.T) {
 	//	{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
 	//		[]string{"34|2|3|4", "35|22|33|<nil>", "36|222|<nil>|<nil>"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
 	//
-	//	// ReadRows returns data isn't nil
+	//	// ReadOneBatchRows returns data isn't nil
 	//	{[]byte("\\2\\3\\4xxxx"), nil, []byte("xxxx"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 	//	{[]byte("\\2\\3\\4xxx"), nil, []string{"37|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	//	{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
@@ -2414,7 +2420,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 		nil)
 	require.NoError(t, err)
 
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)

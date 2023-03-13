@@ -1619,7 +1619,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		}
 	}()
 
-	err = loadDataWorker.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
+	err = loadDataWorker.Load(ctx, []executor.LoadDataReaderInfo{{
+		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
+			return executor.NewSimpleSeekerOnReadCloser(r), nil
+		}}})
 	_ = r.Close()
 	wg.Wait()
 
