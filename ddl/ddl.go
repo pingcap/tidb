@@ -672,7 +672,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.runningJobs.ids = make(map[int64]struct{})
-	ddlCtx.waiting = atomicutil.NewBool(false)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
