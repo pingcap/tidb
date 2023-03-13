@@ -258,9 +258,9 @@ func (s JobStatus) String() string {
 	}
 }
 
-// ErrLoadDataJobIDNotFound is the error when the job ID is not found.
+// ErrLoadDataJobNotFound is the error when the job ID is not found.
 // TODO: move to exeerrors after https://github.com/pingcap/tidb/pull/42075.
-var ErrLoadDataJobIDNotFound = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobIDNotFound)
+var ErrLoadDataJobNotFound = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobNotFound)
 
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are
@@ -291,7 +291,7 @@ func GetJobStatus(
 		return JobFailed, "", err
 	}
 	if len(rows) != 1 {
-		return JobFailed, ErrLoadDataJobIDNotFound.GenWithStackByArgs(jobID).Error(), nil
+		return JobFailed, ErrLoadDataJobNotFound.GenWithStackByArgs(jobID).Error(), nil
 	}
 
 	return getJobStatus(rows[0])
@@ -391,7 +391,7 @@ func GetJobInfo(
 		return nil, err
 	}
 	if len(rows) != 1 {
-		return nil, ErrLoadDataJobIDNotFound.GenWithStackByArgs(jobID)
+		return nil, ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
 	}
 
 	return getJobInfo(rows[0])

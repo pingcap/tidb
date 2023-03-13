@@ -1058,7 +1058,7 @@ const (
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
 	ErrLoadDataUnsupportedOption           = 8166
-	ErrLoadDataJobIDNotFound               = 8170
+	ErrLoadDataJobNotFound                 = 8170
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
