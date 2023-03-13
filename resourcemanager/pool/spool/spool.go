@@ -42,6 +42,7 @@ type Pool struct {
 	running            atomic.Int32
 	waiting            atomic.Int32
 	isStop             atomic.Bool
+	condMu             sync.Mutex
 	cond               sync.Cond
 	concurrencyMetrics prometheus.Gauge
 	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
@@ -56,7 +57,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
 	}
-	result.cond = *sync.NewCond(&result.mu)
+	result.cond = *sync.NewCond(&result.condMu)
 	if size == 0 {
 		return nil, pool.ErrPoolParamsInvalid
 	}
