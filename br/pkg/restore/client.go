@@ -1215,6 +1215,12 @@ func (rc *Client) RestoreSSTFiles(
 		)
 		return errors.Trace(err)
 	}
+	// Once the parent context canceled and there is no task running in the errgroup,
+	// we may break the for loop without error in the errgroup. (Will this happen?)
+	// At that time, return the error in the context here.
+	if err := ectx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 
