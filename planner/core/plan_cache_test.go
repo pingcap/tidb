@@ -199,7 +199,7 @@ func TestNonPreparedPlanCacheEnumFilter(t *testing.T) {
 	tk.MustExec(`select * from t where a<2`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	// queries with filters with JSON columns are not supported
+	// queries with filters with enum columns are not supported
 	tk.MustExec(`select * from t where b='1'`)
 	tk.MustExec(`select * from t where b='2'`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
