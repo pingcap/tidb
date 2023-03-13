@@ -167,7 +167,7 @@ func (stm *GlobalTaskManager) UpdateTask(task *proto.Task) error {
 	stm.mu.Lock()
 	defer stm.mu.Unlock()
 
-	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %? where id = %?", task.State, task.DispatcherID, task.Step, task.StateUpdateTime.UTC().String(), task.ID)
+	_, err := execSQL(stm.ctx, stm.se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %? where id = %?", task.State, task.DispatcherID, task.Step, task.StateUpdateTime.UTC().String(), task.Concurrency, task.ID)
 	if err != nil {
 		return err
 	}
