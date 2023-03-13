@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dispatcher",
+    srcs = [
+        "dispatcher.go",
+        "register.go",
+    ],
+    importpath = "github.com/pingcap/tidb/disttask/framework/dispatcher",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//disttask/framework/proto",
+        "//disttask/framework/storage",
+        "//domain/infosync",
+        "//util",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "dispatcher_test",
+    srcs = ["dispatcher_test.go"],
+    embed = [":dispatcher"],
+    deps = [
+        "//disttask/framework/proto",
+        "//disttask/framework/storage",
+        "//domain/infosync",
+        "//testkit",
+        "//testkit/testsetup",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

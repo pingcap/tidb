@@ -43,10 +43,6 @@ const (
 	TaskStateReverted      = "reverted"
 )
 
-const (
-	TaskTypeCreateIndex = "add_index"
-)
-
 // TaskStep is the step of task.
 const (
 	StepInit int64 = -1
@@ -83,9 +79,11 @@ type Subtask struct {
 // Each subtask is divided into multiple minimal tasks by scheduler.
 type MinimalTask interface{}
 
-// TaskTypeExample is TaskType of Example.
 const (
+	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
+	// TaskTypeCreateIndex is TaskType of "add index" operation.
+	TaskTypeCreateIndex = "AddIndex"
 )
 
 // Type2Int converts task type to int.
