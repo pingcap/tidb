@@ -24,6 +24,7 @@ go_test(
         "//planner/core",
         "//testkit",
         "//types",
+        "//util/dbterror/exeerrors",
         "//util/sqlexec",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
