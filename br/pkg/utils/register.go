@@ -143,8 +143,10 @@ func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 	failpoint.Inject("brie-task-register-always-grant", func(_ failpoint.Value) {
 		timeLeftThreshold = tr.ttl
 	})
-	var lastUpdateTime time.Time = time.Now()
-	var err error
+	var (
+		lastUpdateTime time.Time = time.Now()
+		err            error
+	)
 	for {
 	CONSUMERESP:
 		for {
@@ -243,6 +245,7 @@ func (list RegisterTasksList) MessageToUser() string {
 	var tasksMsgBuf strings.Builder
 	for _, task := range list.Tasks {
 		tasksMsgBuf.WriteString(task.MessageToUser())
+		tasksMsgBuf.WriteString(", ")
 	}
 	return tasksMsgBuf.String()
 }

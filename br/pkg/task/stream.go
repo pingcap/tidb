@@ -375,7 +375,7 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !list.Empty() {
-		return errors.Errorf("There are some lightning/restore tasks running: %s, "+
+		return errors.Errorf("There are some lightning/restore tasks running: %s"+
 			"please stop or wait finishing at first. "+
 			"If the lightning/restore task is forced to terminate by system, "+
 			"please wait for ttl to decrease to 0.", list.MessageToUser())
