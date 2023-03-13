@@ -20,11 +20,6 @@ const (
 	StepTwo
 )
 
-// TaskType of Example.
-const (
-	TaskTypeExample = "Example"
-)
-
 // TaskExample is the example task.
 type TaskExample struct{}
 
