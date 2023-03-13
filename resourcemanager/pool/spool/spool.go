@@ -42,6 +42,7 @@ type Pool struct {
 	running            atomic.Int32
 	waiting            atomic.Int32
 	isStop             atomic.Bool
+	cond               sync.Cond
 	concurrencyMetrics prometheus.Gauge
 	taskManager        pooltask.TaskManager[any, any, any, any, pooltask.NilContext]
 	pool.BasePool
@@ -55,6 +56,7 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
 		taskManager:        pooltask.NewTaskManager[any, any, any, any, pooltask.NilContext](size), // TODO: this general type
 	}
+	result.cond = *sync.NewCond(&result.mu)
 	if size == 0 {
 		return nil, pool.ErrPoolParamsInvalid
 	}
@@ -83,6 +85,7 @@ func (p *Pool) Tune(size int32) {
 // Run runs a function in the pool.
 func (p *Pool) Run(fn func()) error {
 	p.waiting.Add(1)
+	defer p.cond.Signal()
 	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
@@ -127,6 +130,7 @@ func (p *Pool) run(fn func()) {
 // RunWithConcurrency runs a function in the pool with concurrency.
 func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	p.waiting.Add(1)
+	defer p.cond.Signal()
 	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
@@ -185,7 +189,7 @@ func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
 	// wait for all the task in the pending to exit
 	for p.waiting.Load() > 0 {
-		_ = "" // it is empty statement to skip empty-block linter.
+		p.cond.Wait()
 	}
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
