@@ -162,6 +162,27 @@ func FailJob(
 	return err
 }
 
+// DropJob drops a load data job.
+func DropJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err := conn.ExecuteInternal(ctx,
+		`DELETE FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err == nil {
+		return err
+	}
+	if conn.GetSessionVars().StmtCtx.AffectedRows() < 1 {
+		return TODOErr
+	}
+	return err
+}
+
 // JobExpectedStatus is the expected status of a load data job. User can set the
 // expected status of a job and worker will respect it.
 type JobExpectedStatus int

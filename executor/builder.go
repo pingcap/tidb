@@ -835,6 +835,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 				}
 			}
 		}
+	case *ast.LoadDataActionStmt:
+		return &LoadDataActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
+		}
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity

@@ -1262,3 +1262,30 @@ func (k loadDataVarKeyType) String() string {
 
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
+
+var (
+	_ Executor = (*LoadDataActionExec)(nil)
+)
+
+// LoadDataActionExec executes LoadDataActionStmt.
+type LoadDataActionExec struct {
+	baseExecutor
+
+	tp    ast.LoadDataActionTp
+	jobID int64
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	sqlExec := e.ctx.(sqlexec.SQLExecutor)
+	user := e.ctx.GetSessionVars().User.String()
+
+	switch e.tp {
+	case ast.LoadDataCancel:
+		return asyncloaddata.UpdateJobExpectedStatus()
+	case ast.LoadDataDrop:
+		return asyncloaddata.DropJob(ctx, sqlExec, e.jobID, user)
+	default:
+		return errors.Errorf("not implemented LOAD DATA action %v", e.tp)
+	}
+}
