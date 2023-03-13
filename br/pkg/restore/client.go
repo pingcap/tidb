@@ -2554,45 +2554,46 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 	ingestRecorder.UpdateIndexInfo(allSchema)
 	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			addSQL  string
+			addSQL  strings.Builder
 			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
 		)
 
 		if info.IsPrimary {
-			addSQL = fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList)
+			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName, info.TableName)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else if info.IndexInfo.Unique {
-			addSQL = fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList)
+			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
-			addSQL = fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList)
+			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
 		if len(indexTypeStr) > 0 {
-			addSQL = addSQL + fmt.Sprintf(" USING %s", indexTypeStr)
+			addSQL.WriteString(" USING ")
+			addSQL.WriteString(indexTypeStr)
 		}
 
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
-			addSQL = addSQL + " COMMENT %?"
+			addSQL.WriteString(" COMMENT %?")
 			addArgs = append(addArgs, info.IndexInfo.Comment)
 		}
 
 		if info.IndexInfo.Invisible {
-			addSQL = addSQL + " INVISIBLE"
+			addSQL.WriteString(" INVISIBLE")
 		} else {
-			addSQL = addSQL + " VISIBLE"
+			addSQL.WriteString(" VISIBLE")
 		}
 
 		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
 			return errors.Trace(err)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, addSQL, addArgs...); err != nil {
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
