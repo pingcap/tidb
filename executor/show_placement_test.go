@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 

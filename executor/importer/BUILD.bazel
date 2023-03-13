@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/config",
-        "//executor/exeerrors",
         "//parser/ast",
         "//parser/mysql",
         "//planner/core",
@@ -15,6 +14,7 @@ go_library(
         "//table",
         "//util/chunk",
         "//util/dbterror",
+        "//util/dbterror/exeerrors",
     ],
 )
 
@@ -24,11 +24,11 @@ go_test(
     embed = [":importer"],
     deps = [
         "//br/pkg/lightning/config",
-        "//executor/exeerrors",
         "//expression",
         "//parser",
         "//parser/ast",
         "//planner/core",
+        "//util/dbterror/exeerrors",
         "//util/mock",
         "@com_github_stretchr_testify//require",
     ],

@@ -20,10 +20,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 

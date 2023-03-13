@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 )
 
 const (

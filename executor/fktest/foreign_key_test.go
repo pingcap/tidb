@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -39,6 +38,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )

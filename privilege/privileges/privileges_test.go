@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"

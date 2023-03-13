@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 

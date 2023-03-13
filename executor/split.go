@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"

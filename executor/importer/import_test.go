@@ -21,11 +21,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/executor/exeerrors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
