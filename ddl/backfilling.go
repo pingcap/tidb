@@ -147,7 +147,6 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	reorgTp       model.ReorgType
 	sessCtx       sessionctx.Context
 	schemaName    string
 	table         table.Table
@@ -156,7 +155,7 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp model.ReorgType,
+func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
@@ -165,7 +164,6 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp mod
 		id:         id,
 		ddlCtx:     ctx,
 		sessCtx:    sessCtx,
-		reorgTp:    reorgTp,
 		schemaName: schemaName,
 		table:      tbl,
 		batchCnt:   int(variable.GetDDLReorgBatchSize()),
@@ -388,9 +386,13 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) initPartitionIndexInfo(task *reorgBackfillTask) {
 	if pt, ok := w.GetCtx().table.(table.PartitionedTable); ok {
-		if addIdxWorker, ok := w.backfiller.(*addIndexTxnWorker); ok {
+		switch w := w.backfiller.(type) {
+		case *addIndexTxnWorker:
 			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
-			addIdxWorker.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
+			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
+		case *addIndexIngestWorker:
+			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
+			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 		}
 	}
 }
@@ -866,7 +868,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
 			if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 				idxWorker, err := newAddIndexIngestWorker(b.tbl, backfillCtx,
 					job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
@@ -889,7 +891,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 				worker = idxWorker
 			}
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.currElement.ID)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker

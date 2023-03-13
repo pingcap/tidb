@@ -154,7 +154,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		}
 
 		var bf backfiller
-		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl, d.jobContext(jobID), "add_idx_rate", true))
+		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, schemaName, tbl, d.jobContext(jobID), "add_idx_rate", true))
 		if err != nil {
 			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
 				err = nil
