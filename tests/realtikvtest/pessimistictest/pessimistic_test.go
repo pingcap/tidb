@@ -3313,3 +3313,94 @@ func TestAggressiveLockingRetry(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101 102", "101 201 200"))
 }
+
+func TestIssue40114(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", `return("skip")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
+	}()
+
+	tk.MustExec("set @@innodb_lock_wait_timeout = 1")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	// tk2 block tk on row 2.
+	tk2.MustExec("update t set v = v + 1 where id = 2")
+	// tk wait until timeout.
+	tk.MustGetErrCode("delete from t where id = 1 or id = 2", mysql.ErrLockWaitTimeout)
+	tk2.MustExec("commit")
+	// Now, row 1 should have been successfully locked since it's not in the same batch with row 2 (controlled by
+	// failpoint `twoPCRequestBatchSizeLimit`); then it's not pessimisticRollback-ed (controlled by failpoint
+	// `beforeAsyncPessimisticRollback`, which simulates a network fault).
+	// Ensure the row is still locked.
+	time.Sleep(time.Millisecond * 50)
+	tk2.MustExec("begin pessimistic")
+	tk2.MustGetErrCode("select * from t where id = 1 for update nowait", mysql.ErrLockAcquireFailAndNoWaitSet)
+	tk2.MustExec("rollback")
+
+	// tk is still in transaction.
+	tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("0"))
+	// This will unexpectedly succeed in issue 40114.
+	tk.MustGetErrCode("insert into t values (1, 2)", mysql.ErrDupEntry)
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
+}
+
+func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where a = 1 for update")
+	tk.MustExec("commit")
+
+	lockedWithConflictCounter := 0
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Test key exist + write conflict, and locking with conflict takes effect.
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 2)")
+	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
+		lockedWithConflictCounter++
+		return nil
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/lockedWithConflictOccurs"))
+	}()
+	ch := mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows("1 2"))
+	require.Equal(t, lockedWithConflictCounter, 1)
+	tk.MustExec("commit")
+
+	// Test key not exist + write conflict, in which case locking with conflict is disabled.
+	lockedWithConflictCounter = 0
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t where a = 1")
+	ch = mustQueryAsync(tk, "select * from t where a = 1 for update")
+	mustTimeout(t, ch, time.Millisecond*100)
+
+	tk2.MustExec("commit")
+	mustRecv(t, ch).Check(testkit.Rows())
+	require.Equal(t, lockedWithConflictCounter, 0)
+	tk.MustExec("commit")
+}

@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "datamodel.go",
         "datasink.go",
-        "metrics.go",
         "pubsub.go",
         "reporter.go",
         "single_target.go",
@@ -14,11 +13,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
-        "//metrics",
         "//util",
         "//util/hack",
         "//util/logutil",
         "//util/topsql/collector",
+        "//util/topsql/reporter/metrics",
         "//util/topsql/state",
         "//util/topsql/stmtstats",
         "@com_github_pingcap_errors//:errors",
@@ -27,6 +26,7 @@ go_library(
         "@com_github_wangjohn_quickselect//:quickselect",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],

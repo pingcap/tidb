@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	field_types "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -83,7 +84,6 @@ const (
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName        = "default"
-	defaultResourceGroupName          = "default"
 	tiflashCheckPendingTablesWaitTime = 3000 * time.Millisecond
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
@@ -948,7 +948,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetType()) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal())
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -973,7 +973,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal())
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -1224,7 +1224,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
-		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -2150,7 +2150,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		err = checkPartitionByHash(ctx, tbInfo)
 	case model.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)
@@ -2556,6 +2556,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) error {
+	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+		injectBatchSize := val.(int)
+		if len(infos) > injectBatchSize {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
@@ -2867,7 +2873,21 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	return checkListPartitionValue(ctx, tbInfo)
 }
 
-func isColTypeAllowedAsPartitioningCol(fieldType types.FieldType) bool {
+func isValidKeyPartitionColType(fieldType types.FieldType) bool {
+	switch fieldType.GetType() {
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+		return false
+	default:
+		return true
+	}
+}
+
+func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
+	// For key partition, the permitted partition field types can be all field types except
+	// BLOB, JSON, Geometry
+	if partType == model.PartitionTypeKey {
+		return isValidKeyPartitionColType(fieldType)
+	}
 	// The permitted data types are shown in the following list:
 	// All integer types
 	// DATE and DATETIME
@@ -2890,7 +2910,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
-		if !isColTypeAllowedAsPartitioningCol(colInfo.FieldType) {
+		if !isColTypeAllowedAsPartitioningCol(tbInfo.Partition.Type, colInfo.FieldType) {
 			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
 		}
 	}
@@ -3026,6 +3046,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 		placementSettings.FollowerConstraints = stringVal
 	case ast.PlacementOptionVoterConstraints:
 		placementSettings.VoterConstraints = stringVal
+	case ast.PlacementOptionSurvivalPreferences:
+		placementSettings.SurvivalPreferences = stringVal
 	default:
 		return errors.Trace(errors.New("unknown placement policy option"))
 	}
@@ -3033,18 +3055,26 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64) error {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
 	switch typ {
-	case ast.ResourceRRURate:
-		resourceGroupSettings.RRURate = uintVal
-	case ast.ResourceWRURate:
-		resourceGroupSettings.WRURate = uintVal
+	case ast.ResourceRURate:
+		resourceGroupSettings.RURate = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
 		resourceGroupSettings.IOReadBandwidth = stringVal
 	case ast.ResourceUnitIOWriteBandwidth:
 		resourceGroupSettings.IOWriteBandwidth = stringVal
+	case ast.ResourceBurstableOpiton:
+		// Some about BurstLimit(b):
+		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
+		//   - If b < 0, that means the limiter is unlimited capacity and fillrate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
+		//   - If b > 0, that means the limiter is limited capacity. (current not used).
+		limit := int64(0)
+		if boolValue {
+			limit = -1
+		}
+		resourceGroupSettings.BurstLimit = limit
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
 	}
@@ -3321,7 +3351,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
-			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+			err = d.ReorganizePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizeFirstPartition:
 			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
 		case ast.AlterTableReorganizeLastPartition:
@@ -3897,6 +3927,181 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
+// getReorganizedDefinitions return the definitions as they would look like after the REORGANIZE PARTITION is done.
+func getReorganizedDefinitions(pi *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) []model.PartitionDefinition {
+	tmpDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions)+len(pi.AddingDefinitions)-len(idMap))
+	if pi.Type == model.PartitionTypeList {
+		replaced := false
+		for i := range pi.Definitions {
+			if _, ok := idMap[i]; ok {
+				if !replaced {
+					tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+					replaced = true
+				}
+				continue
+			}
+			tmpDefs = append(tmpDefs, pi.Definitions[i])
+		}
+		if !replaced {
+			// For safety, for future non-partitioned table -> partitioned
+			tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+		}
+		return tmpDefs
+	}
+	// Range
+	tmpDefs = append(tmpDefs, pi.Definitions[:firstPartIdx]...)
+	tmpDefs = append(tmpDefs, pi.AddingDefinitions...)
+	if len(pi.Definitions) > (lastPartIdx + 1) {
+		tmpDefs = append(tmpDefs, pi.Definitions[lastPartIdx+1:]...)
+	}
+	return tmpDefs
+}
+
+func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int, int, map[int]struct{}, error) {
+	idMap := make(map[int]struct{})
+	var firstPartIdx, lastPartIdx = -1, -1
+	for _, name := range names {
+		partIdx := pi.FindPartitionDefinitionByName(name.L)
+		if partIdx == -1 {
+			return 0, 0, nil, errors.Trace(dbterror.ErrWrongPartitionName)
+		}
+		if _, ok := idMap[partIdx]; ok {
+			return 0, 0, nil, errors.Trace(dbterror.ErrSameNamePartition)
+		}
+		idMap[partIdx] = struct{}{}
+		if firstPartIdx == -1 {
+			firstPartIdx = partIdx
+		} else {
+			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+		}
+		if lastPartIdx == -1 {
+			lastPartIdx = partIdx
+		} else {
+			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+		}
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
+		}
+	}
+
+	return firstPartIdx, lastPartIdx, idMap, nil
+}
+
+// ReorganizePartitions reorganize one set of partitions to a new set of partitions.
+func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	switch pi.Type {
+	case model.PartitionTypeRange, model.PartitionTypeList:
+	default:
+		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+	}
+	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(spec.PartitionNames, pi)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkReorgPartitionDefs(ctx, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+		return errors.Trace(err)
+	}
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionReorganizePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.PartitionNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+	// partInfo contains only the new added partition, we have to combine it with the
+	// old partitions to check all partitions is strictly increasing.
+	pi := tblInfo.Partition
+	clonedMeta := tblInfo.Clone()
+	clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
+	clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if pi.Type == model.PartitionTypeRange {
+		if lastPartIdx == len(pi.Definitions)-1 {
+			// Last partition dropped, OK to change the end range
+			// Also includes MAXVALUE
+			return nil
+		}
+		// Check if the replaced end range is the same as before
+		lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+		lastOldPartition := pi.Definitions[lastPartIdx]
+		if len(pi.Columns) > 0 {
+			newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if newGtOld {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if oldGtNew {
+				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+			}
+			return nil
+		}
+
+		isUnsigned := isPartExprUnsigned(tblInfo)
+		currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRangeValue, _, err := getRangeValue(ctx, partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if currentRangeValue != newRangeValue {
+			return errors.Trace(dbterror.ErrRangeNotIncreasing)
+		}
+	}
+	return nil
+}
+
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
 func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -3921,13 +4126,12 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	// Key type partition cannot be constructed currently, ignoring it for now.
 	case model.PartitionTypeKey:
+		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
-
-	return errors.Trace(err)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -4774,7 +4978,7 @@ func GetModifiableColumnJob(
 			if col.Name.L != newCol.Name.L {
 				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
-			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
+			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
 			pi := pt.Meta().GetPartitionInfo()
@@ -5669,7 +5873,6 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 	// This DDL will update the table charset to default charset.
 	origCharset, origCollate, err = ResolveCharsetCollation(
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
@@ -7605,24 +7808,25 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	return false
 }
 
-// CreateResourceGroup implements the DDL interface, creates a resource group.
-func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
-	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
+// AddResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	groupInfo.Name = groupName
-	for _, opt := range stmt.ResourceGroupOptionList {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
-		if err != nil {
-			return err
-		}
-	}
-	if !stmt.IfNotExists {
-		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
-			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
-		}
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return err
 	}
 
-	if groupName.L == defaultResourceGroupName {
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			err = infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+	}
+
+	if groupName.L == variable.DefaultResourceGroupName {
 		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
 	}
 
@@ -7668,6 +7872,17 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 		return err
 	}
 
+	// check to see if some user has dependency on the group
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	if matched {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
+		return err
+	}
+
 	job := &model.Job{
 		SchemaID:   group.ID,
 		SchemaName: group.Name.L,
@@ -7683,11 +7898,12 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {
 			return nil, err
 		}
 	}
+	groupInfo.ResourceGroupSettings.Adjust()
 	return groupInfo, nil
 }
 
@@ -7698,7 +7914,12 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
-		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		err := infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	}
 	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
 	if err != nil {

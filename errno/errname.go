@@ -92,7 +92,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMultiplePriKey:                           mysql.Message("Multiple primary key defined", nil),
 	ErrTooManyKeys:                              mysql.Message("Too many keys specified; max %d keys allowed", nil),
 	ErrTooManyKeyParts:                          mysql.Message("Too many key parts specified; max %d parts allowed", nil),
-	ErrTooLongKey:                               mysql.Message("Specified key was too long; max key length is %d bytes", nil),
+	ErrTooLongKey:                               mysql.Message("Specified key was too long (%d bytes); max key length is %d bytes", nil),
 	ErrKeyColumnDoesNotExits:                    mysql.Message("Key column '%-.192s' doesn't exist in table", nil),
 	ErrBlobUsedAsKey:                            mysql.Message("BLOB column '%-.192s' can't be used in key specification with the used table type", nil),
 	ErrTooBigFieldlength:                        mysql.Message("Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead", nil),
@@ -924,6 +924,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
 	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
 	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
+	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -1039,6 +1040,18 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTempTableNotAllowedWithTTL:       mysql.Message("Set TTL for temporary table is not allowed", nil),
 	ErrUnsupportedTTLReferencedByFK:     mysql.Message("Set TTL for a table referenced by foreign key is not allowed", nil),
 	ErrUnsupportedPrimaryKeyTypeWithTTL: mysql.Message("Unsupported clustered primary key type FLOAT/DOUBLE for TTL", nil),
+	ErrLoadDataFromServerDisk:           mysql.Message("Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '%s' needs to specify the clause of LOCAL first", nil),
+	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
+	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
+	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataCantAccess:               mysql.Message("Access to the source file has been denied. Please check the URI, access key and secret access key are correct", nil),
+	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
+	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
+	ErrUnknownOption:                    mysql.Message("Unknown option %s", nil),
+	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
+	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
+	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1084,7 +1097,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
 	ErrPartitionStatsMissing:       mysql.Message("Build global-level stats failed due to missing partition-level stats: %s", nil),
 	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
-	ErrDDLSetting:                  mysql.Message("Error happened when enable/disable DDL: %s", nil),
+	ErrDDLSetting:                  mysql.Message("Error happened when %s DDL: %s", nil),
 	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
@@ -1101,8 +1114,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
 
-	ErrColumnInChange:               mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
-	ErrResourceGroupSupportDisabled: mysql.Message("Resource group feature is disabled", nil),
+	ErrColumnInChange:                 mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
+	ErrResourceGroupSupportDisabled:   mysql.Message("Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature", nil),
+	ErrResourceGroupConfigUnavailable: mysql.Message("Resource group configuration is unavailable", nil),
+	ErrResourceGroupThrottled:         mysql.Message("Exceeded resource group quota limitation", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

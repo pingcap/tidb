@@ -310,7 +310,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
+	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -456,7 +456,7 @@ func (t *Tracker) Consume(bs int64) {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
 					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
-						zap.Uint64("connID", sessionRootTracker.SessionID))
+						zap.Uint64("conn", sessionRootTracker.SessionID))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
@@ -739,8 +739,14 @@ func (t *Tracker) DetachFromGlobalTracker() {
 
 // ReplaceBytesUsed replace bytesConsume for the tracker
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
-	t.Consume(-t.BytesConsumed())
-	t.Consume(bytes)
+	t.Consume(bytes - t.BytesConsumed())
+}
+
+// Reset detach the tracker from the old parent and clear the old children. The label and byteLimit would not be reset.
+func (t *Tracker) Reset() {
+	t.Detach()
+	t.ReplaceBytesUsed(0)
+	t.mu.children = nil
 }
 
 func (t *Tracker) getParent() *Tracker {

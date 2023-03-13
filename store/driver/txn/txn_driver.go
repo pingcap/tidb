@@ -18,9 +18,10 @@ import (
 	"bytes"
 	"context"
 	"sync/atomic"
+	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -69,6 +71,10 @@ func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
+	// For partition table, also cached tblInfo with TableID for global index.
+	if info != nil && info.ID != id {
+		txn.idxNameCache[info.ID] = info
+	}
 }
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
@@ -165,11 +171,8 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "tikvTxn.BatchGet")
+	defer r.End()
 	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
@@ -275,6 +278,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetTxnSource(val.(uint64))
 	case kv.ResourceGroupName:
 		txn.KVTxn.SetResourceGroupName(val.(string))
+	case kv.LoadBasedReplicaReadThreshold:
+		txn.KVTxn.GetSnapshot().SetLoadBasedReplicaReadThreshold(val.(time.Duration))
 	}
 }
 
@@ -286,6 +291,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
+	case kv.RequestSourceInternal:
+		return txn.RequestSourceInternal
 	case kv.RequestSourceType:
 		return txn.RequestSourceType
 	default:
@@ -364,6 +371,7 @@ func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, key
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
+		failpoint.Inject("lockedWithConflictOccurs", func() {})
 		var bufTableID, bufRest bytes.Buffer
 		foundKey := false
 		for k, v := range lockCtx.Values {

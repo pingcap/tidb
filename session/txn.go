@@ -601,6 +601,8 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
+		// set resource group name for kv request such as lock pessimistic keys.
+		txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
 	}
 	return txn, nil
 }
@@ -633,6 +635,16 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 
 	if !tablecodec.IsIndexKey(k) {
 		return true
+	}
+
+	if tablecodec.IsTempIndexKey(k) {
+		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
+		if err != nil {
+			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))
+			return false
+		}
+		current := tmpVal.Current()
+		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
 	}
 
 	return tablecodec.IndexKVIsUnique(v)

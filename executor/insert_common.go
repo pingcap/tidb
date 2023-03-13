@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -657,6 +657,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		col.ColumnInfo.Offset = len(tCols)
 		tCols = append(tCols, col)
 	}
+	rowCntInLoadData := uint64(0)
+	if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		rowCntInLoadData = e.rowCount
+	}
+
 	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
@@ -668,7 +673,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -705,7 +710,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}
@@ -1142,11 +1147,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	replace bool) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("InsertValues.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
+	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
 	start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
@@ -1191,12 +1192,15 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if r.ignored {
 			continue
 		}
-		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				if replace {
-					err2 := e.removeRow(ctx, txn, r)
+					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+					if err != nil {
+						return err
+					}
+					_, err2 := e.removeRow(ctx, txn, handle, r, false)
 					if err2 != nil {
 						return err2
 					}
@@ -1208,15 +1212,36 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+		skip := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
-				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				skip = true
-				break
-			}
-			if !kv.IsErrNotFound(err) {
+				if replace {
+					_, handle, err := tables.FetchDuplicatedHandle(
+						ctx,
+						uk.newKey,
+						true,
+						txn,
+						e.Table.Meta().ID,
+						uk.commonHandle,
+					)
+					if err != nil {
+						return err
+					}
+					if handle == nil {
+						continue
+					}
+					_, err = e.removeRow(ctx, txn, handle, r, true)
+					if err != nil {
+						return err
+					}
+				} else {
+					// If duplicate keys were found in BatchGet, mark row = nil.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					skip = true
+					break
+				}
+			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -1238,12 +1263,16 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
-func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) error {
-	handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
-	if err != nil {
-		return err
-	}
-
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeRow(
+	ctx context.Context,
+	txn kv.Transaction,
+	handle kv.Handle,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
@@ -1253,24 +1282,35 @@ func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBe
 		if kv.IsErrNotFound(err) {
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
-		return err
+		return false, err
 	}
 
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if identical {
-		return nil
+		if inReplace {
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		return true, nil
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
-		return err
+		return false, err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
+	if inReplace {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	} else {
+		e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	}
 
-	return nil
+	return false, nil
 }
 
 // equalDatumsAsBinary compare if a and b contains the same datum values in binary collation.

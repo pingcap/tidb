@@ -64,6 +64,7 @@ type ProcessInfo struct {
 	User                  string
 	Info                  string
 	Port                  string
+	ResourceGroupName     string
 	PlanExplainRows       [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
@@ -135,7 +136,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName)
 }
 
 // GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).

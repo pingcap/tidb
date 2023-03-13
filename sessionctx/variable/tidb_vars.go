@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
 
@@ -48,6 +50,9 @@ const (
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
+	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
+
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -61,6 +66,9 @@ const (
 
 	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
 	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
+
+	// TiDBOptEnable3StageMultiDistinctAgg is used to indicate whether to plan and execute the multi distinct agg in 3 stages
+	TiDBOptEnable3StageMultiDistinctAgg = "tidb_opt_enable_three_stage_multi_distinct_agg"
 
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
@@ -206,6 +214,9 @@ const (
 
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
+	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -697,6 +708,12 @@ const (
 	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
 	TiDBCostModelVersion = "tidb_cost_model_version"
 
+	// TiDBIndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	// IndexJoin can cause plenty of extra double read tasks, which consume lots of resources and take a long time.
+	// Since the number of double read tasks is hard to estimated accurately, we leave this variable to let us can adjust this
+	// part of cost manually.
+	TiDBIndexJoinDoubleReadPenaltyCostRate = "tidb_index_join_double_read_penalty_cost_rate"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
@@ -764,6 +781,9 @@ const (
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
 
+	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
+
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
@@ -779,17 +799,38 @@ const (
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
 
-	// TiDBEnablePlanReplayerContinuesCapture indicates whether to enable continues capture
-	TiDBEnablePlanReplayerContinuesCapture = "tidb_enable_plan_replayer_continues_capture"
+	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
+	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
 
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
+
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
+
+	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
+	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
+
+	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
+	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
+	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -900,6 +941,19 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
+	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
+	TiDBStmtSummaryFilename = "tidb_stmt_summary_filename"
+	// TiDBStmtSummaryFileMaxDays indicates how many days the files written by stmtsummary will be kept.
+	TiDBStmtSummaryFileMaxDays = "tidb_stmt_summary_file_max_days"
+	// TiDBStmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file written by stmtsummary.
+	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
+	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
+	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
 )
 
 // TiDB intentional limits
@@ -930,6 +984,7 @@ const (
 	DefSkipUTF8Check                               = false
 	DefSkipASCIICheck                              = false
 	DefOptAggPushDown                              = false
+	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
 	DefOptWriteRowID                               = false
@@ -1031,7 +1086,7 @@ const (
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
-	DefTiDBEnableTelemetry                         = true
+	DefTiDBEnableTelemetry                         = false
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
@@ -1077,6 +1132,7 @@ const (
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
+	DefTiDB3StageMultiDistinctAgg                  = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1126,6 +1182,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
+	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1150,17 +1207,23 @@ const (
 	DefTiDBTTLDeleteBatchMaxSize                           = 10240
 	DefTiDBTTLDeleteBatchMinSize                           = 1
 	DefTiDBTTLDeleteRateLimit                              = 0
+	DefTiDBTTLRunningTasks                                 = -1
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBStoreBatchSize                                  = 4
 	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture                 = false
 	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
-	DefTiDBEnableResourceControl                           = false
+	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                           = true
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                      = true
+	DefTiDBLoadBasedReplicaReadThreshold                   = 0
 )
 
 // Process global variables.
@@ -1237,7 +1300,10 @@ var (
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl = atomic.NewBool(false)
 )
 
 var (
@@ -1259,6 +1325,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {

@@ -520,14 +520,23 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("explain select * from t where a = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 
+	getStatsHealthy := func() int {
+		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
+		require.Len(t, rows, 1)
+		healthy, err := strconv.Atoi(rows[0][3].(string))
+		require.NoError(t, err)
+		return healthy
+	}
+
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 30)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
-
 	tk.MustExec("insert into t values (1)") // 35 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 25)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("analyze table t")
@@ -535,11 +544,13 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("delete from t limit 24") // 11 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 31)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("delete from t limit 1") // 10 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 28)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
 
@@ -657,4 +668,78 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 			require.Equal(t, "allEvicted", row[10].(string))
 		}
 	}
+}
+
+func TestSingleColumnIndexNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c varchar(20), d varchar(20), index idx_a(a), index idx_b(b), index idx_c(c), index idx_d(d))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1, 1, 'xxx', 'zzz'), (2, 2, 'yyy', 'zzz'), (1, 3, null, 'zzz')")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Sort().Rows()
+	expectedResults := [][]string{
+		{"a", "2", "0"}, {"b", "3", "0"}, {"c", "2", "32"}, {"d", "1", "0"},
+		{"idx_a", "2", "0"}, {"idx_b", "3", "0"}, {"idx_c", "2", "32"}, {"idx_d", "1", "0"},
+	}
+	for i, row := range rows {
+		require.Equal(t, expectedResults[i][0], row[3]) // column_name
+		require.Equal(t, expectedResults[i][1], row[6]) // distinct_count
+		require.Equal(t, expectedResults[i][2], row[7]) // null_count
+	}
+}
+
+func TestColumnStatsLazyLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	// Set `Lease` to `Millisecond` to enable column stats lazy load.
+	h.SetLease(time.Millisecond)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	c1 := tblInfo.Columns[0]
+	c2 := tblInfo.Columns[1]
+	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
+	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
+	tk.MustExec("analyze table t")
+	require.True(t, h.GetTableStats(tblInfo).Columns[c1.ID].IsAllEvicted())
+	require.True(t, h.GetTableStats(tblInfo).Columns[c2.ID].IsAllEvicted())
+}
+
+func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (10),partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	p0 := tblInfo.Partition.Definitions[0]
+	p1 := tblInfo.Partition.Definitions[1]
+	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
+	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
+	h.Clear()
+	require.NoError(t, h.Update(is))
+	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
+	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
 }
