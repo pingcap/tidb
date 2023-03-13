@@ -142,7 +142,6 @@ go_test(
         "//parser/model",
         "//parser/terror",
         "//planner/core",
-        "//privilege/privileges",
         "//server",
         "//sessionctx",
         "//sessionctx/variable",
