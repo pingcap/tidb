@@ -20,6 +20,7 @@ import (
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,7 +231,12 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	// a partitioned table cannot rely on session context/sql modes, so use a default one!
 	ctx := mock.NewContext()
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	vars := ctx.GetSessionVars()
+	// Originally, each session has it's own PlanColumnID to ensure the uniqueness of the column ID.
+	// The ctx here is a mocked one, and the returned partition expression is used by different sessions.
+	// So use a large enough value to avoid potentially conflicting.
+	vars.PlanColumnID = math.MaxInt32
+	dbName := model.NewCIStr(vars.CurrentDB)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err

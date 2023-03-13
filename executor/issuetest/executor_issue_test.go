@@ -1401,3 +1401,16 @@ func TestIssueRaceWhenBuildingExecutorConcurrently(t *testing.T) {
 	}
 	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t t1 right join t t2 on t1.a = t2.b and t1.c = t2.c")
 }
+
+func TestIssue42135(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx1, tx2")
+	tk.MustExec("CREATE TABLE `tx1`  (`ID` varchar(13), `a` varchar(13),`b` varchar(4000),`ltype` int(5) NOT NULL)")
+	tk.MustExec("CREATE TABLE `tx2`  (`ID` varchar(13),`rid` varchar(12),`a` varchar(9),`b` varchar(8),`c` longtext,`d` varchar(12),`ltype` int(5) NOT NULL) PARTITION BY LIST (`ltype`) (PARTITION `p1` VALUES IN (501), PARTITION `p2` VALUES IN (502))")
+	tk.MustExec("insert into tx1 values(1,1,1,501);")
+	tk.MustExec("insert into tx2 values(1,1,1,1,1,1,501);")
+	tk.MustQuery("select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';").Check(
+		testkit.Rows("1 1 1 501 1 1 1 1 1 1 501"))
+}
