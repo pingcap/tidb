@@ -796,6 +796,9 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 	}
+	if v.MemTablePlan != nil {
+		e.MemTableExec = b.build(v.MemTablePlan)
+	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
 		if _, err := e.ctx.Txn(true); err != nil {

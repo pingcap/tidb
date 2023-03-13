@@ -104,12 +104,26 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+
+	// Used for `show processlist`. It reads data from information_schema.cluster_processlist so we can reuse the code fetching processes from remote servers.
+	MemTableExec Executor
 }
 
 type showTableRegionRowItem struct {
 	regionMeta
 	schedulingConstraints string
 	schedulingState       string
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	if e.MemTableExec != nil {
+		return e.MemTableExec.Open(ctx)
+	}
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -141,6 +155,19 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *ShowExec) Close() (err error) {
+	defer func() {
+		if err == nil {
+			err = e.base().Close()
+		}
+	}()
+	if e.MemTableExec != nil {
+		return e.MemTableExec.Close()
+	}
+	return
 }
 
 func (e *ShowExec) fetchAll(ctx context.Context) error {
@@ -216,7 +243,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowErrors:
 		return e.fetchShowWarnings(true)
 	case ast.ShowProcessList:
-		return e.fetchShowProcessList()
+		return e.fetchShowProcessList(ctx)
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsExtended:
@@ -474,7 +501,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcessList() error {
+func (e *ShowExec) fetchShowProcessList(ctx context.Context) error {
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil
@@ -488,17 +515,26 @@ func (e *ShowExec) fetchShowProcessList() error {
 		}
 	}
 
-	pl := sm.ShowProcessList()
-	for _, pi := range pl {
-		// If you have the PROCESS privilege, you can see all threads.
-		// Otherwise, you can see only your own threads.
-		if !hasProcessPriv && pi.User != loginUser.Username {
-			continue
-		}
-		row := pi.ToRowForShow(e.Full)
-		e.appendRow(row)
+	if e.MemTableExec == nil {
+		return nil
 	}
-	return nil
+
+	req := newFirstChunk(e.MemTableExec)
+	for {
+		err := e.MemTableExec.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
+			return err
+		}
+		iter := chunk.NewIterator4Chunk(req)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			user := r.GetString(2)
+			if !hasProcessPriv && user != loginUser.Username {
+				continue
+			}
+			e.result.AppendRow(r)
+		}
+		req = chunk.Renew(req, e.ctx.GetSessionVars().MaxChunkSize)
+	}
 }
 
 func (e *ShowExec) fetchShowOpenTables() error {

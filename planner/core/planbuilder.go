@@ -3294,6 +3294,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+	case ast.ShowProcessList:
+		charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+		const sql = "SELECT INSTANCE, ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO FROM INFORMATION_SCHEMA.CLUSTER_PROCESSLIST"
+		stmt, err := parser.New().ParseOneStmt(sql, charset, collation)
+		if err != nil {
+			return nil, err
+		}
+		plan, _, err := OptimizeAstNode(ctx, b.ctx, stmt, b.is)
+		if err != nil {
+			return nil, err
+		}
+		p.MemTablePlan = plan
 	}
 
 	schema, names := buildShowSchema(show, isView, isSequence)
@@ -5135,8 +5147,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
+		names = []string{"Instance", "Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	case ast.ShowPumpStatus:
 		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
