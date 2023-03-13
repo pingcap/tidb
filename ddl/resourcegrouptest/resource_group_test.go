@@ -17,6 +17,7 @@ package resourcegrouptest_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -38,11 +39,11 @@ func TestResourceGroupBasic(t *testing.T) {
 	re := require.New(t)
 
 	hook := &callback.TestDDLCallback{Do: dom}
-	var groupID int64
+	var groupID atomic.Int64
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// job.SchemaID will be assigned when the group is created.
 		if (job.SchemaName == "x" || job.SchemaName == "y") && job.Type == model.ActionCreateResourceGroup && job.SchemaID != 0 {
-			groupID = job.SchemaID
+			groupID.Store(job.SchemaID)
 			return
 		}
 	}
@@ -61,7 +62,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "x", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(1000), groupInfo.RURate)
 	}
 	// Check the group is correctly reloaded in the information schema.
@@ -105,7 +106,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(4000), groupInfo.RURate)
 		require.Equal(t, int64(4000), groupInfo.BurstLimit)
 	}
@@ -115,7 +116,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(5000), groupInfo.RURate)
 		require.Equal(t, int64(-1), groupInfo.BurstLimit)
 	}
