@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "error_test.go",
         "main_test.go",
+        "multi_file_test.go",
         "one_csv_test.go",
         "one_parquet_test.go",
         "one_sqldump_test.go",
@@ -14,7 +15,6 @@ go_test(
     embedsrcs = ["test.parquet"],
     flaky = True,
     deps = [
-        "//executor",
         "//kv",
         "//parser/terror",
         "//testkit",

@@ -99,6 +99,8 @@ const (
 	TxnSource
 	// ResourceGroupName set the bind resource group name.
 	ResourceGroupName
+	// LoadBasedReplicaReadThreshold sets the TiKV wait duration threshold of enabling replica read automatically.
+	LoadBasedReplicaReadThreshold
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -188,4 +190,6 @@ const (
 	InternalTxnTTL = "TTL"
 	// InternalLoadData is the type of LOAD DATA usage
 	InternalLoadData = "LoadData"
+	// InternalDistTask is the type of distributed task.
+	InternalDistTask = "DistTask"
 )

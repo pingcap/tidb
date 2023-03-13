@@ -1461,6 +1461,21 @@ error = '''
 Subquery returns more than 1 row
 '''
 
+["executor:1261"]
+error = '''
+Row %d doesn't contain data for all columns
+'''
+
+["executor:1262"]
+error = '''
+Row %d was truncated; it contained more data than there were input columns
+'''
+
+["executor:1263"]
+error = '''
+Column set to default value; NULL supplied to NOT NULL column '%s' at row %d
+'''
+
 ["executor:1295"]
 error = '''
 This command is not supported in the prepared statement protocol yet
@@ -1684,6 +1699,26 @@ Failed to read source files. Reason: %s. %s
 ["executor:8162"]
 error = '''
 
+'''
+
+["executor:8163"]
+error = '''
+Unknown option %s
+'''
+
+["executor:8164"]
+error = '''
+Invalid option value for %s
+'''
+
+["executor:8165"]
+error = '''
+Option %s specified more than once
+'''
+
+["executor:8166"]
+error = '''
+Unsupported option %s for %s import mode
 '''
 
 ["executor:8212"]
@@ -2749,6 +2784,21 @@ assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, e
 ["tikv:8229"]
 error = '''
 TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction
+'''
+
+["tikv:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["tikv:8251"]
+error = '''
+Resource group configuration is unavailable
+'''
+
+["tikv:8252"]
+error = '''
+Exceeded resource group quota limitation
 '''
 
 ["tikv:9001"]

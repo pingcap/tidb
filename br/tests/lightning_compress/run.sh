@@ -10,7 +10,7 @@ for BACKEND in tidb local; do
 
     # Set minDeliverBytes to a small enough number to only write only 1 row each time
     # Set the failpoint to kill the lightning instance as soon as one row is written
-    PKG="github.com/pingcap/tidb/br/pkg/lightning/restore"
+    PKG="github.com/pingcap/tidb/br/pkg/lightning/importer"
     export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
 
     # Start importing the tables.
