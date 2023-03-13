@@ -56,9 +56,9 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 		Err       error
 	}{
 		{OptionStr: "xx=1", Err: ErrUnknownOption},
-		{OptionStr: detachedOption + "=1", Err: ErrInvalidOptionVal},
+		{OptionStr: DetachedOption + "=1", Err: ErrInvalidOptionVal},
 		{OptionStr: addIndexOption, Err: ErrInvalidOptionVal},
-		{OptionStr: detachedOption + ", " + detachedOption, Err: ErrDuplicateOption},
+		{OptionStr: DetachedOption + ", " + DetachedOption, Err: ErrDuplicateOption},
 		{OptionStr: importModeOption + "='logical', " + diskQuotaOption + "='100GiB'", Err: ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + checksumOption + "='optional'", Err: ErrLoadDataUnsupportedOption},
 		{OptionStr: importModeOption + "='logical', " + addIndexOption + "=false", Err: ErrLoadDataUnsupportedOption},
@@ -153,7 +153,7 @@ func TestLoadDataWorkerInitOptions(t *testing.T) {
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
-		detachedOption)
+		DetachedOption)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	err = e.initOptions(convertOptions(stmt.(*ast.LoadDataStmt).Options))

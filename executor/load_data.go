@@ -80,11 +80,11 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
-	detachedOption      = "detached"
 )
 
 var (
-	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
+	detachedOption = plannercore.DetachedOption
+	taskQueueSize  = 16 // the maximum number of pending tasks to commit in queue
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
@@ -117,10 +117,15 @@ type LoadDataExec struct {
 	FileLocRef     ast.FileLocRefTp
 	OnDuplicate    ast.OnDuplicateKeyHandlingType
 	loadDataWorker *LoadDataWorker
+	detachHandled  bool
 }
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.detachHandled {
+		return nil
+	}
 	req.GrowAndReset(e.maxChunkSize)
 
 	if e.loadDataWorker.Path == "" {
@@ -159,8 +164,19 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
 		}
-		return e.loadFromRemote(ctx, b, path)
+		jobID, err := e.loadFromRemote(ctx, b, path)
+		if err != nil {
+			return err
+		}
+		if e.loadDataWorker.detached {
+			req.AppendInt64(0, jobID)
+			e.detachHandled = true
+		}
 	case ast.FileLocClient:
+		if e.loadDataWorker.detached {
+			return errors.New("LOCAL can't use WITH DETACHED")
+		}
+
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.ctx
 		val := sctx.Value(LoadDataVarKey)
@@ -177,14 +193,14 @@ func (e *LoadDataExec) loadFromRemote(
 	ctx context.Context,
 	b *backup.StorageBackend,
 	path string,
-) error {
+) (int64, error) {
 	opt := &storage.ExternalStorageOptions{}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return ErrLoadDataCantAccess
+		return 0, ErrLoadDataCantAccess
 	}
 
 	idx := strings.IndexByte(path, '*')
@@ -250,7 +266,7 @@ func (e *LoadDataExec) loadFromRemote(
 			return nil
 		})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	return e.loadDataWorker.Load(ctx, readerInfos)
@@ -696,21 +712,20 @@ type LoadDataReaderInfo struct {
 	Remote *loadRemoteInfo
 }
 
-// Load reads from readerFn and do load data job.
+// Load reads from readerInfos and do load data job.
 func (e *LoadDataWorker) Load(
 	ctx context.Context,
 	readerInfos []LoadDataReaderInfo,
-) error {
+) (int64, error) {
 	var (
-		jobID  int64
-		parser mydump.Parser
-		err    error
+		jobID int64
+		err   error
 	)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	s, err := e.getSysSessionFn()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer e.putSysSessionFn(ctx, s)
 
@@ -718,16 +733,53 @@ func (e *LoadDataWorker) Load(
 	// TODO: move it to bootstrap
 	_, err = sqlExec.ExecuteInternal(ctx, asyncloaddata.CreateLoadDataJobs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
 		ctx, sqlExec, e.Path, e.schemaName, e.table.Meta().Name.O,
 		"logical", e.Ctx.GetSessionVars().User.String())
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	if e.detached {
+		// copy the related variables to the new session
+		// I have no confident that all needed variables are copied
+		from := e.Ctx.GetSessionVars()
+		to := s.GetSessionVars()
+		to.StmtCtx.InLoadDataStmt = from.StmtCtx.InLoadDataStmt
+		to.StmtCtx.IgnoreNoPartition = from.StmtCtx.IgnoreNoPartition
+		to.StmtCtx.DupKeyAsWarning = from.StmtCtx.DupKeyAsWarning
+		to.StmtCtx.TruncateAsWarning = from.StmtCtx.TruncateAsWarning
+		to.StmtCtx.BadNullAsWarning = from.StmtCtx.BadNullAsWarning
+		to.SQLMode = from.SQLMode
+		to.User = from.User
+
+		go func() {
+			// error is stored in system table
+			//nolint: errcheck
+			_ = e.doLoad(context.Background(), readerInfos, jobID)
+		}()
+		return jobID, nil
+	}
+	return jobID, e.doLoad(ctx, readerInfos, jobID)
+}
+
+func (e *LoadDataWorker) doLoad(
+	ctx context.Context,
+	readerInfos []LoadDataReaderInfo,
+	jobID int64,
+) (err error) {
+	s, err := e.getSysSessionFn()
+	if err != nil {
+		return err
+	}
+	defer e.putSysSessionFn(ctx, s)
+
+	sqlExec := s.(sqlexec.SQLExecutor)
+
+	// TODO: use separated context
 	defer func() {
 		if err == nil {
 			err2 := asyncloaddata.FinishJob(
@@ -783,6 +835,7 @@ func (e *LoadDataWorker) Load(
 	done := make(chan struct{})
 
 	// processStream goroutine.
+	var parser mydump.Parser
 	group.Go(func() error {
 		for _, info := range readerInfos {
 			reader, err2 := info.Opener(ctx)
