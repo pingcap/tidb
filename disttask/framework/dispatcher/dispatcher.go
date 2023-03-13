@@ -17,7 +17,6 @@ package dispatcher
 import (
 	"context"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,12 +25,13 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 const (
-	// DefaultConcurrency is the default concurrency for handling global task.
-	DefaultConcurrency = 8
+	// DefaultDispatchConcurrency is the default concurrency for handling global task.
+	DefaultDispatchConcurrency = 8
 	// DefaultSubtaskConcurrency is the default concurrency for handling subtask.
 	DefaultSubtaskConcurrency = 16
 	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
@@ -54,13 +54,6 @@ func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
 	return d.runningGlobalTasks.tasks
 }
 
-func (d *dispatcher) isRunningGlobalTask(globalTaskID int64) bool {
-	d.runningGlobalTasks.RLock()
-	defer d.runningGlobalTasks.RUnlock()
-	_, ok := d.runningGlobalTasks.tasks[globalTaskID]
-	return ok
-}
-
 func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
@@ -81,7 +74,7 @@ type dispatcher struct {
 	wg         tidbutil.WaitGroupWrapper
 
 	runningGlobalTasks struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		tasks map[int64]*proto.Task
 	}
 }
@@ -100,12 +93,8 @@ func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManag
 
 // Start implements Dispatch.Start interface.
 func (d *dispatcher) Start() {
-	d.wg.Run(func() {
-		d.DispatchTaskLoop()
-	})
-	d.wg.Run(func() {
-		d.DetectTaskLoop()
-	})
+	d.wg.Run(d.DispatchTaskLoop)
+	d.wg.Run(d.DetectTaskLoop)
 }
 
 // Stop implements Dispatch.Stop interface.
@@ -127,7 +116,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 		case <-ticker.C:
 			cnt := len(d.getRunningGlobalTasks())
 
-			for cnt < DefaultConcurrency {
+			for cnt < DefaultDispatchConcurrency {
 				// TODO: Consider get all unfinished tasks.
 				gTask, err := d.gTaskMgr.GetNewTask()
 				if err != nil {
@@ -138,18 +127,15 @@ func (d *dispatcher) DispatchTaskLoop() {
 				if gTask == nil {
 					break
 				}
-				if d.isRunningGlobalTask(gTask.ID) {
-					break
-				}
 				if gTask.State == proto.TaskStateReverting {
 					d.setRunningGlobalTasks(gTask)
 					cnt++
 					continue
 				}
 
-				err = d.processNormalFlow(gTask, true)
-				if err != nil {
-					d.delRunningGlobalTasks(gTask.ID)
+				err = d.processNormalFlow(gTask)
+				if err != nil || gTask.State == proto.TaskStateSucceed {
+					continue
 				}
 				d.setRunningGlobalTasks(gTask)
 				cnt++
@@ -235,7 +221,7 @@ func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) {
 		} else {
 			// Finish the normal step.
 			logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
-			err = d.processNormalFlow(gTask, false)
+			err = d.processNormalFlow(gTask)
 		}
 	}
 
@@ -256,6 +242,7 @@ func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) {
 }
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
+	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
 	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
@@ -293,43 +280,41 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	return nil
 }
 
-func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err error) {
+func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// Generate the needed global task meta and subTask meta.
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed", zap.Int64("ID", gTask.ID), zap.Bool("pending", fromPending))
+		logutil.BgLogger().Warn("gen gTask flow handle failed", zap.Int64("ID", gTask.ID))
 		d.updateTaskRevertInfo(gTask)
 		return errors.Errorf("%s type handle doesn't register", gTask.Type)
 	}
-	finished, metas, err := handle.ProcessNormalFlow(d, gTask, fromPending)
+	metas, err := handle.ProcessNormalFlow(d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
 	}
 
-	// Adjust global task meta.
+	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
 		gTask.Concurrency = DefaultSubtaskConcurrency
 	}
 	if gTask.Concurrency > MaxSubtaskConcurrency {
 		gTask.Concurrency = MaxSubtaskConcurrency
 	}
-	if finished {
-		gTask.State = proto.TaskStateSucceed
-	}
 
 	// Special handling for the new tasks.
-	// About TaskStateSucceed gTask, we consider keeping records first.
 	if gTask.State == proto.TaskStatePending {
 		// TODO: Consider using TS.
 		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
-	} else {
-		gTask.StateUpdateTime = time.Now().UTC()
 	}
+	if len(metas) == 0 {
+		gTask.State = proto.TaskStateSucceed
+	}
+	gTask.StateUpdateTime = time.Now().UTC()
 
 	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
-		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Bool("pending", fromPending))
+		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State))
 	// TODO: UpdateTask and addSubtasks in a txn.
 	// Write the global task meta into the storage.
 	err = d.gTaskMgr.UpdateTask(gTask)
@@ -338,7 +323,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err
 		return err
 	}
 
-	if finished {
+	if len(metas) == 0 {
 		return nil
 	}
 

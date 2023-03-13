@@ -203,8 +203,8 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, metas [][]byte, err error) {
-	if fromPending {
+func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
 	}
 	switch gTask.Step {
@@ -216,11 +216,11 @@ func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fr
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
 		logutil.BgLogger().Info("progress step one")
-		return true, nil, nil
+		return nil, nil
 	default:
-		return false, nil, errors.New("unknown step")
+		return nil, errors.New("unknown step")
 	}
-	return false, metas, nil
+	return metas, nil
 }
 
 func (n NumberExampleHandle) ProcessErrFlow(d Dispatch, gTask *proto.Task, receive string) (meta []byte, err error) {
