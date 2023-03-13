@@ -73,7 +73,7 @@ func TestGetInstance(t *testing.T) {
 	// test no server
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err := dsp.GetEligibleInstance(ctx)
+	instanceID, err := GetEligibleInstance(ctx)
 	require.Lenf(t, instanceID, 0, "instanceID:%d", instanceID)
 	require.EqualError(t, err, "not found instance")
 	instanceIDs, err := dsp.getTaskAllInstances(ctx, 1)
@@ -93,7 +93,7 @@ func TestGetInstance(t *testing.T) {
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	instanceID, err = dsp.GetEligibleInstance(ctx)
+	instanceID, err = GetEligibleInstance(ctx)
 	require.NoError(t, err)
 	if instanceID != uuids[0] && instanceID != uuids[1] {
 		require.FailNowf(t, "expected uuids:%d,%d, actual uuid:%d", uuids[0], uuids[1], instanceID)
@@ -179,7 +179,7 @@ func TestSimple(t *testing.T) {
 	subtasks, err := dsp.subTaskMgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, subtasks, int64(subtaskCnt))
-	// test DetectionTaskLoop
+	// test DetectTaskLoop
 	for i := 1; i <= subtaskCnt; i++ {
 		err = dsp.subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateSucceed)
 		require.NoError(t, err)
