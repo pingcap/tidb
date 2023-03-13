@@ -21,18 +21,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/resourcemanager/pool/spool"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 var (
-	schedulerPoolSize       = 4
-	subtaskExecutorPoolSize = 10
-	checkTime               = time.Second
+	schedulerPoolSize       int32 = 4
+	subtaskExecutorPoolSize int32 = 10
+	checkTime                     = time.Second
 )
 
 var (
-	newPool      = NewMockPool
+	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+		return spool.NewPool(name, size, component, options...)
+	}
 	newScheduler = NewInternalScheduler
 )
 
@@ -57,25 +61,35 @@ type Manager struct {
 }
 
 // NewManager creates a new Manager.
-func NewManager(ctx context.Context, id string, globalTaskTable TaskTable, subtaskTable SubtaskTable) *Manager {
+func NewManager(ctx context.Context, id string, globalTaskTable TaskTable, subtaskTable SubtaskTable) (*Manager, error) {
 	m := &Manager{
 		id:                   id,
 		globalTaskTable:      globalTaskTable,
 		subtaskTable:         subtaskTable,
-		schedulerPool:        newPool(schedulerPoolSize),
 		subtaskExecutorPools: make(map[string]Pool),
 		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
+
+	schedulerPool, err := newPool("scheduler_pool", schedulerPoolSize, util.DDL)
+	if err != nil {
+		return nil, err
+	}
+	m.schedulerPool = schedulerPool
+
 	for taskType := range subtaskExecutorConstructors {
 		poolSize := subtaskExecutorPoolSize
 		if opt, ok := subtaskExecutorOptions[taskType]; ok && opt.PoolSize > 0 {
 			poolSize = opt.PoolSize
 		}
-		m.subtaskExecutorPools[taskType] = newPool(poolSize)
+		subtaskExecutorPool, err := newPool(taskType+"_pool", poolSize, util.DDL)
+		if err != nil {
+			return nil, err
+		}
+		m.subtaskExecutorPools[taskType] = subtaskExecutorPool
 	}
-	return m
+	return m, nil
 }
 
 // Start starts the Manager.

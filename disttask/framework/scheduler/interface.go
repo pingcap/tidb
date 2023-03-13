@@ -37,7 +37,7 @@ type SubtaskTable interface {
 // Pool defines the interface of a pool.
 type Pool interface {
 	Run(func()) error
-	RunWithConcurrency(chan func(), uint64) error
+	RunWithConcurrency(chan func(), uint32) error
 	ReleaseAndWait()
 }
 

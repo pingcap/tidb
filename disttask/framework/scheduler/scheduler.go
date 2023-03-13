@@ -118,7 +118,7 @@ func (s *InternalSchedulerImpl) Run(ctx context.Context, task *proto.Task) error
 	defer close(minimalTaskCh)
 	var minimalTaskWg sync.WaitGroup
 
-	err = s.pool.RunWithConcurrency(minimalTaskCh, task.Concurrency)
+	err = s.pool.RunWithConcurrency(minimalTaskCh, uint32(task.Concurrency))
 	if err != nil {
 		s.onError(err)
 		return s.getError()

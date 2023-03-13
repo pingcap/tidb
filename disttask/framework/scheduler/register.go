@@ -30,7 +30,7 @@ type RegisterOption func(opts *schedulerRegisterOptions)
 type SubtaskExecutorConstructor func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error)
 
 type subtaskExecutorRegisterOptions struct {
-	PoolSize int
+	PoolSize int32
 }
 
 // SubtaskExecutorRegisterOption is the register option of SubtaskExecutor.

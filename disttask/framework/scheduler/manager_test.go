@@ -21,12 +21,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/resourcemanager/pool/spool"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestManageTask(t *testing.T) {
-	m := NewManager(context.Background(), "test", nil, nil)
+	m, err := NewManager(context.Background(), "test", nil, nil)
+	require.NoError(t, err)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
 	newTasks := m.filterAlreadyHandlingTasks(tasks)
 	require.Equal(t, tasks, newTasks)
@@ -66,21 +69,24 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
+	originSchedulerFunc := newScheduler
 	newScheduler = func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	}
-	newPool = func(concurrency int) Pool {
-		return mockPool
+	originPoolFunc := newPool
+	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+		return mockPool, nil
 	}
 	defer func() {
-		newScheduler = NewInternalScheduler
-		newPool = NewMockPool
+		newScheduler = originSchedulerFunc
+		newPool = originPoolFunc
 	}()
 	id := "test"
 	taskID := int64(1)
 	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: 0, Type: "type"}
 
-	m := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	require.NoError(t, err)
 
 	// no task
 	m.onRunnableTasks(context.Background(), nil)
@@ -139,11 +145,13 @@ func TestManager(t *testing.T) {
 	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
+	originSchedulerFunc := newScheduler
 	newScheduler = func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
 	}
-	newPool = func(concurrency int) Pool {
-		return mockPool
+	originPoolFunc := newPool
+	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+		return mockPool, nil
 	}
 	RegisterSubtaskExectorConstructor("type", func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
 		return &MockSubtaskExecutor{}, nil
@@ -151,8 +159,8 @@ func TestManager(t *testing.T) {
 		opts.PoolSize = 1
 	})
 	defer func() {
-		newScheduler = NewInternalScheduler
-		newPool = NewMockPool
+		newScheduler = originSchedulerFunc
+		newPool = originPoolFunc
 		delete(subtaskExecutorConstructors, "type")
 		delete(subtaskExecutorOptions, "type")
 	}()
@@ -188,7 +196,8 @@ func TestManager(t *testing.T) {
 	}, func(opts *subtaskExecutorRegisterOptions) {
 		opts.PoolSize = 1
 	})
-	m := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	require.NoError(t, err)
 	m.Start()
 	time.Sleep(5 * time.Second)
 	m.Stop()
