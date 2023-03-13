@@ -205,8 +205,12 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 	}
-	// TODO: support lines terminated is "".
+	// moved from planerbuilder.buildLoadData
 	// see https://github.com/pingcap/tidb/issues/33298
+	if len(e.FieldsTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
+	}
+	// TODO: support lines terminated is "".
 	if len(e.LinesTerminatedBy) == 0 {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 	}
