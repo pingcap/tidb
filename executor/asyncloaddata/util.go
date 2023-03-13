@@ -164,6 +164,64 @@ func FailJob(
 	return err
 }
 
+// CancelJob cancels a load data job. Only a running/paused job can be canceled.
+func CancelJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) (err error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err = conn.ExecuteInternal(ctx, "BEGIN PESSIMISTIC;")
+	if err == nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := conn.ExecuteInternal(ctx, "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = conn.ExecuteInternal(ctx, "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+
+	var (
+		rs   sqlexec.RecordSet
+		rows []chunk.Row
+	)
+	rs, err = conn.ExecuteInternal(ctx,
+		`SELECT expected_status FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+
+	if len(rows) < 1 {
+		return ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
+	}
+	status := rows[0].GetEnum(0).String()
+	if status != "running" && status != "paused" {
+		return ErrLoadDataInvalidOperation.GenWithStackByArgs(fmt.Sprintf("need status running or paused, but got %s", status))
+	}
+
+	_, err = conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
+		SET expected_status = 'canceled'
+		WHERE job_id = %?;`,
+		jobID, user)
+	return err
+}
+
 // DropJob drops a load data job.
 func DropJob(
 	ctx context.Context,
@@ -199,6 +257,7 @@ const (
 )
 
 // UpdateJobExpectedStatus updates the expected status of a load data job.
+// TODO: remove it?
 func UpdateJobExpectedStatus(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -267,6 +326,9 @@ func (s JobStatus) String() string {
 // ErrLoadDataJobNotFound is the error when the job ID is not found.
 // TODO: move to exeerrors after https://github.com/pingcap/tidb/pull/42075.
 var ErrLoadDataJobNotFound = dbterror.ClassExecutor.NewStd(errno.ErrLoadDataJobNotFound)
+
+// ErrLoadDataInvalidOperation is the error when the operation is invalid.
+var ErrLoadDataInvalidOperation = dbterror.ClassExecutor.NewStd(errno.ErrLoadDataInvalidOperation)
 
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are

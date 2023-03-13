@@ -19,6 +19,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
@@ -43,4 +44,10 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 		"2 b",
 	))
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+
+	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
+	require.Len(s.T(), rows, 1)
+	jobID := rows[0][0].(string)
+	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
+	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Check(testkit.Rows())
 }
