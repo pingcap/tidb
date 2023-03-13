@@ -58,4 +58,8 @@ const (
 	// EngineLabelTiFlashCompute is for disaggregated tiflash mode,
 	// it's the lable of tiflash_compute nodes.
 	EngineLabelTiFlashCompute = "tiflash_compute"
+	// EngineRoleLabelKey is the label that indicates if the TiFlash instance is a write node.
+	EngineRoleLabelKey = "engine_role"
+	// EngineRoleLabelWrite is for disaggregated tiflash write node.
+	EngineRoleLabelWrite = "write"
 )
