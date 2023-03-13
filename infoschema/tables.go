@@ -1851,23 +1851,21 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
-	isTiFlash := false
 	for _, label := range store.Labels {
 		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
-			isTiFlash = true
+			return true
 		}
 	}
-	return isTiFlash
+	return false
 }
 
 func isTiFlashWriteNode(store *metapb.Store) bool {
-	isTiFlashWriteNode := false
 	for _, label := range store.Labels {
 		if label.GetKey() == placement.EngineRoleLabelKey && label.GetValue() == placement.EngineRoleLabelWrite {
-			isTiFlashWriteNode = true
+			return true
 		}
 	}
-	return isTiFlashWriteNode
+	return false
 }
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
