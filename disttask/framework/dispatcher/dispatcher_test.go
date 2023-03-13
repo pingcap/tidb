@@ -106,7 +106,7 @@ func TestGetInstance(t *testing.T) {
 	// subtask instance ids: uuid1
 	gTaskID := int64(1)
 	subtask := &proto.Subtask{
-		Type:        proto.TaskTypeCreateIndex,
+		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
 		SchedulerID: uuids[1],
 	}
@@ -118,7 +118,7 @@ func TestGetInstance(t *testing.T) {
 	// server ids: uuid0, uuid1
 	// subtask instance ids: uuid0, uuid1
 	subtask = &proto.Subtask{
-		Type:        proto.TaskTypeCreateIndex,
+		Type:        proto.TaskTypeExample,
 		TaskID:      gTaskID,
 		SchedulerID: uuids[0],
 	}
@@ -203,7 +203,7 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, subTasks []*proto.Subtask, err error) {
+func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, metas [][]byte, err error) {
 	if fromPending {
 		gTask.Step = proto.StepInit
 	}
@@ -211,7 +211,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fr
 	case proto.StepInit:
 		gTask.Step = proto.StepOne
 		for i := 0; i < subtaskCnt; i++ {
-			subTasks = append(subTasks, &proto.Subtask{ID: int64(i)})
+			metas = append(metas, []byte{'1'})
 		}
 		logutil.BgLogger().Info("progress step init")
 	case proto.StepOne:
@@ -220,7 +220,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(d Dispatch, gTask *proto.Task, fr
 	default:
 		return false, nil, errors.New("unknown step")
 	}
-	return false, subTasks, nil
+	return false, metas, nil
 }
 
 func (n NumberExampleHandle) ProcessErrFlow(d Dispatch, gTask *proto.Task, receive string) (meta []byte, err error) {

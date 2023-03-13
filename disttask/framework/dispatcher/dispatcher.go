@@ -281,12 +281,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 
 	// New rollback subtasks and write into the storage.
 	for _, id := range instanceIDs {
-		subtask := &proto.Subtask{
-			Type:        gTask.Type,
-			TaskID:      gTask.ID,
-			SchedulerID: id,
-			Meta:        meta,
-		}
+		subtask := proto.NewSubtask(gTask.ID, gTask.Type, id, meta)
 		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, true)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
@@ -304,7 +299,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err
 		_ = d.updateTaskRevertInfo(gTask)
 		return errors.Errorf("%s type handle doesn't register", gTask.Type)
 	}
-	finished, subtasks, err := handle.ProcessNormalFlow(d, gTask, fromPending)
+	finished, metas, err := handle.ProcessNormalFlow(d, gTask, fromPending)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
@@ -346,13 +341,13 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task, fromPending bool) (err
 	}
 
 	// Write subtasks into the storage.
-	for _, subtask := range subtasks {
+	for _, meta := range metas {
 		instanceID, err := d.GetEligibleInstance(d.ctx)
 		if err != nil {
 			logutil.BgLogger().Warn("get a eligible instance failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
 			return err
 		}
-		subtask.SchedulerID = instanceID
+		subtask := proto.NewSubtask(gTask.ID, gTask.Type, instanceID, meta)
 
 		// TODO: Consider batch insert.
 		// TODO: Synchronization interruption problem, e.g. AddNewTask failed.

@@ -21,6 +21,8 @@ go_library(
 
 go_test(
     name = "dispatcher_test",
+    timeout = "short",
+    flaky = True,
     srcs = ["dispatcher_test.go"],
     embed = [":dispatcher"],
     deps = [

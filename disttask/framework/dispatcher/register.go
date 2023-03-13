@@ -20,7 +20,7 @@ import (
 
 // TaskFlowHandle is used to control the process operations for each global task.
 type TaskFlowHandle interface {
-	ProcessNormalFlow(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, subtasks []*proto.Subtask, err error)
+	ProcessNormalFlow(d Dispatch, gTask *proto.Task, fromPending bool) (finished bool, metas [][]byte, err error)
 	ProcessErrFlow(d Dispatch, gTask *proto.Task, receive string) (meta []byte, err error)
 }
 

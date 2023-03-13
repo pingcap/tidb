@@ -75,6 +75,16 @@ type Subtask struct {
 	Meta        []byte
 }
 
+// NewSubtask create a new subtask.
+func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+	return &Subtask{
+		Type:        tp,
+		TaskID:      taskID,
+		SchedulerID: schedulerID,
+		Meta:        meta,
+	}
+}
+
 // MinimalTask is the minimal task of distribute framework.
 // Each subtask is divided into multiple minimal tasks by scheduler.
 type MinimalTask interface{}
@@ -82,8 +92,6 @@ type MinimalTask interface{}
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
-	// TaskTypeCreateIndex is TaskType of "add index" operation.
-	TaskTypeCreateIndex = "AddIndex"
 )
 
 // Type2Int converts task type to int.
