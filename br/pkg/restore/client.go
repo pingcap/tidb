@@ -2551,12 +2551,14 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 	info := dom.InfoSchema()
 	allSchema := info.AllSchemas()
 	ingestRecorder.UpdateIndexInfo(allSchema)
+	console := glue.GetConsole(g)
 	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
 		var (
-			addSQL  strings.Builder
-			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			addSQL        strings.Builder
+			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
 		)
-
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName, info.TableName)
@@ -2595,6 +2597,11 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
 			return errors.Trace(err)
 		}
+		w.Inc()
+		if err := w.Wait(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		w.Close()
 		return nil
 	})
 	return errors.Trace(err)
