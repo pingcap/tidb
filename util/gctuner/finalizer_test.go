@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +28,12 @@ type testState struct {
 }
 
 func TestFinalizer(t *testing.T) {
+<<<<<<< HEAD
 	maxCount := int32(16)
+=======
+	debug.SetGCPercent(1000)
+	maxCount := int32(8)
+>>>>>>> b9dc38642c (gctuner: fix unstable test TestFinalizer (#42138))
 	state := &testState{}
 	f := newFinalizer(func() {
 		n := atomic.AddInt32(&state.count, 1)
@@ -37,6 +43,7 @@ func TestFinalizer(t *testing.T) {
 	})
 	for i := int32(1); i <= maxCount; i++ {
 		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
 		require.Equal(t, i, atomic.LoadInt32(&state.count))
 	}
 	require.Nil(t, f.ref)
