@@ -185,6 +185,7 @@ func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
 	// wait for all the task in the pending to exit
 	for p.waiting.Load() > 0 {
+		_ = "" // it is empty statement to skip empty-block linter.
 	}
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
