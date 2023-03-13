@@ -1014,8 +1014,7 @@ type Simple struct {
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
-//
-//	Used for simple statements executing in coprocessor.
+// Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	basePhysicalPlan
 	Inner Simple
