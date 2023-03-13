@@ -1,0 +1,190 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	"strconv"
+	"strings"
+
+	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
+)
+
+// workloadBaseRUCostMap contains the base resource cost per 1 kv cpu,
+// the data is calculated by the benchmark result.
+var workloadBaseRUCostMap = map[string]*baseResourceCost{
+	"tpcc": {
+		tidbCPU:       0.6,
+		kvCPU:         0.15,
+		readBytes:     units.MiB / 2, // 0.5MiB
+		writeBytes:    units.MiB,     // 1MiB
+		readReqCount:  300,
+		writeReqCount: 1750,
+	},
+}
+
+func (b *executorBuilder) buildCalibrateResource(schema *expression.Schema) Executor {
+	return &calibrateResourceExec{
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+	}
+}
+
+type calibrateResourceExec struct {
+	baseExecutor
+	done bool
+}
+
+func (e *calibrateResourceExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+
+	// first fetch the ru settings config.
+	ruCfg, err := getRUSettings(ctx, exec)
+	if err != nil {
+		return err
+	}
+
+	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
+	if err != nil {
+		return err
+	}
+
+	workload := "tpcc"
+	baseCost, ok := workloadBaseRUCostMap[workload]
+	if !ok {
+		return errors.Errorf("unknown workload '%s'", workload)
+	}
+
+	if totalTiDBCPU/baseCost.tidbCPU < totalKVCPUQuota {
+		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbCPU
+	}
+	ruPerKVCPU := ruCfg.readBaseCost*float64(baseCost.readReqCount) +
+		ruCfg.readCostCPU*baseCost.kvCPU +
+		ruCfg.readCostPerByte*float64(baseCost.readBytes) +
+		ruCfg.writeBaseCost*float64(baseCost.writeReqCount) +
+		ruCfg.writeCostPerByte*float64(baseCost.writeBytes)
+	quota := totalKVCPUQuota * ruPerKVCPU
+	req.AppendUint64(0, uint64(quota))
+
+	return nil
+}
+
+// the resource cost of a specified workload per 1 tikv cpu
+type baseResourceCost struct {
+	tidbCPU float64
+	// the kv CPU time for calculate RU, it's smaller than the actually cpu usage.
+	kvCPU         float64
+	readBytes     uint64
+	writeBytes    uint64
+	readReqCount  uint64
+	writeReqCount uint64
+}
+
+type ruConfig struct {
+	readBaseCost     float64
+	writeBaseCost    float64
+	readCostCPU      float64
+	readCostPerByte  float64
+	writeCostPerByte float64
+}
+
+func getRUSettings(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (*ruConfig, error) {
+	rows, fields, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW CONFIG WHERE TYPE = 'pd' AND  name like 'request_unit.%'")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("PD request-unit config not found")
+	}
+	var nameIdx, valueIdx int
+	for i, f := range fields {
+		switch f.ColumnAsName.L {
+		case "instance":
+			//instanceIdx = i
+		case "name":
+			nameIdx = i
+		case "value":
+			valueIdx = i
+		}
+	}
+
+	cfg := &ruConfig{}
+	for _, row := range rows {
+		val, err := strconv.ParseFloat(row.GetString(valueIdx), 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		name, _ := strings.CutPrefix(row.GetString(nameIdx), "request-unit.")
+
+		switch name {
+		case "read-base-cost":
+			cfg.readBaseCost = val
+		case "read-cost-per-byte":
+			cfg.readCostPerByte = val
+		case "read-cpu-ms-cost":
+			cfg.readCostCPU = val
+		case "write-base-cost":
+			cfg.writeBaseCost = val
+		case "write-cost-per-byte":
+			cfg.writeCostPerByte = val
+		}
+	}
+
+	return cfg, nil
+}
+
+func getTiKVTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
+	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tikv_cpu_quota GROUP BY time ORDER BY time desc limit 1"
+	return getNumberFromMetrics(ctx, exec, query, "tikv_cpu_quota")
+}
+
+func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
+	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tidb_server_maxprocs GROUP BY time ORDER BY time desc limit 1"
+	return getNumberFromMetrics(ctx, exec, query, "tidb_server_maxprocs")
+}
+
+func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
+	if err != nil {
+		return 0.0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0.0, errors.Errorf("metrics '%s' is empty", metrics)
+	}
+
+	return rows[0].GetFloat64(0), nil
+}

@@ -835,6 +835,8 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 				}
 			}
 		}
+	case *ast.CalibrateResourceStmt:
+		return b.buildCalibrateResource(v.Schema())
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
