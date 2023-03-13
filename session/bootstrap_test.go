@@ -1946,6 +1946,36 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 	}
 }
 
+func TestTiDBUpgradeToVer136(t *testing.T) {
+	store, _ := createStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ver135 := version135
+	seV135 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver135))
+	require.NoError(t, err)
+	mustExec(t, seV135, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver135))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV135)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver135), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV135)
+	require.NoError(t, err)
+	require.Less(t, int64(ver135), ver)
+	dom.Close()
+}
+
 func TestTiDBStatsLoadPseudoTimeoutUpgradeFrom610To650(t *testing.T) {
 	ctx := context.Background()
 	store, _ := createStoreAndBootstrap(t)

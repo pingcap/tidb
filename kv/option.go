@@ -190,4 +190,6 @@ const (
 	InternalTxnTTL = "TTL"
 	// InternalLoadData is the type of LOAD DATA usage
 	InternalLoadData = "LoadData"
+	// InternalDistTask is the type of distributed task.
+	InternalDistTask = "DistTask"
 )
