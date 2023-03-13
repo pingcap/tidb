@@ -136,17 +136,17 @@ func (tr *TaskRegister) RegisterTask(c context.Context) error {
 func (tr *TaskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
 	defer tr.wg.Done()
 	const minTimeLeftThreshold time.Duration = 20 * time.Second
-	var timeLeftThreshold time.Duration = tr.ttl / 4
+	var (
+		timeLeftThreshold time.Duration = tr.ttl / 4
+		lastUpdateTime    time.Time     = time.Now()
+		err               error
+	)
 	if timeLeftThreshold < minTimeLeftThreshold {
 		timeLeftThreshold = minTimeLeftThreshold
 	}
 	failpoint.Inject("brie-task-register-always-grant", func(_ failpoint.Value) {
 		timeLeftThreshold = tr.ttl
 	})
-	var (
-		lastUpdateTime time.Time = time.Now()
-		err            error
-	)
 	for {
 	CONSUMERESP:
 		for {
