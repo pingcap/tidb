@@ -20,8 +20,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -137,4 +140,12 @@ func TestRecordTTLRows(t *testing.T) {
 	tk.MustExec("rollback to insert1")
 	tk.MustExec("commit")
 	require.Equal(t, 7.0, MustReadCounter(t, metrics.TTLInsertRowsCount))
+}
+
+func TestNilHandleInConnectionVerification(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	privileges.SkipWithGrant = true
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil))
 }
