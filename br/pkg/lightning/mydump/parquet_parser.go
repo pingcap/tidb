@@ -371,9 +371,9 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
-// RealPos implements the Parser interface.
+// ScannedPos implements the Parser interface.
 // For parquet it's parquet file's reader current position.
-func (pp *ParquetParser) RealPos() (int64, error) {
+func (pp *ParquetParser) ScannedPos() (int64, error) {
 	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
 }
 

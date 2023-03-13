@@ -256,10 +256,10 @@ func (cr *chunkProcessor) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID, newRealOffset int64
-		var realOffset int64 = -1
+		var newOffset, rowID, newScannedOffset int64
+		var scannedOffset int64 = -1
 		var kvSize uint64
-		var realOffsetErr error
+		var scannedOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
@@ -267,13 +267,13 @@ func (cr *chunkProcessor) encodeLoop(
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
 			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				newRealOffset, realOffsetErr = cr.parser.RealPos()
-				if realOffsetErr != nil {
-					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
-						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				newScannedOffset, scannedOffsetErr = cr.parser.ScannedPos()
+				if scannedOffsetErr != nil {
+					logger.Warn("fail to get data engine ScannedPos, progress may not be accurate",
+						log.ShortError(scannedOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
 				}
-				if realOffset == -1 {
-					realOffset = newRealOffset
+				if scannedOffset == -1 {
+					scannedOffset = newScannedOffset
 				}
 			}
 
@@ -338,7 +338,7 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
-				rowID: rowID, realOffset: newRealOffset})
+				rowID: rowID, realOffset: newScannedOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -357,7 +357,7 @@ func (cr *chunkProcessor) encodeLoop(
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
 			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				m.RowReadBytesHistogram.Observe(float64(newRealOffset - realOffset))
+				m.RowReadBytesHistogram.Observe(float64(newScannedOffset - scannedOffset))
 			} else {
 				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
 			}
