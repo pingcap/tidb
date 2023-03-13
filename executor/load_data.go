@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -144,8 +145,8 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
 		}
-		var filename string
-		u.Path, filename = filepath.Split(u.Path)
+		path := strings.Trim(u.Path, "/")
+		u.Path = ""
 		b, err := storage.ParseBackendFromURL(u, nil)
 		if err != nil {
 			return ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
@@ -153,7 +154,12 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if b.GetLocal() != nil {
 			return ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.Path)
 		}
-		return e.loadFromRemote(ctx, b, filename)
+		// try to find pattern error in advance
+		_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+		if err != nil {
+			return ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
+		}
+		return e.loadFromRemote(ctx, b, path)
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.ctx
@@ -170,7 +176,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *LoadDataExec) loadFromRemote(
 	ctx context.Context,
 	b *backup.StorageBackend,
-	filename string,
+	path string,
 ) error {
 	opt := &storage.ExternalStorageOptions{}
 	if intest.InTest {
@@ -180,17 +186,74 @@ func (e *LoadDataExec) loadFromRemote(
 	if err != nil {
 		return ErrLoadDataCantAccess
 	}
-	fileReader, err := s.Open(ctx, filename)
-	if err != nil {
-		return ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err), "Please check the INFILE path is correct")
-	}
-	defer fileReader.Close()
 
-	e.loadDataWorker.loadRemoteInfo = loadRemoteInfo{
-		store: s,
-		path:  filename,
+	idx := strings.IndexByte(path, '*')
+	// simple path when the INFILE represent one file
+	if idx == -1 {
+		opener := func(ctx context.Context) (io.ReadSeekCloser, error) {
+			fileReader, err2 := s.Open(ctx, path)
+			if err2 != nil {
+				return nil, ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err2), "Please check the INFILE path is correct")
+			}
+			return fileReader, nil
+		}
+
+		// try to read the file size to report progress. Don't fail the main load
+		// if this fails to tolerate transient errors.
+		filesize := int64(-1)
+		reader, err2 := opener(ctx)
+		if err2 == nil {
+			size, err3 := reader.Seek(0, io.SeekEnd)
+			if err3 != nil {
+				logutil.Logger(ctx).Warn("failed to read file size by seek in LOAD DATA",
+					zap.Error(err3))
+			} else {
+				filesize = size
+			}
+			terror.Log(reader.Close())
+		}
+
+		return e.loadDataWorker.Load(ctx, []LoadDataReaderInfo{{
+			Opener: opener,
+			Remote: &loadRemoteInfo{store: s, path: path, size: filesize},
+		}})
 	}
-	return e.loadDataWorker.Load(ctx, fileReader)
+
+	// when the INFILE represent multiple files
+	readerInfos := make([]LoadDataReaderInfo, 0, 8)
+	commonPrefix := path[:idx]
+	// we only support '*', in order to reuse glob library manually escape the path
+	escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
+
+	err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
+		func(remotePath string, size int64) error {
+			// we have checked in LoadDataExec.Next
+			//nolint: errcheck
+			match, _ := filepath.Match(escapedPath, remotePath)
+			if !match {
+				return nil
+			}
+			readerInfos = append(readerInfos, LoadDataReaderInfo{
+				Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
+					fileReader, err2 := s.Open(ctx, remotePath)
+					if err2 != nil {
+						return nil, ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err2), "Please check the INFILE path is correct")
+					}
+					return fileReader, nil
+				},
+				Remote: &loadRemoteInfo{
+					store: s,
+					path:  remotePath,
+					size:  size,
+				},
+			})
+			return nil
+		})
+	if err != nil {
+		return err
+	}
+
+	return e.loadDataWorker.Load(ctx, readerInfos)
 }
 
 // Close implements the Executor Close interface.
@@ -223,6 +286,7 @@ type commitTask struct {
 type loadRemoteInfo struct {
 	store storage.ExternalStorage
 	path  string
+	size  int64
 }
 
 // LoadDataWorker does a LOAD DATA job.
@@ -266,7 +330,7 @@ type LoadDataWorker struct {
 	row             []types.Datum
 	rows            [][]types.Datum
 	commitTaskQueue chan commitTask
-	loadRemoteInfo  loadRemoteInfo
+	finishedSize    int64
 	progress        atomic.Pointer[asyncloaddata.Progress]
 	getSysSessionFn func() (sessionctx.Context, error)
 	putSysSessionFn func(context.Context, sessionctx.Context)
@@ -623,8 +687,20 @@ func (e *LoadDataWorker) reorderColumns(columnNames []string) error {
 // LoadDataReadBlockSize is exposed for test.
 var LoadDataReadBlockSize = int64(config.ReadBlockSize)
 
+// LoadDataReaderInfo provides information for a data reader of LOAD DATA.
+type LoadDataReaderInfo struct {
+	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
+	// be called once.
+	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
+	// Remote is not nil only if load from cloud storage.
+	Remote *loadRemoteInfo
+}
+
 // Load reads from readerFn and do load data job.
-func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) error {
+func (e *LoadDataWorker) Load(
+	ctx context.Context,
+	readerInfos []LoadDataReaderInfo,
+) error {
 	var (
 		jobID  int64
 		parser mydump.Parser
@@ -673,65 +749,24 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 
 	failpoint.Inject("AfterCreateLoadDataJob", nil)
 
-	switch strings.ToLower(e.format) {
-	case "":
-		// CSV-like
-		parser, err = mydump.NewCSVParser(
-			ctx,
-			e.GenerateCSVConfig(),
-			reader,
-			LoadDataReadBlockSize,
-			nil,
-			false,
-			// TODO: support charset conversion
-			nil)
-	case LoadDataFormatSQLDump:
-		parser = mydump.NewChunkParser(
-			ctx,
-			e.Ctx.GetSessionVars().SQLMode,
-			reader,
-			LoadDataReadBlockSize,
-			nil,
-		)
-	case LoadDataFormatParquet:
-		if e.loadRemoteInfo.store == nil {
-			return ErrLoadParquetFromLocal
-		}
-		parser, err = mydump.NewParquetParser(
-			ctx,
-			e.loadRemoteInfo.store,
-			reader,
-			e.loadRemoteInfo.path,
-		)
-	default:
-		return ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
-	}
-	if err != nil {
-		return ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
-	}
-	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
-
 	progress := asyncloaddata.Progress{
 		SourceFileSize: -1,
 		LoadedFileSize: 0,
 		LoadedRowCnt:   0,
 	}
 
-	if e.loadRemoteInfo.store != nil {
-		reader2, err2 := e.loadRemoteInfo.store.Open(ctx, e.loadRemoteInfo.path)
-		if err2 != nil {
-			logutil.Logger(ctx).Warn("open file failed, can not know file size", zap.Error(err2))
-		} else {
-			//nolint: errcheck
-			defer reader2.Close()
-
-			filesize, err3 := reader2.Seek(0, io.SeekEnd)
-			if err3 != nil {
-				logutil.Logger(ctx).Warn("seek file end failed, can not know file size", zap.Error(err2))
-			} else {
-				progress.SourceFileSize = filesize
-			}
+	totalFilesize := int64(0)
+	hasErr := false
+	for _, readerInfo := range readerInfos {
+		if readerInfo.Remote == nil {
+			logutil.Logger(ctx).Warn("can not get total file size when LOAD DATA from local file")
+			hasErr = true
+			break
 		}
+		totalFilesize += readerInfo.Remote.size
+	}
+	if !hasErr {
+		progress.SourceFileSize = totalFilesize
 	}
 	e.progress.Store(&progress)
 
@@ -747,6 +782,37 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 	// goroutine that the job is finished.
 	done := make(chan struct{})
 
+	// processStream goroutine.
+	group.Go(func() error {
+		for _, info := range readerInfos {
+			reader, err2 := info.Opener(ctx)
+			if err2 != nil {
+				return err2
+			}
+
+			parser, err2 = e.buildParser(ctx, reader, info.Remote)
+			if err2 != nil {
+				terror.Log(reader.Close())
+				return err2
+			}
+			err2 = e.processStream(groupCtx, parser, reader)
+			terror.Log(reader.Close())
+			if err2 != nil {
+				return err2
+			}
+		}
+
+		close(e.commitTaskQueue)
+		return nil
+	})
+	// commitWork goroutine.
+	group.Go(func() error {
+		err2 := e.commitWork(groupCtx)
+		if err2 == nil {
+			close(done)
+		}
+		return err2
+	})
 	// UpdateJobProgress goroutine.
 	group.Go(func() error {
 		ticker := time.NewTicker(time.Duration(asyncloaddata.HeartBeatInSec) * time.Second)
@@ -777,22 +843,77 @@ func (e *LoadDataWorker) Load(ctx context.Context, reader io.ReadSeekCloser) err
 			}
 		}
 	})
-	// processStream goroutine.
-	group.Go(func() error {
-		return e.processStream(groupCtx, parser, reader)
-	})
-	// commitWork goroutine.
-	group.Go(func() error {
-		err2 := e.commitWork(groupCtx)
-		if err2 == nil {
-			close(done)
-		}
-		return err2
-	})
 
 	err = group.Wait()
 	e.SetMessage()
 	return err
+}
+
+func (e *LoadDataWorker) buildParser(
+	ctx context.Context,
+	reader io.ReadSeekCloser,
+	remote *loadRemoteInfo,
+) (parser mydump.Parser, err error) {
+	switch strings.ToLower(e.format) {
+	case "":
+		// CSV-like
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			e.GenerateCSVConfig(),
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+			false,
+			// TODO: support charset conversion
+			nil)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			e.Ctx.GetSessionVars().SQLMode,
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+		)
+	case LoadDataFormatParquet:
+		if remote == nil {
+			return nil, ErrLoadParquetFromLocal
+		}
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			remote.store,
+			reader,
+			remote.path,
+		)
+	default:
+		return nil, ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.format)
+	}
+	if err != nil {
+		return nil, ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
+	}
+	parser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+
+	// handle IGNORE N LINES
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err := csvParser.ReadUntilTerminator()
+			return err
+		}
+	}
+
+	ignoreLineCnt := e.IgnoreLines
+	for ignoreLineCnt > 0 {
+		err = ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return parser, nil
+			}
+			return nil, err
+		}
+
+		ignoreLineCnt--
+	}
+	return parser, nil
 }
 
 // processStream process input stream from parser. When returns nil, it means
@@ -815,23 +936,26 @@ func (e *LoadDataWorker) processStream(
 	checkKilled := time.NewTicker(30 * time.Second)
 	defer checkKilled.Stop()
 
-	loggedError := false
+	var (
+		loggedError     = false
+		currScannedSize = int64(0)
+	)
 	for {
 		// prepare batch and enqueue task
-		if err = e.ReadRows(ctx, parser); err != nil {
+		if err = e.ReadOneBatchRows(ctx, parser); err != nil {
 			return
 		}
 		if e.curBatchCnt == 0 {
-			close(e.commitTaskQueue)
+			e.finishedSize += currScannedSize
 			return
 		}
 
 	TrySendTask:
-		pos, err2 := seeker.Seek(0, io.SeekCurrent)
-		if err2 != nil && !loggedError {
+		currScannedSize, err = seeker.Seek(0, io.SeekCurrent)
+		if err != nil && !loggedError {
 			loggedError = true
 			logutil.Logger(ctx).Error(" LOAD DATA failed to read current file offset by seek",
-				zap.Error(err2))
+				zap.Error(err))
 		}
 		select {
 		case <-ctx.Done():
@@ -847,7 +971,7 @@ func (e *LoadDataWorker) processStream(
 			cnt:             e.curBatchCnt,
 			rows:            e.rows,
 			loadedRowCnt:    e.rowCount,
-			scannedFileSize: pos,
+			scannedFileSize: e.finishedSize + currScannedSize,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -1018,31 +1142,12 @@ func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) err
 	return nil
 }
 
-// ReadRows reads rows from parser. When parser's reader meet EOF, it will return
-// nil. For other errors it will return directly. When the rows batch is full it
-// will also return nil.
+// ReadOneBatchRows reads rows from parser. When parser's reader meet EOF, it
+// will return nil. For other errors it will return directly. When the rows
+// batch is full it will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataWorker) ReadRows(ctx context.Context, parser mydump.Parser) error {
-	ignoreOneLineFn := parser.ReadRow
-	if csvParser, ok := parser.(*mydump.CSVParser); ok {
-		ignoreOneLineFn = func() error {
-			_, _, err := csvParser.ReadUntilTerminator()
-			return err
-		}
-	}
-
-	for e.IgnoreLines > 0 {
-		err := ignoreOneLineFn()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				return nil
-			}
-			return err
-		}
-
-		e.IgnoreLines--
-	}
+func (e *LoadDataWorker) ReadOneBatchRows(ctx context.Context, parser mydump.Parser) error {
 	for {
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {
