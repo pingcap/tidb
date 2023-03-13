@@ -335,7 +335,7 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           <br />
           <li>
             <b>Database encryption</b>
-            <br /><i>Encryption at rest with more granularity in table-level and column-level.</i>
+            <br /><i>Encryption at rest with more granularity in table-level and column-level</i>
           </li>
           <br />
           <li>
