@@ -1523,12 +1523,12 @@ func TestRandomPanicConsume(t *testing.T) {
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
-	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
+	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	fpName2 := "github.com/pingcap/tidb/store/copr/ConsumeRandomPanic"
-	require.NoError(t, failpoint.Enable(fpName2, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
+	require.NoError(t, failpoint.Enable(fpName2, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName2))
 	}()
@@ -1579,7 +1579,7 @@ func TestRandomPanicConsume(t *testing.T) {
 					require.NoError(t, res.Close())
 				}
 			}
-			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 		}
 	}
 }

@@ -57,7 +57,7 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	require.True(t, intest.InTest, "you should add --tags=intest when to test")
+	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 	tk := &TestKit{
 		require: require.New(t),

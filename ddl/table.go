@@ -306,11 +306,13 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			}
 			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
 			if err != nil {
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 		}
 		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
@@ -534,6 +536,9 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
 		if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 			err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
+			if err != nil {
+				return
+			}
 		}
 	})
 

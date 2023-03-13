@@ -149,6 +149,8 @@ type SQLExecutor interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+	// GetSessionVars is used to read some result after ExecuteXXX
+	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.

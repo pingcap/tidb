@@ -410,6 +410,72 @@ func TestWindowSpecRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "select rank() over %s from t window w as (order by a)", extractNodeFunc)
 }
 
+func TestLoadDataRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size='10mb',detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=_UTF8MB4'10mb', detached",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=_UTF8MB4'10mb'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size='10mb'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*LoadDataStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestLoadDataActions(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			sourceSQL: "show load data jobs",
+			expectSQL: "SHOW LOAD DATA JOBS",
+		},
+		{
+			sourceSQL: "show load data job 123",
+			expectSQL: "SHOW LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "show load data jobs where aa > 1",
+			expectSQL: "SHOW LOAD DATA JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "pause load data job 123",
+			expectSQL: "PAUSE LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "resume load data job 123",
+			expectSQL: "RESUME LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "Cancel load data job 123",
+			expectSQL: "CANCEL LOAD DATA JOB 123",
+		},
+		{
+			sourceSQL: "drop   load data job 123",
+			expectSQL: "DROP LOAD DATA JOB 123",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestFulltextSearchModifier(t *testing.T) {
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())

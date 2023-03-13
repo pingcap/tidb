@@ -22,6 +22,7 @@ go_library(
         "//kv",
         "//metrics",
         "//parser/terror",
+        "//store/copr/metrics",
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/options",
@@ -75,6 +76,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
+    shard_count = 33,
     deps = [
         "//kv",
         "//store/driver/backoff",

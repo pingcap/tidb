@@ -4386,3 +4386,15 @@ PARTITION BY LIST (level) (
 	tk.MustExec(`INSERT INTO member_level (id, level) values (313, 6)`)
 	tk.MustContainErrMsg(`ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4))`, "[table:1526]Table has no partition for value 6")
 }
+
+func TestDisableDDL(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/41277
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+}

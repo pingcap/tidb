@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -125,7 +124,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
-	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
+	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 
 	return
 }
@@ -521,13 +520,12 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	interval := table.TTLInfo.JobInterval
-	d, err := duration.ParseDuration(interval)
+	interval, err := table.TTLInfo.GetJobInterval()
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("illegal job interval", zap.String("interval", interval))
+		logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
 		return false
 	}
-	return startTime.Add(d).Before(now)
+	return startTime.Add(interval).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -597,6 +595,12 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		// if the job already exist, don't need to submit scan tasks
 		if jobExist {
 			return nil
+		}
+
+		sql, args = createJobHistorySQL(jobID, table, expireTime, now)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
 		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
