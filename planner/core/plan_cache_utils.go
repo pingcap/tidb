@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -155,11 +154,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
-	// set cache type
-	sctx.GetSessionVars().StmtCtx.CacheType = stmtctx.SessionPrepared
-	if !isPrepStmt {
-		sctx.GetSessionVars().StmtCtx.CacheType = stmtctx.SessionNonPrepared
-	}
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
