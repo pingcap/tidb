@@ -678,7 +678,7 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 
 func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) {
+	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
@@ -687,7 +687,8 @@ func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID
 			idxStats, ok := coll.Indices[idxStatsIdx]
 			if ok &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
-				!idxStats.IsInvalid(coll.Pseudo) {
+				!idxStats.IsInvalid(coll.Pseudo) &&
+				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
 			}
 		}
@@ -695,12 +696,9 @@ func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID
 	return false, -1
 }
 
-// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN and NULL.
-// The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
+// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
-func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
-	defaultSelectivity float64,
-	filters []expression.Expression) (ok bool, selectivity float64, err error) {
+func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
@@ -766,12 +764,13 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 		// Restore the original Index to avoid unexpected situation.
 		col.Index = originalIndex
 	}()
-	size := 1
+	topNLen := 0
+	histBucketsLen := hist.Len()
 	if topn != nil {
-		size = len(topn.TopN)
+		topNLen = len(topn.TopN)
 	}
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
-	selected := make([]bool, 0, size)
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, mathutil.Max(1, topNLen))
+	selected := make([]bool, 0, mathutil.Max(histBucketsLen, topNLen))
 
 	// 3. Calculate the TopN part selectivity.
 	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
@@ -797,7 +796,38 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	topNSel = float64(topNSelectedCnt) / totalCnt
 
 	// 4. Calculate the Histogram part selectivity.
-	histSel = defaultSelectivity * histTotalCnt / totalCnt
+	// The buckets upper bounds and the Bucket.Repeat are used like the TopN above.
+	// The buckets lower bounds are used as random samples and are regarded equally.
+	if hist != nil && histTotalCnt > 0 {
+		selected = selected[:0]
+		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		if err != nil {
+			return false, 0, err
+		}
+		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt int64
+		for i := range hist.Buckets {
+			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
+			if len(selected) < 2*i {
+				// This should not happen, but we add this check for safety.
+				break
+			}
+			if selected[2*i] {
+				lowerBoundMatchCnt++
+			}
+			if selected[2*i+1] {
+				bucketRepeatSelectedCnt += hist.Buckets[i].Repeat
+			}
+		}
+		var lowerBoundsRatio, upperBoundsRatio, lowerBoundsSel, upperBoundsSel float64
+		upperBoundsRatio = mathutil.Min(float64(bucketRepeatTotalCnt)/histTotalCnt, 1)
+		lowerBoundsRatio = 1 - upperBoundsRatio
+		if bucketRepeatTotalCnt > 0 {
+			upperBoundsSel = float64(bucketRepeatSelectedCnt) / float64(bucketRepeatTotalCnt)
+		}
+		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
+		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
+		histSel *= histTotalCnt / totalCnt
+	}
 
 	// 5. Calculate the NULL part selectivity.
 	// Errors in this staged would be returned, but would not make this entire method fail.
@@ -805,12 +835,10 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	c.AppendNull(0)
 	selected = selected[:0]
 	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
-	if err != nil || len(selected) != 1 {
-		nullSel = defaultSelectivity * float64(nullCnt) / totalCnt
-	} else if selected[0] {
-		nullSel = float64(nullCnt) / totalCnt
-	} else {
+	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
+	} else {
+		nullSel = float64(nullCnt) / totalCnt
 	}
 
 	// 6. Get the final result.

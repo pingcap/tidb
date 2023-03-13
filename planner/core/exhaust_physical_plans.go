@@ -1886,12 +1886,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			if p.hintInfo != nil && p.preferJoinType > 0 {
 				t := p.hintInfo.indexNestedLoopJoinTables
 				switch {
-				case len(t.inljTables) != 0:
+				case len(t.inljTables) != 0 && ((p.preferJoinType&preferLeftAsINLJInner > 0) || (p.preferJoinType&preferRightAsINLJInner > 0)):
 					errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
 						restore2JoinHint(HintINLJ, t.inljTables), restore2JoinHint(TiDBIndexNestedLoopJoin, t.inljTables))
-				case len(t.inlhjTables) != 0:
+				case len(t.inlhjTables) != 0 && ((p.preferJoinType&preferLeftAsINLHJInner > 0) || (p.preferJoinType&preferRightAsINLHJInner > 0)):
 					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, t.inlhjTables))
-				case len(t.inlmjTables) != 0:
+				case len(t.inlmjTables) != 0 && ((p.preferJoinType&preferLeftAsINLMJInner > 0) || (p.preferJoinType&preferRightAsINLMJInner > 0)):
 					errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, t.inlmjTables))
 				}
 			}
@@ -2014,9 +2014,6 @@ func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if p.ctx.GetSessionVars().EnableAdvancedJoinHint {
-		p.setPreferredJoinType4PhysicalOp()
-	}
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.ctx.GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := p.tryToGetIndexJoin(prop)
@@ -2024,10 +2021,17 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if (p.preferJoinType&preferBCJoin) == 0 && (p.preferJoinType&preferShuffleJoin) == 0 && p.preferJoinType > 0 {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
-		if prop.IsFlashProp() {
-			return nil, false, nil
+	if !isJoinHintSupportedInMPPMode(p.preferJoinType) {
+		if hasMPPJoinHints(p.preferJoinType) {
+			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"))
+			p.preferJoinType = 0
+		} else {
+			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
+			if prop.IsFlashProp() {
+				return nil, false, nil
+			}
 		}
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
@@ -2188,13 +2192,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		RightNAJoinKeys: rNAKeys,
 	}
 	// It indicates which side is the build side.
+	forceLeftToBuild := ((p.preferJoinType & preferLeftAsHJBuild) > 0) || ((p.preferJoinType & preferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.preferJoinType & preferRightAsHJBuild) > 0) || ((p.preferJoinType & preferLeftAsHJProbe) > 0)
+	if forceLeftToBuild && forceRightToBuild {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		forceLeftToBuild = false
+		forceRightToBuild = false
+	}
 	preferredBuildIndex := 0
+	fixedBuildSide := false // Used to indicate whether the build side for the MPP join is fixed or not.
 	if p.JoinType == InnerJoin {
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
 		preferredBuildIndex = 1
+		fixedBuildSide = true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
@@ -2203,6 +2216,10 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
 		// 3. or there are otherConditions for this join
 		if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
+			if !p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide {
+				// The hint has higher priority than variable.
+				fixedBuildSide = true
+			}
 			if p.JoinType == LeftOuterJoin {
 				preferredBuildIndex = 1
 			}
@@ -2210,6 +2227,19 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 		}
 	}
+	if forceLeftToBuild || forceRightToBuild {
+		match := (forceLeftToBuild && preferredBuildIndex == 0) || (forceRightToBuild && preferredBuildIndex == 1)
+		if !match {
+			if fixedBuildSide {
+				// A warning will be generated if the build side is fixed, but we attempt to change it using the hint.
+				p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
+			} else {
+				// The HASH_JOIN_BUILD OR HASH_JOIN_PROBE hints can take effective.
+				preferredBuildIndex = 1 - preferredBuildIndex
+			}
+		}
+	}
+
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {

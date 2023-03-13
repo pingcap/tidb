@@ -506,7 +506,7 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 }
 
 // Range iterates the MemAwareHandleMap with fn, the fn returns true to continue, returns false to stop.
-func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val interface{}) bool) {
+func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 	for h, val := range m.ints.M {
 		if !fn(IntHandle(h), val) {
 			return

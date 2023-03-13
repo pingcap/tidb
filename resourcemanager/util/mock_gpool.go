@@ -32,13 +32,13 @@ func (*MockGPool) ReleaseAndWait() {
 }
 
 // Tune is only for test
-func (*MockGPool) Tune(_ int) {
+func (*MockGPool) Tune(_ int32) {
 	panic("implement me")
 }
 
 // LastTunerTs is only for test
 func (*MockGPool) LastTunerTs() time.Time {
-	panic("implement me")
+	return time.Now().Add(-1 * 10 * time.Second)
 }
 
 // MaxInFlight is only for test
@@ -62,7 +62,7 @@ func (*MockGPool) MaxPASS() uint64 {
 }
 
 // Cap is only for test
-func (*MockGPool) Cap() int {
+func (*MockGPool) Cap() int32 {
 	panic("implement me")
 }
 
@@ -87,7 +87,7 @@ func (*MockGPool) GetQueueSize() int64 {
 }
 
 // Running is only for test
-func (*MockGPool) Running() int {
+func (*MockGPool) Running() int32 {
 	panic("implement me")
 }
 
