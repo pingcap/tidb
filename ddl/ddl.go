@@ -372,8 +372,6 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
-
-	waiting *atomicutil.Bool
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -674,7 +672,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.runningJobs.ids = make(map[int64]struct{})
-	ddlCtx.waiting = atomicutil.NewBool(false)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
