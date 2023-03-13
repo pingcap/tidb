@@ -82,6 +82,8 @@ func (p *Pool) Tune(size int32) {
 
 // Run runs a function in the pool.
 func (p *Pool) Run(fn func()) error {
+	p.waiting.Add(1)
+	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
 	}
@@ -124,6 +126,8 @@ func (p *Pool) run(fn func()) {
 
 // RunWithConcurrency runs a function in the pool with concurrency.
 func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
+	p.waiting.Add(1)
+	defer p.waiting.Add(-1)
 	if p.isStop.Load() {
 		return pool.ErrPoolClosed
 	}
@@ -145,8 +149,6 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 
 // checkAndAddRunning is to check if a task can run. If can, add the running number.
 func (p *Pool) checkAndAddRunning(concurrency uint32) (conc int32, run bool) {
-	p.waiting.Add(1)
-	defer p.waiting.Add(-1)
 	for {
 		if p.isStop.Load() {
 			return 0, false
@@ -183,7 +185,6 @@ func (p *Pool) ReleaseAndWait() {
 	p.isStop.Store(true)
 	// wait for all the task in the pending to exit
 	for p.waiting.Load() > 0 {
-		time.Sleep(waitInterval)
 	}
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
