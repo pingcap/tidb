@@ -350,8 +350,14 @@ func (e *LoadDataWorker) Load(
 	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
-		ctx, sqlExec, e.GetInfilePath(), e.controller.SchemaName, e.table.Meta().Name.O,
-		importer.LogicalImportMode, e.Ctx.GetSessionVars().User.String())
+		ctx,
+		sqlExec,
+		e.GetInfilePath(),
+		e.controller.SchemaName,
+		e.table.Meta().Name.O,
+		importer.LogicalImportMode,
+		e.Ctx.GetSessionVars().User.String(),
+	)
 	if err != nil {
 		return err
 	}
