@@ -520,6 +520,62 @@ func (t CompressionType) String() string {
 	}
 }
 
+type Bool int
+
+const (
+	// BoolAuto means the value is not set.
+	BoolAuto Bool = iota
+	// BoolTrue means the value is true.
+	BoolTrue
+	// BoolFalse means the value is false.
+	BoolFalse
+)
+
+func (b *Bool) UnmarshalTOML(v interface{}) error {
+	if val, ok := v.(bool); ok {
+		if val {
+			*b = BoolTrue
+		} else {
+			*b = BoolFalse
+		}
+		return nil
+	}
+	return errors.Errorf("invalid boolean '%v', should be true or false", v)
+}
+
+func (b *Bool) MarshalText() ([]byte, error) {
+	return []byte(b.String()), nil
+}
+
+func (b *Bool) MarshalJSON() ([]byte, error) {
+	return []byte(b.String()), nil
+}
+
+func (b *Bool) UnmarshalJSON(data []byte) error {
+	switch strings.ToLower(string(data)) {
+	case "true":
+		*b = BoolTrue
+	case "false":
+		*b = BoolFalse
+	case "null", "":
+		*b = BoolAuto
+	default:
+		return errors.Errorf("invalid boolean '%s', should be true or false", data)
+	}
+	return nil
+}
+
+func (b *Bool) String() string {
+	switch *b {
+	case BoolTrue:
+		return "true"
+	case BoolFalse:
+		return "false"
+	default:
+		return ""
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
 	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
@@ -681,6 +737,7 @@ type TikvImporter struct {
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL       Bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -1147,6 +1204,21 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		}
 	default:
 		return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+	}
+
+	if cfg.TikvImporter.IncrementalImport {
+		switch cfg.TikvImporter.AddIndexBySQL {
+		case BoolTrue:
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+		case BoolAuto:
+			cfg.TikvImporter.AddIndexBySQL = BoolFalse
+		}
+	} else {
+		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
+		if cfg.TikvImporter.AddIndexBySQL == BoolAuto && common.IsFailpointBuild {
+			cfg.TikvImporter.AddIndexBySQL = BoolTrue
+		}
 	}
 
 	return nil

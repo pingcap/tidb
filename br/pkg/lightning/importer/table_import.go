@@ -16,10 +16,14 @@ package importer
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -36,16 +40,24 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/dumpling/export"
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+)
+
+const (
+	getDDLStatusInterval = 30 * time.Second
+	getDDLStatusMaxRetry = 10
 )
 
 type TableImporter struct {
@@ -855,7 +867,7 @@ func (tr *TableImporter) postProcess(
 		return false, nil
 	}
 
-	// 3. alter table set auto_increment
+	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
@@ -1004,7 +1016,25 @@ func (tr *TableImporter) postProcess(
 		cp.Status = nextStage
 	}
 
-	// 5. do table analyze
+	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
+		var err error
+		if rc.cfg.TikvImporter.AddIndexBySQL == config.BoolTrue {
+			var db *sql.DB
+			db, err = rc.tidbGlue.GetDB()
+			if err == nil {
+				err = tr.addIndexes(ctx, db)
+			}
+			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
+			shouldSkipAnalyze = true
+		}
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexAdded)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = checkpoints.CheckpointStatusIndexAdded
+	}
+
+	// do table analyze
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
@@ -1027,8 +1057,6 @@ func (tr *TableImporter) postProcess(
 				return false, errors.Trace(err)
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
-		default:
-			return true, nil
 		}
 	}
 
@@ -1175,4 +1203,278 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) e
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
+	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
+	defer func() {
+		task.End(zap.ErrorLevel, retErr)
+	}()
+
+	tblInfo := tr.tableInfo
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+
+	batchSQL, sqls := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	err := tr.executeDDL(ctx, db, batchSQL)
+	if err == nil || !shouldIgnoreDDLError(err) || len(sqls) == 1 {
+		return err
+	}
+
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+	logger.Warn("cannot add all indexes in one statement, try adding them one by one", zap.Strings("sqls", sqls), zap.Error(err))
+
+	for _, sql := range sqls {
+		if err := tr.executeDDL(ctx, db, sql); err != nil {
+			if shouldIgnoreDDLError(err) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string) error {
+	logger := log.With(zap.String("ddl", ddl))
+	logger.Info("execute ddl")
+
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: logger,
+	}
+
+	var ddlCreateTime int64
+	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &ddlCreateTime); err != nil {
+		ddlCreateTime = time.Now().Unix()
+		logger.Warn(
+			"failed to query current time, will use local time as ddl create time",
+			zap.Int64("ddl-create-time", ddlCreateTime),
+			zap.Error(err),
+		)
+	}
+
+	originErr := s.Exec(ctx, "add index", ddl)
+	if originErr == nil || log.IsContextCanceledError(originErr) {
+		return originErr
+	}
+	logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(originErr))
+
+	for {
+		var (
+			status string
+			err    error
+		)
+		for i := 0; i < getDDLStatusMaxRetry; i++ {
+			status, err = getDDLStatusFromTiDB(ctx, db, ddl, ddlCreateTime)
+			if err == nil {
+				break
+			}
+			logger.Warn("failed to query ddl status", zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return originErr
+			case <-time.After(getDDLStatusInterval):
+			}
+		}
+		if err != nil {
+			return originErr
+		}
+
+		switch status {
+		case model.JobStateDone.String(), model.JobStateSynced.String():
+			logger.Info("ddl job is finished", zap.String("status", status))
+			return nil
+		case model.JobStateRunning.String(), model.JobStateQueueing.String(), model.JobStateNone.String():
+			logger.Info("ddl job is running", zap.String("status", status))
+		case "":
+			logger.Warn("ddl status not found, maybe ddl job is not created")
+			return originErr
+		default:
+			logger.Warn("ddl job is canceled or rollbacked", zap.String("status", status))
+			return originErr
+		}
+
+		select {
+		case <-ctx.Done():
+			return originErr
+		case <-time.After(getDDLStatusInterval):
+		}
+	}
+}
+
+// buildAddIndexSQL builds the SQL statement to create missing indexes.
+// It returns both a batch SQL statement that creates all indexes at once,
+// and a list of SQL statements that creates each index individually.
+func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (batchSQL string, sqls []string) {
+	var batchSQLBuf strings.Builder
+	for _, desiredIdxInfo := range desiredTblInfo.Indices {
+		present := false
+		for _, curIdxInfo := range curTblInfo.Indices {
+			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
+				present = true
+			}
+		}
+		if present {
+			continue
+		}
+
+		if len(sqls) == 0 {
+			batchSQLBuf.WriteString("ALTER TABLE ")
+			batchSQLBuf.WriteString(tableName)
+		} else {
+			batchSQLBuf.WriteString(",")
+		}
+
+		var singleSQLBuf strings.Builder
+		singleSQLBuf.WriteString("ALTER TABLE ")
+		singleSQLBuf.WriteString(tableName)
+
+		if desiredIdxInfo.Primary {
+			batchSQLBuf.WriteString(" ADD PRIMARY KEY ")
+			singleSQLBuf.WriteString(" ADD PRIMARY KEY ")
+		} else if desiredIdxInfo.Unique {
+			batchSQLBuf.WriteString(" ADD UNIQUE KEY ")
+			singleSQLBuf.WriteString(" ADD UNIQUE KEY ")
+		} else {
+			batchSQLBuf.WriteString(" ADD KEY ")
+			singleSQLBuf.WriteString(" ADD KEY ")
+		}
+		batchSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+		singleSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+
+		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
+		for _, col := range desiredIdxInfo.Columns {
+			var colStr string
+			if desiredTblInfo.Columns[col.Offset].Hidden {
+				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
+			} else {
+				colStr = common.EscapeIdentifier(col.Name.O)
+				if col.Length != types.UnspecifiedLength {
+					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
+				}
+			}
+			colStrs = append(colStrs, colStr)
+		}
+
+		batchSQLBuf.WriteByte('(')
+		batchSQLBuf.WriteString(strings.Join(colStrs, ","))
+		batchSQLBuf.WriteByte(')')
+
+		singleSQLBuf.WriteByte('(')
+		singleSQLBuf.WriteString(strings.Join(colStrs, ","))
+		singleSQLBuf.WriteByte(')')
+		sqls = append(sqls, singleSQLBuf.String())
+	}
+	return batchSQLBuf.String(), sqls
+}
+
+func shouldIgnoreDDLError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
+}
+
+// getDDLStatusFromTiDB retrieves the synchronizing status of DDL from TiDB
+// hence here db should be TiDB database
+// createTime should be based on the timezone of downstream, and its unit is second.
+//
+// Copied from https://github.com/pingcap/tiflow/blob/7c65f8c5ec2e232a2c37d1a189cde4f611dfdd8a/dm/syncer/util.go#L236.
+func getDDLStatusFromTiDB(ctx context.Context, db *sql.DB, ddl string, createTime int64) (string, error) {
+	const linesOfRows = 10
+	rowNum := linesOfRows
+	rowOffset := 0
+	queryMap := make(map[int]string)
+
+	for {
+		// every attempt try 10 history jobs
+		showJobs := fmt.Sprintf("ADMIN SHOW DDL JOBS %d", rowNum)
+		jobsRows, err := db.QueryContext(ctx, showJobs)
+		if err != nil {
+			return "", err
+		}
+
+		var jobsResults [][]string
+		jobsResults, err = export.GetSpecifiedColumnValuesAndClose(jobsRows, "JOB_ID", "CREATE_TIME", "STATE")
+		if err != nil {
+			return "", err
+		}
+
+		for i := rowNum - linesOfRows; i < rowNum && i < len(jobsResults); i++ {
+			ddlCreateTimeStr := jobsResults[i][1]
+			var ddlCreateTimeParse time.Time
+			ddlCreateTimeParse, err = time.Parse("2006-01-02 15:04:05", ddlCreateTimeStr)
+			if err != nil {
+				return "", err
+			}
+			ddlCreateTime := ddlCreateTimeParse.Unix()
+
+			// ddlCreateTime and createTime are both based on timezone of downstream
+			if ddlCreateTime >= createTime {
+				var jobID int
+				jobID, err = strconv.Atoi(jobsResults[i][0])
+				if err != nil {
+					return "", err
+				}
+
+				for {
+					ddlQuery, ok := queryMap[jobID]
+					if !ok {
+						// jobID does not exist, expand queryMap for deeper search
+						showJobsLimitNext := fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT 10 OFFSET %d", rowOffset)
+						var rowsLimitNext *sql.Rows
+						rowsLimitNext, err = db.QueryContext(ctx, showJobsLimitNext)
+						if err != nil {
+							return "", err
+						}
+
+						var resultsLimitNext [][]string
+						resultsLimitNext, err = export.GetSpecifiedColumnValuesAndClose(rowsLimitNext, "JOB_ID", "QUERY")
+						if err != nil {
+							return "", err
+						}
+						if len(resultsLimitNext) == 0 {
+							// JOB QUERIES has been used up
+							// requested DDL cannot be found
+							return "", nil
+						}
+
+						// if new DDLs are written to TiDB after the last query 'ADMIN SHOW DDL JOB QUERIES LIMIT 10 OFFSET'
+						// we may get duplicate rows here, but it does not affect the checking
+						for k := range resultsLimitNext {
+							var jobIDForLimit int
+							jobIDForLimit, err = strconv.Atoi(resultsLimitNext[k][0])
+							if err != nil {
+								return "", err
+							}
+							queryMap[jobIDForLimit] = resultsLimitNext[k][1]
+						}
+						rowOffset += linesOfRows
+					} else {
+						if ddl == ddlQuery {
+							return jobsResults[i][2], nil
+						}
+						break
+					}
+				}
+			} else {
+				// ddlCreateTime is monotonous in jobsResults
+				// requested DDL cannot be found
+				return "", nil
+			}
+		}
+		if len(jobsResults) == rowNum {
+			rowNum += linesOfRows
+		} else {
+			// jobsResults has been checked thoroughly
+			return "", nil
+		}
+	}
 }

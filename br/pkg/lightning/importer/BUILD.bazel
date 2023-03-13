@@ -45,6 +45,7 @@ go_library(
         "//br/pkg/version",
         "//br/pkg/version/build",
         "//ddl",
+        "//dumpling/export",
         "//errno",
         "//keyspace",
         "//kv",

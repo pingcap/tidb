@@ -445,3 +445,11 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 	}
 	return nil
 }
+
+// IsFailpointBuild is true if this is a failpoint build
+var IsFailpointBuild = isFailpointBuild()
+
+func isFailpointBuild() bool {
+	failpoint.Return(true)
+	return false
+}
