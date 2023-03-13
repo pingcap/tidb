@@ -9,12 +9,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/executor/asyncloaddata",
     visibility = ["//visibility:public"],
     deps = [
-        "//errno",
         "//kv",
         "//parser/terror",
         "//types",
         "//util/chunk",
-        "//util/dbterror",
+        "//util/dbterror/exeerrors",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//util",
