@@ -25,12 +25,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -66,12 +69,14 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -104,6 +109,8 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+
+	LoadDataJobID *int64
 }
 
 type showTableRegionRowItem struct {
@@ -273,6 +280,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForPartition(ctx)
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
+	case ast.ShowLoadDataJobs:
+		return e.fetchShowLoadDataJobs(ctx)
 	}
 	return nil
 }
@@ -2131,6 +2140,67 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 		return err
 	}
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
+	return nil
+}
+
+// fetchShowLoadDataJobs fills the result with the schema
+// {"Job_ID", "Create_Time", "Start_Time", "End_Time",
+// "Data_Source", "Target_Table", "Import_Mode", "Created_By",
+// "Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+// "Result_Code", "Result_Message"}.
+func (e *ShowExec) fetchShowLoadDataJobs(ctx context.Context) error {
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	handleOneInfo := func(info *asyncloaddata.JobInfo) {
+		e.result.AppendInt64(0, info.JobID)
+		e.result.AppendTime(1, info.CreateTime)
+		e.result.AppendTime(2, info.StartTime)
+		e.result.AppendTime(3, info.EndTime)
+		e.result.AppendString(4, info.DataSource)
+		table := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
+		e.result.AppendString(5, table)
+		e.result.AppendString(6, info.ImportMode)
+		e.result.AppendString(7, info.User)
+		e.result.AppendString(8, "loading")
+		e.result.AppendString(9, info.Status.String())
+		progress, err2 := asyncloaddata.ProgressFromJSON([]byte(info.Progress))
+		if err2 != nil {
+			// maybe empty progress
+			if info.Progress != "" {
+				logutil.Logger(ctx).Warn("invalid progress", zap.String("progress", info.Progress))
+			}
+			e.result.AppendNull(10)
+			e.result.AppendNull(11)
+		} else {
+			e.result.AppendString(10, units.HumanSize(float64(progress.SourceFileSize)))
+			e.result.AppendString(11, units.HumanSize(float64(progress.LoadedFileSize)))
+		}
+		terr := new(terror.Error)
+		err2 = terr.UnmarshalJSON([]byte(info.StatusMessage))
+		if err2 == nil {
+			e.result.AppendInt64(12, int64(terr.Code()))
+			e.result.AppendString(13, terr.GetMsg())
+			return
+		}
+		e.result.AppendInt64(12, 0)
+		e.result.AppendString(13, info.StatusMessage)
+	}
+
+	if e.LoadDataJobID != nil {
+		info, err := asyncloaddata.GetJobInfo(ctx, exec, *e.LoadDataJobID, e.ctx.GetSessionVars().User.String())
+		if err != nil {
+			return err
+		}
+		handleOneInfo(info)
+		return nil
+	}
+	infos, err := asyncloaddata.GetAllJobInfo(ctx, exec, e.ctx.GetSessionVars().User.String())
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		handleOneInfo(info)
+	}
+	// TODO: does not support filtering for now
 	return nil
 }
 

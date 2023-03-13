@@ -1926,6 +1926,8 @@ type ShowContents struct {
 	GlobalScope bool       // Used by show variables.
 	Extended    bool       // Used for `show extended columns from ...`
 	Limit       *ast.Limit // Used for limit Result Set row number.
+
+	LoadDataJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))

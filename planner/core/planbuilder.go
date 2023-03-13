@@ -3209,6 +3209,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
+			LoadDataJobID:         show.LoadDataJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -5206,6 +5207,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
+	case ast.ShowLoadDataJobs:
+		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
+			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
+			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Result_Code", "Result_Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
