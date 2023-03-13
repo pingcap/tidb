@@ -1184,8 +1184,11 @@ func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *stati
 		}
 	}
 
+	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
+	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
+
 	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
-	// This would happen when len(cols) > 0 and no proper index stats are available.
+	// This would happen when len(cols) > 1 and no proper index stats are available.
 	minNDV := int64(-1)
 	for _, colStats := range histColl.Columns {
 		if colStats == nil || colStats.Info == nil {
