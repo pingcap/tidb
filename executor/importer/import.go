@@ -83,6 +83,9 @@ var (
 		addIndexOption:  {},
 		analyzeOption:   {},
 	}
+
+	// LoadDataReadBlockSize is exposed for test.
+	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -177,8 +180,9 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
-		if plan.FieldsInfo != nil || plan.LinesInfo != nil {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... for format '%s'", e.Format))
+		// user can give IGNORE 0 LINES actually, we cannot determine whether this clause is specified now.
+		if plan.FieldsInfo != nil || plan.LinesInfo != nil || e.IgnoreLines > 0 {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
 		}
 		// no need to init those param for sql/parquet
 		return nil

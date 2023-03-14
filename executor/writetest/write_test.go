@@ -2028,6 +2028,8 @@ func TestLoadDataInitParam(t *testing.T) {
 		exeerrors.ErrLoadDataWrongFormatConfig)
 	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test lines terminated by 'a'"),
 		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test ignore 3 lines"),
+		"cannot specify FIELDS ... or LINES")
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed"),
 		"must specify FIELDS [OPTIONALLY] ENCLOSED BY")
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test lines terminated by ''"),
@@ -2060,6 +2062,9 @@ func TestLoadDataInitParam(t *testing.T) {
 
 	// positive case
 	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+	// it's allowed for now
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test ignore 0 lines"))
 	ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
 	ctx.SetValue(executor.LoadDataVarKey, nil)

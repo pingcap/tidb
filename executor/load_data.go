@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -312,9 +311,6 @@ func (e *LoadDataWorker) initInsertValues() error {
 	return nil
 }
 
-// LoadDataReadBlockSize is exposed for test.
-var LoadDataReadBlockSize = int64(config.ReadBlockSize)
-
 // LoadDataReaderInfo provides information for a data reader of LOAD DATA.
 type LoadDataReaderInfo struct {
 	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
@@ -489,7 +485,7 @@ func (e *LoadDataWorker) buildParser(
 			ctx,
 			e.controller.GenerateCSVConfig(),
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 			false,
 			// TODO: support charset conversion
@@ -499,7 +495,7 @@ func (e *LoadDataWorker) buildParser(
 			ctx,
 			e.Ctx.GetSessionVars().SQLMode,
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 		)
 	case importer.LoadDataFormatParquet:
