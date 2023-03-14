@@ -133,7 +133,9 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
 	if e.analyzeExec != nil && e.executed {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{e.ruRuntimeStats})
+		if coll := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{e.ruRuntimeStats})
+		}
 	}
 	return err
 }
