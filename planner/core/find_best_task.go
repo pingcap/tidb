@@ -953,9 +953,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 
-		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
-			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
-		}
 		if canConvertPointGet && path.Index != nil && path.Index.MVIndex {
 			canConvertPointGet = false // cannot use PointGet upon MVIndex
 		}
@@ -1015,6 +1012,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
 				}
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) {
+					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("special optimization for PointGet plans"))
+				}
+
 				appendCandidate(ds, pointGetTask, prop, opt)
 				if !pointGetTask.invalid() {
 					cntPlan++
@@ -1092,27 +1093,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
-}
-
-func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
-	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
-	// these assumptions may be broken after parameters change.
-	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
-
-	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
-	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
-		for _, accessCond := range path.AccessConds {
-			f, ok := accessCond.(*expression.ScalarFunction)
-			if !ok {
-				return false
-			}
-			if f.FuncName.L != ast.EQ {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
