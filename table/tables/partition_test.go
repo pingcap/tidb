@@ -23,8 +23,6 @@ import (
 	"testing"
 	gotime "time"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -41,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestPartitionBasic(t *testing.T) {
