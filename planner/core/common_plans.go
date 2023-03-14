@@ -652,7 +652,6 @@ func containShuffleOperator(p Plan) bool {
 	if !ok {
 		return false
 	}
-	childContainTableDual := false
 	for _, child := range physicalPlan.Children() {
 		childContainTableDual = childContainTableDual || containShuffleOperator(child)
 		if childContainTableDual {
