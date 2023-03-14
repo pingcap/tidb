@@ -1208,7 +1208,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
-						// lock duplicated row key on insert-ingore
+						// lock duplicated row key on insert-ignore
 						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
 					}
 					continue
