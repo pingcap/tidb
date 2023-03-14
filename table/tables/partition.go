@@ -615,7 +615,34 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	return ret, nil
 }
 
+<<<<<<< HEAD
 func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, exprCols []*expression.Column,
+=======
+// Clone a copy of ForListPruning
+func (lp *ForListPruning) Clone() *ForListPruning {
+	ret := *lp
+	if ret.LocateExpr != nil {
+		ret.LocateExpr = lp.LocateExpr.Clone()
+	}
+	if ret.PruneExpr != nil {
+		ret.PruneExpr = lp.PruneExpr.Clone()
+	}
+	ret.PruneExprCols = make([]*expression.Column, 0, len(lp.PruneExprCols))
+	for i := range lp.PruneExprCols {
+		c := lp.PruneExprCols[i].Clone().(*expression.Column)
+		ret.PruneExprCols = append(ret.PruneExprCols, c)
+	}
+	ret.ColPrunes = make([]*ForListColumnPruning, 0, len(lp.ColPrunes))
+	for i := range lp.ColPrunes {
+		l := *lp.ColPrunes[i]
+		l.ExprCol = l.ExprCol.Clone().(*expression.Column)
+		ret.ColPrunes = append(ret.ColPrunes, &l)
+	}
+	return &ret
+}
+
+func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, defs []model.PartitionDefinition, exprCols []*expression.Column,
+>>>>>>> 6f3122a145 (*: Update the UniqueID of partition expression columns in LIST partitioning (#42193))
 	columns []*expression.Column, names types.NameSlice) error {
 	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
