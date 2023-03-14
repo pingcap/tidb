@@ -28,6 +28,8 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/resourcemanager/gpool/spool"
+	rutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -204,8 +206,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
 	)
-
-	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
+	pool, err := spool.NewPool("tikv_driver", 128, rutil.TIKVDRIVER)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient, tikv.WithPool(pool))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

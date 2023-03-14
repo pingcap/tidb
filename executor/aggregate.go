@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/resourcemanager/gpool/spool"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -855,7 +856,9 @@ func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.Wa
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup := &sync.WaitGroup{}
 	fetchChildWorkerWaitGroup.Add(1)
-	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
+	spool.Run(func() {
+		e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
+	})
 
 	// We get the pointers here instead of when we are all finished and adding the time because:
 	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
@@ -884,7 +887,10 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+		worker := e.finalWorkers[i]
+		spool.Run(func() {
+			worker.run(e.ctx, finalWorkerWaitGroup)
+		})
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()

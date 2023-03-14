@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spool",
+    srcs = [
+        "option.go",
+        "spool.go",
+        "worker.go",
+        "worker_loop_queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/gpool/spool",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//metrics",
+        "//resourcemanager",
+        "//resourcemanager/util",
+        "//util/gpool",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "spool_test",
+    srcs = [
+        "main_test.go",
+        "spool_benchmark_test.go",
+        "spool_test.go",
+        "worker_loop_queue_test.go",
+    ],
+    embed = [":spool"],
+    deps = [
+        "//resourcemanager/util",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
