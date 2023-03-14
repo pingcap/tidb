@@ -450,7 +450,15 @@ func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
 var IsFailpointBuild = isFailpointBuild()
 
 func isFailpointBuild() bool {
-	failpoint.Return(true)
-	//nolint:unreachable
-	return false
+	var result bool
+	// Hack: use a *special* switch statement to avoid unreachable code in failpoint build.
+	// The naive way is to add `failpoint.Return(true)` before the last return statement,
+	// but this will cause unreachable code in failpoint build.
+	switch {
+	case true:
+		failpoint.Fallthrough()
+	default:
+		result = true
+	}
+	return result
 }
