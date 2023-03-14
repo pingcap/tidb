@@ -541,6 +541,7 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	return rc
 }
 
+<<<<<<< HEAD
 func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
 	rc := dc.getReorgCtx(bfJob.JobID)
 	if rc == nil {
@@ -549,6 +550,10 @@ func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
 	} else {
 		rc.references.Add(1)
 	}
+=======
+func genBackfillJobReorgCtxID(jobID int64) int64 {
+	return -jobID
+>>>>>>> bd546f88c0 (ddl: fix dist-reorg bugs (#42204))
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {

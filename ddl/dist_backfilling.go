@@ -34,7 +34,87 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 const getJobWithoutPartition = -1
+=======
+const (
+	getJobWithoutPartition    = -1
+	getJobWithPartitionInitID = int64(0)
+	backfillJobPrefixKey      = "%d_%s_%d_%%"
+
+	// InstanceLease is the instance lease.
+	InstanceLease                = 1 * time.Minute
+	updateInstanceLease          = 25 * time.Second
+	genTaskBatch                 = 4096
+	genPhysicalTableTaskBatch    = 256
+	minGenTaskBatch              = 1024
+	minGenPhysicalTableTaskBatch = 64
+	minDistTaskCnt               = 64
+	retrySQLTimes                = 10
+)
+
+// RetrySQLInterval is export for test.
+var RetrySQLInterval = 300 * time.Millisecond
+
+func backfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return fmt.Sprintf(backfillJobPrefixKey, ddlJobID, hex.EncodeToString(eleKey), eleID)
+}
+
+// BackfillJob is for a tidb_background_subtask table's record.
+type BackfillJob struct {
+	ID              int64
+	JobID           int64
+	EleID           int64
+	EleKey          []byte
+	PhysicalTableID int64
+	Tp              backfillerType
+	State           model.JobState
+	InstanceID      string
+	InstanceLease   types.Time
+	StartTS         uint64
+	StateUpdateTS   uint64
+	Meta            *model.BackfillMeta
+}
+
+// PrefixKeyString returns the BackfillJob's prefix key.
+func (bj *BackfillJob) PrefixKeyString() string {
+	return backfillJobPrefixKeyString(bj.JobID, bj.EleKey, bj.EleID)
+}
+
+func (bj *BackfillJob) keyString() string {
+	return fmt.Sprintf("%d_%s_%d_%d", bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID, bj.ID)
+}
+
+// AbbrStr returns the BackfillJob's info without the Meta info.
+func (bj *BackfillJob) AbbrStr() string {
+	return fmt.Sprintf("ID:%d, JobID:%d, EleID:%d, Type:%s, State:%s, InstanceID:%s, InstanceLease:%s",
+		bj.ID, bj.JobID, bj.EleID, bj.Tp, bj.State, bj.InstanceID, bj.InstanceLease)
+}
+
+// GetOracleTimeWithStartTS returns the current time with txn's startTS.
+func GetOracleTimeWithStartTS(se *session) (time.Time, error) {
+	txn, err := se.Txn(true)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return oracle.GetTimeFromTS(txn.StartTS()).UTC(), nil
+}
+
+// GetOracleTime returns the current time from TS without txn.
+func GetOracleTime(store kv.Storage) (time.Time, error) {
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return time.Time{}, errors.Trace(err)
+	}
+	return oracle.GetTimeFromTS(currentVer.Ver).UTC(), nil
+}
+
+// GetLeaseGoTime returns a types.Time by adding a lease.
+func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
+	leaseTime := currTime.Add(lease)
+	return types.NewTime(types.FromGoTime(leaseTime.In(time.UTC)), mysql.TypeTimestamp, types.MaxFsp)
+}
+>>>>>>> bd546f88c0 (ddl: fix dist-reorg bugs (#42204))
 
 type backfillWorkerContext struct {
 	currID          int
@@ -129,7 +209,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 		return bfWorker.runTask(task)
 	})
 
-	runningPID := int64(0)
+	runningPID := getJobWithPartitionInitID
 	// If txn-merge we needn't to claim the backfill job through the partition table
 	if ingestBackendCtx == nil {
 		runningPID = getJobWithoutPartition
@@ -228,6 +308,7 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 		bfJob:         bfJob,
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
+		id:         int(bfJob.ID),
 		sqlQuery:   bfJob.Meta.Query,
 		startKey:   bfJob.Meta.StartKey,
 		endKey:     bfJob.Meta.EndKey,
@@ -244,6 +325,11 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
+				// Make it run the next physical table when the current physical table is finished.
+				if *runningPID != getJobWithoutPartition && *runningPID != 0 {
+					*runningPID = getJobWithPartitionInitID
+					continue
+				}
 				logutil.BgLogger().Info("no backfill job, handle backfill task finished")
 				return nil, gpool.ErrProducerClosed
 			}

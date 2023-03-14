@@ -277,6 +277,110 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
 }
 
+<<<<<<< HEAD
+=======
+func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, phyTblID int64, notDistTask bool,
+	batchTasks []*reorgBackfillTask, bJobs []*BackfillJob) error {
+	bJobs = bJobs[:0]
+	instanceID := ""
+	if notDistTask {
+		instanceID = reorgInfo.d.uuid
+	}
+
+	// TODO: Adjust the number of ranges(region) for each task.
+	for _, task := range batchTasks {
+		bm := &model.BackfillMeta{
+			IsUnique:   sJobCtx.isUnique,
+			EndInclude: task.endInclude,
+			ReorgTp:    reorgInfo.Job.ReorgMeta.ReorgTp,
+			SQLMode:    reorgInfo.ReorgMeta.SQLMode,
+			Location:   reorgInfo.ReorgMeta.Location,
+			JobMeta: &model.JobMeta{
+				SchemaID: reorgInfo.Job.SchemaID,
+				TableID:  reorgInfo.Job.TableID,
+				Type:     reorgInfo.Job.Type,
+				Query:    reorgInfo.Job.Query,
+			},
+			StartKey: task.startKey,
+			EndKey:   task.endKey,
+		}
+		bj := &BackfillJob{
+			ID:              sJobCtx.currBackfillJobID.Add(1),
+			JobID:           reorgInfo.Job.ID,
+			EleID:           reorgInfo.currElement.ID,
+			EleKey:          reorgInfo.currElement.TypeKey,
+			PhysicalTableID: phyTblID,
+			Tp:              sJobCtx.bfWorkerType,
+			State:           model.JobStateNone,
+			InstanceID:      instanceID,
+			Meta:            bm,
+		}
+		bj.Meta.CurrKey = task.startKey
+		bJobs = append(bJobs, bj)
+	}
+	if err := AddBackfillJobs(sess, bJobs); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, pTblMeta *BackfillJobRangeMeta) error {
+	isFirstOps := !sJobCtx.isMultiPhyTbl
+	batchSize := sJobCtx.batchSize
+	startKey, endKey := kv.Key(pTblMeta.StartKey), kv.Key(pTblMeta.EndKey)
+	bJobs := make([]*BackfillJob, 0, batchSize)
+	for {
+		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
+		if len(batchTasks) == 0 {
+			break
+		}
+		notNeedDistProcess := isFirstOps && (len(kvRanges) < minDistTaskCnt)
+		if err = addBatchBackfillJobs(sess, reorgInfo, sJobCtx, pTblMeta.PhyTblID, notNeedDistProcess, batchTasks, bJobs); err != nil {
+			return errors.Trace(err)
+		}
+		isFirstOps = false
+
+		remains := kvRanges[len(batchTasks):]
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+		}
+		isFinished := startKey.Cmp(endKey) >= 0
+		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
+		logutil.BgLogger().Info("[ddl] batch split backfill jobs to the backfill table",
+			zap.Int64("physicalID", pTblMeta.PhyTblID),
+			zap.Int("batchTasksCnt", len(batchTasks)),
+			zap.Int("totalRegionCnt", len(kvRanges)),
+			zap.Int("remainRegionCnt", len(remains)),
+			zap.String("startHandle", hex.EncodeToString(startKey)),
+			zap.String("endHandle", hex.EncodeToString(endKey)),
+			zap.Bool("isFinished", isFinished))
+
+		if isFinished {
+			break
+		}
+
+		for {
+			bJobCnt, err := CheckBackfillJobCountWithPhyID(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if bJobCnt < sJobCtx.minBatchSize {
+				break
+			}
+			time.Sleep(RetrySQLInterval)
+		}
+	}
+	return nil
+}
+
+>>>>>>> bd546f88c0 (ddl: fix dist-reorg bugs (#42204))
 func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext) {
 	defaultSQLMode := sess.GetSessionVars().SQLMode
 	defer func() { sess.GetSessionVars().SQLMode = defaultSQLMode }()
@@ -439,15 +543,24 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
+=======
+// CheckBackfillJobCountWithPhyID checks if the backfill job is interrupted, if not gets the backfill job count.
+func CheckBackfillJobCountWithPhyID(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
+>>>>>>> bd546f88c0 (ddl: fix dist-reorg bugs (#42204))
 	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEleID, currEleKey)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	backfillJobCnt, err = GetBackfillJobCount(sess, BackgroundSubtaskTable,
+<<<<<<< HEAD
 		fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
 			ddlJobID, hex.EncodeToString(currEleKey), currEleID), "check_backfill_job_count")
+=======
+		fmt.Sprintf("task_key like '%s' and ddl_physical_tid = %d", backfillJobPrefixKeyString(ddlJobID, currEleKey, currEleID), pTblID), "check_backfill_job_count")
+>>>>>>> bd546f88c0 (ddl: fix dist-reorg bugs (#42204))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

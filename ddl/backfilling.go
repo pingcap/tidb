@@ -364,6 +364,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	isDistReorg := task.bfJob != nil
 	if isDistReorg {
 		w.initPartitionIndexInfo(task)
+		jobID = genBackfillJobReorgCtxID(jobID)
 	}
 	for {
 		// Give job chance to be canceled, if we not check it here,

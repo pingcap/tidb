@@ -340,6 +340,12 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
+	allCnt, err = ddl.CheckBackfillJobCountWithPhyID(se, jobID2, eleID2, meta.IndexElementKey, 0)
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 0)
+	allCnt, err = ddl.CheckBackfillJobCountWithPhyID(se, jobID2, eleID2, meta.IndexElementKey, 1)
+	require.NoError(t, err)
+	require.Equal(t, allCnt, cnt)
 	// test physical table
 	err = ddl.RemoveBackfillJob(se, true, bJobs1[0])
 	require.NoError(t, err)
