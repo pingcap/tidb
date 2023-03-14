@@ -1,0 +1,135 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl_test
+
+import (
+	"encoding/hex"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBackfillFlowHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handler, err := ddl.NewLitBackfillFlowHandle(dom.DDL())
+	require.NoError(t, err)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// test normal table ProcessNormalFlow
+	tk.MustExec("create table t1(id int primary key, v int)")
+	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1")
+	baseMeta := gTaskMeta.LitBackfillTaskMetaBase
+	metas, err := handler.ProcessNormalFlow(nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, proto.StepOne, gTask.Step)
+	require.Equal(t, 1, len(metas))
+	var subTask ddl.LitBackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal(metas[0], &subTask))
+	require.Equal(t, baseMeta, subTask.LitBackfillTaskMetaBase)
+	require.Equal(t, baseMeta.TableID, subTask.PhysicalTableID)
+
+	// test normal table ProcessNormalFlow after step1 finished
+	gTask.State = proto.TaskStateRunning
+	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(metas))
+
+	// test normal table ProcessErrFlow
+	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
+	require.NoError(t, err)
+	require.Nil(t, errMeta)
+
+	// test partition table ProcessNormalFlow
+	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
+		"PARTITION p0 VALUES LESS THAN (10),\n" +
+		"PARTITION p1 VALUES LESS THAN (100),\n" +
+		"PARTITION p2 VALUES LESS THAN (1000),\n" +
+		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
+	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	baseMeta = gTaskMeta.LitBackfillTaskMetaBase
+	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, proto.StepOne, gTask.Step)
+	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	for i, par := range tblInfo.Partition.Definitions {
+		var subTask ddl.LitBackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(metas[i], &subTask))
+		require.Equal(t, baseMeta, subTask.LitBackfillTaskMetaBase)
+		require.Equal(t, par.ID, subTask.PhysicalTableID)
+	}
+
+	// test partition table ProcessNormalFlow after step1 finished
+	gTask.State = proto.TaskStateRunning
+	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(metas))
+
+	// test partition table ProcessErrFlow
+	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
+	require.NoError(t, err)
+	require.Nil(t, errMeta)
+}
+
+func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+	require.True(t, ok)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+
+	taskMeta := &ddl.LitBackfillGlobalTaskMeta{
+		LitBackfillTaskMetaBase: ddl.LitBackfillTaskMetaBase{
+			JobID:             time.Now().UnixMicro(),
+			SchemaID:          db.ID,
+			TableID:           tblInfo.ID,
+			ElementID:         10,
+			ElementKeyEncoded: hex.EncodeToString(meta.IndexElementKey),
+			IsUnique:          true,
+			SQLMode:           defaultSQLMode,
+			Location:          &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+		},
+	}
+
+	gTaskMetaBytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+
+	gTask := &proto.Task{
+		ID:              time.Now().UnixMicro(),
+		Type:            ddl.FlowHandleLitBackfill,
+		Step:            proto.StepInit,
+		State:           proto.TaskStatePending,
+		Meta:            gTaskMetaBytes,
+		StartTime:       time.Now(),
+		StateUpdateTime: time.Now(),
+	}
+
+	return gTask, taskMeta
+}
