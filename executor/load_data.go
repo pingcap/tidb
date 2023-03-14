@@ -642,10 +642,13 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 		tasks               uint64
 		lastScannedFileSize int64
 		currScannedFileSize int64
+		backgroundCtx       = context.Background()
 	)
 	for {
 		select {
 		case <-ctx.Done():
+			e.Ctx.StmtRollback(backgroundCtx, false)
+			_ = e.Ctx.RefreshTxnCtx(backgroundCtx)
 			return ctx.Err()
 		case task, ok := <-e.commitTaskQueue:
 			if !ok {

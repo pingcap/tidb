@@ -46,8 +46,8 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
-	require.Len(s.T(), rows, 1)
-	jobID := rows[0][0].(string)
+	require.Greater(s.T(), len(rows), 0)
+	jobID := rows[len(rows)-1][0].(string)
 	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
 	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Check(testkit.Rows())
 }

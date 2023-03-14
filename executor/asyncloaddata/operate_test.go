@@ -21,6 +21,8 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,11 +50,20 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 1;")
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
 		INTO TABLE test_operate.t;`, gcsEndpoint)
+
+	// DROP can happen anytime
+	user := &auth.UserIdentity{
+		AuthUsername: "test-load",
+		AuthHostname: "test-host",
+	}
+	s.tk.Session().GetSessionVars().User = user
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2.Session().GetSessionVars().User = user
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.tk.MustContainErrMsg(sql, "failed to keepalive")
+		tk2.MustContainErrMsg(sql, "failed to keepalive")
 	}()
 
 	// TODO: remove this sleep after moving mysql.load_data_jobs to bootstrap
@@ -61,5 +72,22 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	require.Greater(s.T(), len(rows), 0)
 	jobID := rows[len(rows)-1][0].(string)
 	s.tk.MustExec("DROP LOAD DATA JOB " + jobID + ";")
+	wg.Wait()
+
+	// test CANCEL
+
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
+		REPLACE INTO TABLE test_operate.t;`, gcsEndpoint)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustContainErrMsg(sql, "lance test")
+	}()
+
+	time.Sleep(3 * time.Second)
+	rows = s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+	require.Greater(s.T(), len(rows), 0)
+	jobID = rows[len(rows)-1][0].(string)
+	s.tk.MustExec("CANCEL LOAD DATA JOB " + jobID + ";")
 	wg.Wait()
 }
