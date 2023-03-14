@@ -1015,7 +1015,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isPointGetPath(candidate.path) {
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
 					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
 				}
 
@@ -1098,7 +1098,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
-func (ds *DataSource) isSafePointGetPlan(path *util.AccessPath) bool {
+func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 
