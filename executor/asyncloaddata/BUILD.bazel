@@ -25,6 +25,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "operate_test.go",
         "show_test.go",
         "util_test.go",
     ],
