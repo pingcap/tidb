@@ -257,9 +257,9 @@ Projection	10.00	root		tpch.lineitem.l_orderkey, Column#35, tpch.orders.o_orderd
         │   └─Selection	36870000.00	cop[tikv]		lt(tpch.orders.o_orderdate, 1995-03-13 00:00:00.000000)
         │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
         └─IndexLookUp(Probe)	91515927.49	root		
-          ├─IndexRangeScan(Build)	168388203.74	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+          ├─IndexRangeScan(Build)	91515927.49	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
           └─Selection(Probe)	91515927.49	cop[tikv]		gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
-            └─TableRowIDScan	168388203.74	cop[tikv]	table:lineitem	keep order:false
+            └─TableRowIDScan	91515927.49	cop[tikv]	table:lineitem	keep order:false
 /*
 Q4 Order Priority Checking Query
 This query determines how well the order priority system is working and gives an assessment of customer satisfaction.
@@ -298,9 +298,9 @@ Sort	1.00	root		tpch.orders.o_orderpriority
       │ └─Selection	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01 00:00:00.000000)
       │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
       └─IndexLookUp(Probe)	11851908.75	root		
-        ├─IndexRangeScan(Build)	14814885.94	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+        ├─IndexRangeScan(Build)	11851908.75	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
         └─Selection(Probe)	11851908.75	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
-          └─TableRowIDScan	14814885.94	cop[tikv]	table:lineitem	keep order:false
+          └─TableRowIDScan	11851908.75	cop[tikv]	table:lineitem	keep order:false
 /*
 Q5 Local Supplier Volume Query
 This query lists the revenue volume done through local suppliers.
@@ -672,9 +672,9 @@ Projection	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#39,
           │   └─TableReader(Probe)	7500000.00	root		data:TableFullScan
           │     └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
           └─IndexLookUp(Probe)	12222016.17	root		
-            ├─IndexRangeScan(Build)	49605980.10	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+            ├─IndexRangeScan(Build)	12222016.17	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
             └─Selection(Probe)	12222016.17	cop[tikv]		eq(tpch.lineitem.l_returnflag, "R")
-              └─TableRowIDScan	49605980.10	cop[tikv]	table:lineitem	keep order:false
+              └─TableRowIDScan	12222016.17	cop[tikv]	table:lineitem	keep order:false
 /*
 Q11 Important Stock Identification Query
 This query finds the most important subset of suppliers' stock in a given nation.
@@ -1239,9 +1239,9 @@ Projection	100.00	root		tpch.supplier.s_name, Column#72
       │   ├─IndexRangeScan(Build)	49550432.16	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
       │   └─TableRowIDScan(Probe)	49550432.16	cop[tikv]	table:l2	keep order:false
       └─IndexLookUp(Probe)	39640345.73	root		
-        ├─IndexRangeScan(Build)	49550432.16	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
+        ├─IndexRangeScan(Build)	39640345.73	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
         └─Selection(Probe)	39640345.73	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
-          └─TableRowIDScan	49550432.16	cop[tikv]	table:l3	keep order:false
+          └─TableRowIDScan	39640345.73	cop[tikv]	table:l3	keep order:false
 /*
 Q22 Global Sales Opportunity Query
 The Global Sales Opportunity Query identifies geographies where there are customers who may be likely to make a
