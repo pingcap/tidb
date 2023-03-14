@@ -345,7 +345,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	if e.byItems == nil {
+	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
+	if e.byItems == nil || len(e.partitions) <= 1 {
 		kvReq, err := e.buildKVReq(ctx, kvRanges)
 		if err != nil {
 			e.feedback.Invalidate()
