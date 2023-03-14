@@ -124,7 +124,8 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 			tk.alloc.Reset()
 		}
 	}()
-	tk.MustExecWithContext(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk.MustExecWithContext(ctx, sql, args...)
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
