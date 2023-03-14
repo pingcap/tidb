@@ -1429,9 +1429,9 @@ func getDDLStatusFromTiDB(ctx context.Context, db *sql.DB, ddl string, createTim
 					ddlQuery, ok := queryMap[jobID]
 					if !ok {
 						// jobID does not exist, expand queryMap for deeper search
-						//nolint:rowserrcheck
 						showJobsLimitNext := fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT 10 OFFSET %d", rowOffset)
 						var rowsLimitNext *sql.Rows
+						//nolint:rowserrcheck
 						rowsLimitNext, err = db.QueryContext(ctx, showJobsLimitNext)
 						if err != nil {
 							return "", err
