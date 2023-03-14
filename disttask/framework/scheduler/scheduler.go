@@ -37,7 +37,7 @@ type InternalSchedulerImpl struct {
 	logCtx       context.Context
 
 	mu struct {
-		sync.Mutex
+		sync.RWMutex
 		err error
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelFunc
@@ -265,8 +265,8 @@ func (s *InternalSchedulerImpl) onError(err error) {
 }
 
 func (s *InternalSchedulerImpl) getError() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.mu.err
 }
 

@@ -48,7 +48,7 @@ type Manager struct {
 	// taskType -> subtaskExecutorPool
 	subtaskExecutorPools map[string]Pool
 	mu                   struct {
-		sync.Mutex
+		sync.RWMutex
 		// taskID -> cancelFunc
 		// cancelFunc is used to fast cancel the scheduler.Run
 		handlingTasks map[int64]context.CancelFunc
@@ -191,8 +191,8 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 
 // onCanceledTasks cancels the running tasks.
 func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
@@ -203,8 +203,8 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 
 // cancelAllRunningTasks cancels all running tasks.
 func (m *Manager) cancelAllRunningTasks() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for id, cancel := range m.mu.handlingTasks {
 		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("id", id))
 		if cancel != nil {
@@ -215,8 +215,8 @@ func (m *Manager) cancelAllRunningTasks() {
 
 // filterAlreadyHandlingTasks filters the tasks that are already handled.
 func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	var i int
 	for _, task := range tasks {
