@@ -72,36 +72,45 @@ type LoadDataExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
+func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		if err != nil && e.loadDataWorker.ownSession {
+			ctx2 := context.Background()
+			ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
+			e.loadDataWorker.releaseSysSession(ctx2, e.loadDataWorker.Ctx)
+		}
+	}()
+
+	req.GrowAndReset(e.maxChunkSize)
 	if e.detachHandled {
+		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-	req.GrowAndReset(e.maxChunkSize)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		u, err := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+		u, err2 := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
 		}
 		path := strings.Trim(u.Path, "/")
 		u.Path = ""
-		b, err := storage.ParseBackendFromURL(u, nil)
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
+		b, err2 := storage.ParseBackendFromURL(u, nil)
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err2))
 		}
 		if b.GetLocal() != nil {
 			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
 		}
 		// try to find pattern error in advance
-		_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
+		_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 		}
-		jobID, err := e.loadFromRemote(ctx, b, path)
-		if err != nil {
-			return err
+		jobID, err2 := e.loadFromRemote(ctx, b, path)
+		if err2 != nil {
+			return err2
 		}
 		if e.loadDataWorker.controller.Detached {
 			req.AppendInt64(0, jobID)
@@ -261,6 +270,7 @@ type LoadDataWorker struct {
 	progress        atomic.Pointer[asyncloaddata.Progress]
 	getSysSessionFn func() (sessionctx.Context, error)
 	putSysSessionFn func(context.Context, sessionctx.Context)
+	ownSession      bool
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
@@ -270,9 +280,17 @@ func NewLoadDataWorker(
 	tbl table.Table,
 	getSysSessionFn func() (sessionctx.Context, error),
 	putSysSessionFn func(context.Context, sessionctx.Context),
-) (*LoadDataWorker, error) {
+	ownSession bool,
+) (w *LoadDataWorker, err error) {
+	defer func() {
+		if err != nil && ownSession {
+			ctx := context.Background()
+			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+			putSysSessionFn(ctx, sctx)
+		}
+	}()
+
 	insertVal := &InsertValues{
-		// TODO: here use another sctx!!!
 		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
 		Table:          tbl,
 		Columns:        plan.Columns,
@@ -284,7 +302,7 @@ func NewLoadDataWorker(
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 	controller := importer.NewLoadDataController(plan, tbl)
-	if err := controller.Init(sctx, plan.Options); err != nil {
+	if err = controller.Init(sctx, plan.Options); err != nil {
 		return nil, err
 	}
 	if !restrictive {
@@ -304,6 +322,7 @@ func NewLoadDataWorker(
 		restrictive:     restrictive,
 		getSysSessionFn: getSysSessionFn,
 		putSysSessionFn: putSysSessionFn,
+		ownSession:      ownSession,
 	}
 	if err := loadDataWorker.initInsertValues(); err != nil {
 		return nil, err
@@ -350,7 +369,6 @@ func (e *LoadDataWorker) Load(
 		jobID int64
 		err   error
 	)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	s, err := e.getSysSessionFn()
 	if err != nil {
@@ -379,28 +397,10 @@ func (e *LoadDataWorker) Load(
 	}
 
 	if e.controller.Detached {
-		s2, err2 := e.getSysSessionFn()
-		if err2 != nil {
-			return 0, err2
-		}
-		// copy the related variables to the new session
-		// I have no confident that all needed variables are copied
-		from := e.Ctx.GetSessionVars()
-		to := s2.GetSessionVars()
-		to.StmtCtx.InLoadDataStmt = from.StmtCtx.InLoadDataStmt
-		to.StmtCtx.IgnoreNoPartition = from.StmtCtx.IgnoreNoPartition
-		to.StmtCtx.DupKeyAsWarning = from.StmtCtx.DupKeyAsWarning
-		to.StmtCtx.TruncateAsWarning = from.StmtCtx.TruncateAsWarning
-		to.StmtCtx.BadNullAsWarning = from.StmtCtx.BadNullAsWarning
-		to.SQLMode = from.SQLMode
-		to.User = from.User
-		e.Ctx = s2
-
 		go func() {
-			defer e.putSysSessionFn(ctx, s2)
-			// error is stored in system table
 			detachedCtx := context.Background()
 			detachedCtx = kv.WithInternalSourceType(detachedCtx, kv.InternalLoadData)
+			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
 			_ = e.doLoad(detachedCtx, readerInfos, jobID)
 		}()
@@ -414,6 +414,12 @@ func (e *LoadDataWorker) doLoad(
 	readerInfos []LoadDataReaderInfo,
 	jobID int64,
 ) (err error) {
+	defer func() {
+		if e.ownSession {
+			e.putSysSessionFn(ctx, e.Ctx)
+		}
+	}()
+
 	s, err := e.getSysSessionFn()
 	if err != nil {
 		return err
@@ -422,11 +428,12 @@ func (e *LoadDataWorker) doLoad(
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
-	// TODO: use separated context
 	defer func() {
+		ctx2 := context.Background()
+		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
 		if err == nil {
 			err2 := asyncloaddata.FinishJob(
-				ctx,
+				ctx2,
 				sqlExec,
 				jobID,
 				e.Ctx.GetSessionVars().StmtCtx.GetMessage())
@@ -441,7 +448,7 @@ func (e *LoadDataWorker) doLoad(
 			}
 		}
 
-		err2 := asyncloaddata.FailJob(ctx, sqlExec, jobID, errMsg)
+		err2 := asyncloaddata.FailJob(ctx2, sqlExec, jobID, errMsg)
 		terror.Log(err2)
 	}()
 
