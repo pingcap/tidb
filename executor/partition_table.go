@@ -23,6 +23,9 @@ import (
 )
 
 func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive bool, partitionIDs []int64) error {
+	if exec == nil {
+		return nil
+	}
 	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:

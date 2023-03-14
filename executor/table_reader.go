@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
@@ -105,6 +106,8 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
@@ -188,6 +191,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
+
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
@@ -312,6 +316,23 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return nil, err
 		}
 		return result, nil
+	}
+
+	// use sortedSelectResults here when pushDown limit for partition table.
+	if e.kvRangeBuilder != nil && e.byItems != nil {
+		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		var results []distsql.SelectResult
+		for _, kvReq := range kvReqs {
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+		}
+		return distsql.NewSortedSelectResults(results, e.byItems, e.memTracker), nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)

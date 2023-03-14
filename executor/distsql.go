@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -192,6 +193,8 @@ type IndexReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems []*plannerutil.ByItems
 
 	corColInFilter bool
 	corColInAccess bool
@@ -293,6 +296,25 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
+func (e *IndexReaderExecutor) buildKVReq(ctx context.Context, r []kv.KeyRange) (*kv.Request, error) {
+	var builder distsql.RequestBuilder
+	builder.SetKeyRanges(r).
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetIsStaleness(e.isStaleness).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.netDataSize)).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID)
+	kvReq, err := builder.Build()
+	return kvReq, err
+}
+
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -323,6 +345,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
+<<<<<<< HEAD
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -345,6 +368,40 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
+=======
+	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
+	if e.byItems == nil || len(e.partitions) <= 1 {
+		kvReq, err := e.buildKVReq(ctx, kvRanges)
+		if err != nil {
+			e.feedback.Invalidate()
+			return err
+		}
+		e.result, err = e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			e.feedback.Invalidate()
+			return err
+		}
+	} else {
+		kvReqs := make([]*kv.Request, 0, len(kvRanges))
+		for _, kvRange := range kvRanges {
+			kvReq, err := e.buildKVReq(ctx, []kv.KeyRange{kvRange})
+			if err != nil {
+				e.feedback.Invalidate()
+				return err
+			}
+			kvReqs = append(kvReqs, kvReq)
+		}
+		var results []distsql.SelectResult
+		for _, kvReq := range kvReqs {
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			if err != nil {
+				e.feedback.Invalidate()
+				return err
+			}
+			results = append(results, result)
+		}
+		e.result = distsql.NewSortedSelectResults(results, e.byItems, e.memTracker)
+>>>>>>> cc56b21242 (executor: support mergeSort different selectResult in TableScan and IndexScan (#42024))
 	}
 	return nil
 }
