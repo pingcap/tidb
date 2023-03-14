@@ -1647,3 +1647,24 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 	test1(false)
 	test2()
 }
+
+func TestAutoScalerConfig(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default is false.
+	res := tk.MustQuery("show config where name = 'use-autoscaler';").Rows()
+	require.Equal(t, "use-autoscaler", res[0][2].(string))
+	require.Equal(t, "false", res[0][3].(string))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.UseAutoScaler = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.UseAutoScaler = false
+	})
+	res = tk.MustQuery("show config where name = 'use-autoscaler';").Rows()
+	require.Equal(t, "use-autoscaler", res[0][2].(string))
+	require.Equal(t, "true", res[0][3].(string))
+}
