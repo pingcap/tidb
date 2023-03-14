@@ -272,6 +272,7 @@ func NewLoadDataWorker(
 	putSysSessionFn func(context.Context, sessionctx.Context),
 ) (*LoadDataWorker, error) {
 	insertVal := &InsertValues{
+		// TODO: here use another sctx!!!
 		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
 		Table:          tbl,
 		Columns:        plan.Columns,
@@ -378,10 +379,14 @@ func (e *LoadDataWorker) Load(
 	}
 
 	if e.controller.Detached {
+		s2, err2 := e.getSysSessionFn()
+		if err2 != nil {
+			return 0, err2
+		}
 		// copy the related variables to the new session
 		// I have no confident that all needed variables are copied
 		from := e.Ctx.GetSessionVars()
-		to := s.GetSessionVars()
+		to := s2.GetSessionVars()
 		to.StmtCtx.InLoadDataStmt = from.StmtCtx.InLoadDataStmt
 		to.StmtCtx.IgnoreNoPartition = from.StmtCtx.IgnoreNoPartition
 		to.StmtCtx.DupKeyAsWarning = from.StmtCtx.DupKeyAsWarning
@@ -389,11 +394,15 @@ func (e *LoadDataWorker) Load(
 		to.StmtCtx.BadNullAsWarning = from.StmtCtx.BadNullAsWarning
 		to.SQLMode = from.SQLMode
 		to.User = from.User
+		e.Ctx = s2
 
 		go func() {
+			defer e.putSysSessionFn(ctx, s2)
 			// error is stored in system table
+			detachedCtx := context.Background()
+			detachedCtx = kv.WithInternalSourceType(detachedCtx, kv.InternalLoadData)
 			//nolint: errcheck
-			_ = e.doLoad(context.Background(), readerInfos, jobID)
+			_ = e.doLoad(detachedCtx, readerInfos, jobID)
 		}()
 		return jobID, nil
 	}

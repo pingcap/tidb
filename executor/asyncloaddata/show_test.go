@@ -134,16 +134,27 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	}
 	s.tk.Session().GetSessionVars().User = user
 
-	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
-		INTO TABLE test_show.t;`, gcsEndpoint)
-	s.tk.MustExec(sql)
+	backup := HeartBeatInSec
+	HeartBeatInSec = 1
+	s.T().Cleanup(func() {
+		HeartBeatInSec = backup
+	})
 
-	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
+	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
+		INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+	rows := s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row := rows[0]
-	id := row[0].(string)
+	jobID := row[0].(string)
+
+	require.Eventually(s.T(), func() bool {
+		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		return row[9] == "finished"
+	}, 5*time.Second, time.Second)
 	r := expectedRecord{
-		jobID:          id,
+		jobID:          jobID,
 		dataSource:     "gs://test-show/t.tsv",
 		targetTable:    "`test_show`.`t`",
 		importMode:     "logical",
@@ -161,15 +172,18 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	require.ErrorContains(s.T(), err, "Job ID 100 doesn't exist")
 
 	// repeat LOAD DATA, will get duplicate entry error
-	s.tk.MustContainErrMsg(sql, "Duplicate entry '1' for key 't.PRIMARY'")
-	idNum, err := strconv.Atoi(id)
-	require.NoError(s.T(), err)
-	nextID := strconv.Itoa(idNum + 1)
-	rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + nextID + ";").Rows()
+	rows = s.tk.MustQuery(sql).Rows()
 	require.Len(s.T(), rows, 1)
 	row = rows[0]
+	jobID = row[0].(string)
+	require.Eventually(s.T(), func() bool {
+		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		return row[9] == "failed"
+	}, 10*time.Second, time.Second)
 
-	r.jobID = nextID
+	r.jobID = jobID
 	r.jobStatus = "failed"
 	r.sourceFileSize = "<nil>"
 	r.loadedFileSize = "<nil>"
