@@ -181,7 +181,7 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 		require.Len(s.T(), rows, 1)
 		row = rows[0]
 		return row[9] == "failed"
-	}, 10*time.Second, time.Second)
+	}, 5*time.Second, time.Second)
 
 	r.jobID = jobID
 	r.jobStatus = "failed"
@@ -189,6 +189,51 @@ func (s *mockGCSSuite) TestSimpleShowLoadDataJobs() {
 	r.loadedFileSize = "<nil>"
 	r.resultCode = "1062"
 	r.resultMessage = "Duplicate entry '1' for key 't.PRIMARY'"
+	r.check(s.T(), row)
+
+	// test IGNORE
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
+		IGNORE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+	rows = s.tk.MustQuery(sql).Rows()
+	require.Len(s.T(), rows, 1)
+	row = rows[0]
+	jobID = row[0].(string)
+	require.Eventually(s.T(), func() bool {
+		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		return row[9] == "finished"
+	}, 10*time.Second, time.Second)
+	r = expectedRecord{
+		jobID:          jobID,
+		dataSource:     "gs://test-show/t.tsv",
+		targetTable:    "`test_show`.`t`",
+		importMode:     "logical",
+		createdBy:      "test-load-2@test-host",
+		jobState:       "loading",
+		jobStatus:      "finished",
+		sourceFileSize: "3B",
+		loadedFileSize: "3B",
+		resultCode:     "0",
+		resultMessage:  "Records: 2  Deleted: 0  Skipped: 2  Warnings: 2",
+	}
+	r.check(s.T(), row)
+
+	// test REPLACE
+	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-show/t.tsv?endpoint=%s'
+		REPLACE INTO TABLE test_show.t WITH DETACHED;`, gcsEndpoint)
+	rows = s.tk.MustQuery(sql).Rows()
+	require.Len(s.T(), rows, 1)
+	row = rows[0]
+	jobID = row[0].(string)
+	require.Eventually(s.T(), func() bool {
+		rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID + ";").Rows()
+		require.Len(s.T(), rows, 1)
+		row = rows[0]
+		return row[9] == "finished"
+	}, 10*time.Second, time.Second)
+	r.jobID = jobID
+	r.resultMessage = "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"
 	r.check(s.T(), row)
 }
 
