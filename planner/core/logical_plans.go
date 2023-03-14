@@ -1237,7 +1237,7 @@ type DataSource struct {
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
 
-	indexMinSelectivity float64
+	accessPathMinSelectivity float64
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
