@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -549,6 +550,20 @@ const (
     	key(parent_table_id, create_time),
     	key(create_time)
 	);`
+
+	// CreateGlobalTask is a table about global task.
+	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time TIMESTAMP,
+		state_update_time TIMESTAMP,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11),
+		key(state)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -791,6 +806,8 @@ const (
 	// ...
 	// [version110, version129] is the version range reserved for patches of 6.5.x
 	// ...
+	// version110 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
 	// version130 add column source to mysql.stats_meta_history
 	version130 = 130
 	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
@@ -806,11 +823,13 @@ const (
 	version134 = 134
 	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
 	version135 = 135
+	// version136 prepare the tables for the distributed task.
+	version136 = 136
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version135
+var currentBootstrapVersion int64 = version136
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -927,12 +946,14 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 		upgradeToVer130,
 		upgradeToVer131,
 		upgradeToVer132,
 		upgradeToVer133,
 		upgradeToVer134,
 		upgradeToVer135,
+		upgradeToVer136,
 	}
 )
 
@@ -2278,6 +2299,15 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
+// For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
+}
+
 func upgradeToVer130(s Session, ver int64) {
 	if ver >= version130 {
 		return
@@ -2324,6 +2354,7 @@ func upgradeToVer135(s Session, ver int64) {
 	if ver >= version135 {
 		return
 	}
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
@@ -2337,6 +2368,15 @@ func upgradeToVer135(s Session, ver int64) {
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+}
+
+func upgradeToVer136(s Session, ver int64) {
+	if ver >= version136 {
+		return
+	}
+	mustExecute(s, CreateGlobalTask)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {
@@ -2449,6 +2489,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTask)
 	// Create tidb_ttl_job_history table
 	mustExecute(s, CreateTTLJobHistory)
+	// Create tidb_global_task table
+	mustExecute(s, CreateGlobalTask)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
