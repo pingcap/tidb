@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -115,7 +116,7 @@ func PaginateScanRegion(
 			return err
 		}
 		return nil
-	}, newScanRegionBackoffer())
+	}, NewScanRegionBackoffer())
 
 	return regions, err
 }
@@ -174,7 +175,7 @@ func ScanRegionsWithRetry(
 		}
 
 		return nil
-	}, newScanRegionBackoffer())
+	}, NewScanRegionBackoffer())
 
 	return regions, err
 }
@@ -185,7 +186,8 @@ type scanRegionBackoffer struct {
 	maxDelayTime time.Duration
 }
 
-func newScanRegionBackoffer() utils.Backoffer {
+// NewScanRegionBackoffer create a backoff to retry to scan regions.
+func NewScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
 		attempt:      ScanRegionAttemptTimes,
 		delayTime:    time.Millisecond * 10,
@@ -203,7 +205,15 @@ func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 		if b.delayTime > b.maxDelayTime {
 			b.delayTime = b.maxDelayTime
 		}
-		return b.delayTime
+
+		delayTime := b.delayTime
+
+		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
+			if val.(bool) {
+				delayTime = time.Microsecond
+			}
+		})
+		return delayTime
 	}
 	b.attempt = 0
 	return 0
