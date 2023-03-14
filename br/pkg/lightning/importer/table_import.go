@@ -1410,6 +1410,9 @@ func getDDLStatusFromTiDB(ctx context.Context, db *sql.DB, ddl string, createTim
 
 		for i := rowNum - linesOfRows; i < rowNum && i < len(jobsResults); i++ {
 			ddlCreateTimeStr := jobsResults[i][1]
+			if ddlCreateTimeStr == "" {
+				continue
+			}
 			var ddlCreateTimeParse time.Time
 			ddlCreateTimeParse, err = time.Parse("2006-01-02 15:04:05", ddlCreateTimeStr)
 			if err != nil {
