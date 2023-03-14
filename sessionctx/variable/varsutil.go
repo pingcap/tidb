@@ -49,6 +49,26 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLReorgReaderCounter sets ddlReorgReaderCounter count.
+func SetDDLReorgReaderCounter(cnt int32) {
+	atomic.StoreInt32(&ddlReorgReaderCounter, cnt)
+}
+
+// GetDDLReorgReaderCounter gets ddlReorgReaderCounter.
+func GetDDLReorgReaderCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgReaderCounter)
+}
+
+// SetDDLReorgWriterCounter sets ddlReorgWriterCounter count.
+func SetDDLReorgWriterCounter(cnt int32) {
+	atomic.StoreInt32(&ddlReorgWriterCounter, cnt)
+}
+
+// GetDDLReorgWriterCounter gets ddlReorgWriterCounter.
+func GetDDLReorgWriterCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWriterCounter)
+}
+
 // SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLFlashbackConcurrency(cnt int32) {

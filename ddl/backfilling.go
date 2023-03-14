@@ -856,7 +856,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
 		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 	}
-	workerCnt := b.expectedWorkerSize()
+	workerCnt := mathutil.Min(int(variable.GetDDLReorgWriterCounter()), b.maxSize)
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
 		sessCtx, err := b.newSessCtx()
@@ -928,7 +928,8 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		closeBackfillWorkers(workers)
 	}
 	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.adjustSize(len(b.workers))
+		readerCnt := mathutil.Min(int(variable.GetDDLReorgReaderCounter()), b.maxSize)
+		b.copReqSenderPool.adjustSize(readerCnt)
 	}
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }

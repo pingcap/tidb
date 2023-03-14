@@ -671,6 +671,14 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgReaderCount, Value: strconv.Itoa(DefTiDBDDLReorgReaderCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetDDLReorgReaderCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgReaderCount)))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgWriterCount, Value: strconv.Itoa(DefTiDBDDLReorgWriterCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetDDLReorgWriterCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWriterCount)))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil

@@ -456,6 +456,9 @@ const (
 	// TiDBDDLReorgWorkerCount defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
+	TiDBDDLReorgReaderCount = "tidb_ddl_reorg_reader_cnt"
+	TiDBDDLReorgWriterCount = "tidb_ddl_reorg_writer_cnt"
+
 	// TiDBDDLFlashbackConcurrency defines the count of ddl flashback workers.
 	TiDBDDLFlashbackConcurrency = "tidb_ddl_flashback_concurrency"
 
@@ -1041,6 +1044,8 @@ const (
 	DefTiDBRowFormatV1                             = 1
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
+	DefTiDBDDLReorgReaderCount                     = 4
+	DefTiDBDDLReorgWriterCount                     = 4
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLFlashbackConcurrency                 = 64
 	DefTiDBDDLErrorCountLimit                      = 512
@@ -1236,6 +1241,8 @@ var (
 	EnableBatchDML                = atomic.NewBool(false)
 	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
 	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgReaderCounter   int32 = DefTiDBDDLReorgReaderCount
+	ddlReorgWriterCounter   int32 = DefTiDBDDLReorgWriterCount
 	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
 	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
 	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
