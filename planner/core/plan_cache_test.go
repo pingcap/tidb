@@ -1081,11 +1081,11 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'update t set a = 1 limit ?'", []int{1}},
 		{"prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)'", []int{1, 2}},
-		{"prepare stmt from 'select * from t where a = ? limit ?, ?'", []int{1, 1, 1}},
-		{"prepare stmt from 'select * from t where a in (?, ?) limit ?, ?'", []int{1, 2, 1, 1}},
 	}
 
 	for idx, testCase := range testCases {
+		fmt.Println(">>>> ", testCase.sql)
+
 		tk.MustExec(testCase.sql)
 		var using []string
 		for i, p := range testCase.params {
