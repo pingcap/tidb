@@ -582,20 +582,19 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	return iter
 }
 
-func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error) {
+func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, TTL int64) (int, error) {
 	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
 		v, _ := strconv.ParseInt(value.(string), 10, 0)
 		c.lastUpdate = v
 	})
 
 	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
-	oriMPPStoreCnt := atomic.LoadInt32(&c.cnt)
 	now := time.Now().UnixMicro()
 	isInit := atomic.LoadInt32(&c.initFlag) != 0
 
 	if now-lastUpdate < TTL {
 		if isInit {
-			return int(oriMPPStoreCnt), nil
+			return int(atomic.LoadInt32(&c.cnt)), nil
 		}
 	}
 
@@ -606,14 +605,14 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 
 	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
 		if isInit {
-			return int(oriMPPStoreCnt), nil
+			return int(atomic.LoadInt32(&c.cnt)), nil
 		}
 		// if has't initialized, always fetch latest mpp store info
 	}
 
 	// update mpp store cache
 	cnt := 0
-	stores, err := storeCtx.GetRegionCache().PDClient().GetAllStores(storeCtx.store.Ctx(), pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
 
 	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
 		if value.(bool) {
@@ -638,7 +637,7 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 		cnt = value.(int)
 	})
 
-	if atomic.LoadInt64(&c.lastUpdate) == now {
+	if !isInit || atomic.LoadInt64(&c.lastUpdate) == now {
 		atomic.StoreInt32(&c.cnt, int32(cnt))
 		atomic.StoreInt32(&c.initFlag, 1)
 	}
@@ -648,5 +647,5 @@ func (c *mppStoreCnt) getMPPStoreCount(storeCtx *kvStore, TTL int64) (int, error
 
 // GetMPPStoreCount returns number of TiFlash stores
 func (c *MPPClient) GetMPPStoreCount() (int, error) {
-	return c.store.mppStoreCnt.getMPPStoreCount(c.store, 120*1e6 /* TTL 120sec */)
+	return c.store.mppStoreCnt.getMPPStoreCount(c.store.store.Ctx(), c.store.store.GetPDClient(), 120*1e6 /* TTL 120sec */)
 }
