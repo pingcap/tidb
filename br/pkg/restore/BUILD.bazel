@@ -34,6 +34,7 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
         "//br/pkg/redact",
+        "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/prealloc_table_id",
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
