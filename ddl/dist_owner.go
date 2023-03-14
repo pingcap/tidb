@@ -366,7 +366,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		}
 
 		for {
-			bJobCnt, err := checkBackfillJobCountWithPhyID(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
+			bJobCnt, err := CheckBackfillJobCountWithPhyID(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -557,7 +557,8 @@ func cleanupBackfillJobs(sess *session, prefixKey string) error {
 	return err
 }
 
-func checkBackfillJobCountWithPhyID(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
+// CheckBackfillJobCountWithPhyID checks if the backfill job is interrupted, if not gets the backfill job count.
+func CheckBackfillJobCountWithPhyID(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
 	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEleID, currEleKey)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -576,7 +577,7 @@ func getBackfillJobWithRetry(sess *session, tableName, bjPrefixKey string) ([]*B
 	var err error
 	var bJobs []*BackfillJob
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetBackfillJobs(sess, tableName, fmt.Sprintf("task_key like  '%s' limit 1", bjPrefixKey), "check_backfill_job_state")
+		bJobs, err = GetBackfillJobs(sess, tableName, fmt.Sprintf("task_key like '%s' limit 1", bjPrefixKey), "check_backfill_job_state")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] GetBackfillJobs failed", zap.Error(err))
 			time.Sleep(RetrySQLInterval)

@@ -40,8 +40,9 @@ import (
 )
 
 const (
-	getJobWithoutPartition = -1
-	backfillJobPrefixKey   = "%d_%s_%d_%%"
+	getJobWithoutPartition    = -1
+	getJobWithPartitionInitID = int64(0)
+	backfillJobPrefixKey      = "%d_%s_%d_%%"
 
 	// InstanceLease is the instance lease.
 	InstanceLease                = 1 * time.Minute
@@ -209,7 +210,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 		return bfWorker.runTask(task)
 	})
 
-	runningPID := int64(0)
+	runningPID := getJobWithPartitionInitID
 	// If txn-merge we needn't to claim the backfill job through the partition table
 	if ingestBackendCtx == nil {
 		runningPID = getJobWithoutPartition
@@ -325,8 +326,9 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
+				// Make it run the next physical table when the current physical table is finished.
 				if *runningPID != getJobWithoutPartition && *runningPID != 0 {
-					*runningPID = 0
+					*runningPID = getJobWithPartitionInitID
 					continue
 				}
 				logutil.BgLogger().Info("no backfill job, handle backfill task finished")
