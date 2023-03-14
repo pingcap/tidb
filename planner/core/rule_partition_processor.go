@@ -485,12 +485,19 @@ type listPartitionPruner struct {
 }
 
 func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning) *listPartitionPruner {
+	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning, columns []*expression.Column) *listPartitionPruner {
 	colIDToUniqueID := make(map[int64]int64)
 	for _, cond := range conds {
 		condCols := expression.ExtractColumns(cond)
 		for _, c := range condCols {
 			colIDToUniqueID[c.ID] = c.UniqueID
+		}
+	}
+	for i := range pruneList.PruneExprCols {
+		for _, col := range columns {
+			if col.ID == pruneList.PruneExprCols[i].ID {
+				pruneList.PruneExprCols[i].UniqueID = col.UniqueID
+			}
 		}
 	}
 	fullRange := make(map[int]struct{})
@@ -711,11 +718,11 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 }
 
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression) ([]int, error) {
+	conds []expression.Expression, columns []*expression.Column) ([]int, error) {
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 
-	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning)
+	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning, columns)
 	var used map[int]struct{}
 	var err error
 	if partExpr.ForListPruning.ColPrunes == nil {
@@ -739,8 +746,8 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 }
 
 func (s *partitionProcessor) pruneListPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression) ([]int, error) {
-	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds)
+	conds []expression.Expression, columns []*expression.Column) ([]int, error) {
+	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds, columns)
 	if err != nil {
 		return nil, err
 	}
@@ -984,7 +991,7 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 }
 
 func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds)
+	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols)
 	if err != nil {
 		return nil, err
 	}
