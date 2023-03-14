@@ -1198,19 +1198,24 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
-		// Register the RU runtime stats for analyze executor.
-		store, ok := b.ctx.GetStore().(interface {
-			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
-		})
-		if ok {
-			// StartTS will be used to identify this SQL, so that the runtime stats could
-			// aggregate the RU stats beneath the KV storage client.
-			startTS, err := b.getSnapshotTS()
-			if err != nil {
-				b.err = err
-				return nil
+		// If the resource group name is not empty or "default", we could collect and display the RU
+		// runtime stats for analyze executor.
+		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
+		if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+			// Try to register the RU runtime stats for analyze executor.
+			store, ok := b.ctx.GetStore().(interface {
+				CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+			})
+			if ok {
+				// StartTS will be used to identify this SQL, so that the runtime stats could
+				// aggregate the RU stats beneath the KV storage client.
+				startTS, err := b.getSnapshotTS()
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
 			}
-			explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
