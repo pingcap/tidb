@@ -1084,8 +1084,6 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	}
 
 	for idx, testCase := range testCases {
-		fmt.Println(">>>> ", testCase.sql)
-
 		tk.MustExec(testCase.sql)
 		var using []string
 		for i, p := range testCase.params {
