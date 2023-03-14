@@ -667,8 +667,8 @@ type SelectInto struct {
 // LineFieldsInfo used in load-data/select-into/index-advise stmt.
 type LineFieldsInfo struct {
 	FieldsTerminatedBy string
-	FieldsEnclosedBy   string // always a byte, we use string to represent empty value
-	FieldsEscapedBy    string // always a byte, we use string to represent empty value
+	FieldsEnclosedBy   string // length always <= 1, see parser.y
+	FieldsEscapedBy    string // length always <= 1, see parser.y
 	FieldsOptEnclosed  bool
 	LinesStartingBy    string
 	LinesTerminatedBy  string

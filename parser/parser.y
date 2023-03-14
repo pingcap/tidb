@@ -13693,7 +13693,8 @@ FormatOpt:
 	}
 |	"FORMAT" stringLit
 	{
-		$$ = &($2)
+		str := $2
+		$$ = &str
 	}
 
 IgnoreLines:
