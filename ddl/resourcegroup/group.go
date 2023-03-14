@@ -30,6 +30,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
+
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
