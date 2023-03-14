@@ -933,41 +933,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
-	sctx := b.ctx
-	ownSession := false
-	if v.Detached {
-		if v.FileLocRef == ast.FileLocClient {
-			b.err = exeerrors.ErrLoadDataCantDetachWithLocal
-			return nil
-		}
-		sysSession, err := base.getSysSession()
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		// copy the related variables to the new session
-		// I have no confident that all needed variables are copied :(
-		from := b.ctx.GetSessionVars()
-		to := sysSession.GetSessionVars()
-		to.User = from.User
-		to.CurrentDB = from.CurrentDB
-		to.SQLMode = from.SQLMode
-		sctx = sysSession
-		ownSession = true
-	}
-	worker, err := NewLoadDataWorker(
-		sctx,
-		v,
-		tbl,
-		base.getSysSession,
-		base.releaseSysSession,
-		ownSession,
-	)
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl, base.getSysSession, base.releaseSysSession)
 	if err != nil {
 		b.err = err
 		return nil

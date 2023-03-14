@@ -253,6 +253,7 @@ type loadRemoteInfo struct {
 type LoadDataWorker struct {
 	*InsertValues
 
+	// TODO: remove this field, use embedded InsertValues.ctx instead.
 	Ctx sessionctx.Context
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -275,20 +276,50 @@ type LoadDataWorker struct {
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
 func NewLoadDataWorker(
-	sctx sessionctx.Context,
+	userSctx sessionctx.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
 	getSysSessionFn func() (sessionctx.Context, error),
 	putSysSessionFn func(context.Context, sessionctx.Context),
-	ownSession bool,
 ) (w *LoadDataWorker, err error) {
+	ownSession := false
 	defer func() {
 		if err != nil && ownSession {
 			ctx := context.Background()
 			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-			putSysSessionFn(ctx, sctx)
+			putSysSessionFn(ctx, userSctx)
 		}
 	}()
+
+	controller := importer.NewLoadDataController(plan, tbl)
+	if err = controller.Init(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+
+	sctx := userSctx
+	if controller.Detached {
+		if plan.FileLocRef == ast.FileLocClient {
+			return nil, exeerrors.ErrLoadDataCantDetachWithLocal
+		}
+		sysSession, err2 := getSysSessionFn()
+		if err2 != nil {
+			return nil, err2
+		}
+		ownSession = true
+
+		err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
+		if err != nil {
+			return nil, err
+		}
+		// copy the related variables to the new session
+		// I have no confident that all needed variables are copied :(
+		from := userSctx.GetSessionVars()
+		to := sysSession.GetSessionVars()
+		to.User = from.User
+		to.CurrentDB = from.CurrentDB
+		to.SQLMode = from.SQLMode
+		sctx = sysSession
+	}
 
 	insertVal := &InsertValues{
 		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
@@ -301,10 +332,7 @@ func NewLoadDataWorker(
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	controller := importer.NewLoadDataController(plan, tbl)
-	if err = controller.Init(sctx, plan.Options); err != nil {
-		return nil, err
-	}
+
 	if !restrictive {
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
@@ -420,6 +448,7 @@ func (e *LoadDataWorker) doLoad(
 		}
 	}()
 
+	// get a session for UpdateJobProgress. e.Ctx is exclusively used by commitWork.
 	s, err := e.getSysSessionFn()
 	if err != nil {
 		return err
@@ -429,6 +458,7 @@ func (e *LoadDataWorker) doLoad(
 	sqlExec := s.(sqlexec.SQLExecutor)
 
 	defer func() {
+		// write the ending status even if user context is canceled.
 		ctx2 := context.Background()
 		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
 		if err == nil {
