@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"fmt"
 	"strconv"
@@ -77,33 +78,74 @@ type SelectResult interface {
 	Close() error
 }
 
+type chunkRowHeap struct {
+	*sortedSelectResults
+}
+
+func (h chunkRowHeap) Len() int {
+	return len(h.rowPtrs)
+}
+
+func (h chunkRowHeap) Less(i, j int) bool {
+	iPtr := h.rowPtrs[i]
+	jPtr := h.rowPtrs[j]
+	return h.lessRow(h.cachedChunks[iPtr.ChkIdx].GetRow(int(iPtr.RowIdx)),
+		h.cachedChunks[jPtr.ChkIdx].GetRow(int(jPtr.RowIdx)))
+}
+
+func (h chunkRowHeap) Swap(i, j int) {
+	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+func (h *chunkRowHeap) Push(x interface{}) {
+	h.rowPtrs = append(h.rowPtrs, x.(chunk.RowPtr))
+}
+
+func (h *chunkRowHeap) Pop() interface{} {
+	ret := h.rowPtrs[len(h.rowPtrs)-1]
+	h.rowPtrs = h.rowPtrs[0 : len(h.rowPtrs)-1]
+	return ret
+}
+
 // NewSortedSelectResults is only for partition table
 func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
-	cur := make([]int, len(selectResult))
 	s := &sortedSelectResults{
 		selectResult: selectResult,
-		cur:          cur,
 		byItems:      byitems,
 		memTracker:   memTracker,
 	}
 	s.initCompareFuncs()
 	s.buildKeyColumns()
+
+	s.heap = &chunkRowHeap{s}
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
-	s.cachedChunkIdx = make([]int, len(selectResult))
 	return s
 }
 
 type sortedSelectResults struct {
 	selectResult []SelectResult
-	cur          []int
 	compareFuncs []chunk.CompareFunc
 	byItems      []*util.ByItems
 	keyColumns   []int
 
-	cachedChunks   []*chunk.Chunk
-	cachedChunkIdx []int
+	cachedChunks []*chunk.Chunk
+	rowPtrs      []chunk.RowPtr
+	heap         *chunkRowHeap
 
 	memTracker *memory.Tracker
+}
+
+func (ssr *sortedSelectResults) updateCachedChunk(ctx context.Context, idx uint32) error {
+	prevMemUsage := ssr.cachedChunks[idx].MemoryUsage()
+	if err := ssr.selectResult[idx].Next(ctx, ssr.cachedChunks[idx]); err != nil {
+		return err
+	}
+	ssr.memTracker.Consume(ssr.cachedChunks[idx].MemoryUsage() - prevMemUsage)
+	if ssr.cachedChunks[idx].NumRows() == 0 {
+		return nil
+	}
+	heap.Push(ssr.heap, chunk.RowPtr{ChkIdx: idx, RowIdx: 0})
+	return nil
 }
 
 func (ssr *sortedSelectResults) initCompareFuncs() {
@@ -150,31 +192,30 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
 		}
 	}
-	for c.NumRows() < c.RequiredRows() {
-		minSelectResultIdx := -1
+
+	if ssr.heap.Len() == 0 {
 		for i := range ssr.cachedChunks {
-			if ssr.cachedChunkIdx[i] == ssr.cachedChunks[i].NumRows() {
-				prevMemUsage := ssr.cachedChunks[i].MemoryUsage()
-				if err = ssr.selectResult[i].Next(ctx, ssr.cachedChunks[i]); err != nil {
-					return err
-				}
-				ssr.cachedChunkIdx[i] = 0
-				ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage() - prevMemUsage)
-				if ssr.cachedChunks[i].NumRows() == 0 {
-					continue
-				}
-			}
-			idx := ssr.cachedChunkIdx[i]
-			row := ssr.cachedChunks[i].GetRow(idx)
-			if minSelectResultIdx == -1 || ssr.lessRow(row, ssr.cachedChunks[minSelectResultIdx].GetRow(ssr.cachedChunkIdx[minSelectResultIdx])) {
-				minSelectResultIdx = i
+			if err = ssr.updateCachedChunk(ctx, uint32(i)); err != nil {
+				return err
 			}
 		}
-		if minSelectResultIdx == -1 {
+	}
+
+	for c.NumRows() < c.RequiredRows() {
+		if ssr.heap.Len() == 0 {
 			break
 		}
-		c.AppendRow(ssr.cachedChunks[minSelectResultIdx].GetRow(ssr.cachedChunkIdx[minSelectResultIdx]))
-		ssr.cachedChunkIdx[minSelectResultIdx]++
+
+		idx := heap.Pop(ssr.heap).(chunk.RowPtr)
+		c.AppendRow(ssr.cachedChunks[idx.ChkIdx].GetRow(int(idx.RowIdx)))
+
+		if int(idx.RowIdx) >= ssr.cachedChunks[idx.ChkIdx].NumRows()-1 {
+			if err = ssr.updateCachedChunk(ctx, idx.ChkIdx); err != nil {
+				return err
+			}
+		} else {
+			heap.Push(ssr.heap, chunk.RowPtr{ChkIdx: idx.ChkIdx, RowIdx: idx.RowIdx + 1})
+		}
 	}
 	return nil
 }
