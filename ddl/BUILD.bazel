@@ -50,7 +50,11 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
+<<<<<<< HEAD
         "//br/pkg/utils",
+=======
+        "//br/pkg/lightning/common",
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
         "//config",
         "//ddl/ingest",
         "//ddl/label",

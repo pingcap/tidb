@@ -32,6 +32,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -2441,6 +2446,78 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
+	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
+	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+)
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	ingestRecorder.UpdateIndexInfo(allSchema)
+	console := glue.GetConsole(g)
+	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+		var (
+			addSQL        strings.Builder
+			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+		)
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+		if info.IsPrimary {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.Unique {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// USING BTREE/HASH/RTREE
+		indexTypeStr := info.IndexInfo.Tp.String()
+		if len(indexTypeStr) > 0 {
+			addSQL.WriteString(" USING ")
+			addSQL.WriteString(indexTypeStr)
+		}
+
+		// COMMENT [...]
+		if len(info.IndexInfo.Comment) > 0 {
+			addSQL.WriteString(" COMMENT %?")
+			addArgs = append(addArgs, info.IndexInfo.Comment)
+		}
+
+		if info.IndexInfo.Invisible {
+			addSQL.WriteString(" INVISIBLE")
+		} else {
+			addSQL.WriteString(" VISIBLE")
+		}
+
+		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
+			return errors.Trace(err)
+		}
+		w.Inc()
+		if err := w.Wait(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		w.Close()
+		return nil
+	})
+	return errors.Trace(err)
+}
+
+const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
 
@@ -2591,6 +2668,109 @@ func (rc *Client) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
 }
 
+<<<<<<< HEAD
+=======
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, &waitTiFlashBackoffer{
+		Attempts:    30,
+		BaseBackoff: 4 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
+}
+
+// RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
+// TODO: need to implement the range filter out feature
+func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
+	err := recorder.RewriteTableID(func(tableID int64) (int64, error) {
+		rewriteRule, exists := rewriteRules[tableID]
+		if !exists {
+			return 0, errors.Errorf("rewriteRule not found, tableID: %d", tableID)
+		}
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			return 0, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+		}
+		return newTableID, nil
+	})
+	return errors.Trace(err)
+	/* TODO: we can use range filter to skip restoring the index kv using accelerated indexing feature
+	filter := rtree.NewRangeTree()
+	err = recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		// range after table ID rewritten
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		rg := rtree.Range{
+			StartKey: codec.EncodeBytes([]byte{}, startKey),
+			EndKey:   codec.EncodeBytes([]byte{}, endKey),
+		}
+		filter.InsertRange(rg)
+		return nil
+	})
+	return errors.Trace(err)
+	*/
+}
+
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}

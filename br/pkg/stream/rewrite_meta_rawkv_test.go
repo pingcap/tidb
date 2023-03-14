@@ -645,7 +645,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.tryToGCJob(multiSchemaChangeJob0)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob0)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
@@ -658,7 +658,7 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.tryToGCJob(multiSchemaChangeJob1)
+	err = schemaReplace.restoreFromHistory(multiSchemaChangeJob1)
 	require.NoError(t, err)
 	for l := 0; l < 2; l++ {
 		iargs = <-midr.indexCh

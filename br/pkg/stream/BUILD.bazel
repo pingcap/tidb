@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/httputil",
         "//br/pkg/logutil",
+        "//br/pkg/restore/ingestrec",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",

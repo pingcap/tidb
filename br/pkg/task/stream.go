@@ -1187,7 +1187,24 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
+<<<<<<< HEAD
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+=======
+	ingestRecorder := schemasReplace.GetIngestRecorder()
+	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
+		return errors.Trace(err)
+	}
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
@@ -1205,6 +1222,10 @@ func restoreStream(
 
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
 	if cfg.tiflashRecorder != nil {

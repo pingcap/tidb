@@ -33,6 +33,11 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/pdutil",
         "//br/pkg/redact",
+<<<<<<< HEAD
+=======
+        "//br/pkg/restore/ingestrec",
+        "//br/pkg/restore/prealloc_table_id",
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/rtree",

@@ -26,7 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/utils"
+=======
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/infoschema"
@@ -605,7 +609,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		reorgTp := pickBackfillType(w, job)
+		reorgTp := pickBackfillType(job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -684,17 +688,27 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
+func pickBackfillType(job *model.Job) model.ReorgType {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't switch the backfill process.
 		return job.ReorgMeta.ReorgTp
 	}
 	if IsEnableFastReorg() {
+<<<<<<< HEAD
 		canUseIngest := canUseIngest(w)
 		if ingest.LitInitialized && canUseIngest {
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge
+=======
+		var useIngest bool
+		if ingest.LitInitialized {
+			useIngest = canUseIngest()
+			if useIngest {
+				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+				return model.ReorgTypeLitMerge
+			}
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
@@ -708,6 +722,7 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 }
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
+<<<<<<< HEAD
 func canUseIngest(w *worker) bool {
 	ctx, err := w.sessPool.get()
 	if err != nil {
@@ -720,6 +735,18 @@ func canUseIngest(w *worker) bool {
 	})
 	// Ingest way is not compatible with PiTR.
 	return !utils.IsLogBackupInUse(ctx)
+=======
+func canUseIngest() bool {
+	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
+	activeJobIDs := ingest.LitBackCtxMgr.Keys()
+	if len(activeJobIDs) > 0 {
+		logutil.BgLogger().Info("[ddl-ingest] ingest backfill is already in use by another DDL job",
+			zap.Int64("job ID", activeJobIDs[0]))
+		return false
+	}
+
+	return true
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 }
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
@@ -772,7 +799,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bfProcess := pickBackfillType(w, job)
+	bfProcess := pickBackfillType(job)
 	if !bfProcess.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
 	}
@@ -843,6 +870,59 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			return false, ver, err
 		}
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
+<<<<<<< HEAD
+=======
+		return true, ver, err
+	default:
+		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
+	}
+}
+
+func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	bfProcess := pickBackfillType(job)
+	if !bfProcess.NeedMergeProcess() {
+		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+	}
+	switch indexInfo.BackfillState {
+	case model.BackfillStateRunning:
+		logutil.BgLogger().Info("[ddl] index backfill state running",
+			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.String("index", indexInfo.Name.O))
+		switch bfProcess {
+		case model.ReorgTypeLitMerge:
+			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl] dist lightning import error", zap.Error(err))
+				return false, ver, errors.Trace(err)
+			}
+			if !done {
+				return false, ver, nil
+			}
+		case model.ReorgTypeTxnMerge:
+			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			if err != nil || !done {
+				return false, ver, errors.Trace(err)
+			}
+		}
+		indexInfo.BackfillState = model.BackfillStateReadyToMerge
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		return false, ver, errors.Trace(err)
+	case model.BackfillStateReadyToMerge:
+		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
+			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
+		indexInfo.BackfillState = model.BackfillStateMerging
+		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		return false, ver, errors.Trace(err)
+	case model.BackfillStateMerging:
+		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
+		if !done {
+			return false, ver, err
+		}
+		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
+>>>>>>> c8e68765b3 (pitr: add ingest recorder to repair indexes (#41670))
 		return true, ver, nil
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
