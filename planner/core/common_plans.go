@@ -614,7 +614,6 @@ type IndexAdvise struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
 	LineFieldsInfo
 }
 

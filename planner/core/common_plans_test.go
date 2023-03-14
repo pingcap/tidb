@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_newLineFieldsInfo(t *testing.T) {
+func TestNewLineFieldsInfo(t *testing.T) {
 	cases := []struct {
 		sql      string
 		expected LineFieldsInfo

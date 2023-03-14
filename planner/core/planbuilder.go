@@ -4257,7 +4257,6 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 		Path:           node.Path,
 		MaxMinutes:     node.MaxMinutes,
 		MaxIndexNum:    node.MaxIndexNum,
-		LinesInfo:      node.LinesInfo,
 		LineFieldsInfo: newLineFieldsInfo(nil, node.LinesInfo),
 	}
 	return p
