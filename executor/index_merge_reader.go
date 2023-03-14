@@ -363,7 +363,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
+					SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 				var notClosedSelectResult distsql.SelectResult
 				defer func() {
