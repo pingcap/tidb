@@ -812,6 +812,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	return ret, nil
 }
 
+// Clone a copy of ForListPruning
 func (lp *ForListPruning) Clone() *ForListPruning {
 	ret := *lp
 	if ret.LocateExpr != nil {
