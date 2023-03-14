@@ -20,6 +20,7 @@
 
 set -o pipefail
 
+make check-bazel-prepare
 make bazel_ci_build
 make bazel_coverage_test
 EXIT_STATUS=$?
