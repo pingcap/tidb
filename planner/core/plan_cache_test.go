@@ -1312,7 +1312,7 @@ func TestIssue42125(t *testing.T) {
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Batch/PointGet plans may be over-optimized"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
 	// should use PointGet: unsafe PointGet
 	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
