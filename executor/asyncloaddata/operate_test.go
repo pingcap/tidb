@@ -77,7 +77,7 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	// test CANCEL
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
-		IGNORE INTO TABLE test_operate.t;`, gcsEndpoint)
+		REPLACE INTO TABLE test_operate.t;`, gcsEndpoint)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

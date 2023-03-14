@@ -49,5 +49,5 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 	require.Greater(s.T(), len(rows), 0)
 	jobID := rows[len(rows)-1][0].(string)
 	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
-	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Check(testkit.Rows())
+	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs WHERE job_id = " + jobID).Check(testkit.Rows())
 }
