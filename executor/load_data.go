@@ -74,7 +74,10 @@ type LoadDataExec struct {
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	defer func() {
-		if err != nil && e.loadDataWorker.ownSession {
+		// in happy path the detached worker will release the system session in
+		// e.loadDataWorker.doLoad, and it must have no error after e.loadDataWorker.doLoad.
+		// Here we handle the case that error occurred before e.loadDataWorker.doLoad/
+		if err != nil && e.loadDataWorker.controller.Detached {
 			ctx2 := context.Background()
 			ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
 			e.loadDataWorker.releaseSysSession(ctx2, e.loadDataWorker.Ctx)
@@ -271,7 +274,6 @@ type LoadDataWorker struct {
 	progress        atomic.Pointer[asyncloaddata.Progress]
 	getSysSessionFn func() (sessionctx.Context, error)
 	putSysSessionFn func(context.Context, sessionctx.Context)
-	ownSession      bool
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
@@ -350,9 +352,8 @@ func NewLoadDataWorker(
 		restrictive:     restrictive,
 		getSysSessionFn: getSysSessionFn,
 		putSysSessionFn: putSysSessionFn,
-		ownSession:      ownSession,
 	}
-	if err := loadDataWorker.initInsertValues(); err != nil {
+	if err = loadDataWorker.initInsertValues(); err != nil {
 		return nil, err
 	}
 	loadDataWorker.ResetBatch()
@@ -443,7 +444,7 @@ func (e *LoadDataWorker) doLoad(
 	jobID int64,
 ) (err error) {
 	defer func() {
-		if e.ownSession {
+		if e.controller.Detached {
 			e.putSysSessionFn(ctx, e.Ctx)
 		}
 	}()
