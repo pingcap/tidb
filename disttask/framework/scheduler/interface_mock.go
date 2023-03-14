@@ -182,3 +182,7 @@ func (m *MockSubtaskExecutor) Run(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
+
+type MockMinimalTask struct{}
+
+func (MockMinimalTask) IsMinimalTask() {}
