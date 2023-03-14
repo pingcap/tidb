@@ -118,7 +118,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 	case ast.FileLocClient:
 		if e.loadDataWorker.controller.Detached {
-			return errors.New("LOCAL can't use WITH DETACHED")
+			return exeerrors.ErrLoadDataCantDetachWithLocal
 		}
 
 		// let caller use handleQuerySpecial to read data in this connection

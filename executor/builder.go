@@ -936,6 +936,10 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	sctx := b.ctx
 	ownSession := false
 	if v.Detached {
+		if v.FileLocRef == ast.FileLocClient {
+			b.err = exeerrors.ErrLoadDataCantDetachWithLocal
+			return nil
+		}
 		sysSession, err := base.getSysSession()
 		if err != nil {
 			b.err = err
