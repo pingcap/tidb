@@ -2234,7 +2234,7 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 		return err
 	}
-	ingest.LitBackCtxMgr.Unregister(bfJob.ID)
+	ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 	bc.SetDone()
 	return nil
 }
