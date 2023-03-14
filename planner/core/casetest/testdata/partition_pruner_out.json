@@ -697,7 +697,7 @@
           "├─TableReader(Build) 19.98 root partition:p0 data:Selection",
           "│ └─Selection 19.98 cop[tikv]  not(isnull(test_partition.t1.id)), or(eq(test_partition.t1.a, 1), eq(test_partition.t1.a, 3))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 29.97 root partition:p0,p1 data:Selection",
+          "└─TableReader(Probe) 29.97 root partition:p1 data:Selection",
           "  └─Selection 29.97 cop[tikv]  in(test_partition.t3.a, 6, 7, 8), not(isnull(test_partition.t3.id))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]

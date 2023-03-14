@@ -485,10 +485,19 @@ type listPartitionPruner struct {
 
 func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning, columns []*expression.Column) *listPartitionPruner {
+	pruneList = pruneList.Clone()
 	for i := range pruneList.PruneExprCols {
-		for _, col := range columns {
-			if col.ID == pruneList.PruneExprCols[i].ID {
-				pruneList.PruneExprCols[i].UniqueID = col.UniqueID
+		for j := range columns {
+			if columns[j].ID == pruneList.PruneExprCols[i].ID {
+				pruneList.PruneExprCols[i].UniqueID = columns[j].UniqueID
+				break
+			}
+		}
+	}
+	for i := range pruneList.ColPrunes {
+		for j := range columns {
+			if columns[j].ID == pruneList.ColPrunes[i].ExprCol.ID {
+				pruneList.ColPrunes[i].ExprCol.UniqueID = columns[j].UniqueID
 				break
 			}
 		}

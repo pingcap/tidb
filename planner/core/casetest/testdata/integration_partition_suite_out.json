@@ -142,7 +142,7 @@
       {
         "SQL": "explain format = 'brief' select * from tcollist where a in (2)",
         "DynamicPlan": [
-          "TableReader 10.00 root partition:p0,p1,p2,p3 data:Selection",
+          "TableReader 10.00 root partition:p0 data:Selection",
           "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
           "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
@@ -615,7 +615,7 @@
         "SQL": "explain format = 'brief' insert into tcollist select * from tcollist where a in (2)",
         "DynamicPlan": [
           "Insert N/A root  N/A",
-          "└─TableReader 10.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
           "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tcollist.a, 2)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
