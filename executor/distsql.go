@@ -311,7 +311,7 @@ func (e *IndexReaderExecutor) buildKVReq(ctx context.Context, r []kv.KeyRange) (
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.netDataSize)).
-        SetConnID(e.ctx.GetSessionVars().ConnectionID)
+		SetConnID(e.ctx.GetSessionVars().ConnectionID)
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
