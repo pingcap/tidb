@@ -548,11 +548,12 @@ func (b *Bool) MarshalText() ([]byte, error) {
 }
 
 func (b *Bool) MarshalJSON() ([]byte, error) {
-	return []byte(b.String()), nil
+	return []byte(`"` + b.String() + `"`), nil
 }
 
 func (b *Bool) UnmarshalJSON(data []byte) error {
-	switch strings.ToLower(string(data)) {
+	s := strings.Trim(string(data), `"`)
+	switch strings.ToLower(s) {
 	case "true":
 		*b = BoolTrue
 	case "false":
@@ -1187,6 +1188,21 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
+	if cfg.TikvImporter.IncrementalImport {
+		switch cfg.TikvImporter.AddIndexBySQL {
+		case BoolTrue:
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+		case BoolAuto:
+			cfg.TikvImporter.AddIndexBySQL = BoolFalse
+		}
+	} else {
+		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
+		if cfg.TikvImporter.AddIndexBySQL == BoolAuto && common.IsFailpointBuild {
+			cfg.TikvImporter.AddIndexBySQL = BoolTrue
+		}
+	}
+
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 	}
@@ -1204,21 +1220,6 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		}
 	default:
 		return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
-	}
-
-	if cfg.TikvImporter.IncrementalImport {
-		switch cfg.TikvImporter.AddIndexBySQL {
-		case BoolTrue:
-			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
-		case BoolAuto:
-			cfg.TikvImporter.AddIndexBySQL = BoolFalse
-		}
-	} else {
-		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
-		if cfg.TikvImporter.AddIndexBySQL == BoolAuto && common.IsFailpointBuild {
-			cfg.TikvImporter.AddIndexBySQL = BoolTrue
-		}
 	}
 
 	return nil
