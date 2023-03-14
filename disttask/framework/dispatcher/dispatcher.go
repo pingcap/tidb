@@ -260,7 +260,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	if len(instanceIDs) == 0 {
 		gTask.State = proto.TaskStateReverted
 	} else {
-		gTask.State = proto.TaskStateRevertPending
+		gTask.State = proto.TaskStateReverting
 	}
 	// TODO: Consider add the error msg to gTask.
 	// Write the global task meta into the storage.
@@ -273,6 +273,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	// New rollback subtasks and write into the storage.
 	for _, id := range instanceIDs {
 		subtask := proto.NewSubtask(gTask.ID, gTask.Type, id, meta)
+		subtask.State = proto.TaskStateRevertPending
 		err = d.subTaskMgr.AddNewTask(gTask.ID, subtask.SchedulerID, subtask.Meta, subtask.Type, true)
 		if err != nil {
 			logutil.BgLogger().Warn("add subtask failed", zap.Int64("gTask ID", gTask.ID), zap.Error(err))
