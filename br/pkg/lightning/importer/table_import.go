@@ -1343,8 +1343,11 @@ func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableI
 			batchSQLBuf.WriteString(" ADD KEY ")
 			singleSQLBuf.WriteString(" ADD KEY ")
 		}
-		batchSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
-		singleSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+		// "primary" is a special name for primary key, we should not use it as index name.
+		if desiredIdxInfo.Name.L != "primary" {
+			batchSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+			singleSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+		}
 
 		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
 		for _, col := range desiredIdxInfo.Columns {

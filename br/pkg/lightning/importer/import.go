@@ -27,7 +27,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	"github.com/go-sql-driver/mysql"
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -57,6 +57,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -1737,6 +1738,8 @@ func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints
 		sqls     []string
 		reserved []*model.IndexInfo
 	)
+	cols := tblInfo.Core.Columns
+loop:
 	for _, idxInfo := range tblInfo.Core.Indices {
 		if idxInfo.State != model.StatePublic {
 			reserved = append(reserved, idxInfo)
@@ -1746,6 +1749,15 @@ func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints
 		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
 			reserved = append(reserved, idxInfo)
 			continue
+		}
+		// Skip the index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if mysql.HasAutoIncrementFlag(flag) {
+				reserved = append(reserved, idxInfo)
+				continue loop
+			}
 		}
 
 		if idxInfo.Primary {
@@ -1767,7 +1779,7 @@ func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints
 	db := rc.tidbGlue.GetSQLExecutor()
 	for _, sql := range sqls {
 		if err := db.ExecuteWithLog(ctx, sql, "drop index", logger); err != nil {
-			if merr, ok := errors.Cause(err).(*mysql.MySQLError); ok && merr.Number == errno.ErrCantDropFieldOrKey {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok && merr.Number == errno.ErrCantDropFieldOrKey {
 				logger.Warn("cannot drop index, maybe it has been dropped", zap.Error(err), zap.String("sql", sql))
 				continue
 			}
