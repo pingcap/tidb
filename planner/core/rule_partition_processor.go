@@ -476,27 +476,20 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 // listPartitionPruner uses to prune partition for list partition.
 type listPartitionPruner struct {
 	*partitionProcessor
-	ctx             sessionctx.Context
-	pi              *model.PartitionInfo
-	partitionNames  []model.CIStr
-	colIDToUniqueID map[int64]int64
-	fullRange       map[int]struct{}
-	listPrune       *tables.ForListPruning
+	ctx            sessionctx.Context
+	pi             *model.PartitionInfo
+	partitionNames []model.CIStr
+	fullRange      map[int]struct{}
+	listPrune      *tables.ForListPruning
 }
 
 func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning, columns []*expression.Column) *listPartitionPruner {
-	colIDToUniqueID := make(map[int64]int64)
-	for _, cond := range conds {
-		condCols := expression.ExtractColumns(cond)
-		for _, c := range condCols {
-			colIDToUniqueID[c.ID] = c.UniqueID
-		}
-	}
 	for i := range pruneList.PruneExprCols {
 		for _, col := range columns {
 			if col.ID == pruneList.PruneExprCols[i].ID {
 				pruneList.PruneExprCols[i].UniqueID = col.UniqueID
+				break
 			}
 		}
 	}
@@ -507,7 +500,6 @@ func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNa
 		ctx:                ctx,
 		pi:                 tbl.Meta().Partition,
 		partitionNames:     partitionNames,
-		colIDToUniqueID:    colIDToUniqueID,
 		fullRange:          fullRange,
 		listPrune:          pruneList,
 	}
@@ -650,9 +642,6 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 	colLen := make([]int, 0, len(exprCols))
 	for _, c := range exprCols {
 		c = c.Clone().(*expression.Column)
-		if uniqueID, ok := l.colIDToUniqueID[c.ID]; ok {
-			c.UniqueID = uniqueID
-		}
 		cols = append(cols, c)
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
