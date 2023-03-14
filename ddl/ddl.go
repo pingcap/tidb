@@ -544,6 +544,10 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	return rc
 }
 
+func genBackfillJobReorgCtxID(jobID int64) int64 {
+	return -jobID
+}
+
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()

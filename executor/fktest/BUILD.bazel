@@ -23,6 +23,7 @@ go_test(
         "//parser/mysql",
         "//planner/core",
         "//testkit",
+        "//tests/realtikvtest",
         "//types",
         "//util/dbterror/exeerrors",
         "//util/sqlexec",

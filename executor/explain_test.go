@@ -662,12 +662,12 @@ func TestExplainFormatPlanCache(t *testing.T) {
 
 	// miss
 	tk.MustExec("explain format = 'plan_cache' select * from t limit 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"))
 	tk.MustExec("explain format = 'plan_cache' select * from t limit 1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("explain analyze format = 'plan_cache' select * from t limit 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prep plan cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported"))
 	tk.MustExec("explain analyze format = 'plan_cache' select * from t limit 1")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
