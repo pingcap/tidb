@@ -47,18 +47,18 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCreateLoadDataJob", `sleep(1000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(1000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(1000)`)
-	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 1;")
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
 		INTO TABLE test_operate.t;`, gcsEndpoint)
 
 	// DROP can happen anytime
 	user := &auth.UserIdentity{
-		AuthUsername: "test-load",
+		AuthUsername: "test-load-3",
 		AuthHostname: "test-host",
 	}
 	s.tk.Session().GetSessionVars().User = user
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	tk2.Session().GetSessionVars().User = user
+	tk2.MustExec("SET SESSION tidb_dml_batch_size = 1;")
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -71,23 +71,40 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Greater(s.T(), len(rows), 0)
 	jobID := rows[len(rows)-1][0].(string)
-	s.tk.MustExec("DROP LOAD DATA JOB " + jobID + ";")
+	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
 	wg.Wait()
 
 	// test CANCEL
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
-		REPLACE INTO TABLE test_operate.t;`, gcsEndpoint)
+		IGNORE INTO TABLE test_operate.t;`, gcsEndpoint)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		tk2.MustContainErrMsg(sql, "lance test")
+		tk2.MustContainErrMsg(sql, "failed to keepalive")
 	}()
 
 	time.Sleep(3 * time.Second)
 	rows = s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Greater(s.T(), len(rows), 0)
 	jobID = rows[len(rows)-1][0].(string)
-	s.tk.MustExec("CANCEL LOAD DATA JOB " + jobID + ";")
+	s.tk.MustExec("CANCEL LOAD DATA JOB " + jobID)
 	wg.Wait()
+	rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID).Rows()
+	require.Len(s.T(), rows, 1)
+	row := rows[0]
+	e := expectedRecord{
+		jobID:          jobID,
+		dataSource:     "gs://test-operate/t.tsv",
+		targetTable:    "`test_operate`.`t`",
+		importMode:     "logical",
+		createdBy:      "test-load-3@test-host",
+		jobState:       "loading",
+		jobStatus:      "canceled",
+		sourceFileSize: row[10].(string),
+		loadedFileSize: row[11].(string),
+		resultCode:     "0",
+		resultMessage:  "canceled by user",
+	}
+	e.checkIgnoreTimes(s.T(), row)
 }

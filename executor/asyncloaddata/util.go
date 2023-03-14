@@ -137,6 +137,7 @@ func UpdateJobProgress(
 		`UPDATE mysql.load_data_jobs
 		SET progress = %?, update_time = CURRENT_TIMESTAMP(6)
 		WHERE job_id = %?
+			AND end_time IS NULL
 			AND (update_time >= DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL %? SECOND)
 				OR update_time IS NULL);`,
 		progress, jobID, OfflineThresholdInSec)
@@ -187,17 +188,17 @@ func CancelJob(
 ) (err error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err = conn.ExecuteInternal(ctx, "BEGIN PESSIMISTIC;")
-	if err == nil {
+	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			_, err1 := conn.ExecuteInternal(ctx, "ROLLBACK")
+			_, err1 := conn.ExecuteInternal(ctx, "ROLLBACK;")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = conn.ExecuteInternal(ctx, "COMMIT")
+		_, err = conn.ExecuteInternal(ctx, "COMMIT;")
 		if err != nil {
 			return
 		}
@@ -230,9 +231,11 @@ func CancelJob(
 
 	_, err = conn.ExecuteInternal(ctx,
 		`UPDATE mysql.load_data_jobs
-		SET expected_status = 'canceled'
+		SET expected_status = 'canceled',
+		    end_time = CURRENT_TIMESTAMP(6),
+		    error_message = 'canceled by user'
 		WHERE job_id = %?;`,
-		jobID, user)
+		jobID)
 	return err
 }
 
@@ -377,6 +380,7 @@ func GetJobStatus(
 // start_time).
 func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 	// ending status has the highest priority
+	expectedStatus := row.GetEnum(0).String()
 	endTimeIsNull := row.IsNull(2)
 	if !endTimeIsNull {
 		resultMsgIsNull := row.IsNull(3)
@@ -384,13 +388,16 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 			resultMessage := row.GetString(3)
 			return JobFinished, resultMessage, nil
 		}
+
 		errorMessage := row.GetString(4)
+		if expectedStatus == "canceled" {
+			return JobCanceled, errorMessage, nil
+		}
 		return JobFailed, errorMessage, nil
 	}
 
 	isAlive := row.GetInt64(1) == 1
 	startTimeIsNull := row.IsNull(5)
-	expectedStatus := row.GetEnum(0).String()
 
 	switch expectedStatus {
 	case "canceled":
