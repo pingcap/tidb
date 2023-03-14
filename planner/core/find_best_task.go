@@ -1012,6 +1012,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
 				}
+
+				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
+				// For safety, prevent these plans from the plan cache here.
 				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) {
 					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("special optimization for PointGet plans"))
 				}
