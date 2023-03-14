@@ -148,7 +148,6 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 	}
 	c := &LoadDataController{
 		Path:               plan.Path,
-		IgnoreLines:        plan.IgnoreLines,
 		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
@@ -180,12 +179,15 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
-		// user can give IGNORE 0 LINES actually, we cannot determine whether this clause is specified now.
-		if plan.FieldsInfo != nil || plan.LinesInfo != nil || e.IgnoreLines > 0 {
+		if plan.FieldsInfo != nil || plan.LinesInfo != nil || plan.IgnoreLines != nil {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
 		}
 		// no need to init those param for sql/parquet
 		return nil
+	}
+
+	if plan.IgnoreLines != nil {
+		e.IgnoreLines = *plan.IgnoreLines
 	}
 
 	var (

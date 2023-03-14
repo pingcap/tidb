@@ -416,6 +416,15 @@ func TestLoadDataRestore(t *testing.T) {
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 		},
+		// ignore N lines
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 0 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 0 LINES",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 11 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 11 LINES",
+		},
 		// fields
 		{
 			sourceSQL: "load data infile '/a.csv' into table `t` fields terminated by 'a\\t'",

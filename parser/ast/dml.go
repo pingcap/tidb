@@ -1827,7 +1827,7 @@ type LoadDataStmt struct {
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
-	IgnoreLines       uint64
+	IgnoreLines       *uint64
 	ColumnAssignments []*Assignment
 	Options           []*LoadDataOpt
 
@@ -1863,9 +1863,9 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.LinesInfo != nil {
 		n.LinesInfo.Restore(ctx)
 	}
-	if n.IgnoreLines != 0 {
+	if n.IgnoreLines != nil {
 		ctx.WriteKeyWord(" IGNORE ")
-		ctx.WritePlainf("%d", n.IgnoreLines)
+		ctx.WritePlainf("%d", *n.IgnoreLines)
 		ctx.WriteKeyWord(" LINES")
 	}
 	if len(n.ColumnsAndUserVars) != 0 {

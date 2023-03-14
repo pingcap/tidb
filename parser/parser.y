@@ -13663,7 +13663,7 @@ LoadDataStmt:
 			Table:              $10.(*ast.TableName),
 			FieldsInfo:         $12.(*ast.FieldsClause),
 			LinesInfo:          $13.(*ast.LinesClause),
-			IgnoreLines:        $14.(uint64),
+			IgnoreLines:        $14.(*uint64),
 			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
 			ColumnAssignments:  $16.([]*ast.Assignment),
 			Options:            $17.([]*ast.LoadDataOpt),
@@ -13699,11 +13699,12 @@ FormatOpt:
 
 IgnoreLines:
 	{
-		$$ = uint64(0)
+		$$ = (*uint64)(nil)
 	}
 |	"IGNORE" NUM "LINES"
 	{
-		$$ = getUint64FromNUM($2)
+		v := getUint64FromNUM($2)
+		$$ = &v
 	}
 
 CharsetOpt:
