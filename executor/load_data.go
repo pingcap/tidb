@@ -482,8 +482,8 @@ func (e *LoadDataWorker) buildParser(
 	reader io.ReadSeekCloser,
 	remote *loadRemoteInfo,
 ) (parser mydump.Parser, err error) {
-	switch strings.ToLower(e.controller.Format) {
-	case "":
+	switch e.controller.Format {
+	case importer.LoadDataFormatDelimitedData:
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
