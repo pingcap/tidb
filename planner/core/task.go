@@ -1211,6 +1211,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
 			stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1229,6 +1230,18 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if selSelectivity > 0 && selSelectivity < 1 {
 				scaledRowCount := child.Stats().RowCount / selSelectivity
 				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+			}
+
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			// only support IndexReader now.
+			if _, ok := rootTask.p.(*PhysicalIndexReader); ok {
+				rootLimit := PhysicalLimit{
+					Count:       p.Count,
+					Offset:      p.Offset,
+					PartitionBy: newPartitionBy,
+				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+				rootLimit.SetSchema(rootTask.plan().Schema())
+				return attachPlan2Task(rootLimit, rootTask), true
 			}
 		}
 	} else if copTsk.indexPlan == nil {
@@ -1251,6 +1264,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblScan.Desc = isDesc
 		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
 		tblScan.KeepOrder = true
+		tblScan.ByItems = p.ByItems
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1271,6 +1285,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			scaledRowCount := child.Stats().RowCount / selSelectivity
 			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
 		}
+
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		rootLimit := PhysicalLimit{
+			Count:       p.Count,
+			Offset:      p.Offset,
+			PartitionBy: newPartitionBy,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		rootLimit.SetSchema(rootTask.plan().Schema())
+		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
 	}
