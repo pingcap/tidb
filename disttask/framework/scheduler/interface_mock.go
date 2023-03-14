@@ -183,6 +183,8 @@ func (m *MockSubtaskExecutor) Run(ctx context.Context) error {
 	return args.Error(0)
 }
 
+// MockMinimalTask is a mock of MinimalTask.
 type MockMinimalTask struct{}
 
+// IsMinimalTask implements MinimalTask.IsMinimalTask.
 func (MockMinimalTask) IsMinimalTask() {}
