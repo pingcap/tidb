@@ -203,7 +203,7 @@ type LockCtx = tikvstore.LockCtx
 type Transaction interface {
 	RetrieverMutator
 	AssertionProto
-	AggressiveLockingController
+	FairLockingController
 	// Size returns sum of keys and values length.
 	Size() int
 	// Mem returns the memory consumption of the transaction.
@@ -282,13 +282,13 @@ type AssertionProto interface {
 	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
-// AggressiveLockingController is the interface that defines aggressive locking related operations.
-type AggressiveLockingController interface {
-	StartAggressiveLocking() error
-	RetryAggressiveLocking(ctx context.Context) error
-	CancelAggressiveLocking(ctx context.Context) error
-	DoneAggressiveLocking(ctx context.Context) error
-	IsInAggressiveLockingMode() bool
+// FairLockingController is the interface that defines fair locking related operations.
+type FairLockingController interface {
+	StartFairLocking() error
+	RetryFairLocking(ctx context.Context) error
+	CancelFairLocking(ctx context.Context) error
+	DoneFairLocking(ctx context.Context) error
+	IsInFairLockingMode() bool
 }
 
 // Client is used to send request to KV layer.
