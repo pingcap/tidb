@@ -451,5 +451,6 @@ var IsFailpointBuild = isFailpointBuild()
 
 func isFailpointBuild() bool {
 	failpoint.Return(true)
+	//nolint:unreachable
 	return false
 }
