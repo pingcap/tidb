@@ -118,6 +118,7 @@ func (d *dispatcher) DispatchTaskLoop() {
 
 			for cnt < DefaultDispatchConcurrency {
 				// TODO: Consider get all unfinished tasks.
+				// If the task is in step2, we need to check the step1 is finished.
 				gTask, err := d.gTaskMgr.GetNewTask()
 				if err != nil {
 					logutil.BgLogger().Warn("get new task failed", zap.Error(err))
@@ -259,7 +260,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	if len(instanceIDs) == 0 {
 		gTask.State = proto.TaskStateReverted
 	} else {
-		gTask.State = proto.TaskStateReverting
+		gTask.State = proto.TaskStateRevertPending
 	}
 	// TODO: Consider add the error msg to gTask.
 	// Write the global task meta into the storage.
