@@ -1620,6 +1620,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		}
 	}()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 	_, err = loadDataWorker.Load(ctx, []executor.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			return executor.NewSimpleSeekerOnReadCloser(r), nil
