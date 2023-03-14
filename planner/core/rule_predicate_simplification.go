@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"golang.org/x/exp/slices"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -26,41 +27,40 @@ import (
 type predicateSimplification struct {
 }
 
-type PredicateType = byte
+type predicateType = byte
 
 const (
-	InPredicate       PredicateType = 0x00
-	NotEqualPredicate PredicateType = 0x01
-	OtherPredicate    PredicateType = 0x02
+	inListPredicate predicateType = iota
+	notEqualPredicate
+	otherPredicate
 )
 
-func findPredicateType(expr expression.Expression) (*expression.Column, PredicateType) {
+func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
 		args := v.GetArgs()
 		col, colOk := args[0].(*expression.Column)
 		if !colOk {
-			return nil, OtherPredicate
+			return nil, otherPredicate
 		}
 		if v.FuncName.L == ast.NE {
 			if _, ok := args[1].(*expression.Constant); !ok {
-				return nil, OtherPredicate
-			} else {
-				return col, NotEqualPredicate
+				return nil, otherPredicate
 			}
+			return col, notEqualPredicate
 		}
 		if v.FuncName.L == ast.In {
 			for _, value := range args[1:] {
 				if _, ok := value.(*expression.Constant); !ok {
-					return nil, OtherPredicate
+					return nil, otherPredicate
 				}
 			}
-			return col, InPredicate
+			return col, inListPredicate
 		}
 	default:
-		return nil, OtherPredicate
+		return nil, otherPredicate
 	}
-	return nil, OtherPredicate
+	return nil, otherPredicate
 }
 
 func (s *predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
@@ -76,11 +76,13 @@ func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) Logica
 	return p
 }
 
-func updateInPredicate(inPredicate expression.Expression, notEQPredicate expression.Expression) expression.Expression {
+// updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
+// a special case if an element in the inlist is not removed to keep the list not empty.
+func updateInPredicate(inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
 	_, inPredicateType := findPredicateType(inPredicate)
 	_, notEQPredicateType := findPredicateType(notEQPredicate)
-	if inPredicateType != InPredicate || notEQPredicateType != NotEqualPredicate {
-		return inPredicate
+	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
+		return inPredicate, true
 	}
 	v := inPredicate.(*expression.ScalarFunction)
 	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
@@ -97,29 +99,22 @@ func updateInPredicate(inPredicate expression.Expression, notEQPredicate express
 		}
 	}
 	// Special case if all IN list values are prunned. Ideally, this is False condition
-	// which can be optimized with LogicalDual. But, this ia already done. TODO: the false
+	// which can be optimized with LogicalDual. But, this is already done. TODO: the false
 	// optimization and its propagation through query tree will be added part of predicate simplification.
+	specialCase := false
 	if len(newValues) < 2 {
 		newValues = append(newValues, lastValue)
+		specialCase = true
 	}
 	newPred := expression.NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newValues...)
-	return newPred
-}
-
-func indexInSlice(index int, list []int) bool {
-	for _, v := range list {
-		if v == index {
-			return true
-			break
-		}
-	}
-	return false
+	return newPred, specialCase
 }
 
 func applyPredicateSimplification(predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
+	specialCase := false
 	removeValues := make([]int, 0, len(predicates))
 	for i := range predicates {
 		for j := i + 1; j < len(predicates); j++ {
@@ -128,19 +123,23 @@ func applyPredicateSimplification(predicates []expression.Expression) []expressi
 			iCol, iType := findPredicateType(ithPredicate)
 			jCol, jType := findPredicateType(jthPredicate)
 			if iCol == jCol {
-				if iType == NotEqualPredicate && jType == InPredicate {
-					predicates[j] = updateInPredicate(jthPredicate, ithPredicate)
-					removeValues = append(removeValues, i)
-				} else if iType == InPredicate && jType == NotEqualPredicate {
-					predicates[i] = updateInPredicate(ithPredicate, jthPredicate)
-					removeValues = append(removeValues, j)
+				if iType == notEqualPredicate && jType == inListPredicate {
+					predicates[j], specialCase = updateInPredicate(jthPredicate, ithPredicate)
+					if !specialCase {
+						removeValues = append(removeValues, i)
+					}
+				} else if iType == inListPredicate && jType == notEqualPredicate {
+					predicates[i], specialCase = updateInPredicate(ithPredicate, jthPredicate)
+					if !specialCase {
+						removeValues = append(removeValues, j)
+					}
 				}
 			}
 		}
 	}
 	newValues := make([]expression.Expression, 0, len(predicates))
 	for i, value := range predicates {
-		if !(indexInSlice(i, removeValues)) {
+		if !(slices.Contains(removeValues, i)) {
 			newValues = append(newValues, value)
 		}
 	}

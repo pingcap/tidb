@@ -18,6 +18,7 @@
     "name": "TestInListAndNotEqualSimplification",
     "cases":[
       "select f from t use index() where f <> 1 and f in (1,2,3) -- Simple case",
+      "select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant",
       "select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676",
       "select f from t use index() where f <> 3 and f in (1,2,3) and f <> 2 -- Multiple <> values. All are in inlist",
       "select f from t use index() where f in (1,2,3) and f <> 2 and f <> 99 -- Multiple <> values. Some are in inlist",

@@ -94,6 +94,14 @@
         ]
       },
       {
+        "SQL": "select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant",
+        "Plan": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  in(test.t.f, 1, 2, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676",
         "Plan": [
           "TableReader 20.00 root  data:Selection",
@@ -128,8 +136,8 @@
       {
         "SQL": "select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist",
         "Plan": [
-          "TableReader 10.00 root  data:Selection",
-          "└─Selection 10.00 cop[tikv]  in(test.t.f, 2)",
+          "TableReader 0.00 root  data:Selection",
+          "└─Selection 0.00 cop[tikv]  in(test.t.f, 2), ne(test.t.f, 2)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
