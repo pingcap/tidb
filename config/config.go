@@ -295,7 +295,6 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
-	// todo: remove this after AutoScaler is stable.
 	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
@@ -1039,7 +1038,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
-	UseAutoScaler:                        true,
+	UseAutoScaler:                        false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
