@@ -312,7 +312,7 @@ func (bc *Client) StartCheckpointRunner(
 		}
 	}
 
-	bc.checkpointRunner, err = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
+	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
 	return errors.Trace(err)
 }
 
@@ -356,7 +356,7 @@ func (bc *Client) GetProgressRange(r rtree.Range) (*rtree.ProgressRange, error) 
 func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	pastDureTime, err := checkpoint.WalkCheckpointFile(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
+	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg *rtree.Range) {
 		rangeTree, exists := rangeDataMap[groupKey]
 		if !exists {
 			rangeTree = rtree.NewRangeTree()

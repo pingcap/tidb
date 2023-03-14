@@ -11,6 +11,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"go.uber.org/zap"
 )
@@ -54,6 +55,8 @@ type Batcher struct {
 	manager            ContextManager
 	batchSizeThreshold int
 	size               int32
+
+	tree rtree.RangeTree
 }
 
 // Len calculate the current size of this batcher.
@@ -231,6 +234,19 @@ func (result DrainResult) Files() []*backuppb.File {
 	return files
 }
 
+func (result DrainResult) Clean(tree rtree.RangeTree) []rtree.Range {
+	newRanges := make([]rtree.Range, 0, len(result.Ranges))
+	for _, rg := range result.Ranges {
+		if r := tree.Find(&rg); r != nil {
+			log.Info("find range is completed to ingest", logutil.Key("start-key", rg.StartKey), logutil.Files(rg.Files))
+		} else {
+			newRanges = append(newRanges, rg)
+		}
+	}
+	result.Ranges = newRanges
+	return newRanges
+}
+
 func newDrainResult() DrainResult {
 	return DrainResult{
 		TablesToSend:         make([]CreatedTable, 0),
@@ -320,6 +336,7 @@ func (b *Batcher) Send(ctx context.Context) {
 	}
 
 	drainResult := b.drainRanges()
+	drainResult.Clean(b.tree)
 	tbs := drainResult.TablesToSend
 	ranges := drainResult.Ranges
 	log.Info("restore batch start", rtree.ZapRanges(ranges), ZapTables(tbs))
@@ -371,4 +388,8 @@ func (b *Batcher) Close() {
 // just set threshold before anything starts(e.g. EnableAutoCommit), please.
 func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
+}
+
+func (b *Batcher) SetCheckpoint(tree rtree.RangeTree) {
+	b.tree = tree
 }

@@ -43,10 +43,43 @@ const (
 	CheckpointMetaPath = "checkpoint.meta"
 	CheckpointDir      = "/checkpoints"
 
-	CheckpointDataDir     = CheckpointDir + "/data"
-	CheckpointChecksumDir = CheckpointDir + "/checksum"
-	CheckpointLockPath    = CheckpointDir + "/checkpoint.lock"
+	CheckpointDataDirForBackup     = CheckpointDir + "/data"
+	CheckpointChecksumDirForBackup = CheckpointDir + "/checksum"
+	CheckpointLockPathForBackup    = CheckpointDir + "/checkpoint.lock"
+
+	RestoreGroupKey                       = "restore"
+	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
+	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
 )
+
+type FlushPosition struct {
+	CheckpointDataDir     string
+	CheckpointChecksumDir string
+	CheckpointLockPath    string
+}
+
+func FlushPositionForBackup() FlushPosition {
+	return FlushPosition{
+		CheckpointDataDir:     CheckpointDataDirForBackup,
+		CheckpointChecksumDir: CheckpointChecksumDirForBackup,
+		CheckpointLockPath:    CheckpointLockPathForBackup,
+	}
+}
+
+func getCheckpointDataDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointDataDirForRestoreFormat, taskName)
+}
+
+func getCheckpointChecksumDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName)
+}
+
+func FlushPositionForRestore(taskName string) FlushPosition {
+	return FlushPosition{
+		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
+		CheckpointChecksumDir: fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName),
+	}
+}
 
 const MaxChecksumTotalCost float64 = 60.0
 
@@ -60,7 +93,7 @@ type CheckpointMessage struct {
 	// start-key of the origin range
 	GroupKey string
 
-	Group *rtree.Range
+	Group []*rtree.Range
 }
 
 // A Checkpoint Range File is like this:
@@ -73,6 +106,9 @@ type CheckpointMessage struct {
 // |      ...       |     | CipherIv                 |            |     ...     |
 // | RangeGroupData |     | Size                     |            |    Range    |
 // +----------------+     +--------------------------+            +-------------+
+//
+// For restore, because there is no group key, so there is only one RangeGroupData
+// with multi-ranges in the ChecksumData.
 
 type RangeGroups struct {
 	GroupKey string         `json:"group-key"`
@@ -121,7 +157,8 @@ type ChecksumInfo struct {
 type ChecksumRunner struct {
 	sync.Mutex
 
-	checksumItems ChecksumItems
+	checkpointChecksumDir string
+	checksumItems         ChecksumItems
 
 	// when the total time cost is large than the threshold,
 	// begin to flush checksum
@@ -132,9 +169,10 @@ type ChecksumRunner struct {
 	workerPool utils.WorkerPool
 }
 
-func NewChecksumRunner() *ChecksumRunner {
+func NewChecksumRunner(checkpointChecksumDir string) *ChecksumRunner {
 	return &ChecksumRunner{
-		workerPool: *utils.NewWorkerPool(4, "checksum flush worker"),
+		checkpointChecksumDir: checkpointChecksumDir,
+		workerPool:            *utils.NewWorkerPool(4, "checksum flush worker"),
 	}
 }
 
@@ -175,6 +213,9 @@ func (cr *ChecksumRunner) FlushChecksum(
 	}
 	cr.totalCost += timeCost
 	cr.checksumItems.Items = append(cr.checksumItems.Items, checksumItem)
+	// When the table is large, the time spent executing checksum will span
+	// several breakpoint persistence cycles. So we'd better to immediately persist
+	// the checksum of these large tables.
 	if cr.totalCost > MaxChecksumTotalCost {
 		toBeFlushedChecksumItems = &ChecksumItems{
 			Items: cr.checksumItems.Items,
@@ -211,7 +252,7 @@ func (cr *ChecksumRunner) FlushChecksum(
 			return
 		}
 
-		fname := fmt.Sprintf("%s/t%d_and__", CheckpointChecksumDir, tableID)
+		fname := fmt.Sprintf("%s/t%d_and__", cr.checkpointChecksumDir, tableID)
 		err = s.WriteFile(ctx, fname, data)
 		if err != nil {
 			cr.RecordError(err)
@@ -226,6 +267,7 @@ type GlobalTimer interface {
 }
 
 type CheckpointRunner struct {
+	FlushPosition
 	lockId uint64
 
 	meta map[string]*RangeGroups
@@ -244,12 +286,13 @@ type CheckpointRunner struct {
 	wg sync.WaitGroup
 }
 
-// only for test
-func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*CheckpointRunner, error) {
-	runner := &CheckpointRunner{
+func newCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer, f FlushPosition) *CheckpointRunner {
+	return &CheckpointRunner{
+		FlushPosition: f,
+
 		meta: make(map[string]*RangeGroups),
 
-		checksumRunner: NewChecksumRunner(),
+		checksumRunner: NewChecksumRunner(f.CheckpointChecksumDir),
 
 		storage: storage,
 		cipher:  cipher,
@@ -260,41 +303,55 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 		lockCh:   make(chan struct{}),
 		errCh:    make(chan error, 1),
 	}
+}
+
+// only for test
+func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*CheckpointRunner, error) {
+	runner := newCheckpointRunner(ctx, storage, cipher, timer, FlushPositionForBackup())
 
 	err := runner.initialLock(ctx)
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
 	}
-	runner.startCheckpointLoop(ctx, tick, tick)
+	runner.startCheckpointMainLoop(ctx, tick, tick)
 	return runner, nil
 }
 
-func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*CheckpointRunner, error) {
-	runner := &CheckpointRunner{
-		meta: make(map[string]*RangeGroups),
-
-		checksumRunner: NewChecksumRunner(),
-
-		storage: storage,
-		cipher:  cipher,
-		timer:   timer,
-
-		appendCh: make(chan *CheckpointMessage),
-		metaCh:   make(chan map[string]*RangeGroups),
-		lockCh:   make(chan struct{}),
-		errCh:    make(chan error, 1),
-	}
+func StartCheckpointRunnerForBackup(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*CheckpointRunner, error) {
+	runner := newCheckpointRunner(ctx, storage, cipher, timer, FlushPositionForBackup())
 
 	err := runner.initialLock(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner.startCheckpointLoop(ctx, tickDurationForFlush, tickDurationForLock)
+	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, tickDurationForLock)
+	return runner, nil
+}
+
+func StartCheckpointRunnerForRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*CheckpointRunner, error) {
+	runner := newCheckpointRunner(ctx, storage, cipher, nil, FlushPositionForRestore(taskName))
+
+	// for restore, no need to set lock
+	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
 	return runner, nil
 }
 
 func (r *CheckpointRunner) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64, totalKvs uint64, totalBytes uint64, timeCost float64) error {
 	return r.checksumRunner.FlushChecksum(ctx, r.storage, tableID, crc64xor, totalKvs, totalBytes, timeCost)
+}
+
+func (r *CheckpointRunner) append(
+	ctx context.Context,
+	message *CheckpointMessage,
+) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-r.errCh:
+		return err
+	case r.appendCh <- message:
+		return nil
+	}
 }
 
 func (r *CheckpointRunner) Append(
@@ -304,21 +361,34 @@ func (r *CheckpointRunner) Append(
 	endKey []byte,
 	files []*backuppb.File,
 ) error {
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-r.errCh:
-		return err
-	case r.appendCh <- &CheckpointMessage{
+	return r.append(ctx, &CheckpointMessage{
 		GroupKey: groupKey,
-		Group: &rtree.Range{
-			StartKey: startKey,
-			EndKey:   endKey,
-			Files:    files,
+		Group: []*rtree.Range{
+			{
+				StartKey: startKey,
+				EndKey:   endKey,
+				Files:    files,
+			},
 		},
-	}:
-		return nil
+	})
+}
+
+func (r *CheckpointRunner) AppendRanges(
+	ctx context.Context,
+	ranges []rtree.Range,
+) error {
+	// no need to persist the file information
+	group := make([]*rtree.Range, 0, len(ranges))
+	for _, rg := range ranges {
+		group = append(group, &rtree.Range{
+			StartKey: rg.StartKey,
+			EndKey:   rg.EndKey,
+		})
 	}
+	return r.append(ctx, &CheckpointMessage{
+		GroupKey: RestoreGroupKey,
+		Group:    group,
+	})
 }
 
 // Note: Cannot be parallel with `Append` function
@@ -330,9 +400,11 @@ func (r *CheckpointRunner) WaitForFinish(ctx context.Context) {
 	// wait the checksum flusher exit
 	r.checksumRunner.wg.Wait()
 	// remove the checkpoint lock
-	err := r.storage.DeleteFile(ctx, CheckpointLockPath)
-	if err != nil {
-		log.Warn("failed to remove the checkpoint lock", zap.Error(err))
+	if r.lockId > 0 {
+		err := r.storage.DeleteFile(ctx, r.CheckpointLockPath)
+		if err != nil {
+			log.Warn("failed to remove the checkpoint lock", zap.Error(err))
+		}
 	}
 }
 
@@ -361,7 +433,7 @@ func (r *CheckpointRunner) setLock(ctx context.Context, errCh chan error) error 
 }
 
 // start a goroutine to flush the meta, which is sent from `checkpoint looper`, to the external storage
-func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.WaitGroup) chan error {
+func (r *CheckpointRunner) startCheckpointFlushLoop(ctx context.Context, wg *sync.WaitGroup) chan error {
 	errCh := make(chan error, 1)
 	wg.Add(1)
 	flushWorker := func(ctx context.Context, errCh chan error) {
@@ -405,23 +477,24 @@ func (r *CheckpointRunner) sendError(err error) {
 	r.checksumRunner.RecordError(err)
 }
 
-func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDurationForFlush, tickDurationForLock time.Duration) {
+func (r *CheckpointRunner) startCheckpointMainLoop(ctx context.Context, tickDurationForFlush, tickDurationForLock time.Duration) {
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
 		defer r.wg.Done()
 		cctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		var wg sync.WaitGroup
-		errCh := r.startCheckpointRunner(cctx, &wg)
+		errCh := r.startCheckpointFlushLoop(cctx, &wg)
 		flushTicker := time.NewTicker(tickDurationForFlush)
 		defer flushTicker.Stop()
-		lockTicker := time.NewTicker(tickDurationForLock)
+		// register time ticker, the lock ticker is optional
+		lockTicker := dispatcherTicker(tickDurationForLock)
 		defer lockTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-lockTicker.C:
+			case <-lockTicker.Ch():
 				if err := r.setLock(ctx, errCh); err != nil {
 					r.sendError(err)
 					return
@@ -452,7 +525,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 					}
 					r.meta[msg.GroupKey] = groups
 				}
-				groups.Groups = append(groups.Groups, msg.Group)
+				groups.Groups = append(groups.Groups, msg.Group...)
 			case err := <-errCh:
 				// pass flush worker's error back
 				r.sendError(err)
@@ -516,7 +589,7 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 
 		checksum := sha256.Sum256(fname)
 		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
-		path := fmt.Sprintf("%s/%s_%d.cpt", CheckpointDataDir, checksumEncoded, rand.Uint64())
+		path := fmt.Sprintf("%s/%s_%d.cpt", r.CheckpointDataDir, checksumEncoded, rand.Uint64())
 		if err := r.storage.WriteFile(ctx, path, data); err != nil {
 			return errors.Trace(err)
 		}
@@ -563,13 +636,13 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 		return errors.Trace(err)
 	}
 
-	err = r.storage.WriteFile(ctx, CheckpointLockPath, data)
+	err = r.storage.WriteFile(ctx, r.CheckpointLockPath, data)
 	return errors.Trace(err)
 }
 
 // check whether this lock belongs to this BR
 func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
-	data, err := r.storage.ReadFile(ctx, CheckpointLockPath)
+	data, err := r.storage.ReadFile(ctx, r.CheckpointLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -589,7 +662,7 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 	} else if lock.LockId != r.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath)
+			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), r.CheckpointLockPath)
 	}
 
 	return nil
@@ -614,7 +687,7 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	r.lockId = oracle.ComposeTS(p, l)
-	exist, err := r.storage.FileExists(ctx, CheckpointLockPath)
+	exist, err := r.storage.FileExists(ctx, r.CheckpointLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -633,12 +706,20 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// walk the whole checkpoint range files and retrieve the metadatat of backed up ranges
+// walk the whole checkpoint range files and retrieve the metadata of backed up ranges
 // and return the total time cost in the past executions
-func WalkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
+func WalkCheckpointFileForBackup(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
+	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
+}
+
+func WalkCheckpointFileForRestore(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
+	return walkCheckpointFile(ctx, s, cipher, getCheckpointDataDirByName(taskName), fn)
+}
+
+func walkCheckpointFile(ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, subDir string, fn func(groupKey string, rg *rtree.Range)) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDirForBackup}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
@@ -705,15 +786,19 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	m.CheckpointChecksum, err = loadCheckpointChecksum(ctx, s)
+	m.CheckpointChecksum, err = loadCheckpointChecksum(ctx, s, CheckpointChecksumDirForBackup)
 	return m, errors.Trace(err)
 }
 
+func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (map[int64]*ChecksumItem, error) {
+	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
+}
+
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
-func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage) (map[int64]*ChecksumItem, error) {
+func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subDir string) (map[int64]*ChecksumItem, error) {
 	checkpointChecksum := make(map[int64]*ChecksumItem)
 
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointChecksumDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Trace(err)

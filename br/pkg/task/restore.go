@@ -683,6 +683,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	tree, err := client.InitCheckpoint(ctx, sp.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
@@ -770,12 +775,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, client.GetCheckpointRunner())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
 	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher.SetCheckpoint(tree)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
