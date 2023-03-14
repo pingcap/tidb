@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -558,4 +560,67 @@ func hasPseudoStats(rows [][]interface{}) bool {
 		}
 	}
 	return false
+}
+
+func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
+	idx2Columns := make(map[int64][]int64)
+	colID2IdxID := make(map[int64]int64)
+	for _, idxHist := range statsTbl.Indices {
+		ids := make([]int64, 0, len(idxHist.Info.Columns))
+		for _, idxCol := range idxHist.Info.Columns {
+			ids = append(ids, int64(idxCol.Offset))
+		}
+		colID2IdxID[ids[0]] = idxHist.ID
+		idx2Columns[idxHist.ID] = ids
+	}
+	statsTbl.Idx2ColumnIDs = idx2Columns
+	statsTbl.ColID2IdxID = colID2IdxID
+}
+
+func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// The two columns are the same.
+	// From 0 to 499, each value has 1000 rows. Therefore, NDV is 500 and total row count is 500000.
+	mockStatsTbl := mockStatsTable(tblInfo, 500000)
+	colValues, err := generateIntDatum(1, 500)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Count:             500000,
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	testKit.MustQuery("explain format = 'brief' " +
+		"select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b").
+		Check(testkit.Rows(
+			"IndexJoin 1000000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+			"├─TableReader(Build) 1000.00 root  data:Selection",
+			"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+			"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"└─IndexLookUp(Probe) 1000000.00 root  ",
+			"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
+			"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+			"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
+			"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		))
 }

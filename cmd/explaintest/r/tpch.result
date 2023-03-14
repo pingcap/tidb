@@ -302,7 +302,7 @@ Sort	1.00	root		tpch.orders.o_orderpriority
       ├─TableReader(Build)	2925937.50	root		data:Selection
       │ └─Selection	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01 00:00:00.000000)
       │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-      └─IndexLookUp(Probe)	4.05	root		
+      └─IndexLookUp(Probe)	4.05	root
         ├─IndexRangeScan(Build)	5.06	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
         └─Selection(Probe)	4.05	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
           └─TableRowIDScan	5.06	cop[tikv]	table:lineitem	keep order:false
@@ -547,7 +547,7 @@ Sort	719.02	root		Column#62
                 │ └─TableReader(Probe)	22413367.93	root		data:Selection
                 │   └─Selection	22413367.93	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), le(tpch.orders.o_orderdate, 1996-12-31 00:00:00.000000)
                 │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-                └─IndexLookUp(Probe)	4.05	root		
+                └─IndexLookUp(Probe)	4.05	root
                   ├─IndexRangeScan(Build)	4.05	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
                   └─TableRowIDScan(Probe)	4.05	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -676,7 +676,7 @@ Projection	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#39,
           │   │ └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
           │   └─TableReader(Probe)	7500000.00	root		data:TableFullScan
           │     └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
-          └─IndexLookUp(Probe)	4.05	root		
+          └─IndexLookUp(Probe)	4.05	root
             ├─IndexRangeScan(Build)	16.44	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
             └─Selection(Probe)	4.05	cop[tikv]		eq(tpch.lineitem.l_returnflag, "R")
               └─TableRowIDScan	16.44	cop[tikv]	table:lineitem	keep order:false
@@ -1166,7 +1166,7 @@ Sort	20000.00	root		tpch.supplier.s_name
           │ ├─TableReader(Build)	80007.93	root		data:Selection
           │ │ └─Selection	80007.93	cop[tikv]		like(tpch.part.p_name, "green%", 92)
           │ │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-          │ └─IndexLookUp(Probe)	4.02	root		
+          │ └─IndexLookUp(Probe)	4.02	root
           │   ├─IndexRangeScan(Build)	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
           │   └─TableRowIDScan(Probe)	4.02	cop[tikv]	table:partsupp	keep order:false
           └─TableReader(Probe)	44189356.65	root		data:Selection
@@ -1240,10 +1240,10 @@ Projection	100.00	root		tpch.supplier.s_name, Column#72
       │ │ └─TableReader(Probe)	0.49	root		data:Selection
       │ │   └─Selection	0.49	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
       │ │     └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
-      │ └─IndexLookUp(Probe)	4.05	root		
+      │ └─IndexLookUp(Probe)	4.05	root
       │   ├─IndexRangeScan(Build)	4.05	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
       │   └─TableRowIDScan(Probe)	4.05	cop[tikv]	table:l2	keep order:false
-      └─IndexLookUp(Probe)	4.05	root		
+      └─IndexLookUp(Probe)	4.05	root
         ├─IndexRangeScan(Build)	5.06	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
         └─Selection(Probe)	4.05	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
           └─TableRowIDScan	5.06	cop[tikv]	table:l3	keep order:false
