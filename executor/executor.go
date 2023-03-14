@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -312,7 +313,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		return ErrQueryInterrupted
+		return exeerrors.ErrQueryInterrupted
 	}
 
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
@@ -328,7 +329,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	// recheck whether the session/query is killed during the Next()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		err = ErrQueryInterrupted
+		err = exeerrors.ErrQueryInterrupted
 	}
 	return err
 }
@@ -1793,7 +1794,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return ErrSubqueryMoreThan1Row
+		return exeerrors.ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := tryNewCacheChunk(e.children[0])
@@ -1802,7 +1803,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return ErrSubqueryMoreThan1Row
+		return exeerrors.ErrSubqueryMoreThan1Row
 	}
 
 	return nil
@@ -2104,9 +2105,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
+		sc.ExplainFormat = explainStmt.Format
 		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
+	} else {
+		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
@@ -2151,12 +2155,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
-		sc.DupKeyAsWarning = true
-		sc.BadNullAsWarning = true
-		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
-		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
-		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
-		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true

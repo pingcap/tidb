@@ -308,6 +308,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
+	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
 	return builder
 }
 
@@ -415,6 +416,12 @@ func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 // SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
 func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
 	builder.ClosestReplicaReadAdjuster = chkFn
+	return builder
+}
+
+// SetConnID sets connection id for the builder.
+func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
+	builder.ConnID = connID
 	return builder
 }
 

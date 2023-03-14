@@ -310,7 +310,8 @@ func (e *IndexReaderExecutor) buildKVReq(ctx context.Context, r []kv.KeyRange) (
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.netDataSize))
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.netDataSize)).
+    SetConnID(e.ctx.GetSessionVars().ConnectionID)
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
@@ -645,7 +646,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker)
+			SetMemTracker(tracker).
+			SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed

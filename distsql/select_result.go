@@ -318,6 +318,9 @@ type selectResult struct {
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
+		if enableTelemetry, telemetryErr := telemetry.IsTelemetryEnabled(r.ctx); telemetryErr != nil || !enableTelemetry {
+			return
+		}
 		if r.stats != nil {
 			// Ignore internal sql.
 			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {

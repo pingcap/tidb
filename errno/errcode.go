@@ -1054,6 +1054,11 @@ const (
 	ErrLoadDataCantRead                    = 8160
 	ErrLoadDataPhysicalImportTableNotEmpty = 8161
 	ErrLoadDataWrongFormatConfig           = 8162
+	ErrUnknownOption                       = 8163
+	ErrInvalidOptionVal                    = 8164
+	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataJobNotFound                 = 8170
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1103,9 +1108,12 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
-	ErrResourceGroupExists                = 8248
-	ErrResourceGroupNotExists             = 8249
-	ErrResourceGroupSupportDisabled       = 8250
+	// Resource group errors.
+	ErrResourceGroupExists            = 8248
+	ErrResourceGroupNotExists         = 8249
+	ErrResourceGroupSupportDisabled   = 8250
+	ErrResourceGroupConfigUnavailable = 8251
+	ErrResourceGroupThrottled         = 8252
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

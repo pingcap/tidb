@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -43,9 +44,17 @@ import (
 )
 
 var (
-	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
-	addingBackfillJob      = "/tidb/ddl/add_backfill_job"
+	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
+	addingBackfillJob           = "/tidb/ddl/add_backfill_job"
+	dispatchLoopWaitingDuration = 1 * time.Second
 )
+
+func init() {
+	// In test the wait duration can be reduced to make test case run faster
+	if intest.InTest {
+		dispatchLoopWaitingDuration = 50 * time.Millisecond
+	}
+}
 
 func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
 	dc.runningJobs.Lock()
@@ -173,15 +182,15 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !d.isOwner() || d.waiting.Load() {
+		if !d.isOwner() {
 			d.once.Store(true)
-			time.Sleep(time.Second)
+			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
 		select {
@@ -925,7 +934,7 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := "delete from mysql.tidb_background_subtask"
 	if !isOneEle {
-		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.keyString())
+		sql += fmt.Sprintf(" where task_key = '%s'", backfillJob.keyString())
 	} else {
 		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.PrefixKeyString())
 	}

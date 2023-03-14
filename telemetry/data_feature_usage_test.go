@@ -76,13 +76,13 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionAggressiveLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.False(t, txnUsage.AggressiveLocking)
+		require.False(t, txnUsage.FairLocking)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionAggressiveLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.True(t, txnUsage.AggressiveLocking)
+		require.True(t, txnUsage.FairLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -362,7 +362,7 @@ func TestResourceGroups(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), usage.ResourceControlUsage.NumResourceGroups)
-	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
 	tk.MustExec("create resource group x ru_per_sec=100")
@@ -894,7 +894,7 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.Equal(t, diff.BatchedFallbackCount, int64(1))
 }
 
-func TestAggressiveLockingUsage(t *testing.T) {
+func TestFairLockingUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -905,24 +905,24 @@ func TestAggressiveLockingUsage(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t set v = v + 1 where id = 1")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	// Not counted before transaction committing.
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(1), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	// Counted by transaction instead of by statement.
 	tk.MustExec("begin pessimistic")
@@ -931,8 +931,8 @@ func TestAggressiveLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(2), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	// Effective only when LockedWithConflict occurs.
 	tk3 := testkit.NewTestKit(t, store)
@@ -959,6 +959,6 @@ func TestAggressiveLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(4), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(1), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 }
