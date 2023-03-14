@@ -261,6 +261,7 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 	} else {
 		gTask.State = proto.TaskStateReverting
 	}
+	// TODO: Consider add the error msg to gTask.
 	// Write the global task meta into the storage.
 	err = d.gTaskMgr.UpdateTask(gTask)
 	if err != nil {
