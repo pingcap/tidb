@@ -314,6 +314,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (47),\n" +
 		" PARTITION `p4` VALUES LESS THAN (90))"))
 
+	// Test reorganize range partitions works when a function defined as the key.
 	tk.MustExec("drop table t")
 	tk.MustExec(`create table t (a int PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) partition by range (abs(a)) ` +
 		`(partition p0 values less than (10),` +
@@ -360,6 +361,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 func TestReorganizeRangeColumnsPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// Test reorganize range columns partitions works for integer and string defined as the key.
 	tk.MustExec("CREATE DATABASE ReorgPartition")
 	tk.MustExec("USE ReorgPartition")
 	tk.MustExec(`
@@ -400,6 +402,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t PARTITION(p00)`).Sort().Check(testkit.Rows("1 abc 1"))
 	tk.MustQuery(`SELECT * FROM t PARTITION(p01)`).Sort().Check(testkit.Rows("3 ggg 3"))
 
+	// Test reorganize range columns partitions works for string and integer defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
@@ -457,6 +460,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"5 ggg 5",
 		"9 ggg 9"))
 
+	// Test reorganize range columns partitions works for DATE and DATETIME defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
@@ -518,6 +522,7 @@ func TestReorganizeRangeColumnsPartition(t *testing.T) {
 		"2020-05-05 2020-05-05 10:10:10 3", "2021-05-04 2021-05-04 10:10:10 4"))
 	tk.MustQuery(`SELECT * FROM t PARTITION(pMax)`).Sort().Check(testkit.Rows("2022-05-05 2022-05-05 10:10:10 5", "2023-05-05 2023-05-05 10:10:10 6"))
 
+	// Test reorganize range columns partitions works for DATETIME and DATE defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
@@ -624,6 +629,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		" PARTITION `p2` VALUES IN (24,63))"))
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
 
+	// Test reorganize list partitions works when a function defined as the key.
 	tk.MustExec("drop table t")
 	tk.MustExec(`create table t (a int, b varchar(55), c int) partition by list (abs(a))
 		(partition p0 values in (-1,0,1),
@@ -672,6 +678,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE ReorgPartition")
 	tk.MustExec("USE ReorgPartition")
+	// Test reorganize list columns partitions works for interger and string defined as the key.
 	tk.MustExec(`
 	CREATE TABLE t (
 		a INT,
@@ -716,6 +723,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t PARTITION(pAll)`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))
 	tk.MustQuery(`SELECT * FROM t`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))
 
+	// Test reorganize list columns partitions works for string and integer defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
@@ -759,6 +767,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t PARTITION(pAll)`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))
 	tk.MustQuery(`SELECT * FROM t`).Sort().Check(testkit.Rows("1 aaa 1", "16 lll 16", "3 ccc 3", "5 eee 5"))
 
+	// Test reorganize list columns partitions works for DATE and DATETIME defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
@@ -831,6 +840,7 @@ func TestReorganizeListColumnsPartition(t *testing.T) {
 		"2020-05-04 2020-05-04 10:10:10 3", "2021-05-04 2021-05-04 10:10:10 4",
 		"2022-05-04 2022-05-04 10:10:10 5", "2022-05-05 2022-05-06 11:11:11 6"))
 
+	// Test reorganize list columns partitions works for DATETIME and DATE defined as the key.
 	tk.MustExec("DROP TABLE t")
 	tk.MustExec(`
 	CREATE TABLE t (
