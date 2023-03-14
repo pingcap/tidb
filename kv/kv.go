@@ -577,6 +577,9 @@ type Request struct {
 	LimitSize uint64
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
+
+	// ConnID stores the session connection id.
+	ConnID uint64
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
