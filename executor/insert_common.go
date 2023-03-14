@@ -1244,7 +1244,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
-						// lock duplicated unique key on insert-ingore
+						// lock duplicated unique key on insert-ignore
 						txnCtx.AddUnchangedRowKey(uk.newKey)
 					}
 					skip = true
