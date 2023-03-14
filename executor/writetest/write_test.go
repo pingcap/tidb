@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -2003,7 +2004,7 @@ func TestIssue18681(t *testing.T) {
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
-func TestIssue33298(t *testing.T) {
+func TestLoadDataInitParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
@@ -2013,11 +2014,65 @@ func TestIssue33298(t *testing.T) {
 	tk.MustExec("drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
 
+	require.ErrorIs(t, tk.ExecToErr("load data infile '' into table load_data_test"),
+		exeerrors.ErrLoadDataEmptyPath)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format '' into table load_data_test"),
+		exeerrors.ErrLoadDataUnsupportedFormat)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'aaa' into table load_data_test"),
+		exeerrors.ErrLoadDataUnsupportedFormat)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test fields terminated by 'a'"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test lines terminated by 'a'"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test lines terminated by 'a'"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed"),
+		"must specify FIELDS [OPTIONALLY] ENCLOSED BY")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test lines terminated by ''"),
+		"LINES TERMINATED BY is empty")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields enclosed by 'a' terminated by 'a'"),
+		"must not be prefix of each other")
+
+	// null def values
+	testFunc := func(sql string, expectedNullDef []string, expectedNullOptEnclosed bool) {
+		require.NoError(t, tk.ExecToErr(sql))
+		defer ctx.SetValue(executor.LoadDataVarKey, nil)
+		ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
+		require.True(t, ok)
+		require.NotNil(t, ld)
+		require.Equal(t, expectedNullDef, ld.GetController().FieldNullDef)
+		require.Equal(t, expectedNullOptEnclosed, ld.GetController().NullValueOptEnclosed)
+	}
+	testFunc("load data local infile '/a' into table load_data_test",
+		[]string{"\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by ''",
+		[]string{"\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields defined null by 'a'",
+		[]string{"a", "\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b' defined null by 'a' optionally enclosed",
+		[]string{"a", "\\N"}, true)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b'",
+		[]string{"NULL", "\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b' escaped by ''",
+		[]string{"NULL"}, false)
+
+	// positive case
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'delimited data' into table load_data_test fields terminated by 'a'"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+
 	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
 	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
 	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
 }
 
 func TestIssue34358(t *testing.T) {

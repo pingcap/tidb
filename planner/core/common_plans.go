@@ -689,10 +689,10 @@ func newLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause)
 			e.FieldsTerminatedBy = *fieldsInfo.Terminated
 		}
 		if fieldsInfo.Enclosed != nil {
-			e.FieldsEnclosedBy = string([]byte{*fieldsInfo.Enclosed})
+			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
 		}
 		if fieldsInfo.Escaped != nil {
-			e.FieldsEscapedBy = string([]byte{*fieldsInfo.Escaped})
+			e.FieldsEscapedBy = *fieldsInfo.Escaped
 		}
 		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
 	}

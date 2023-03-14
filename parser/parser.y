@@ -13731,12 +13731,10 @@ Fields:
 			case ast.Terminated:
 				fieldsClause.Terminated = &item.Value
 			case ast.Enclosed:
-				enclosed := item.Value[0]
-				fieldsClause.Enclosed = &enclosed
+				fieldsClause.Enclosed = &item.Value
 				fieldsClause.OptEnclosed = item.OptEnclosed
 			case ast.Escaped:
-				escaped := item.Value[0]
-				fieldsClause.Escaped = &escaped
+				fieldsClause.Escaped = &item.Value
 			case ast.DefinedNullBy:
 				fieldsClause.DefinedNullBy = &item.Value
 				fieldsClause.NullValueOptEnclosed = item.OptEnclosed
@@ -13773,7 +13771,7 @@ FieldItem:
 |	optionallyEnclosedBy FieldTerminator
 	{
 		str := $2
-		if str != "\\" && len(str) != 1 {
+		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}
@@ -13786,7 +13784,7 @@ FieldItem:
 |	"ENCLOSED" "BY" FieldTerminator
 	{
 		str := $3
-		if str != "\\" && len(str) != 1 {
+		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}
@@ -13798,7 +13796,7 @@ FieldItem:
 |	"ESCAPED" "BY" FieldTerminator
 	{
 		str := $3
-		if str != "\\" && len(str) != 1 {
+		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}

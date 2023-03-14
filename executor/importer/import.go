@@ -115,8 +115,8 @@ type LoadDataController struct {
 	insertColumns []*table.Column
 
 	// used for DELIMITED DATA format
-	fieldNullDef     []string
-	quotedNullIsText bool
+	FieldNullDef         []string
+	NullValueOptEnclosed bool
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
@@ -189,6 +189,8 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 		nullValueOptEnclosed = false
 	)
 
+	// todo: move null defined into plannercore.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO DUMPFILE there's only one
 	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
 		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
 		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
@@ -199,8 +201,8 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 		nullDef = append(nullDef, string([]byte{e.FieldsEscapedBy[0], 'N'}))
 	}
 
-	e.fieldNullDef = nullDef
-	e.quotedNullIsText = !nullValueOptEnclosed
+	e.FieldNullDef = nullDef
+	e.NullValueOptEnclosed = nullValueOptEnclosed
 
 	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
@@ -523,13 +525,13 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 		Delimiter:        e.FieldsEnclosedBy,
 		Terminator:       e.LinesTerminatedBy,
 		NotNull:          false,
-		Null:             e.fieldNullDef,
+		Null:             e.FieldNullDef,
 		Header:           false,
 		TrimLastSep:      false,
 		EscapedBy:        e.FieldsEscapedBy,
 		StartingBy:       e.LinesStartingBy,
 		AllowEmptyLine:   true,
-		QuotedNullIsText: e.quotedNullIsText,
+		QuotedNullIsText: !e.NullValueOptEnclosed,
 		UnescapedQuote:   true,
 	}
 }

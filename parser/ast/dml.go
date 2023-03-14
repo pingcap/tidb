@@ -1982,8 +1982,8 @@ type FieldItem struct {
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated           *string
-	Enclosed             *byte
-	Escaped              *byte
+	Enclosed             *string // can only be a byte, we use string to allow empty value(difference from nil)
+	Escaped              *string // can only be a byte, we use string to allow empty value(difference from nil)
 	OptEnclosed          bool
 	DefinedNullBy        *string
 	NullValueOptEnclosed bool
@@ -2005,11 +2005,11 @@ func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" OPTIONALLY")
 		}
 		ctx.WriteKeyWord(" ENCLOSED BY ")
-		ctx.WriteString(string(*n.Enclosed))
+		ctx.WriteString(*n.Enclosed)
 	}
 	if n.Escaped != nil {
 		ctx.WriteKeyWord(" ESCAPED BY ")
-		ctx.WriteString(string(*n.Escaped))
+		ctx.WriteString(*n.Escaped)
 	}
 	if n.DefinedNullBy != nil {
 		ctx.WriteKeyWord(" DEFINED NULL BY ")
