@@ -874,6 +874,7 @@ func (e *LoadDataWorker) parserData2TableData(
 			return nil, err
 		}
 		e.handleWarning(err)
+		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
 		// TODO: should not return nil! caller will panic when lookup index
 		return nil, nil
 	}
