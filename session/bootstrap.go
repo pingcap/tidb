@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	resourcegroup "github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -566,6 +567,10 @@ const (
 	);`
 )
 
+var (
+	CreateDefaultResourceGroup = fmt.Sprintf("CREATE RESOURCE GROUP `default` RU_PER_SEC=%d BURSTABLE", resourcegroup.MaxRUFillRate)
+)
+
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	startTime := time.Now()
@@ -825,6 +830,8 @@ const (
 	version135 = 135
 	// version136 prepare the tables for the distributed task.
 	version136 = 136
+	// version137 introduces some reserved resource groups
+	version137 = 137
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -954,6 +961,7 @@ var (
 		upgradeToVer134,
 		upgradeToVer135,
 		upgradeToVer136,
+		upgradeToVer137,
 	}
 )
 
@@ -2379,6 +2387,13 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
+func upgradeToVer137(s Session, ver int64) {
+	if ver >= version137 {
+		return
+	}
+	doReentrantDDL(s, CreateDefaultResourceGroup)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2491,6 +2506,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
+	// Create default resource group
+	mustExecute(s, CreateDefaultResourceGroup)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

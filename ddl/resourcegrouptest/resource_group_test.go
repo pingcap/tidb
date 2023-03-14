@@ -50,6 +50,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000000 YES"))
+
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustExec("create user usr1")
@@ -57,6 +59,10 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupSupportDisabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+
+	tk.MustExec("alter resource group `default` ru_per_sec=10000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 NO"))
+	tk.MustContainErrMsg("drop resource group `default`", "can't drop internal resource groups")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
@@ -135,7 +141,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
 	groups, err := infosync.ListResourceGroups(context.TODO())
-	require.Equal(t, 0, len(groups))
+	require.Equal(t, 1, len(groups))
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
@@ -155,7 +161,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 YES"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
 
-	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("3"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")

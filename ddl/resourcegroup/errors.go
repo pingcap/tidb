@@ -29,4 +29,8 @@ var (
 	ErrInvalidResourceGroupDuplicatedMode = errors.New("cannot set RU mode and Raw mode options at the same time")
 	// ErrUnknownResourceGroupMode is from group.go.
 	ErrUnknownResourceGroupMode = errors.New("unknown resource group mode")
+	// ErrDroppingInternalResourceGroup is from group.go
+	ErrDroppingInternalResourceGroup = errors.New("can't drop internal resource groups")
+	// ErrRUOutOfRang is from group.go
+	ErrRUOutOfRang = errors.Errorf("RU_PER_SEC must be an integer in [%d, %d]", MinRUFillRate, MaxRUFillRate)
 )
