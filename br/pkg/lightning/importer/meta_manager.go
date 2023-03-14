@@ -503,7 +503,7 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 }
 
 type taskMetaMgr interface {
-	InitTask(ctx context.Context, source int64) error
+	InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error
 	CheckTaskExist(ctx context.Context) (bool, error)
 	// CheckTasksExclusively check all tasks exclusively. action is the function to check all tasks and returns the tasks
 	// need to update or any new tasks. There is at most one lightning who can execute the action function at the same time.
@@ -576,12 +576,14 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 }
 
 type taskMeta struct {
-	taskID       int64
-	pdCfgs       string
-	status       taskMetaStatus
-	state        int
-	sourceBytes  uint64
-	clusterAvail uint64
+	taskID             int64
+	pdCfgs             string
+	status             taskMetaStatus
+	state              int
+	tikvSourceBytes    uint64
+	tiflashSourceBytes uint64
+	tikvAvail          uint64
+	tiflashAvail       uint64
 }
 
 type storedCfgs struct {
@@ -589,14 +591,14 @@ type storedCfgs struct {
 	RestoreCfg pdutil.ClusterConfig `json:"restore"`
 }
 
-func (m *dbTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
 		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, source_bytes) values (?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
-	err := exec.Exec(ctx, "init task meta", stmt, m.taskID, taskMetaStatusInitial.String(), source, taskStateNormal)
+	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, tikv_source_bytes, tiflash_source_bytes) values (?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
+	err := exec.Exec(ctx, "init task meta", stmt, m.taskID, taskMetaStatusInitial.String(), tikvSourceSize, tiflashSourceSize, taskStateNormal)
 	return errors.Trace(err)
 }
 
@@ -655,7 +657,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
-			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from %s FOR UPDATE", m.tableName),
+			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from %s FOR UPDATE", m.tableName),
 		)
 		if err != nil {
 			return errors.Annotate(err, "fetch task metas failed")
@@ -666,7 +668,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		for rows.Next() {
 			var task taskMeta
 			var statusValue string
-			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.clusterAvail); err != nil {
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.tikvSourceBytes, &task.tiflashSourceBytes, &task.tikvAvail, &task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
 			status, err := parseTaskMetaStatus(statusValue)
@@ -685,8 +687,8 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		}
 		for _, task := range newTasks {
 			// nolint:gosec
-			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
-			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.clusterAvail); err != nil {
+			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
+			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.tikvSourceBytes, task.tiflashSourceBytes, task.tikvAvail, task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1007,7 +1009,7 @@ func (b noopMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 
 type noopTaskMetaMgr struct{}
 
-func (m noopTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+func (m noopTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
 	return nil
 }
 
@@ -1094,15 +1096,18 @@ func (b singleMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 }
 
 type singleTaskMetaMgr struct {
-	pd           *pdutil.PdController
-	taskID       int64
-	initialized  bool
-	sourceBytes  uint64
-	clusterAvail uint64
+	pd                 *pdutil.PdController
+	taskID             int64
+	initialized        bool
+	tikvSourceBytes    uint64
+	tiflashSourceBytes uint64
+	tikvAvail          uint64
+	tiflashAvail       uint64
 }
 
-func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
-	m.sourceBytes = uint64(source)
+func (m *singleTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSourceSize int64) error {
+	m.tikvSourceBytes = uint64(tikvSourceSize)
+	m.tiflashSourceBytes = uint64(tiflashSourceSize)
 	m.initialized = true
 	return nil
 }
@@ -1110,16 +1115,20 @@ func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
 	newTasks, err := action([]taskMeta{
 		{
-			taskID:       m.taskID,
-			status:       taskMetaStatusInitial,
-			sourceBytes:  m.sourceBytes,
-			clusterAvail: m.clusterAvail,
+			taskID:             m.taskID,
+			status:             taskMetaStatusInitial,
+			tikvSourceBytes:    m.tikvSourceBytes,
+			tiflashSourceBytes: m.tiflashSourceBytes,
+			tikvAvail:          m.tikvAvail,
+			tiflashAvail:       m.tiflashAvail,
 		},
 	})
 	for _, t := range newTasks {
 		if m.taskID == t.taskID {
-			m.sourceBytes = t.sourceBytes
-			m.clusterAvail = t.clusterAvail
+			m.tikvSourceBytes = t.tikvSourceBytes
+			m.tiflashSourceBytes = t.tiflashSourceBytes
+			m.tikvAvail = t.tikvAvail
+			m.tiflashAvail = t.tiflashAvail
 		}
 	}
 	return err
