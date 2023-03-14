@@ -242,26 +242,48 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func (rc *Client) InitCheckpoint(ctx context.Context, taskName string) (rtree.RangeTree, error) {
+func (rc *Client) InitCheckpoint(ctx context.Context, ts *uint64) (rtree.RangeTree, string, error) {
+	taskName := fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
 	tree := rtree.NewRangeTree()
+	id := utils.MakeSafePointID()
+	var meta *checkpoint.CheckpointMetadata
+	ok, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
+	if err != nil {
+		return tree, id, errors.Trace(err)
+	}
+
+	if ok {
+		meta, err = checkpoint.LoadCheckpointMetaForRestore(ctx, rc.storage, taskName)
+		id = meta.GCServiceId
+		*ts = meta.BackupTS
+	} else {
+		err = checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadata{
+			GCServiceId: id,
+			BackupTS:    *ts,
+		}, taskName)
+	}
+	if err != nil {
+		return tree, id, errors.Trace(err)
+	}
+
 	restoreCheckpoint, err := checkpoint.StartCheckpointRunnerForRestore(ctx, rc.storage, rc.cipher, taskName)
 	if err != nil {
-		return tree, errors.Trace(err)
+		return tree, id, errors.Trace(err)
 	}
 	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey string, rg *rtree.Range) {
 		tree.InsertRange(*rg)
 	})
 	if err != nil {
-		return tree, errors.Trace(err)
+		return tree, id, errors.Trace(err)
 	}
 	summary.AdjustStartTimeToEarlierTime(t)
 	checkpointChecksum, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, rc.storage, taskName)
 	if err != nil {
-		return tree, errors.Trace(err)
+		return tree, id, errors.Trace(err)
 	}
 	rc.checkpointRunner = restoreCheckpoint
 	rc.checkpointChecksum = checkpointChecksum
-	return tree, nil
+	return tree, id, nil
 }
 
 func (rc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {

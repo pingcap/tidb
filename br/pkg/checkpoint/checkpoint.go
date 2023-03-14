@@ -50,6 +50,7 @@ const (
 	RestoreGroupKey                       = "restore"
 	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
 	CheckpointChecksumDirForRestoreFormat = CheckpointDir + "/restore-%s/checksum"
+	CheckpointMetaPathForRestore          = CheckpointDir + "/restore-%s/checkpoint.meta"
 )
 
 type FlushPosition struct {
@@ -64,6 +65,10 @@ func FlushPositionForBackup() FlushPosition {
 		CheckpointChecksumDir: CheckpointChecksumDirForBackup,
 		CheckpointLockPath:    CheckpointLockPathForBackup,
 	}
+}
+
+func getCheckpointMetaPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointMetaPathForRestore, taskName)
 }
 
 func getCheckpointDataDirByName(taskName string) string {
@@ -777,12 +782,7 @@ type CheckpointMetadata struct {
 
 // load checkpoint metadata from the external storage
 func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadata, error) {
-	data, err := s.ReadFile(ctx, CheckpointMetaPath)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	m := &CheckpointMetadata{}
-	err = json.Unmarshal(data, m)
+	m, err := loadCheckpointMeta(ctx, s, CheckpointMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -792,6 +792,20 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 
 func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (map[int64]*ChecksumItem, error) {
 	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
+}
+
+func LoadCheckpointMetaForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (*CheckpointMetadata, error) {
+	return loadCheckpointMeta(ctx, s, getCheckpointMetaPathByName(taskName))
+}
+
+func loadCheckpointMeta(ctx context.Context, s storage.ExternalStorage, path string) (*CheckpointMetadata, error) {
+	data, err := s.ReadFile(ctx, path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	m := &CheckpointMetadata{}
+	err = json.Unmarshal(data, m)
+	return m, errors.Trace(err)
 }
 
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
@@ -841,4 +855,18 @@ func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta
 
 	err = s.WriteFile(ctx, CheckpointMetaPath, data)
 	return errors.Trace(err)
+}
+
+func SaveCheckpointMetadataForRestore(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata, taskName string) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = s.WriteFile(ctx, getCheckpointMetaPathByName(taskName), data)
+	return errors.Trace(err)
+}
+
+func ExistsRestoreCheckpoint(ctx context.Context, s storage.ExternalStorage, taskName string) (bool, error) {
+	return s.FileExists(ctx, getCheckpointMetaPathByName(taskName))
 }

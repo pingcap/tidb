@@ -608,10 +608,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	tree, id, err := client.InitCheckpoint(ctx, &restoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		ID:       id,
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
@@ -681,11 +686,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	tree, err := client.InitCheckpoint(ctx, sp.ID)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	// We make bigger errCh so we won't block on multi-part failed.
