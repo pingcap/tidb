@@ -190,7 +190,7 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	)
 
 	// todo: move null defined into plannercore.LineFieldsInfo
-	// in load data, there maybe multiple null def, but in SELECT ... INTO DUMPFILE there's only one
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
 	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
 		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
 		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
