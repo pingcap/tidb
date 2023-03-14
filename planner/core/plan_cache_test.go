@@ -1297,3 +1297,34 @@ func TestNonPreparedPlanCacheExplain(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
 }
+
+func TestIssue42125(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, unique key(a, b))")
+
+	// should use BatchPointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b in (?, ?)'")
+	tk.MustExec("set @a=1, @b=2")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 special optimization for PointGet plans"))
+
+	// should use PointGet
+	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1")
+	tk.MustExec("execute st using @a, @b")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	tk.MustExec("execute st using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
+}
