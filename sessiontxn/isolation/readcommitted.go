@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -105,8 +106,10 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() && sessionVars.InTxn() &&
-		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
+		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
+		plannercore.IsReadOnly(node, sessionVars) &&
+		!ctx.GetSessionVars().GetStatusFlag(mysql.ServerStatusCursorExists) {
 		return true
 	}
 	return false
