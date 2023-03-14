@@ -897,14 +897,13 @@
         ]
       },
       {
-        "Query": "explain format = 'brief' select * from t where b = 1 or c = 2 order by c limit 1",
+        "Query": "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
         "Result": [
-          "TopN 1.00 root  test.t.c, offset:0, count:1",
-          "└─IndexMerge 1.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ib(b) range:[1,1], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ic(c) range:[2,2], keep order:false, stats:pseudo",
-          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRowIDScan 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 49.76 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  or(and(ge(test.t.b, 0), le(test.t.b, 100)), and(ge(test.t.c, 0), le(test.t.c, 100)))",
+          "    └─TableRowIDScan 49.76 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -991,14 +990,14 @@
         ]
       },
       {
-        "Query": "explain format = 'brief' select * from t where b = 1 or c = 2 order by c limit 1",
+        "Query": "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
         "Result": [
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexMerge 1.00 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ib(b) range:[1,1], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ic(c) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[0,50], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─TableRowIDScan 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1017.40 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
