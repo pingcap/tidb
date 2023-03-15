@@ -132,7 +132,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
-		Type:            ddl.FlowHandleLitBackfill,
+		Type:            ddl.FlowHandleLitBackfillType,
 		Step:            proto.StepInit,
 		State:           proto.TaskStatePending,
 		Meta:            gTaskMetaBytes,

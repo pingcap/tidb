@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
-const FlowHandleLitBackfill = "flowHandleLitBackfill"
+// FlowHandleLitBackfillType is the task type to handle backfill
+const FlowHandleLitBackfillType = "flowHandleLitBackfill"
 
+// LitBackfillTaskMetaBase is the base object for all task meta
 type LitBackfillTaskMetaBase struct {
 	JobID      int64              `json:"job_id"`
 	SchemaID   int64              `json:"schema_id"`
@@ -38,15 +40,18 @@ type LitBackfillTaskMetaBase struct {
 	ReorgMeta  model.DDLReorgMeta `json:"reorg_meta"`
 }
 
+// LitBackfillGlobalTaskMeta is the global task meta for lightning backfill
 type LitBackfillGlobalTaskMeta struct {
 	LitBackfillTaskMetaBase
 }
 
+// LitBackfillSubTaskMeta is the subtask meta for lightning backfill
 type LitBackfillSubTaskMeta struct {
 	LitBackfillTaskMetaBase
 	PhysicalTableID int64
 }
 
+// LitBackfillSubTaskRollbackMeta is the meta for rolling back a lightning fill
 type LitBackfillSubTaskRollbackMeta struct {
 	LitBackfillTaskMetaBase
 }
@@ -55,6 +60,7 @@ type litBackfillFlowHandle struct {
 	*ddl
 }
 
+// NewLitBackfillFlowHandle creates a lightning backfill flow
 func NewLitBackfillFlowHandle(o DDL) (dispatcher.TaskFlowHandle, error) {
 	d, ok := o.(*ddl)
 	if !ok {
@@ -66,6 +72,7 @@ func NewLitBackfillFlowHandle(o DDL) (dispatcher.TaskFlowHandle, error) {
 	}, nil
 }
 
+// ProcessNormalFlow processes the normal flow
 func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State != proto.TaskStatePending {
 		// This flow has only one step, finish task when it is not pending
@@ -113,6 +120,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	return subTaskMetas, nil
 }
 
+// ProcessErrFlow processes the error flow
 func (h *litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
 	var globalTaskMeta LitBackfillGlobalTaskMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
