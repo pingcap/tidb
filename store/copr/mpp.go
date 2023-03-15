@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
@@ -54,17 +55,8 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
-	resultTasks := make([]kv.MPPTaskMeta, 0)
-	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
-		task := &batchCopTask{storeAddr: s.GetAddr(), cmdType: tikvrpc.CmdMPPTask}
-		resultTasks = append(resultTasks, task)
-	}
-	return resultTasks
-}
-
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -76,13 +68,13 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy)
 	} else {
 		if req.KeyRanges == nil {
-			return c.selectAllTiFlashStore(), nil
+			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy)
 	}
 
 	if err != nil {

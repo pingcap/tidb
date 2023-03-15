@@ -1132,6 +1132,8 @@ func TestSetJobScheduleWindow(t *testing.T) {
 
 func TestTiDBEnableResourceControl(t *testing.T) {
 	// setup the hooks for test
+	// NOTE: the default system variable is true but the switch is false
+	// It is initialized at the first call of `rebuildSysVarCache`
 	enable := false
 	EnableGlobalResourceControlFunc = func() { enable = true }
 	DisableGlobalResourceControlFunc = func() { enable = false }
@@ -1150,24 +1152,31 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
 
-	// Default false
-	require.Equal(t, resourceControlEnabled.Value, Off)
+	// Default true
+	require.Equal(t, resourceControlEnabled.Value, On)
 	require.Equal(t, enable, false)
 
-	// Set to On
+	// Set to On(init at start)
 	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
-
 	require.NoError(t, err)
 	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 	require.Equal(t, enable, true)
 
-	// Set to off
+	// Set to Off
 	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, Off)
 	require.NoError(t, err)
 	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
 	require.NoError(t, err1)
 	require.Equal(t, Off, val)
 	require.Equal(t, enable, false)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, enable, true)
 }

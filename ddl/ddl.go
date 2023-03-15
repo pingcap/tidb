@@ -372,8 +372,6 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
-
-	waiting *atomicutil.Bool
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -546,6 +544,10 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	return rc
 }
 
+func genBackfillJobReorgCtxID(jobID int64) int64 {
+	return -jobID
+}
+
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
@@ -674,7 +676,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.runningJobs.ids = make(map[int64]struct{})
-	ddlCtx.waiting = atomicutil.NewBool(false)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -1239,32 +1240,15 @@ func (d *ddl) startCleanDeadTableLock() {
 	}
 }
 
-// SwitchMDL enables MDL or disable DDL.
+// SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-
-	if enable {
-		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
-			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
-		sess, err := d.sessPool.get()
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] get session failed", zap.Error(err))
-			return nil
-		}
-		defer d.sessPool.put(sess)
-		se := newSession(sess)
-		_, err = se.execute(ctx, sql, "disableMDL")
-		if err != nil {
-			logutil.BgLogger().Warn("[ddl] disable MDL failed", zap.Error(err))
-		}
-		return nil
-	}
-
 	isEnableBefore := variable.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
 
 	// Check if there is any DDL running.
 	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.

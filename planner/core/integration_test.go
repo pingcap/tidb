@@ -4831,7 +4831,7 @@ func TestPlanCacheForTableRangeFallback(t *testing.T) {
 	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long"))
+		"Warning 1105 skip prepared plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	// The plan with range fallback is not cached.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -4871,15 +4871,15 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	// We don't limit range mem usage when rebuilding ranges for the cached plan.
 	// So ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"] can still be built even if its mem usage exceeds 1330.
-	require.True(t, strings.Contains(rows[2][0].(string), "IndexRangeScan"))
-	require.True(t, strings.Contains(rows[2][4].(string), "range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"]"))
+	require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
+	require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aaaaaaaaaa\",\"aaaaaaaaaa\"], [\"bbbbbbbbbb\",\"bbbbbbbbbb\"], [\"cccccccccc\",\"cccccccccc\"], [\"dddddddddd\",\"dddddddddd\"], [\"eeeeeeeeee\",\"eeeeeeeeee\"]"))
 
 	// Test the plan with range fallback would not be put into cache.
 	tk.MustExec("prepare stmt2 from 'select * from t where a in (?, ?, ?, ?, ?) and b in (?, ?, ?, ?, ?)'")
 	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long"))
+		"Warning 1105 skip prepared plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
@@ -5002,7 +5002,7 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 	tk.MustExec("set @a='a', @b='b', @c='c', @d='d', @e='e'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1275 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long"))
+		"Warning 1105 skip prepared plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

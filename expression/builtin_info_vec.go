@@ -119,6 +119,23 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
+func (b *builtinCurrentResourceGroupSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCurrentResourceGroupSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		result.AppendString(data.ResourceGroupName)
+	}
+	return nil
+}
+
 func (b *builtinCurrentRoleSig) vectorized() bool {
 	return true
 }

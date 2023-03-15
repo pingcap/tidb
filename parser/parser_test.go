@@ -1179,9 +1179,6 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
-		{"show imports", true, "SHOW IMPORTS"},
-		// for show create import
-		{"show create import test", true, "SHOW CREATE IMPORT `test`"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -1538,6 +1535,7 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT CURRENT_USER;", true, "SELECT CURRENT_USER()"},
 		{"SELECT CONNECTION_ID();", true, "SELECT CONNECTION_ID()"},
 		{"SELECT VERSION();", true, "SELECT VERSION()"},
+		{"SELECT CURRENT_RESOURCE_GROUP();", true, "SELECT CURRENT_RESOURCE_GROUP()"},
 		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(1000000, AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT BENCHMARK(AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT CHARSET('abc');", true, "SELECT CHARSET(_UTF8MB4'abc')"},
@@ -3677,6 +3675,9 @@ func TestDDL(t *testing.T) {
 		{"drop resource group x,y", false, ""},
 		{"drop resource group if exists x,y", false, ""},
 
+		{"set resource group x;", true, "SET RESOURCE GROUP `x`"},
+		{"set resource group x y", false, ""},
+
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},
 		{"CREATE ROLE RESOURCE", false, ""},
 
@@ -3874,12 +3875,12 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
 	// Test FORCE_INDEX
-	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) RESOURCE_GROUP(rg1)*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
+	require.Len(t, hints, 3)
 	require.Equal(t, "force_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
@@ -3891,6 +3892,9 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	require.Equal(t, "resource_group", hints[2].HintName.L)
+	require.Equal(t, hints[2].HintData, "rg1")
 
 	// Test IGNORE_INDEX
 	stmt, _, err = p.Parse("select /*+ IGNORE_INDEX(T1,T2), ignore_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -6530,70 +6534,6 @@ func TestBRIE(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
-}
-
-func TestPurge(t *testing.T) {
-	cases := []testCase{
-		{"purge import 100", true, "PURGE IMPORT 100"},
-		{"purge import abc", false, ""},
-	}
-	RunTest(t, cases, false)
-}
-
-func TestAsyncImport(t *testing.T) {
-	cases := []testCase{
-		{"create import test from 'file:///d/'", true, "CREATE IMPORT `test` FROM 'file:///d/'"},
-		{
-			"create import if not exists test from 'file:///d/' skip all csv_header = columns strict_format = true csv_backslash_escape = true",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' SKIP ALL CSV_HEADER = COLUMNS STRICT_FORMAT = 1 CSV_BACKSLASH_ESCAPE = 1",
-		},
-		{
-			"create import if not exists test from 'file:///d/' replace SKIP_SCHEMA_FILES TRUE",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' REPLACE SKIP_SCHEMA_FILES = 1",
-		},
-		{"create import test from 'file:///d/' csv_header = 0", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 0"},
-		{"create import test from 'file:///d/' csv_header = 1", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 1"},
-		{"create import test from 'file:///d/' csv_header = 9001", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 9001"},
-		{"create import test from 'file:///d/' csv_header = fields", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = COLUMNS"},
-		{"create import test from 'file:///d/' csv_header = 'columns'", false, ""},
-		{"create import test from 'file:///d/' on_duplicate = ignore", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'ignore'"},
-		{"create import test from 'file:///d/' on_duplicate = replace", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'replace'"},
-		{"create import test from 'file:///d/' on_duplicate = error", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'error'"},
-		{"create import test from 'file:///d/' backend = local", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'local'"},
-		{"create import test from 'file:///d/' backend = tidb", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'tidb'"},
-		{"create import test from 'file:///d/' backend = importer", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'importer'"},
-		{"create import test from 'file:///d/' checkpoint = 'false'", false, ""},
-		{"create import test from 'file:///d/' checkpoint = 30", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKPOINT = 1"},
-		{"create import test from 'file:///d/' csv_null = null", false, ""},
-		{"create import test from 'file:///d/' csv_null = false", false, ""},
-		{"create import test from 'file:///d/' csv_null = 0", false, ""},
-		{"create import test from 'file:///d/' csv_null = abcdefgh", false, ""},
-		{"create import test from 'file:///d/' resume 1", true, "CREATE IMPORT `test` FROM 'file:///d/' RESUME = 1"},
-		{"create import test from 'file:///d/' resume abc", false, ""},
-		{"create import test from 'file:///d/' analyze = optional", true, "CREATE IMPORT `test` FROM 'file:///d/' ANALYZE = OPTIONAL"},
-		{"create import test from 'file:///d/' analyze = abc", false, ""},
-		// still support boolean checksum/analyze, non-zero represent true thus goes REQUIRED
-		{"create import test from 'file:///d/' checksum true analyze 2", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKSUM = REQUIRED ANALYZE = REQUIRED"},
-		{"stop import test", true, "STOP IMPORT `test`"},
-		{"stop import if running test", true, "STOP IMPORT IF RUNNING `test`"},
-		{"resume import test", true, "RESUME IMPORT `test`"},
-		{"resume import if not running test", true, "RESUME IMPORT IF NOT RUNNING `test`"},
-		// empty alter import is OK
-		{"alter import test", true, "ALTER IMPORT `test`"},
-		{"alter import test truncate all", true, "ALTER IMPORT `test` TRUNCATE ALL"},
-		{"alter import test skip duplicate csv_delimiter = '''' truncate errors table tbl", true, "ALTER IMPORT `test` SKIP DUPLICATE CSV_DELIMITER = '''' TRUNCATE ERRORS TABLE `tbl`"},
-		{"alter import test truncate errors table db.tbl", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tbl`"},
-		{"alter import test truncate errors table db.tb1, tb2", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tb1`, `tb2`"},
-		{"drop import test", true, "DROP IMPORT `test`"},
-		{"drop import if exists test", true, "DROP IMPORT IF EXISTS `test`"},
-		{"show import test", true, "SHOW IMPORT `test`"},
-		{"show import test table tbl", true, "SHOW IMPORT `test` TABLE `tbl`"},
-		{"show import test errors table tbl", true, "SHOW IMPORT `test` ERRORS TABLE `tbl`"},
-		{"show import test errors table tb1, db.tb2", true, "SHOW IMPORT `test` ERRORS TABLE `tb1`, `db`.`tb2`"},
-	}
-	RunTest(t, cases, false)
 }
 
 func TestStatisticsOps(t *testing.T) {

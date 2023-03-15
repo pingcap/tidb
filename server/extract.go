@@ -16,12 +16,17 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -48,53 +53,121 @@ func (s *Server) newExtractServeHandler() *ExtractTaskServeHandler {
 
 // ServeHTTP serves http
 func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	task, err := buildExtractTask(req)
+	task, isDump, err := buildExtractTask(req)
 	if err != nil {
 		logutil.BgLogger().Error("build extract task failed", zap.Error(err))
 		writeError(w, err)
 		return
 	}
-	_, err = eh.extractHandler.ExtractTask(context.Background(), task)
+	failpoint.Inject("extractTaskServeHandler", func(val failpoint.Value) {
+		if val.(bool) {
+			w.WriteHeader(http.StatusOK)
+			_, err = w.Write([]byte("mock"))
+			if err != nil {
+				writeError(w, err)
+			}
+			failpoint.Return()
+		}
+	})
+
+	name, err := eh.extractHandler.ExtractTask(context.Background(), task)
 	if err != nil {
 		logutil.BgLogger().Error("extract task failed", zap.Error(err))
 		writeError(w, err)
 		return
 	}
-	// TODO: support return zip file directly for non background job later
 	w.WriteHeader(http.StatusOK)
+	if !isDump {
+		_, err = w.Write([]byte(name))
+		if err != nil {
+			logutil.BgLogger().Error("extract handler failed", zap.Error(err))
+		}
+		return
+	}
+	content, err := loadExtractResponse(name)
+	if err != nil {
+		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+	_, err = w.Write(content)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", name))
 }
 
-func buildExtractTask(req *http.Request) (*domain.ExtractTask, error) {
+func loadExtractResponse(name string) ([]byte, error) {
+	path := filepath.Join(domain.GetExtractTaskDirName(), name)
+	//nolint: gosec
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 	extractTaskType := req.URL.Query().Get(pType)
 	switch strings.ToLower(extractTaskType) {
 	case extractPlanTaskType:
 		return buildExtractPlanTask(req)
 	}
 	logutil.BgLogger().Error("unknown extract task type")
-	return nil, errors.New("unknown extract task type")
+	return nil, false, errors.New("unknown extract task type")
 }
 
-func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, error) {
+func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 	beginStr := req.URL.Query().Get(pBegin)
 	endStr := req.URL.Query().Get(pEnd)
-	begin, err := time.Parse(types.TimeFormat, beginStr)
-	if err != nil {
-		return nil, err
+	var begin time.Time
+	var err error
+	if len(beginStr) < 1 {
+		begin = time.Now().Add(30 * time.Minute)
+	} else {
+		begin, err = time.Parse(types.TimeFormat, beginStr)
+		if err != nil {
+			logutil.BgLogger().Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
+			return nil, false, err
+		}
 	}
-	end, err := time.Parse(types.TimeFormat, endStr)
-	if err != nil {
-		return nil, err
+	var end time.Time
+	if len(endStr) < 1 {
+		end = time.Now()
+	} else {
+		end, err = time.Parse(types.TimeFormat, endStr)
+		if err != nil {
+			logutil.BgLogger().Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
+			return nil, false, err
+		}
 	}
-	isBackgroundJobStr := req.URL.Query().Get(pIsBackground)
-	var isBackgroundJob bool
-	isBackgroundJob, err = strconv.ParseBool(isBackgroundJobStr)
-	if err != nil {
-		isBackgroundJob = false
-	}
+	isDump := extractBoolParam(pIsDump, false, req)
+
 	return &domain.ExtractTask{
 		ExtractType:     domain.ExtractPlanType,
-		IsBackgroundJob: isBackgroundJob,
+		IsBackgroundJob: false,
 		Begin:           begin,
 		End:             end,
-	}, nil
+		SkipStats:       extractBoolParam(pIsSkipStats, false, req),
+		UseHistoryView:  extractBoolParam(pIsHistoryView, true, req),
+	}, isDump, nil
+}
+
+func extractBoolParam(param string, defaultValue bool, req *http.Request) bool {
+	str := req.URL.Query().Get(param)
+	if len(str) < 1 {
+		return defaultValue
+	}
+	v, err := strconv.ParseBool(str)
+	if err != nil {
+		return defaultValue
+	}
+	return v
 }

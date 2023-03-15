@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -64,9 +65,6 @@ import (
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
-
-// DefaultResourceGroupName is the default resource group name.
-const DefaultResourceGroupName = "default"
 
 var (
 	// PreparedStmtCount is exported for test.
@@ -241,13 +239,13 @@ type TxnCtxNoNeedToRestore struct {
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
-	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode.
-	AggressiveLockingUsed bool
-	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode.
+	FairLockingUsed bool
+	// FairLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
-	AggressiveLockingEffective bool
+	FairLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -1366,13 +1364,24 @@ type SessionVars struct {
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
 
-	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	PessimisticTransactionAggressiveLocking bool
+	PessimisticTransactionFairLocking bool
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1776,6 +1785,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2703,6 +2713,10 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogKeyspaceName is slow log field name.
+	SlowLogKeyspaceName = "Keyspace_name"
+	// SlowLogKeyspaceID is slow log field name.
+	SlowLogKeyspaceID = "Keyspace_ID"
 	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
 	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
@@ -2833,6 +2847,8 @@ type JSONSQLWarnForSlowLog struct {
 // slow query log.
 type SlowQueryLogItems struct {
 	TxnTS             uint64
+	KeyspaceName      string
+	KeyspaceID        uint32
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -2875,6 +2891,8 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
+// # Keyspace_name: keyspace_a
+// # Keyspace_ID: 1
 // # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
@@ -2896,6 +2914,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
+	if logItems.KeyspaceName != "" {
+		writeSlowLogItem(&buf, SlowLogKeyspaceName, logItems.KeyspaceName)
+		writeSlowLogItem(&buf, SlowLogKeyspaceID, fmt.Sprintf("%d", logItems.KeyspaceID))
+	}
+
 	if s.User != nil {
 		hostAddress := s.User.Hostname
 		if s.ConnectionInfo != nil {

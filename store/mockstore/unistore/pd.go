@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
@@ -271,4 +272,32 @@ func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64
 
 func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
 	return c.externalTimestamp.Load(), nil
+}
+
+func (c *pdClient) GetTSWithinKeyspace(ctx context.Context, keyspaceID uint32) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (c *pdClient) GetTSWithinKeyspaceAsync(ctx context.Context, keyspaceID uint32) pd.TSFuture {
+	return nil
+}
+
+func (c *pdClient) GetLocalTSWithinKeyspace(ctx context.Context, dcLocation string, keyspaceID uint32) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation string, keyspaceID uint32) pd.TSFuture {
+	return nil
+}
+
+func (c *pdClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	return nil, nil
+}
+
+func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
+	return nil, nil
 }

@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -44,9 +44,17 @@ import (
 )
 
 var (
-	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
-	addingBackfillJob      = "/tidb/ddl/add_backfill_job"
+	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
+	addingBackfillJob           = "/tidb/ddl/add_backfill_job"
+	dispatchLoopWaitingDuration = 1 * time.Second
 )
+
+func init() {
+	// In test the wait duration can be reduced to make test case run faster
+	if intest.InTest {
+		dispatchLoopWaitingDuration = 50 * time.Millisecond
+	}
+}
 
 func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
 	dc.runningJobs.Lock()
@@ -174,15 +182,15 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !d.isOwner() || d.waiting.Load() {
+		if !d.isOwner() {
 			d.once.Store(true)
-			time.Sleep(time.Second)
+			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
 		select {
@@ -402,12 +410,12 @@ func (d *ddl) loadBackfillJobAndRun() {
 		return
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
-	d.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
+	d.newReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID), bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
 	d.wg.Run(func() {
 		defer func() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
 			d.removeBackfillCtxJobCtx(bfJob.JobID)
-			d.removeReorgCtx(bfJob.JobID)
+			d.removeReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID))
 			d.sessPool.put(se)
 		}()
 
@@ -537,20 +545,6 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
-	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
-	// update them to table's in this case.
-	if physicalTableID == 0 {
-		if job.ReorgMeta != nil {
-			endKey = kv.IntHandle(job.ReorgMeta.EndHandle).Encoded()
-		} else {
-			endKey = kv.IntHandle(math.MaxInt64).Encoded()
-		}
-		physicalTableID = job.TableID
-		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
-			zap.Int64("partition ID", physicalTableID),
-			zap.Stringer("startHandle", startKey),
-			zap.Stringer("endHandle", endKey))
-	}
 	return
 }
 
@@ -940,7 +934,7 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := "delete from mysql.tidb_background_subtask"
 	if !isOneEle {
-		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.keyString())
+		sql += fmt.Sprintf(" where task_key = '%s'", backfillJob.keyString())
 	} else {
 		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.PrefixKeyString())
 	}

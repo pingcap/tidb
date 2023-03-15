@@ -363,7 +363,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID])).
+					SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
 				var notClosedSelectResult distsql.SelectResult
 				defer func() {
@@ -998,8 +999,8 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	// We assume the result of intersection is small, so no need to track memory.
 	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
 	for parTblIdx, hMap := range w.handleMapsPerWorker {
-		hMap.Range(func(h kv.Handle, val interface{}) bool {
-			if *(val.(*int)) == len(w.indexMerge.partialPlans) {
+		hMap.Range(func(h kv.Handle, val *int) bool {
+			if *(val) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
 				intersectedMap[parTblIdx] = append(intersectedMap[parTblIdx], h)
 			}

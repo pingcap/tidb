@@ -1830,6 +1830,7 @@ type LoadDataStmt struct {
 	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
+	Options           []*LoadDataOpt
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 }
@@ -1896,6 +1897,19 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore LoadDataStmt.Options")
+			}
+		}
+	}
 	return nil
 }
 
@@ -1936,6 +1950,24 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		n.ColumnsAndUserVars[i] = node.(*ColumnNameOrUserVar)
 	}
 	return v.Leave(n)
+}
+
+type LoadDataOpt struct {
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + "=")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore LoadDataOpt")
+		}
+	}
+	return nil
 }
 
 const (
@@ -2815,6 +2847,7 @@ const (
 	ShowPlacementLabels
 	ShowSessionStates
 	ShowCreateResourceGroup
+	ShowLoadDataJobs
 )
 
 const (
@@ -2860,6 +2893,8 @@ type ShowStmt struct {
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
+
+	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3048,9 +3083,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PRIVILEGES")
 	case ShowBuiltins:
 		ctx.WriteKeyWord("BUILTINS")
-	case ShowCreateImport:
-		ctx.WriteKeyWord("CREATE IMPORT ")
-		ctx.WriteName(n.DBName)
 	case ShowPlacementForDatabase:
 		ctx.WriteKeyWord("PLACEMENT FOR DATABASE ")
 		ctx.WriteName(n.DBName)
@@ -3066,6 +3098,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
+	case ShowLoadDataJobs:
+		if n.LoadDataJobID != nil {
+			ctx.WriteKeyWord("LOAD DATA JOB ")
+			ctx.WritePlainf("%d", *n.LoadDataJobID)
+		} else {
+			ctx.WriteKeyWord("LOAD DATA JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {

@@ -34,12 +34,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -224,15 +226,15 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
 		if isInternal {
-			transactionDurationPessimisticAbortInternal.Observe(duration)
+			session_metrics.TransactionDurationPessimisticAbortInternal.Observe(duration)
 		} else {
-			transactionDurationPessimisticAbortGeneral.Observe(duration)
+			session_metrics.TransactionDurationPessimisticAbortGeneral.Observe(duration)
 		}
 	} else {
 		if isInternal {
-			transactionDurationOptimisticAbortInternal.Observe(duration)
+			session_metrics.TransactionDurationOptimisticAbortInternal.Observe(duration)
 		} else {
-			transactionDurationOptimisticAbortGeneral.Observe(duration)
+			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
 }
@@ -283,7 +285,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)

@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -372,7 +374,8 @@ var defaultSysVars = []*SysVar{
 		GlobalLogMaxDays.Store(int32(maxAge))
 		cfg := config.GetGlobalConfig().Log.ToLogConfig()
 		cfg.Config.File.MaxDays = int(maxAge)
-		err = logutil.ReplaceLogger(cfg)
+
+		err = logutil.ReplaceLogger(cfg, keyspace.WrapZapcoreWithKeyspace())
 		if err != nil {
 			return err
 		}
@@ -389,6 +392,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(ProcessGeneralLog.Load()), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
+		Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+			s.SlowTxnThreshold = TidbOptUint64(val, logutil.DefaultSlowTxnThreshold)
+			return nil
+		},
+	},
 	{Scope: ScopeInstance, Name: TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Instance.SlowThreshold, uint64(TidbOptInt64(val, logutil.DefaultSlowThreshold)))
 		return nil
@@ -2363,8 +2372,8 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -2380,10 +2389,42 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(s.EnableINLJoinInnerMultiPattern), nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashComputeDispatchPolicy, Value: string(DefTiFlashComputeDispatchPolicy), Type: TypeStr, SetSession: setTiFlashComputeDispatchPolicy,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			return setTiFlashComputeDispatchPolicy(vars, s)
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForSubquery, Value: BoolToOnOff(DefTiDBEnablePlanCacheForSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLoadBasedReplicaReadThreshold, Value: time.Duration(DefTiDBLoadBasedReplicaReadThreshold).String(), Type: TypeDuration, MaxValue: uint64(time.Hour), SetSession: func(s *SessionVars, val string) error {
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return err
+		}
+		s.LoadBasedReplicaReadThreshold = d
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBTTLRunningTasks, Value: strconv.Itoa(DefTiDBTTLRunningTasks), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLRunningTasks.Store(int32(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(int(TTLRunningTasks.Load())), nil
+	}},
+}
+
+func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
+	p, err := tiflashcompute.GetDispatchPolicyByStr(val)
+	if err != nil {
+		return err
+	}
+	s.TiFlashComputeDispatchPolicy = p
+	return nil
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

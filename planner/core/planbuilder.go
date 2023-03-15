@@ -831,7 +831,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3214,6 +3214,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
+			LoadDataJobID:         show.LoadDataJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -4187,6 +4188,19 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
 	}
+	options := []*LoadDataOpt{}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	var err error
+	for _, opt := range ld.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4200,6 +4214,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            options,
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error
@@ -4221,7 +4236,6 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if err != nil {
 		return nil, err
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -5198,6 +5212,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
+	case ast.ShowLoadDataJobs:
+		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
+			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
+			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Result_Code", "Result_Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
