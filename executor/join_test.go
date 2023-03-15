@@ -24,13 +24,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2310,7 +2310,7 @@ func TestIssue18070(t *testing.T) {
 	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
@@ -2593,7 +2593,7 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)"))
 	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk"))
 	plannercore.ForceUseOuterBuild4Test.Store(true)
 	defer func() {
@@ -2603,7 +2603,7 @@ func TestIssue20270(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	require.Equal(t, executor.ErrQueryInterrupted, err)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
 	require.NoError(t, err)
 }
@@ -2891,4 +2891,21 @@ func TestOuterJoin(t *testing.T) {
 			"3 2 <nil> <nil> 3 4",
 		),
 	)
+}
+
+func TestCartesianJoinPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = off;")
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
+	require.NotNil(t, err)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }

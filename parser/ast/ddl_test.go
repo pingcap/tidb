@@ -16,7 +16,6 @@ package ast_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser"
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
@@ -247,6 +246,21 @@ func TestDDLColumnOptionRestore(t *testing.T) {
 		return node.(*CreateTableStmt).Cols[0].Options[0]
 	}
 	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc)
+}
+
+func TestGeneratedRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"generated always as(id + 1)", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) virtual", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) stored", "GENERATED ALWAYS AS(`id`+1) STORED"},
+		{"generated always as(lower(id)) stored", "GENERATED ALWAYS AS(LOWER(`id`)) STORED"},
+		{"generated always as(lower(child.id)) stored", "GENERATED ALWAYS AS(LOWER(`id`)) STORED"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Cols[0].Options[0]
+	}
+	runNodeRestoreTestWithFlagsStmtChange(t, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc,
+		format.DefaultRestoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName)
 }
 
 func TestDDLColumnDefRestore(t *testing.T) {
@@ -843,8 +857,6 @@ func TestFlashBackDatabaseRestore(t *testing.T) {
 }
 
 func TestTableOptionTTLRestore(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
 	sourceSQL2 := "alter table t ttl_enable = 'OFF'"
 	sourceSQL3 := "alter table t remove ttl"
@@ -870,5 +882,39 @@ func TestTableOptionTTLRestore(t *testing.T) {
 			{ca.sourceSQL, ca.expectSQL},
 		}
 		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
+	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
+	sourceSQL2 := "alter table t ttl_enable = 'ON'"
+	sourceSQL3 := "alter table t remove ttl"
+	sourceSQL4 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR ttl_enable = 'ON'"
+	sourceSQL5 := "alter table t ttl_enable = 'ON' placement policy p1"
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreWithTTLEnableOff, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment | format.RestoreWithTTLEnableOff, "CREATE TABLE `t` (`created_at` DATETIME) /*T![ttl] TTL = `created_at` + INTERVAL 1 YEAR */ /*T![ttl] TTL_ENABLE = 'OFF' */"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreWithTTLEnableOff, "ALTER TABLE `t`"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment | format.RestoreWithTTLEnableOff, "ALTER TABLE `t`"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreWithTTLEnableOff, "ALTER TABLE `t` REMOVE TTL"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment | format.RestoreWithTTLEnableOff, "ALTER TABLE `t` /*T![ttl] REMOVE TTL */"},
+		{sourceSQL4, format.DefaultRestoreFlags | format.RestoreWithTTLEnableOff, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{sourceSQL4, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment | format.RestoreWithTTLEnableOff, "CREATE TABLE `t` (`created_at` DATETIME) /*T![ttl] TTL = `created_at` + INTERVAL 1 YEAR */ /*T![ttl] TTL_ENABLE = 'OFF' */"},
+		{sourceSQL5, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment | format.RestoreWithTTLEnableOff, "ALTER TABLE `t` /*T![placement] PLACEMENT POLICY = `p1` */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}
 }

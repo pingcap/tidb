@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -57,7 +61,7 @@ func copReadChunkPoolSize() int {
 	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
-func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) ([]*indexRecord, *chunk.Chunk, kv.Key, bool, error) {
+func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) (*chunk.Chunk, kv.Key, bool, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -66,29 +70,29 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 			if !ok {
 				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed",
 					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
-				return nil, nil, handleRange.endKey, true, nil
+				return nil, handleRange.endKey, true, nil
 			}
 			if rs.err != nil {
-				return nil, nil, handleRange.startKey, false, rs.err
+				return nil, handleRange.startKey, false, rs.err
 			}
 			if rs.done {
 				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
-					zap.Int("id", rs.id), zap.Int("total", rs.total))
+					zap.Int("id", rs.id))
 				c.results.Store(rs.id, struct{}{})
 			}
 			if _, found := c.results.Load(handleRange.id); found {
 				logutil.BgLogger().Info("[ddl-ingest] task is found in results",
 					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
 				c.results.Delete(handleRange.id)
-				return rs.records, rs.chunk, handleRange.endKey, true, nil
+				return rs.chunk, handleRange.endKey, true, nil
 			}
-			return rs.records, rs.chunk, handleRange.startKey, false, nil
+			return rs.chunk, handleRange.startKey, false, nil
 		case <-ticker.C:
 			logutil.BgLogger().Info("[ddl-ingest] cop-request result channel is empty",
 				zap.Int("id", handleRange.id))
 			if _, found := c.results.Load(handleRange.id); found {
 				c.results.Delete(handleRange.id)
-				return nil, nil, handleRange.endKey, true, nil
+				return nil, handleRange.endKey, true, nil
 			}
 		}
 	}
@@ -99,14 +103,13 @@ type copReqSenderPool struct {
 	resultsCh chan idxRecResult
 	results   generic.SyncMap[int, struct{}]
 
-	ctx     context.Context
-	copCtx  *copContext
-	startTS uint64
+	ctx    context.Context
+	copCtx *copContext
+	store  kv.Storage
 
 	senders []*copReqSender
 	wg      sync.WaitGroup
 
-	idxBufPool chan []*indexRecord
 	srcChkPool chan *chunk.Chunk
 }
 
@@ -120,6 +123,10 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
+	var curTaskID int
+	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
+		p.resultsCh <- idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic}
+	}, false)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -128,37 +135,44 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
-		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
+		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
+		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+		if err != nil {
+			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			return
+		}
+		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("mock panic")
+			}
+		})
 		var done bool
-		var total int
 		for !done {
-			idxRec, srcChk := p.getIndexRecordsAndChunks()
-			idxRec, done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk, idxRec)
+			srcChk := p.getChunk()
+			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
-				p.recycleIdxRecordsAndChunk(idxRec, srcChk)
+				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return
 			}
-			total += len(idxRec)
-			p.resultsCh <- idxRecResult{id: task.id, records: idxRec, chunk: srcChk, done: done, total: total}
+			p.resultsCh <- idxRecResult{id: task.id, chunk: srcChk, done: done}
 		}
 		terror.Call(rs.Close)
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
-	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
-		idxBufPool <- make([]*indexRecord, 0, copReadBatchSize())
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
 	return &copReqSenderPool{
@@ -167,10 +181,9 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		results:    generic.NewSyncMap[int, struct{}](10),
 		ctx:        ctx,
 		copCtx:     copCtx,
-		startTS:    startTS,
+		store:      store,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:         sync.WaitGroup{},
-		idxBufPool: idxBufPool,
 		srcChkPool: srcChkPool,
 	}
 }
@@ -212,34 +225,31 @@ func (c *copReqSenderPool) close() {
 	c.wg.Wait()
 	close(c.resultsCh)
 	cleanupWg.Wait()
-	close(c.idxBufPool)
 	close(c.srcChkPool)
 }
 
 func (c *copReqSenderPool) drainResults() {
 	// Consume the rest results because the writers are inactive anymore.
 	for rs := range c.resultsCh {
-		c.recycleIdxRecordsAndChunk(rs.records, rs.chunk)
+		c.recycleChunk(rs.chunk)
 	}
 }
 
-func (c *copReqSenderPool) getIndexRecordsAndChunks() ([]*indexRecord, *chunk.Chunk) {
-	ir := <-c.idxBufPool
+func (c *copReqSenderPool) getChunk() *chunk.Chunk {
 	chk := <-c.srcChkPool
 	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
 		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
 	}
 	chk.Reset()
-	return ir[:0], chk
+	return chk
 }
 
-// recycleIdxRecordsAndChunk puts the index record slice and the chunk back to the pool for reuse.
-func (c *copReqSenderPool) recycleIdxRecordsAndChunk(idxRecs []*indexRecord, chk *chunk.Chunk) {
-	if idxRecs == nil || chk == nil {
+// recycleChunk puts the index record slice and the chunk back to the pool for reuse.
+func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
+	if chk == nil {
 		return
 	}
-	c.idxBufPool <- idxRecs
 	c.srcChkPool <- chk
 }
 
@@ -409,6 +419,8 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 		SetFromInfoSchema(c.sessCtx.GetDomainInfoSchema()).
 		SetConcurrency(1).
 		Build()
+	kvReq.RequestSource.RequestSourceInternal = true
+	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -416,31 +428,46 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 }
 
 func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.SelectResult,
-	chk *chunk.Chunk, buf []*indexRecord) ([]*indexRecord, bool, error) {
-	sctx := c.sessCtx.GetSessionVars().StmtCtx
+	chk *chunk.Chunk) (bool, error) {
 	err := result.Next(ctx, chk)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if chk.NumRows() == 0 {
-		return buf, true, nil
+		return true, nil
 	}
-	iter := chunk.NewIterator4Chunk(chk)
 	err = table.FillVirtualColumnValue(c.virtualColFieldTps, c.virtualColOffsets, c.expColInfos, c.colInfos, c.sessCtx, chk)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		idxDt := extractDatumByOffsets(row, c.idxColOutputOffsets, c.expColInfos)
-		hdDt := extractDatumByOffsets(row, c.handleOutputOffsets, c.expColInfos)
-		handle, err := buildHandle(hdDt, c.tblInfo, c.pkInfo, sctx)
-		if err != nil {
-			return nil, false, errors.Trace(err)
+	return false, nil
+}
+
+func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+		return nil
+	}
+	if pkIdx == nil {
+		return nil
+	}
+	for i, pkIdxCol := range pkIdx.Columns {
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredData(&pkCol.FieldType) {
+			// Since the handle data cannot be null, we can use SetNull to
+			// indicate that this column does not need to be restored.
+			handleDts[i].SetNull()
+			continue
 		}
-		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
-		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
+		tables.TryTruncateRestoredData(&handleDts[i], pkCol, pkIdxCol, targetIdx)
+		tables.ConvertDatumToTailSpaceCount(&handleDts[i], pkCol)
 	}
-	return buf, false, nil
+	dtToRestored := handleDts[:0]
+	for _, handleDt := range handleDts {
+		if !handleDt.IsNull() {
+			dtToRestored = append(dtToRestored, handleDt)
+		}
+	}
+	return dtToRestored
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
@@ -467,14 +494,13 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column) []types.Datum {
-	datumBuf := make([]types.Datum, 0, len(offsets))
+func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for _, offset := range offsets {
 		c := expCols[offset]
 		rowDt := row.GetDatum(offset, c.GetType())
-		datumBuf = append(datumBuf, rowDt)
+		buf = append(buf, rowDt)
 	}
-	return datumBuf
+	return buf
 }
 
 func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
@@ -491,10 +517,8 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 }
 
 type idxRecResult struct {
-	id      int
-	records []*indexRecord
-	chunk   *chunk.Chunk
-	err     error
-	done    bool
-	total   int
+	id    int
+	chunk *chunk.Chunk
+	err   error
+	done  bool
 }

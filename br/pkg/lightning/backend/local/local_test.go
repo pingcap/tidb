@@ -18,16 +18,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -113,9 +114,20 @@ func TestNextKey(t *testing.T) {
 		require.NoError(t, err)
 		nextHdl, err := tidbkv.NewCommonHandle(nextKeyBytes)
 		require.NoError(t, err)
-		expectNextKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
-		require.Equal(t, expectNextKey, nextKey(key))
+		nextValidKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
+		// nextKey may return a key that can't be decoded, but it must not be larger than the valid next key.
+		require.True(t, bytes.Compare(nextKey(key), nextValidKey) <= 0, "datums: %v", datums)
 	}
+
+	// a special case that when len(string datum) % 8 == 7, nextKey twice should not panic.
+	keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewStringDatum("1234567"))
+	require.NoError(t, err)
+	h, err := tidbkv.NewCommonHandle(keyBytes)
+	require.NoError(t, err)
+	key = tablecodec.EncodeRowKeyWithHandle(1, h)
+	nextOnce := nextKey(key)
+	// should not panic
+	_ = nextKey(nextOnce)
 
 	// dIAAAAAAAAD/PV9pgAAAAAD/AAABA4AAAAD/AAAAAQOAAAD/AAAAAAEAAAD8
 	// a index key with: table: 61, index: 1, int64: 1, int64: 1
@@ -237,8 +249,6 @@ func TestRangeProperties(t *testing.T) {
 }
 
 func TestRangePropertiesWithPebble(t *testing.T) {
-	dir := t.TempDir()
-
 	sizeDistance := uint64(500)
 	keysDistance := uint64(20)
 	opt := &pebble.Options{
@@ -259,8 +269,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 			},
 		},
 	}
-	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
-	require.NoError(t, err)
+	db, _ := makePebbleDB(t, opt)
 	defer db.Close()
 
 	// local collector
@@ -277,7 +286,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 			key := make([]byte, 8)
 			valueLen := rand.Intn(50)
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
-			err = wb.Set(key, value[:valueLen], writeOpt)
+			err := wb.Set(key, value[:valueLen], writeOpt)
 			require.NoError(t, err)
 			err = collector.Add(pebble.InternalKey{UserKey: key, Trailer: pebble.InternalKeyKindSet}, value[:valueLen])
 			require.NoError(t, err)
@@ -304,7 +313,6 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 }
 
 func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
-	dir := t.TempDir()
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
 		MaxConcurrentCompactions: 16,
@@ -313,12 +321,8 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		DisableWAL:               true,
 		ReadOnly:                 false,
 	}
-	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
-	require.NoError(t, err)
+	db, tmpPath := makePebbleDB(t, opt)
 	defer db.Close()
-	tmpPath := filepath.Join(dir, "test.sst")
-	err = os.Mkdir(tmpPath, 0o755)
-	require.NoError(t, err)
 
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
@@ -339,7 +343,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	pool := membuf.NewPool()
 	defer pool.Destroy()
 	kvBuffer := pool.NewBuffer()
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024, kvBuffer)
+	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, keyspace.CodecV1, 1024, kvBuffer)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -435,108 +439,6 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.Reg
 	}, nil
 }
 
-func TestIsIngestRetryable(t *testing.T) {
-	local := &local{
-		splitCli: &mockSplitClient{},
-		logger:   log.L(),
-	}
-
-	resp := &sst.IngestResponse{
-		Error: &errorpb.Error{
-			NotLeader: &errorpb.NotLeader{
-				Leader: &metapb.Peer{Id: 2},
-			},
-		},
-	}
-	ctx := context.Background()
-	region := &split.RegionInfo{
-		Leader: &metapb.Peer{Id: 1},
-		Region: &metapb.Region{
-			Id:       1,
-			StartKey: []byte{1},
-			EndKey:   []byte{3},
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
-			},
-		},
-	}
-	metas := []*sst.SSTMeta{
-		{
-			Range: &sst.Range{
-				Start: []byte{1},
-				End:   []byte{2},
-			},
-		},
-		{
-			Range: &sst.Range{
-				Start: []byte{1, 1},
-				End:   []byte{2},
-			},
-		},
-	}
-	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Leader.Id)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{3},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
-		},
-	}
-	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Region.RegionEpoch.Version)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
-			Reason: "test",
-		},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		Message: "raft: proposal dropped",
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVRaftProposalDropped))
-
-	resp.Error = &errorpb.Error{
-		DiskFull: &errorpb.DiskFull{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.Contains(t, err.Error(), "non-retryable error")
-
-	resp.Error = &errorpb.Error{
-		StaleCommand: &errorpb.StaleCommand{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
-}
-
 type testIngester struct{}
 
 func (i testIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
@@ -564,7 +466,6 @@ func (i testIngester) ingest([]*sstMeta) error {
 }
 
 func TestLocalIngestLoop(t *testing.T) {
-	dir := t.TempDir()
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
 		MaxConcurrentCompactions: 16,
@@ -573,18 +474,14 @@ func TestLocalIngestLoop(t *testing.T) {
 		DisableWAL:               true,
 		ReadOnly:                 false,
 	}
-	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
-	require.NoError(t, err)
+	db, tmpPath := makePebbleDB(t, opt)
 	defer db.Close()
-	tmpPath := filepath.Join(dir, "test.sst")
-	err = os.Mkdir(tmpPath, 0o755)
-	require.NoError(t, err)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 	f := Engine{
 		db:           db,
 		UUID:         engineUUID,
-		sstDir:       "",
+		sstDir:       tmpPath,
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
@@ -637,7 +534,7 @@ func TestLocalIngestLoop(t *testing.T) {
 	wg.Wait()
 
 	f.mutex.RLock()
-	err = f.flushEngineWithoutLock(engineCtx)
+	err := f.flushEngineWithoutLock(engineCtx)
 	require.NoError(t, err)
 	f.mutex.RUnlock()
 
@@ -732,7 +629,6 @@ func TestFilterOverlapRange(t *testing.T) {
 }
 
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
-	dir := t.TempDir()
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
 		MaxConcurrentCompactions: 16,
@@ -741,12 +637,8 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		DisableWAL:               true,
 		ReadOnly:                 false,
 	}
-	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
-	require.NoError(t, err)
+	db, tmpPath := makePebbleDB(t, opt)
 	defer db.Close()
-	tmpPath := filepath.Join(dir, "test.sst")
-	err = os.Mkdir(tmpPath, 0o755)
-	require.NoError(t, err)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 
@@ -837,49 +729,90 @@ func TestMergeSSTsDuplicated(t *testing.T) {
 
 type mockPdClient struct {
 	pd.Client
-	stores []*metapb.Store
+	stores  []*metapb.Store
+	regions []*pd.Region
 }
 
 func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, nil
 }
 
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
+	return c.regions, nil
+}
+
 type mockGrpcErr struct{}
 
 func (e mockGrpcErr) GRPCStatus() *status.Status {
-	return status.New(codes.Unimplemented, "unimplmented")
+	return status.New(codes.Unimplemented, "unimplemented")
 }
 
 func (e mockGrpcErr) Error() string {
-	return "unimplmented"
+	return "unimplemented"
 }
 
 type mockImportClient struct {
 	sst.ImportSSTClient
 	store              *metapb.Store
+	resp               *sst.IngestResponse
 	err                error
 	retry              int
 	cnt                int
 	multiIngestCheckFn func(s *metapb.Store) bool
+	apiInvokeRecorder  map[string][]uint64
+}
+
+func newMockImportClient() *mockImportClient {
+	return &mockImportClient{
+		multiIngestCheckFn: func(s *metapb.Store) bool {
+			return true
+		},
+	}
 }
 
 func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
 	defer func() {
 		c.cnt++
 	}()
-	if c.cnt < c.retry && c.err != nil {
-		return nil, c.err
+	if c.apiInvokeRecorder != nil {
+		c.apiInvokeRecorder["MultiIngest"] = append(c.apiInvokeRecorder["MultiIngest"], c.store.GetId())
+	}
+	if c.cnt < c.retry && (c.err != nil || c.resp != nil) {
+		return c.resp, c.err
 	}
 
 	if !c.multiIngestCheckFn(c.store) {
 		return nil, mockGrpcErr{}
 	}
-	return nil, nil
+	return &sst.IngestResponse{}, nil
+}
+
+type mockWriteClient struct {
+	sst.ImportSST_WriteClient
+	writeResp *sst.WriteResponse
+}
+
+func (m mockWriteClient) Send(request *sst.WriteRequest) error {
+	return nil
+}
+
+func (m mockWriteClient) CloseAndRecv() (*sst.WriteResponse, error) {
+	return m.writeResp, nil
+}
+
+func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (sst.ImportSST_WriteClient, error) {
+	if c.apiInvokeRecorder != nil {
+		c.apiInvokeRecorder["Write"] = append(c.apiInvokeRecorder["Write"], c.store.GetId())
+	}
+	return mockWriteClient{writeResp: &sst.WriteResponse{Metas: []*sst.SSTMeta{
+		{}, {}, {},
+	}}}, nil
 }
 
 type mockImportClientFactory struct {
-	stores         []*metapb.Store
-	createClientFn func(store *metapb.Store) sst.ImportSSTClient
+	stores            []*metapb.Store
+	createClientFn    func(store *metapb.Store) sst.ImportSSTClient
+	apiInvokeRecorder map[string][]uint64
 }
 
 func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
@@ -888,7 +821,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 			return f.createClientFn(store), nil
 		}
 	}
-	return nil, errors.New("store not found")
+	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
 func (f *mockImportClientFactory) Close() {}
@@ -1177,9 +1110,13 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
+	jobCh := make(chan *regionJob, 1)
+	jobCh <- &regionJob{}
+	jobOutCh := make(chan *regionJob, 1)
+	err := bak.startWorker(context.Background(), jobCh, jobOutCh)
 	require.Error(t, err)
 	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+	require.Len(t, jobCh, 0)
 }
 
 func TestGetRegionSplitSizeKeys(t *testing.T) {
@@ -1219,4 +1156,140 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	l := local{}
 	require.True(t, l.isRetryableImportTiKVError(io.EOF))
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
+}
+
+func TestCheckPeersBusy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	apiInvokeRecorder := map[string][]uint64{}
+	serverIsBusyResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			ServerIsBusy: &errorpb.ServerIsBusy{},
+		}}
+
+	createTimeStore12 := 0
+	local := &local{
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
+				{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli := newMockImportClient()
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 12 {
+					createTimeStore12++
+					// the second time is checkWriteStall, we mock a busy response
+					if createTimeStore12 == 2 {
+						importCli.retry = 1
+						importCli.resp = serverIsBusyResp
+					}
+				}
+				return importCli
+			},
+		},
+		logger:                log.L(),
+		writeLimiter:          noopStoreWriteLimiter{},
+		bufferPool:            membuf.NewPool(),
+		supportMultiIngest:    true,
+		shouldCheckWriteStall: true,
+		tikvCodec:             keyspace.CodecV1,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel2 := context.WithCancel(context.Background())
+	f := &Engine{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel2,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	err := f.db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	err = f.db.Set([]byte("b"), []byte("b"), nil)
+	require.NoError(t, err)
+
+	jobCh := make(chan *regionJob, 10)
+
+	retryJob := &regionJob{
+		keyRange: Range{start: []byte("a"), end: []byte("b")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 1,
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 11}, {Id: 2, StoreId: 12}, {Id: 3, StoreId: 13},
+				},
+				StartKey: []byte("a"),
+				EndKey:   []byte("b"),
+			},
+			Leader: &metapb.Peer{Id: 1, StoreId: 11},
+		},
+		stage:      regionScanned,
+		engine:     f,
+		retryCount: 20,
+		waitUntil:  time.Now().Add(-time.Second),
+	}
+	jobCh <- retryJob
+
+	jobCh <- &regionJob{
+		keyRange: Range{start: []byte("b"), end: []byte("")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 4,
+				Peers: []*metapb.Peer{
+					{Id: 4, StoreId: 21}, {Id: 5, StoreId: 22}, {Id: 6, StoreId: 23},
+				},
+				StartKey: []byte("b"),
+				EndKey:   []byte(""),
+			},
+			Leader: &metapb.Peer{Id: 4, StoreId: 21},
+		},
+		stage:      regionScanned,
+		engine:     f,
+		retryCount: 20,
+		waitUntil:  time.Now().Add(-time.Second),
+	}
+
+	retryJobs := make([]*regionJob, 0, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	jobOutCh := make(chan *regionJob)
+	go func() {
+		job := <-jobOutCh
+		job.retryCount++
+		retryJobs = append(retryJobs, job)
+		<-jobOutCh
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := local.startWorker(ctx, jobCh, jobOutCh)
+		require.NoError(t, err)
+	}()
+
+	// retryJob will be retried once and worker will sleep 30s before processing the
+	// job again, we simply hope below check is happened when worker is sleeping
+	time.Sleep(5 * time.Second)
+	require.Len(t, retryJobs, 1)
+	require.Same(t, retryJob, retryJobs[0])
+	require.Equal(t, 21, retryJob.retryCount)
+	require.Equal(t, wrote, retryJob.stage)
+
+	cancel()
+	wg.Wait()
+
+	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
+	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
+	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+	// region (11, 12, 13) has key range ["a", "b"), it's not finished.
+	require.Equal(t, []Range{{start: []byte("b"), end: []byte("")}}, f.finishedRanges.ranges)
 }

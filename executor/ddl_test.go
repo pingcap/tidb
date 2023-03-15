@@ -29,17 +29,16 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -290,16 +290,16 @@ func TestCreateView(t *testing.T) {
 
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrViewInvalid), "err %s", err)
 
 	// Refer https://github.com/pingcap/tidb/issues/32682
 	tk.MustExec("drop view if exists v1,v2;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1(a INT, b INT);")
 	err = tk.ExecToErr("CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
 	err = tk.ExecToErr("CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 }
 
 func TestViewRecursion(t *testing.T) {
@@ -558,6 +558,17 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustExec("create sequence alter_seq")
 	err = tk.ExecToErr("alter table alter_seq add column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	tk.MustExec("alter table alter_test add column c4 date default current_date")
+	now = time.Now().Format(types.DateFormat)
+	r, err = tk.Exec("select c4 from alter_test")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(context.Background(), req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.GreaterOrEqual(t, now, row.GetTime(0).String())
+	require.Nil(t, r.Close())
 	tk.MustExec("drop sequence alter_seq")
 }
 
@@ -1307,6 +1318,20 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	res.Check(testkit.Rows("100"))
 }
 
+func TestLoadDDLDistributeVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.Equal(t, variable.DefTiDBDDLEnableDistributeReorg, distributereorg.TiDBEnableDistributeReorg)
+
+	tk.MustGetDBError("set @@global.tidb_ddl_distribute_reorg = invalid_val", variable.ErrWrongValueForVar)
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = 'on'")
+	require.Equal(t, true, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_distribute_reorg = %v", distributereorg.TiDBEnableDistributeReorg))
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
+}
+
 // Test issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
 func TestIssue9205(t *testing.T) {
@@ -1525,39 +1550,44 @@ func TestRenameMultiTables(t *testing.T) {
 }
 
 func TestCreateTableWithTTL(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 5 DAY TTL_ENABLE = 'ON'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 	tk.MustExec("DROP TABLE t")
 
 	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY", "[ddl:8148]Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
 
 	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_ENABLE = 'ON'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
 
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+	tk.MustExec("DROP TABLE t")
+
 	// when multiple ttl and ttl_enable configs are submitted, only the last one will be handled
 	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 	tk.MustExec("DROP TABLE t")
 }
 
 func TestAlterTTLInfo(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY")
 	tk.MustExec("ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'ON'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
 
@@ -1567,13 +1597,13 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustGetErrMsg("ALTER TABLE t CHANGE updated_at updated_at_new INT", "[ddl:8148]Field 'updated_at_new' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
 
 	tk.MustExec("ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_2` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustExec("ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 2 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustExec("ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR")
-	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin TTL = `updated_at_3` + INTERVAL 3 YEAR TTL_ENABLE = 'OFF'"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL", "[ddl:8200]Unsupported multi schema change for alter table ttl")
 
@@ -1581,11 +1611,11 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
 }
 
 func TestDisableTTLForTempTable(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1594,8 +1624,6 @@ func TestDisableTTLForTempTable(t *testing.T) {
 }
 
 func TestDisableTTLForFKParentTable(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1617,4 +1645,41 @@ func TestDisableTTLForFKParentTable(t *testing.T) {
 	tk.MustExec("CREATE TABLE t_1 (t_id int)")
 	tk.MustGetDBError("ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id)", dbterror.ErrUnsupportedTTLReferencedByFK)
 	tk.MustExec("drop table t,t_1")
+}
+
+func TestCheckPrimaryKeyForTTLTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// create table should fail when pk contains double/float
+	tk.MustGetDBError("create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id double primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// alter table should fail when pk contains double/float
+	tk.MustExec("create table t1(id float primary key, t timestamp)")
+	tk.MustExec("create table t2(id double primary key, t timestamp)")
+	tk.MustExec("create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp)")
+	tk.MustExec("create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp)")
+	tk.MustGetDBError("alter table t1 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t2 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t3 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t4 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// create table should not fail when the pk is not clustered
+	tk.MustExec("create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY")
+
+	// alter table should not fail when the pk is not clustered
+	tk.MustExec("create table t21(id float primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t22(id double primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered)")
+	tk.MustExec("alter table t21 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t22 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t23 TTL=`t`+INTERVAL 1 DAY")
 }

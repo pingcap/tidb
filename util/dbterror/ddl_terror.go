@@ -369,6 +369,8 @@ var (
 	ErrDependentByFunctionalIndex = ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// ErrFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	ErrFunctionalIndexOnBlob = ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+	// ErrDependentByPartitionFunctional returns when the dropped column depends by expression partition.
+	ErrDependentByPartitionFunctional = ClassDDL.NewStd(mysql.ErrDependentByPartitionFunctional)
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
 	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
@@ -423,10 +425,15 @@ var (
 	ErrUnsupportedColumnInTTLConfig = ClassDDL.NewStd(mysql.ErrUnsupportedColumnInTTLConfig)
 	// ErrTTLColumnCannotDrop returns when a column is dropped while referenced by TTL config
 	ErrTTLColumnCannotDrop = ClassDDL.NewStd(mysql.ErrTTLColumnCannotDrop)
-	// ErrSetTTLEnableForNonTTLTable returns when the `TTL_ENABLE` option is set on a non-TTL table
-	ErrSetTTLEnableForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLEnableForNonTTLTable)
+	// ErrSetTTLOptionForNonTTLTable returns when the `TTL_ENABLE` or `TTL_JOB_INTERVAL` option is set on a non-TTL table
+	ErrSetTTLOptionForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLOptionForNonTTLTable)
 	// ErrTempTableNotAllowedWithTTL returns when setting TTL config for a temp table
 	ErrTempTableNotAllowedWithTTL = ClassDDL.NewStd(mysql.ErrTempTableNotAllowedWithTTL)
 	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
+	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
+	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// ErrNotSupportedYet returns when tidb does not support this feature.
+	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
 )

@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "scheduler",
+    srcs = [
+        "cpu_scheduler.go",
+        "scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/scheduler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanager/util",
+        "//util/cpu",
+    ],
+)

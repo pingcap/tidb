@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -64,11 +65,6 @@ import (
 )
 
 const notSpecified = -1
-
-var (
-	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
-	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
-)
 
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
@@ -90,14 +86,18 @@ type SimpleExec struct {
 	staleTxnStartTS uint64
 }
 
-type passwordLockInfo struct {
-	lockAccount               string
-	passwordExpired           string
-	passwordLifetime          any
-	passwordHistory           int64
-	passwordHistoryFlag       bool
-	passwordReuseInterval     int64
-	passwordReuseIntervalFlag bool
+type passwordOrLockOptionsInfo struct {
+	lockAccount                 string
+	passwordExpired             string
+	passwordLifetime            any
+	passwordHistory             int64
+	passwordHistoryChange       bool
+	passwordReuseInterval       int64
+	passwordReuseIntervalChange bool
+	failedLoginAttempts         int64
+	passwordLockTime            int64
+	failedLoginAttemptsChange   bool
+	passwordLockTimeChange      bool
 }
 
 type passwordReuseInfo struct {
@@ -106,10 +106,11 @@ type passwordReuseInfo struct {
 }
 
 type userInfo struct {
-	host string
-	user string
-	pLI  *passwordLockInfo
-	pwd  string
+	host       string
+	user       string
+	pLI        *passwordOrLockOptionsInfo
+	pwd        string
+	authString string
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -209,6 +210,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeShutdown(x)
 	case *ast.AdminStmt:
 		err = e.executeAdmin(x)
+	case *ast.SetResourceGroupStmt:
+		err = e.executeSetResourceGroupName(x)
 	}
 	e.done = true
 	return err
@@ -253,7 +256,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
 		}
 	}
 	for _, role := range s.RoleList {
@@ -262,7 +265,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", role.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", role.String())
 		}
 	}
 
@@ -307,7 +310,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
 				}
-				return ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
 		}
 	}
@@ -324,7 +327,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
 		}
 	}
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
@@ -409,7 +412,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 			}
 			ok := checker.FindEdge(e.ctx, role, user)
 			if !ok {
-				return ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
+				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
 			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?)", user.Hostname, user.Username, role.Hostname, role.Username)
 		}
@@ -484,7 +487,7 @@ func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
 	ok, roleName := checker.ActiveRoles(e.ctx, roleList)
 	if !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }
@@ -497,7 +500,7 @@ func (e *SimpleExec) setRoleAll(s *ast.SetRoleStmt) error {
 	ok, roleName := checker.ActiveRoles(e.ctx, roles)
 	if !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }
@@ -536,7 +539,7 @@ func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
 	ok, roleName := checker.ActiveRoles(e.ctx, afterExcept)
 	if !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }
@@ -549,7 +552,7 @@ func (e *SimpleExec) setRoleDefault(s *ast.SetRoleStmt) error {
 	ok, roleName := checker.ActiveRoles(e.ctx, roles)
 	if !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }
@@ -561,7 +564,7 @@ func (e *SimpleExec) setRoleNone(s *ast.SetRoleStmt) error {
 	ok, roleName := checker.ActiveRoles(e.ctx, roles)
 	if !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }
@@ -590,7 +593,7 @@ func (e *SimpleExec) dbAccessDenied(dbname string) error {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbname)
+	return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, dbname)
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
@@ -676,7 +679,7 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
 	deleted := e.ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(s.Name)
 	if !deleted {
-		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
+		return exeerrors.ErrSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
 	}
 	return nil
 }
@@ -703,7 +706,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 			return errors.Trace(err)
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 		}
 	}
 
@@ -734,7 +737,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return errors.Trace(err)
 			}
-			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", user.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", user.String())
 		}
 		for _, role := range s.Roles {
 			if role.Hostname == "" {
@@ -746,7 +749,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return errors.Trace(err)
 				}
-				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+				return exeerrors.ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
 
 			sql.Reset()
@@ -755,7 +758,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return errors.Trace(err)
 				}
-				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+				return exeerrors.ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
 
 			// delete from activeRoles
@@ -778,7 +781,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	}
 	if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
 		u := e.ctx.GetSessionVars().User
-		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -796,11 +799,11 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	}
 	if s.SavepointName != "" {
 		if !txn.Valid() {
-			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+			return exeerrors.ErrSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
 		savepointRecord := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
 		if savepointRecord == nil {
-			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+			return exeerrors.ErrSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 		}
 		txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
 		return nil
@@ -809,10 +812,18 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.TxnCtx.IsPessimistic {
-			transactionDurationPessimisticRollback.Observe(duration)
-		} else {
-			transactionDurationOptimisticRollback.Observe(duration)
+		isInternal := false
+		if internal := txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
+			isInternal = true
+		}
+		if isInternal && sessVars.TxnCtx.IsPessimistic {
+			executor_metrics.TransactionDurationPessimisticRollbackInternal.Observe(duration)
+		} else if isInternal && !sessVars.TxnCtx.IsPessimistic {
+			executor_metrics.TransactionDurationOptimisticRollbackInternal.Observe(duration)
+		} else if !isInternal && sessVars.TxnCtx.IsPessimistic {
+			executor_metrics.TransactionDurationPessimisticRollbackGeneral.Observe(duration)
+		} else if !isInternal && !sessVars.TxnCtx.IsPessimistic {
+			executor_metrics.TransactionDurationOptimisticRollbackGeneral.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
@@ -820,70 +831,198 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-func whetherSavePasswordHistory(passwdlockinfo *passwordLockInfo) bool {
-	passwdSaveNum, passwdSaveTime := passwdlockinfo.passwordHistory, passwdlockinfo.passwordReuseInterval
-	if passwdSaveNum == notSpecified {
+func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
+	var passwdSaveNum, passwdSaveTime int64
+	// If the user specifies a default, read the global variable.
+	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
+		passwdSaveNum = plOptions.passwordHistory
+	} else {
 		passwdSaveNum = variable.PasswordHistory.Load()
 	}
-	if passwdSaveTime == notSpecified {
+	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
+		passwdSaveTime = plOptions.passwordReuseInterval
+	} else {
 		passwdSaveTime = variable.PasswordReuseInterval.Load()
 	}
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
 
-func (pLinfo *passwordLockInfo) analyzeLockPasswordInfo(PasswordOrLockOptions []*ast.PasswordOrLockOption) error {
-	if length := len(PasswordOrLockOptions); length > 0 {
-		// If "ACCOUNT LOCK" or "ACCOUNT UNLOCK" appears many times,
-		// only the last declaration takes effect.
-		for i := length - 1; i >= 0; i-- {
-			if PasswordOrLockOptions[i].Type == ast.Lock {
-				pLinfo.lockAccount = "Y"
-				break
-			} else if PasswordOrLockOptions[i].Type == ast.Unlock {
-				pLinfo.lockAccount = "N"
-				break
-			}
-		}
+type alterUserPasswordLocking struct {
+	failedLoginAttempts            int64
+	passwordLockTime               int64
+	failedLoginAttemptsNotFound    bool
+	passwordLockTimeChangeNotFound bool
+	// containsNoOthers indicates whether User_attributes only contains one "Password_locking" element.
+	containsNoOthers bool
+}
+
+func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLockOption) error {
+	if length := len(plOption); length > 0 {
 		// If "PASSWORD EXPIRE ..." appears many times,
 		// only the last declaration takes effect.
 	Loop:
 		for i := length - 1; i >= 0; i-- {
-			switch PasswordOrLockOptions[i].Type {
+			switch plOption[i].Type {
 			case ast.PasswordExpire:
-				pLinfo.passwordExpired = "Y"
+				info.passwordExpired = "Y"
 				break Loop
 			case ast.PasswordExpireDefault:
-				pLinfo.passwordLifetime = nil
+				info.passwordLifetime = nil
 				break Loop
 			case ast.PasswordExpireNever:
-				pLinfo.passwordLifetime = 0
+				info.passwordLifetime = 0
 				break Loop
 			case ast.PasswordExpireInterval:
-				if PasswordOrLockOptions[i].Count == 0 || PasswordOrLockOptions[i].Count > math.MaxUint16 {
-					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", PasswordOrLockOptions[i].Count))
+				if plOption[i].Count == 0 || plOption[i].Count > math.MaxUint16 {
+					return types.ErrWrongValue2.GenWithStackByArgs("DAY", fmt.Sprintf("%v", plOption[i].Count))
 				}
-				pLinfo.passwordLifetime = PasswordOrLockOptions[i].Count
+				info.passwordLifetime = plOption[i].Count
 				break Loop
 			}
 		}
 	}
-	for _, option := range PasswordOrLockOptions {
+	// only the last declaration takes effect.
+	for _, option := range plOption {
 		switch option.Type {
+		case ast.Lock:
+			info.lockAccount = "Y"
+		case ast.Unlock:
+			info.lockAccount = "N"
+		case ast.FailedLoginAttempts:
+			info.failedLoginAttempts = mathutil.Min(option.Count, math.MaxInt16)
+			info.failedLoginAttemptsChange = true
+		case ast.PasswordLockTime:
+			info.passwordLockTime = mathutil.Min(option.Count, math.MaxInt16)
+			info.passwordLockTimeChange = true
+		case ast.PasswordLockTimeUnbounded:
+			info.passwordLockTime = -1
+			info.passwordLockTimeChange = true
 		case ast.PasswordHistory:
-			pLinfo.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
-			pLinfo.passwordHistoryFlag = true
+			info.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordHistoryChange = true
 		case ast.PasswordHistoryDefault:
-			pLinfo.passwordHistory = notSpecified
-			pLinfo.passwordHistoryFlag = true
+			info.passwordHistory = notSpecified
+			info.passwordHistoryChange = true
 		case ast.PasswordReuseInterval:
-			pLinfo.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
-			pLinfo.passwordReuseIntervalFlag = true
+			info.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordReuseIntervalChange = true
 		case ast.PasswordReuseDefault:
-			pLinfo.passwordReuseInterval = notSpecified
-			pLinfo.passwordReuseIntervalFlag = true
+			info.passwordReuseInterval = notSpecified
+			info.passwordReuseIntervalChange = true
 		}
 	}
 	return nil
+}
+
+func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
+	// Record only when either failedLoginAttempts and passwordLockTime is not 0
+	if (info.failedLoginAttemptsChange && info.failedLoginAttempts != 0) || (info.passwordLockTimeChange && info.passwordLockTime != 0) {
+		return fmt.Sprintf("\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}",
+			info.failedLoginAttempts, info.passwordLockTime)
+	}
+	return ""
+}
+
+func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string) string {
+	// alterUserPasswordLocking is the user's actual configuration.
+	var passwordLockingArray []string
+	if info.failedLoginAttempts != 0 || info.passwordLockTime != 0 {
+		if lockAccount == "N" {
+			passwordLockingArray = append(passwordLockingArray,
+				fmt.Sprintf("\"auto_account_locked\": \"%s\"", lockAccount),
+				fmt.Sprintf("\"auto_locked_last_changed\": \"%s\"", time.Now().Format(time.UnixDate)),
+				fmt.Sprintf("\"failed_login_count\": %d", 0))
+		}
+		passwordLockingArray = append(passwordLockingArray,
+			fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts),
+			fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
+	}
+	if len(passwordLockingArray) > 0 {
+		return fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
+	}
+	return ""
+}
+
+func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, pLO *passwordOrLockOptionsInfo) (aUPL *alterUserPasswordLocking, err error) {
+	alterUserInfo := &alterUserPasswordLocking{
+		failedLoginAttempts:            0,
+		passwordLockTime:               0,
+		failedLoginAttemptsNotFound:    false,
+		passwordLockTimeChangeNotFound: false,
+		containsNoOthers:               false,
+	}
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
+        JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
+	    JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking')) FROM %n.%n WHERE User=%? AND Host=%?;`,
+		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	if err != nil {
+		return nil, err
+	}
+
+	// Configuration priority is User Changes > User History
+	if pLO.failedLoginAttemptsChange {
+		alterUserInfo.failedLoginAttempts = pLO.failedLoginAttempts
+	} else if !rows[0].IsNull(0) {
+		str := rows[0].GetString(0)
+		alterUserInfo.failedLoginAttempts, err = strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		alterUserInfo.failedLoginAttempts = mathutil.Max(alterUserInfo.failedLoginAttempts, 0)
+		alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
+	} else {
+		alterUserInfo.failedLoginAttemptsNotFound = true
+	}
+
+	if pLO.passwordLockTimeChange {
+		alterUserInfo.passwordLockTime = pLO.passwordLockTime
+	} else if !rows[0].IsNull(1) {
+		str := rows[0].GetString(1)
+		alterUserInfo.passwordLockTime, err = strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		alterUserInfo.passwordLockTime = mathutil.Max(alterUserInfo.passwordLockTime, -1)
+		alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
+	} else {
+		alterUserInfo.passwordLockTimeChangeNotFound = true
+	}
+
+	alterUserInfo.containsNoOthers = rows[0].IsNull(2) || rows[0].GetInt64(2) == 0
+	return alterUserInfo, nil
+}
+
+// deletePasswordLockingAttribute deletes "$.Password_locking" in "User_attributes" when failedLoginAttempts and passwordLockTime both 0.
+func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, alterUser *alterUserPasswordLocking) error {
+	// No password_locking information.
+	if alterUser.failedLoginAttemptsNotFound && alterUser.passwordLockTimeChangeNotFound {
+		return nil
+	}
+	// Password_locking information is still in used.
+	if alterUser.failedLoginAttempts != 0 || alterUser.passwordLockTime != 0 {
+		return nil
+	}
+	sql := new(strings.Builder)
+	if alterUser.containsNoOthers {
+		// If we use JSON_REMOVE(user_attributes, '$.Password_locking') directly here, the result is not compatible with MySQL.
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL`, mysql.SystemDB, mysql.UserTable)
+	} else {
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
+	}
+	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, name)
+	_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	return err
 }
 
 func (e *SimpleExec) authUsingCleartextPwd(authOpt *ast.AuthOption, authPlugin string) bool {
@@ -928,32 +1067,58 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
-	passwdlockinfo := &passwordLockInfo{
-		lockAccount:               "N",
-		passwordExpired:           "N",
-		passwordLifetime:          nil,
-		passwordHistory:           notSpecified,
-		passwordReuseInterval:     notSpecified,
-		passwordHistoryFlag:       false,
-		passwordReuseIntervalFlag: false,
+	plOptions := &passwordOrLockOptionsInfo{
+		lockAccount:                 "N",
+		passwordExpired:             "N",
+		passwordLifetime:            nil,
+		passwordHistory:             notSpecified,
+		passwordReuseInterval:       notSpecified,
+		failedLoginAttemptsChange:   false,
+		passwordLockTimeChange:      false,
+		passwordHistoryChange:       false,
+		passwordReuseIntervalChange: false,
 	}
-	err = passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
 		return err
 	}
+	PasswordLocking := createUserFailedLoginJSON(plOptions)
 	if s.IsCreateRole {
-		passwdlockinfo.lockAccount = "Y"
-		passwdlockinfo.passwordExpired = "Y"
+		plOptions.lockAccount = "Y"
+		plOptions.passwordExpired = "Y"
 	}
 
-	var userAttributes any = nil
+	var userAttributes []string
 	if s.CommentOrAttributeOption != nil {
 		if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-			userAttributes = fmt.Sprintf("{\"metadata\": {\"comment\": \"%s\"}}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": {\"comment\": \"%s\"}", s.CommentOrAttributeOption.Value))
 		} else if s.CommentOrAttributeOption.Type == ast.UserAttributeType {
-			userAttributes = fmt.Sprintf("{\"metadata\": %s}", s.CommentOrAttributeOption.Value)
+			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
 	}
+
+	if s.ResourceGroupNameOption != nil {
+		if !variable.EnableResourceControl.Load() {
+			return infoschema.ErrResourceGroupSupportDisabled
+		}
+
+		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
+
+		// check if specified resource group exists
+		if resourceGroupName != "default" && resourceGroupName != "" {
+			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			if !exists {
+				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
+			}
+		}
+		userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
+	}
+	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
+	// When inserting the attempts into json, an error occurs. This requires special handling.
+	if PasswordLocking != "" {
+		userAttributes = append(userAttributes, PasswordLocking)
+	}
+	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
@@ -967,8 +1132,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	sqlPasswordHistory := new(strings.Builder)
 	passwordInit := true
 	// Get changed user password reuse info.
-	savePasswdHistory := whetherSavePasswordHistory(passwdlockinfo)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Password_reuse_time, Password_reuse_history) VALUES "
+	savePasswdHistory := whetherSavePasswordHistory(plOptions)
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlexec.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
@@ -979,13 +1144,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		if len(spec.User.Username) > auth.UserNameMaxLength {
-			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
-		if len(spec.User.Username) == 0 && passwdlockinfo.passwordExpired == "Y" {
-			return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
+		if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
+			return exeerrors.ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
 		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
-			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
 		}
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
@@ -998,9 +1163,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			if !s.IfNotExists {
 				if s.IsCreateRole {
-					return ErrCannotUser.GenWithStackByArgs("CREATE ROLE", user)
+					return exeerrors.ErrCannotUser.GenWithStackByArgs("CREATE ROLE", user)
 				}
-				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
+				return exeerrors.ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
 			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -1023,13 +1188,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		pwd, ok := spec.EncodedPassword()
 
 		if !ok {
-			return errors.Trace(ErrPasswordFormat)
+			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
 
 		switch authPlugin {
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken:
 		default:
-			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 		}
 
 		recordTokenIssuer := tokenIssuer
@@ -1043,22 +1208,24 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributes, passwdlockinfo.lockAccount, recordTokenIssuer, passwdlockinfo.passwordExpired, passwdlockinfo.passwordLifetime)
+		sqlexec.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
 		// add Password_reuse_time value.
-		if passwdlockinfo.passwordReuseInterval != notSpecified {
-			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordReuseInterval)
+		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
+			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		// add Password_reuse_history value.
-		if passwdlockinfo.passwordHistory != notSpecified {
-			sqlexec.MustFormatSQL(sql, `, %?`, passwdlockinfo.passwordHistory)
+		if plOptions.passwordHistoryChange && (plOptions.passwordHistory != notSpecified) {
+			sqlexec.MustFormatSQL(sql, `, %?`, plOptions.passwordHistory)
 		} else {
 			sqlexec.MustFormatSQL(sql, `, %?`, nil)
 		}
 		sqlexec.MustFormatSQL(sql, `)`)
 		// The empty password does not count in the password history and is subject to reuse at any time.
-		if savePasswdHistory && len(pwd) != 0 {
+		// AuthTiDBAuthToken is the token login method on the cloud,
+		// and the Password Reuse Policy does not take effect.
+		if savePasswdHistory && len(pwd) != 0 && !strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
 			if !passwordInit {
 				sqlexec.MustFormatSQL(sqlPasswordHistory, ",")
 			} else {
@@ -1084,6 +1251,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 	if err != nil {
+		logutil.BgLogger().Warn("Fail to create user", zap.String("sql", sql.String()))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -1123,7 +1291,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
-func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, passwdlockinfo *passwordLockInfo) (*passwordReuseInfo, error) {
+func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string, plOptions *passwordOrLockOptionsInfo) (pRI *passwordReuseInfo, err error) {
 	res := &passwordReuseInfo{notSpecified, notSpecified}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT Password_reuse_history,Password_reuse_time FROM %n.%n WHERE User=%? AND Host=%?;`,
@@ -1133,6 +1301,11 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
@@ -1149,11 +1322,21 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
 		}
 	}
-	if passwdlockinfo.passwordHistoryFlag {
-		res.passwordHistory = passwdlockinfo.passwordHistory
+	if plOptions.passwordHistoryChange {
+		// If the user specifies a default, the global variable needs to be re-read.
+		if plOptions.passwordHistory != notSpecified {
+			res.passwordHistory = plOptions.passwordHistory
+		} else {
+			res.passwordHistory = variable.PasswordHistory.Load()
+		}
 	}
-	if passwdlockinfo.passwordReuseIntervalFlag {
-		res.passwordReuseInterval = passwdlockinfo.passwordReuseInterval
+	if plOptions.passwordReuseIntervalChange {
+		// If the user specifies a default, the global variable needs to be re-read.
+		if plOptions.passwordReuseInterval != notSpecified {
+			res.passwordReuseInterval = plOptions.passwordReuseInterval
+		} else {
+			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+		}
 	}
 	return res, nil
 }
@@ -1218,14 +1401,36 @@ func addHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, use
 	return nil
 }
 
-func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (int64, error) {
+// checkPasswordsMatch used to compare whether the password encrypted with mysql.AuthCachingSha2Password or mysql.AuthTiDBSM3Password is repeated.
+func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, error) {
+	for _, row := range rows {
+		if !row.IsNull(0) {
+			pwd := row.GetString(0)
+			authok, err := auth.CheckHashingPassword([]byte(pwd), oldPwd, authPlugin)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+				return false, err
+			}
+			if authok {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (deleteNum int64, err error) {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return 0, err
 	}
-
+	defer func() {
+		if closeErr := recordSet.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
 	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
@@ -1238,65 +1443,148 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	return rows[0].GetInt64(0), nil
 }
 
-func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo) (bool, error) {
-	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
+func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, authPlugin string) (canUse bool, err error) {
+	switch authPlugin {
+	case mysql.AuthNativePassword, "":
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User= %? AND Host= %? AND Password = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) == 0 {
+			return true, nil
+		}
+		return false, nil
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User= %? AND Host= %? ;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
-	}
-	return false, nil
 }
 
-func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo) (bool, error) {
-	sql := new(strings.Builder)
-	// Exceeded the maximum number of saved items, only check the ones within the limit.
-	checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
-	checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
-	checkRows = checkRows + ` ) as t where t.Password = %? `
-	sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
+func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, authPlugin string) (canUse bool, err error) {
+	switch authPlugin {
+	case mysql.AuthNativePassword, "":
+		sql := new(strings.Builder)
+		// Exceeded the maximum number of saved items, only check the ones within the limit.
+		checkRows := `SELECT count(*) FROM (SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+		checkRows = checkRows + ` ) as t where t.Password = %? `
+		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) != 0 {
+			return false, nil
+		}
+		return true, nil
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		checkRows := `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? ORDER BY Password_timestamp DESC LIMIT `
+		checkRows = checkRows + strconv.FormatInt(passwordReuse.passwordHistory, 10)
+		sqlexec.MustFormatSQL(sql, checkRows, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host))
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) != 0 {
-		return false, nil
-	}
-	return true, nil
 }
 
 func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionctx.Context) (bool, error) {
-	sql := new(strings.Builder)
+	sctx sessionctx.Context, authPlugin string) (canUse bool, err error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
-	sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
-		mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
-	}
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
-	if err != nil {
-		return false, err
-	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
+	switch authPlugin {
+	case mysql.AuthNativePassword, "":
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT count(*) FROM %n.%n WHERE User=%? AND Host=%? AND Password = %? AND Password_timestamp >= %?;`,
+			mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), userDetail.pwd, beforeDate)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		if err != nil {
+			return false, err
+		}
+		if rows[0].GetInt64(0) == 0 {
+			return true, nil
+		}
+	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, `SELECT Password FROM %n.%n WHERE User=%? AND Host=%? AND Password_timestamp >= %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, userDetail.user, strings.ToLower(userDetail.host), beforeDate)
+		recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return false, err
+		}
+		defer func() {
+			if closeErr := recordSet.Close(); closeErr != nil {
+				err = closeErr
+			}
+		}()
+		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		if err != nil {
+			return false, err
+		}
+		return checkPasswordsMatch(rows, userDetail.authString, authPlugin)
+	default:
+		return false, exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 	}
 	return false, nil
 }
 
-func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) (bool, int64, error) {
+func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context, authPlugin string) (bool, int64, error) {
 	passwordNum, err := getUserPasswordNum(ctx, sqlExecutor, userDetail)
 	if err != nil {
 		return false, 0, err
@@ -1315,18 +1603,18 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	// The maximum number of saves has not been exceeded.
 	// There are too many retention days, and it is impossible to time out in one's lifetime.
 	if (passwordNum <= passwordReuse.passwordHistory) || (passwordReuse.passwordReuseInterval > math.MaxInt32) {
-		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail)
+		passChecking, err := fullRecordCheck(ctx, sqlExecutor, userDetail, authPlugin)
 		return passChecking, canDeleteNum, err
 	}
 
 	if passwordReuse.passwordHistory > 0 {
-		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse)
+		passChecking, err := checkPasswordHistoryRule(ctx, sqlExecutor, userDetail, passwordReuse, authPlugin)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
 	}
 	if passwordReuse.passwordReuseInterval > 0 {
-		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx)
+		passChecking, err := checkPasswordTimeRule(ctx, sqlExecutor, userDetail, passwordReuse, sctx, authPlugin)
 		if err != nil || !passChecking {
 			return false, 0, err
 		}
@@ -1334,19 +1622,24 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return true, canDeleteNum, nil
 }
 
-func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context) error {
+func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context, authPlugin string) error {
+	if strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) {
+		// AuthTiDBAuthToken is the token login method on the cloud,
+		// and the Password Reuse Policy does not take effect.
+		return nil
+	}
 	// read password reuse info from mysql.user and global variables.
 	passwdReuseInfo, err := getUserPasswordLimit(ctx, sqlExecutor, userDetail.user, userDetail.host, userDetail.pLI)
 	if err != nil {
 		return err
 	}
 	// check whether password can be used.
-	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx)
+	res, maxDelNum, err := passwordVerification(ctx, sqlExecutor, userDetail, passwdReuseInfo, sctx, authPlugin)
 	if err != nil {
 		return err
 	}
 	if !res {
-		return ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host)
+		return exeerrors.ErrExistsInHistoryPassword.GenWithStackByArgs(userDetail.user, userDetail.host)
 	}
 	err = deleteHistoricalData(ctx, sqlExecutor, userDetail, maxDelNum, passwdReuseInfo, sctx)
 	if err != nil {
@@ -1385,16 +1678,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
-	passwdlockinfo := &passwordLockInfo{
-		lockAccount:               "",
-		passwordExpired:           "",
-		passwordLifetime:          notSpecified,
-		passwordHistory:           notSpecified,
-		passwordReuseInterval:     notSpecified,
-		passwordHistoryFlag:       false,
-		passwordReuseIntervalFlag: false,
+	plOptions := passwordOrLockOptionsInfo{
+		lockAccount:                 "",
+		passwordExpired:             "",
+		passwordLifetime:            notSpecified,
+		passwordHistory:             notSpecified,
+		passwordReuseInterval:       notSpecified,
+		failedLoginAttemptsChange:   false,
+		passwordLockTimeChange:      false,
+		passwordHistoryChange:       false,
+		passwordReuseIntervalChange: false,
 	}
-	err = passwdlockinfo.analyzeLockPasswordInfo(s.PasswordOrLockOptions)
+	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
 		return err
 	}
@@ -1521,7 +1816,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
-				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
+			// changing the auth method prunes history.
+			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
+				// delete password history from mysql.password_history.
+				sql := new(strings.Builder)
+				sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
+				if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+					failedUsers = append(failedUsers, spec.User.String())
+					needRollback = true
+					break
+				}
 			}
 			if e.isValidatePasswordEnabled() && e.authUsingCleartextPwd(spec.AuthOpt, spec.AuthOpt.AuthPlugin) {
 				if err := pwdValidator.ValidatePassword(e.ctx.GetSessionVars(), spec.AuthOpt.AuthString); err != nil {
@@ -1530,14 +1836,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
-				return errors.Trace(ErrPasswordFormat)
+				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
 			// for Support Password Reuse Policy.
 			// The empty password does not count in the password history and is subject to reuse at any time.
 			// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 			if len(pwd) != 0 {
-				userDetail := &userInfo{spec.User.Hostname, spec.User.Username, passwdlockinfo, pwd}
-				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
+				userDetail := &userInfo{
+					host:       spec.User.Hostname,
+					user:       spec.User.Username,
+					pLI:        &plOptions,
+					pwd:        pwd,
+					authString: spec.AuthOpt.AuthString,
+				}
+				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx, spec.AuthOpt.AuthPlugin)
 				if err != nil {
 					return err
 				}
@@ -1547,49 +1859,80 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				fields = append(fields, alterField{"plugin=%?", spec.AuthOpt.AuthPlugin})
 			}
 			if spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString {
-				if passwdlockinfo.passwordExpired == "" {
-					passwdlockinfo.passwordExpired = "N"
+				if plOptions.passwordExpired == "" {
+					plOptions.passwordExpired = "N"
 				}
 			}
 		}
 
-		if len(passwdlockinfo.lockAccount) != 0 {
-			fields = append(fields, alterField{"account_locked=%?", passwdlockinfo.lockAccount})
+		if len(plOptions.lockAccount) != 0 {
+			fields = append(fields, alterField{"account_locked=%?", plOptions.lockAccount})
 		}
 
 		// support alter Password_reuse_history and Password_reuse_time.
-		if passwdlockinfo.passwordHistoryFlag {
-			if passwdlockinfo.passwordHistory == notSpecified {
+		if plOptions.passwordHistoryChange {
+			if plOptions.passwordHistory == notSpecified {
 				fields = append(fields, alterField{"Password_reuse_history = NULL ", ""})
 			} else {
-				fields = append(fields, alterField{"Password_reuse_history = %? ", strconv.FormatInt(passwdlockinfo.passwordHistory, 10)})
+				fields = append(fields, alterField{"Password_reuse_history = %? ", strconv.FormatInt(plOptions.passwordHistory, 10)})
 			}
 		}
-		if passwdlockinfo.passwordReuseIntervalFlag {
-			if passwdlockinfo.passwordReuseInterval == notSpecified {
+		if plOptions.passwordReuseIntervalChange {
+			if plOptions.passwordReuseInterval == notSpecified {
 				fields = append(fields, alterField{"Password_reuse_time = NULL ", ""})
 			} else {
-				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(passwdlockinfo.passwordReuseInterval, 10)})
+				fields = append(fields, alterField{"Password_reuse_time = %? ", strconv.FormatInt(plOptions.passwordReuseInterval, 10)})
 			}
 		}
 
-		if len(passwdlockinfo.passwordExpired) != 0 {
-			if len(spec.User.Username) == 0 && passwdlockinfo.passwordExpired == "Y" {
-				return ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
-			}
-			fields = append(fields, alterField{"password_expired=%?", passwdlockinfo.passwordExpired})
+		passwordLockingInfo, err := readPasswordLockingInfo(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, &plOptions)
+		if err != nil {
+			return err
 		}
-		if passwdlockinfo.passwordLifetime != notSpecified {
-			fields = append(fields, alterField{"password_lifetime=%?", passwdlockinfo.passwordLifetime})
+		passwordLockingStr := alterUserFailedLoginJSON(passwordLockingInfo, plOptions.lockAccount)
+
+		if len(plOptions.passwordExpired) != 0 {
+			if len(spec.User.Username) == 0 && plOptions.passwordExpired == "Y" {
+				return exeerrors.ErrPasswordExpireAnonymousUser.GenWithStackByArgs()
+			}
+			fields = append(fields, alterField{"password_expired=%?", plOptions.passwordExpired})
+		}
+		if plOptions.passwordLifetime != notSpecified {
+			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
 		}
 
+		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
-			newAttributesStr := ""
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
-				newAttributesStr = fmt.Sprintf(`{"metadata": {"comment": "%s"}}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": {"comment": "%s"}`, s.CommentOrAttributeOption.Value))
 			} else {
-				newAttributesStr = fmt.Sprintf(`{"metadata": %s}`, s.CommentOrAttributeOption.Value)
+				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
+		}
+		if s.ResourceGroupNameOption != nil {
+			if !variable.EnableResourceControl.Load() {
+				return infoschema.ErrResourceGroupSupportDisabled
+			}
+
+			// check if specified resource group exists
+			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
+			if resourceGroupName != "default" && s.ResourceGroupNameOption.Value != "" {
+				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+				if !exists {
+					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
+				}
+			}
+
+			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, resourceGroupName))
+		}
+		if passwordLockingStr != "" {
+			newAttributes = append(newAttributes, passwordLockingStr)
+		}
+		if length := len(newAttributes); length > 0 {
+			if length > 1 || passwordLockingStr == "" {
+				passwordLockingInfo.containsNoOthers = false
+			}
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
 		}
 
@@ -1634,6 +1977,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
+		// Remove useless Password_locking from User_attributes.
+		err = deletePasswordLockingAttribute(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname, passwordLockingInfo)
+		if err != nil {
+			failedUsers = append(failedUsers, spec.User.String())
+			needRollback = true
+			continue
+		}
+
 		if len(privData) > 0 {
 			sql := new(strings.Builder)
 			sqlexec.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
@@ -1647,7 +1998,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if len(failedUsers) > 0 {
 		// Compatible with MySQL 8.0, `ALTER USER` realizes atomic operation.
 		if !s.IfExists || needRollback {
-			return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
 		for _, user := range failedUsers {
 			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
@@ -1677,7 +2028,7 @@ func (e *SimpleExec) checkSandboxMode(specs []*ast.UserSpec) error {
 			}
 		}
 	}
-	return errMustChangePassword.GenWithStackByArgs()
+	return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 }
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
@@ -1691,7 +2042,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 			return err
 		}
 		if !exists {
-			return ErrGrantRole.GenWithStackByArgs(role.String())
+			return exeerrors.ErrGrantRole.GenWithStackByArgs(role.String())
 		}
 	}
 	for _, user := range s.Users {
@@ -1700,7 +2051,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 		}
 	}
 
@@ -1726,7 +2077,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return err
 				}
-				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+				return exeerrors.ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 			}
 		}
 	}
@@ -1753,10 +2104,10 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
 		if len(newUser.Username) > auth.UserNameMaxLength {
-			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
+			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
-			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
+			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
 		exists, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
@@ -1847,7 +2198,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		if _, err := sqlExecutor.ExecuteInternal(ctx, "rollback"); err != nil {
 			return err
 		}
-		return ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
+		return exeerrors.ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2032,7 +2383,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			// apply new activeRoles
 			if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
 				u := e.ctx.GetSessionVars().User
-				return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 			}
 		}
 	} else {
@@ -2040,9 +2391,9 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return err
 		}
 		if s.IsDropRole {
-			return ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
 		}
-		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
+		return exeerrors.ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -2067,7 +2418,7 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	}
 	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(ctx, req)
-	var rows int = 0
+	var rows = 0
 	if err == nil {
 		rows = req.NumRows()
 	}
@@ -2111,7 +2462,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
+			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
 		u = s.User.Username
 		h = s.User.Hostname
@@ -2121,12 +2472,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	if !exists {
-		return errors.Trace(ErrPasswordNoMatch)
+		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
 	if e.ctx.InSandBoxMode() {
 		if s.User == nil || s.User.CurrentUser ||
 			e.ctx.GetSessionVars().User.AuthUsername == u && e.ctx.GetSessionVars().User.AuthHostname == strings.ToLower(h) {
 			disableSandboxMode = true
+		} else {
+			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
 	}
 
@@ -2144,22 +2497,31 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
-		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
 		pwd = ""
 	default:
 		pwd = auth.EncodePassword(s.Password)
 	}
 
 	// for Support Password Reuse Policy.
-	passwdlockinfo :=
-		&passwordLockInfo{lockAccount: "", passwordHistory: notSpecified,
-			passwordReuseInterval: notSpecified, passwordHistoryFlag: false,
-			passwordReuseIntervalFlag: false}
+	plOptions := &passwordOrLockOptionsInfo{
+		lockAccount:                 "",
+		passwordHistory:             notSpecified,
+		passwordReuseInterval:       notSpecified,
+		passwordHistoryChange:       false,
+		passwordReuseIntervalChange: false,
+	}
 	// The empty password does not count in the password history and is subject to reuse at any time.
 	// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-reuse-policy
 	if len(pwd) != 0 {
-		userDetail := &userInfo{h, u, passwdlockinfo, pwd}
-		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx)
+		userDetail := &userInfo{
+			host:       h,
+			user:       u,
+			pLI:        plOptions,
+			pwd:        pwd,
+			authString: s.Password,
+		}
+		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.ctx, authplugin)
 		if err != nil {
 			return err
 		}
@@ -2213,7 +2575,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 	if e.IsFromRemote {
-		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
+		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
 		sm.Kill(s.ConnectionID, s.Query)
 		return nil
@@ -2227,7 +2589,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	}
 	if isTruncated {
 		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
-		logutil.BgLogger().Warn(message, zap.Uint64("connID", s.ConnectionID))
+		logutil.BgLogger().Warn(message, zap.Uint64("conn", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
 		err := errors.New(message)
@@ -2285,7 +2647,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	}
 
 	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
-		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
+		zap.Uint64("conn", connID.ID()), zap.Bool("query", query))
 	return err
 }
 
@@ -2472,5 +2834,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		// it will check the timestamp first to decide whether the plan cache should be flushed.
 		domain.GetDomain(e.ctx).SetExpiredTimeStamp4PC(now)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
+	if s.Name.L != "" {
+		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
+			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
+		}
+	}
+
+	e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
 	return nil
 }

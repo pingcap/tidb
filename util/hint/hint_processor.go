@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -616,4 +617,56 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
+}
+
+// CheckBindingFromHistoryBindable checks whether the ast and hint string from history is bindable.
+// Not support:
+// 1. query use tiFlash engine
+// 2. query with sub query
+// 3. query with more than 2 table join
+func CheckBindingFromHistoryBindable(node ast.Node, hintStr string) error {
+	// check tiflash
+	contain := strings.Contains(hintStr, "tiflash")
+	if contain {
+		return errors.New("can't create binding for query with tiflash engine")
+	}
+
+	checker := bindableChecker{
+		bindable: true,
+		tables:   make(map[model.CIStr]struct{}, 2),
+	}
+	node.Accept(&checker)
+	return checker.reason
+}
+
+// bindableChecker checks whether a binding from history can be created.
+type bindableChecker struct {
+	bindable bool
+	reason   error
+	tables   map[model.CIStr]struct{}
+}
+
+// Enter implements Visitor interface.
+func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		checker.bindable = false
+		checker.reason = errors.New("can't create binding for query with sub query")
+		return in, true
+	case *ast.TableName:
+		if _, ok := checker.tables[node.Schema]; !ok {
+			checker.tables[node.Name] = struct{}{}
+		}
+		if len(checker.tables) >= 3 {
+			checker.bindable = false
+			checker.reason = errors.New("can't create binding for query with more than two table join")
+			return in, true
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *bindableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.bindable
 }

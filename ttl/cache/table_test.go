@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -29,8 +28,6 @@ import (
 )
 
 func TestNewTTLTable(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	cases := []struct {
 		db      string
 		tbl     string
@@ -166,8 +163,6 @@ func TestNewTTLTable(t *testing.T) {
 }
 
 func TestEvalTTLExpireTime(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 day")

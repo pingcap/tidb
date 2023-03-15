@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitSecond),
 			Enable:           true,
+			JobInterval:      "1h",
 		},
 		State: model.StatePublic,
 	}
@@ -137,6 +139,7 @@ type mockSession struct {
 	evalExpire         time.Time
 	resetTimeZoneCalls int
 	closed             bool
+	commitErr          error
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -152,6 +155,10 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		evalExpire:        time.Now(),
 		sessionVars:       sessVars,
 	}
+}
+
+func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	return s.sessionInfoSchema
 }
 
 func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
@@ -175,14 +182,17 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	}
 
 	if s.executeSQL != nil {
-		return s.executeSQL(ctx, sql, args)
+		return s.executeSQL(ctx, sql, args...)
 	}
 	return s.rows, s.execErr
 }
 
-func (s *mockSession) RunInTxn(_ context.Context, fn func() error) (err error) {
+func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.TxnMode) error {
 	require.False(s.t, s.closed)
-	return fn()
+	if err := fn(); err != nil {
+		return err
+	}
+	return s.commitErr
 }
 
 func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
@@ -193,6 +203,14 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 
 func (s *mockSession) Close() {
 	s.closed = true
+}
+
+func (s *mockSession) Now() time.Time {
+	tz := s.sessionVars.TimeZone
+	if tz != nil {
+		tz = time.UTC
+	}
+	return time.Now().In(tz)
 }
 
 func TestExecuteSQLWithCheck(t *testing.T) {
@@ -224,6 +242,13 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, int64(12), rows[0].GetInt64(0))
 	require.Equal(t, 3, s.resetTimeZoneCalls)
+
+	s.commitErr = errors.New("mockCommitErr")
+	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
+	require.EqualError(t, err, "mockCommitErr")
+	require.True(t, shouldRetry)
+	require.Nil(t, rows)
+	require.Equal(t, 4, s.resetTimeZoneCalls)
 }
 
 func TestValidateTTLWork(t *testing.T) {

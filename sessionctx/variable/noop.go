@@ -115,7 +115,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_log_group_home_dir", Value: "./"},
 	{Scope: ScopeNone, Name: "performance_schema_events_statements_history_size", Value: "10"},
 	{Scope: ScopeGlobal, Name: GeneralLog, Value: Off, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: "validate_password_dictionary_file", Value: ""},
 	{Scope: ScopeGlobal, Name: BinlogOrderCommits, Value: On, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_division_limit", Value: "100"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_insert_delayed_threads", Value: "20"},

@@ -23,11 +23,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,14 +109,24 @@ func TestForeignKey(t *testing.T) {
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-
+	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("idx_fk"),
+		Table: model.NewCIStr("t"),
+		Columns: []*model.IndexColumn{{
+			Name:   model.NewCIStr("c1"),
+			Offset: 0,
+			Length: types.UnspecifiedLength,
+		}},
+		State: model.StatePublic,
+	})
 	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
@@ -156,7 +168,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	tc2 := &ddl.TestDDLCallback{}
+	tc2 := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
@@ -213,7 +225,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	var wg sync.WaitGroup
 	var truncateErr, dropErr error
 	testTruncate := true
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
@@ -269,7 +281,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
@@ -308,7 +320,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	tk.MustExec("create database test2")
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
@@ -349,7 +361,7 @@ func TestAddForeignKey2(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, index(b));")
 	var wg sync.WaitGroup
 	var addErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
@@ -389,7 +401,7 @@ func TestAddForeignKey3(t *testing.T) {
 
 	var insertErrs []error
 	var deleteErrs []error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddForeignKey {
 			return

@@ -60,7 +60,7 @@ func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.PlanCacheStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.PlanCacheStmt).StmtCacheable = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -668,7 +668,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
-	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)->Sel\(\[lt\(test.t1.c1, now\(3\)\)\]\)`
+	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)`
 
 	var cnt [2]float64
 	var planStr [2]string
@@ -1339,7 +1339,7 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 	// DB is not specified
 	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, core.PickPlanFromBucket, tk.Session()),
+		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false),
 	})
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKitWithSession(t, store, se2)
@@ -1373,7 +1373,6 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 }
 
 func TestPlanCacheHitInfo(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210705")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
@@ -1420,7 +1419,7 @@ func TestIssue29303(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // unsafe range
 }
 
 func TestIssue34725(t *testing.T) {
@@ -1696,7 +1695,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
 	tk.MustExec(`set @a2=4, @a3=2`)
 	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unsafe range
 }
 
 func TestIssue29565(t *testing.T) {
@@ -1940,7 +1939,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustQuery("execute s0 using @a0, @b0, @a0").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s0 using @a0, @a0, @b0").Check(testkit.Rows("0000 7777 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2))")
 	tk.MustExec("insert into t1 values('0000','7777',1)")
@@ -1991,7 +1990,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestIssue26873(t *testing.T) {

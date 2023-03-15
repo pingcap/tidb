@@ -624,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
@@ -900,7 +900,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	_, err = tk.Exec(bigSQL, bigParams...)
+	err = tk.ExecToErr(bigSQL, bigParams...)
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
@@ -940,7 +940,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5800)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -987,16 +987,12 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("set @@session.tidb_batch_insert=0;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.Error(t, err)
-	require.Truef(t, kv.ErrTxnTooLarge.Equal(err), "%v", err)
+	tk.MustGetErrCode(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`, errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
@@ -1022,17 +1018,14 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+	tk.MustExec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.NoError(t, err)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
 	r.Check(testkit.Rows("320"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
@@ -1474,12 +1467,12 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {

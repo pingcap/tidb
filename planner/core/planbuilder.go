@@ -577,6 +577,9 @@ type PlanBuilder struct {
 
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
+
+	// allowBuildCastArray indicates whether allow cast(... as ... array).
+	allowBuildCastArray bool
 }
 
 type handleColHelper struct {
@@ -695,6 +698,14 @@ type PlanBuilderOptNoExecution struct{}
 // Apply implements the interface PlanBuilderOpt.
 func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
+}
+
+// PlanBuilderOptAllowCastArray means the plan builder should allow build cast(... as ... array).
+type PlanBuilderOptAllowCastArray struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+	builder.allowBuildCastArray = true
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
@@ -820,7 +831,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -1003,10 +1014,20 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSetBindingStatus,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+	var p *SQLBindPlan
+	if v.OriginNode != nil {
+		p = &SQLBindPlan{
+			SQLBindOp:    OpSetBindingStatus,
+			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		}
+	} else if v.SQLDigest != "" {
+		p = &SQLBindPlan{
+			SQLBindOp: OpSetBindingStatusByDigest,
+			SQLDigest: v.SQLDigest,
+		}
+	} else {
+		return nil, errors.New("sql digest is empty")
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
@@ -1040,11 +1061,38 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
+func fetchRecordFromClusterStmtSummary(sctx sessionctx.Context, planDigest string) ([]chunk.Row, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	exec, _ := sctx.(sqlexec.SQLExecutor)
+	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
+	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
+		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
+		"order by length(plan_digest) desc"
+	rs, err := exec.ExecuteInternal(ctx, sql)
+	if rs == nil {
+		return nil, errors.New("can't find any records for '" + planDigest + "' in statement summary")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (Plan, error) {
 	if v.PlanDigest == "" {
 		return nil, errors.New("plan digest is empty")
 	}
-	bindableStmt := stmtsummary.StmtSummaryByDigestMap.GetBindableStmtByPlanDigest(v.PlanDigest)
+	rows, err := fetchRecordFromClusterStmtSummary(b.ctx, v.PlanDigest)
+	if err != nil {
+		return nil, err
+	}
+	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
 	if bindableStmt == nil {
 		return nil, errors.New("can't find any plans for '" + v.PlanDigest + "'")
 	}
@@ -1054,7 +1102,9 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-
+	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
+		return nil, err
+	}
 	bindSQL := bindinfo.GenerateBindSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
@@ -1166,7 +1216,8 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var primaryIdxPath *util.AccessPath
+	var primaryIdxPath, indexPrefixPath *util.AccessPath
+	prefixMatches := 0
 	for _, path := range paths {
 		if path.StoreType == kv.TiFlash {
 			continue
@@ -1178,9 +1229,18 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 		if path.Index.Name.L == idxName.L {
 			return path
 		}
+		if strings.HasPrefix(path.Index.Name.L, idxName.L) {
+			indexPrefixPath = path
+			prefixMatches++
+		}
 	}
 	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 		return primaryIdxPath
+	}
+
+	// Return only unique prefix matches
+	if prefixMatches == 1 {
+		return indexPrefixPath
 	}
 	return nil
 }
@@ -1242,7 +1302,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, _ int64) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1347,10 +1407,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
-			if path.Index != nil && path.Index.Global {
-				ignored = append(ignored, path)
-				continue
-			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
 				ignored = append(ignored, path)
@@ -1360,6 +1416,12 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
+			if hint.HintType == ast.HintOrderIndex {
+				path.ForceKeepOrder = true
+			}
+			if hint.HintType == ast.HintNoOrderIndex {
+				path.ForceNoKeepOrder = true
+			}
 			available = append(available, path)
 		}
 	}
@@ -1369,9 +1431,11 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
-	if staleread.IsStmtStaleness(ctx) {
-		// skip tiflash if the statement is for stale read until tiflash support stale read
-		available = removeTiflashDuringStaleRead(available)
+
+	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
+	// ignore global index if flagPartitionProcessor exists.
+	if hasFlagPartitionProcessor {
+		available = removeGlobalIndexPaths(available)
 	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
@@ -1391,6 +1455,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
+		// availableEngineStr is for warning message.
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
 			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
@@ -1430,6 +1495,18 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 		}
 	}
 	return remainedPaths
+}
+
+func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
+	i := 0
+	for _, path := range paths {
+		if path.Index != nil && path.Index.Global {
+			continue
+		}
+		paths[i] = path
+		i++
+	}
+	return paths[:i]
 }
 
 func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
@@ -2237,10 +2314,14 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
-func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
+			continue
+		}
+		if originIdx.MVIndex {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2318,7 +2399,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			execColsInfo = colsInfo
 		}
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2548,6 +2629,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				commonHandleInfo = idx
 				continue
 			}
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -2641,6 +2726,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
+		if idx.MVIndex {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
 				id = -1
@@ -2683,6 +2772,11 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
+
 			for i, id := range physicalIDs {
 				if id == tblInfo.ID {
 					id = -1
@@ -3106,6 +3200,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Partition:             show.Partition,
 			Column:                show.Column,
 			IndexName:             show.IndexName,
+			ResourceGroupName:     show.ResourceGroupName,
 			Flag:                  show.Flag,
 			User:                  show.User,
 			Roles:                 show.Roles,
@@ -3114,6 +3209,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
+			LoadDataJobID:         show.LoadDataJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -3179,6 +3275,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+		if show.Tp == ast.ShowStatsHealthy {
+			if extractor := newShowBaseExtractor(*show); extractor.Extract() {
+				p.Extractor = extractor
+				buildPattern = false
+			}
+		}
 	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsLocked:
 		var err error
 		if user := b.ctx.GetSessionVars().User; user != nil {
@@ -3535,7 +3637,10 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
+		originalVal := b.allowBuildCastArray
+		b.allowBuildCastArray = true
 		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
 		}
@@ -3850,7 +3955,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return err
 		}
 		if idx < 0 {
-			return errors.Errorf("Can't find column %s", assign.Column)
+			return dbterror.ErrBadField.GenWithStackByArgs(assign.Column, "field list")
 		}
 		colNames = append(colNames, assign.Column.Name.L)
 		exprCols = append(exprCols, insertPlan.tableSchema.Columns[idx])
@@ -4078,17 +4183,33 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
 	}
+	options := []*LoadDataOpt{}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	var err error
+	for _, opt := range ld.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
 	p := LoadData{
-		IsLocal:            ld.IsLocal,
+		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
 		Path:               ld.Path,
+		Format:             ld.Format,
 		Table:              ld.Table,
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
+		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            options,
 	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr, deleteErr error
@@ -4110,7 +4231,6 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if err != nil {
 		return nil, err
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -4457,6 +4577,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
 					"stats_extended", "", authErr)
+			} else if spec.Tp == ast.AlterTableAddConstraint {
+				if b.ctx.GetSessionVars().User != nil && spec.Constraint != nil &&
+					spec.Constraint.Tp == ast.ConstraintForeignKey && spec.Constraint.Refer != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, spec.Constraint.Refer.Table.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, spec.Constraint.Refer.Table.Schema.L,
+						spec.Constraint.Refer.Table.Name.L, "", authErr)
+				}
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -4635,9 +4763,39 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.TableToTables[0].NewTable.Schema.L,
 			v.TableToTables[0].NewTable.Name.L, "", authErr)
-	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt, *ast.FlashBackDatabaseStmt:
-		// Recover table command can only be executed by administrator.
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.RecoverTableStmt:
+		if v.Table == nil {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		} else {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+		}
+	case *ast.FlashBackTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L, v.Table.Name.L, "", authErr)
+	case *ast.FlashBackDatabaseStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.DBName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.DBName.L, "", "", authErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.DBName.L, "", "", authErr)
 	case *ast.FlashBackToTimestampStmt:
 		// Flashback cluster can only be executed by user with `super` privilege.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -4661,6 +4819,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "PLACEMENT_ADMIN", false, err)
+	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -4941,6 +5102,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
+	case ast.ShowCreateResourceGroup:
+		names = []string{"Resource_Group", "Create Resource Group"}
 	case ast.ShowCreateUser:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
@@ -5044,6 +5207,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
+	case ast.ShowLoadDataJobs:
+		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
+			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
+			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Result_Code", "Result_Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -5070,7 +5242,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
-	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File, Capture: pc.Capture, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())

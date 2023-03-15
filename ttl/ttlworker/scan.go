@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,14 +47,17 @@ type ttlStatistics struct {
 }
 
 func (s *ttlStatistics) IncTotalRows(cnt int) {
+	metrics.ScannedExpiredRows.Add(float64(cnt))
 	s.TotalRows.Add(uint64(cnt))
 }
 
 func (s *ttlStatistics) IncSuccessRows(cnt int) {
+	metrics.DeleteSuccessExpiredRows.Add(float64(cnt))
 	s.SuccessRows.Add(uint64(cnt))
 }
 
 func (s *ttlStatistics) IncErrorRows(cnt int) {
+	metrics.DeleteErrorExpiredRows.Add(float64(cnt))
 	s.ErrorRows.Add(uint64(cnt))
 }
 
@@ -62,11 +67,16 @@ func (s *ttlStatistics) Reset() {
 	s.TotalRows.Store(0)
 }
 
+func (s *ttlStatistics) String() string {
+	return fmt.Sprintf("Total Rows: %d, Success Rows: %d, Error Rows: %d", s.TotalRows.Load(), s.SuccessRows.Load(), s.ErrorRows.Load())
+}
+
 type ttlScanTask struct {
+	ctx context.Context
+
+	*cache.TTLTask
+
 	tbl        *cache.PhysicalTable
-	expire     time.Time
-	rangeStart []types.Datum
-	rangeEnd   []types.Datum
 	statistics *ttlStatistics
 }
 
@@ -88,6 +98,13 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool sessionPool) *ttlScanTaskExecResult {
+	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
+	// now, the taskCtx is only check at the beginning of every loop
+	taskCtx := t.ctx
+	tracer := metrics.PhaseTracerFromCtx(ctx)
+	defer tracer.EnterPhase(tracer.Phase())
+
+	tracer.EnterPhase(metrics.PhaseOther)
 	rawSess, err := getSession(sessPool)
 	if err != nil {
 		return t.result(err)
@@ -104,8 +121,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		terror.Log(err)
 	}()
 
-	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.rangeStart, t.rangeEnd)
+	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
 		return t.result(err)
 	}
@@ -114,6 +131,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	retryTimes := 0
 	var lastResult [][]types.Datum
 	for {
+		if err = taskCtx.Err(); err != nil {
+			return t.result(err)
+		}
 		if err = ctx.Err(); err != nil {
 			return t.result(err)
 		}
@@ -136,14 +156,17 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			return t.result(nil)
 		}
 
+		sqlStart := time.Now()
 		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
+		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
+			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
 			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
 			logutil.BgLogger().Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
 				zap.Bool("needRetry", needRetry),
-				zap.Error(err),
+				zap.Error(sqlErr),
 			)
 
 			if !needRetry {
@@ -151,14 +174,18 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			}
 			retrySQL = sql
 			retryTimes++
+
+			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {
 			case <-ctx.Done():
 				return t.result(ctx.Err())
 			case <-time.After(scanTaskExecuteSQLRetryInterval):
 			}
+			tracer.EnterPhase(metrics.PhaseOther)
 			continue
 		}
 
+		metrics.SelectSuccessDuration.Observe(selectInterval.Seconds())
 		retrySQL = ""
 		retryTimes = 0
 		lastResult = t.getDatumRows(rows)
@@ -168,16 +195,19 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		delTask := &ttlDeleteTask{
 			tbl:        t.tbl,
-			expire:     t.expire,
+			expire:     t.ExpireTime,
 			rows:       lastResult,
 			statistics: t.statistics,
 		}
+
+		tracer.EnterPhase(metrics.PhaseDispatch)
 		select {
 		case <-ctx.Done():
 			return t.result(ctx.Err())
 		case delCh <- delTask:
 			t.statistics.IncTotalRows(len(lastResult))
 		}
+		tracer.EnterPhase(metrics.PhaseOther)
 	}
 }
 
@@ -204,10 +234,11 @@ func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- interface{}
 	return w
 }
 
-func (w *ttlScanWorker) Idle() bool {
+func (w *ttlScanWorker) CouldSchedule() bool {
 	w.Lock()
 	defer w.Unlock()
-	return w.status == workerStatusRunning && w.curTask == nil
+	// see `Schedule`. If a `worker.CouldSchedule()` is true, `worker.Schedule` must success
+	return w.status == workerStatusRunning && w.curTask == nil && w.curTaskResult == nil
 }
 
 func (w *ttlScanWorker) Schedule(task *ttlScanTask) error {
@@ -240,30 +271,41 @@ func (w *ttlScanWorker) CurrentTask() *ttlScanTask {
 	return w.curTask
 }
 
-func (w *ttlScanWorker) PollTaskResult() (*ttlScanTaskExecResult, bool) {
+func (w *ttlScanWorker) PollTaskResult() *ttlScanTaskExecResult {
 	w.Lock()
 	defer w.Unlock()
 	if r := w.curTaskResult; r != nil {
 		w.curTask = nil
 		w.curTaskResult = nil
-		return r, true
+		return r
 	}
-	return nil, false
+	return nil
 }
 
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
+	tracer := metrics.NewScanWorkerPhaseTracer()
+	defer func() {
+		tracer.EndPhase()
+		logutil.BgLogger().Info("ttlScanWorker loop exited.")
+	}()
+
+	ticker := time.Tick(time.Second * 5)
 	for w.Status() == workerStatusRunning {
+		tracer.EnterPhase(metrics.PhaseIdle)
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-ticker:
+			// ticker is used to update metrics on time
 		case msg, ok := <-w.baseWorker.ch:
+			tracer.EnterPhase(metrics.PhaseOther)
 			if !ok {
 				return nil
 			}
 			switch task := msg.(type) {
 			case *ttlScanTask:
-				w.handleScanTask(ctx, task)
+				w.handleScanTask(tracer, task)
 			default:
 				logutil.BgLogger().Warn("unrecognized message for ttlScanWorker", zap.Any("msg", msg))
 			}
@@ -272,7 +314,8 @@ func (w *ttlScanWorker) loop() error {
 	return nil
 }
 
-func (w *ttlScanWorker) handleScanTask(ctx context.Context, task *ttlScanTask) {
+func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlScanTask) {
+	ctx := metrics.CtxWithPhaseTracer(w.ctx, tracer)
 	result := task.doScan(ctx, w.delCh, w.sessionPool)
 	if result == nil {
 		result = task.result(nil)
@@ -288,4 +331,13 @@ func (w *ttlScanWorker) handleScanTask(ctx context.Context, task *ttlScanTask) {
 		default:
 		}
 	}
+}
+
+type scanWorker interface {
+	worker
+
+	CouldSchedule() bool
+	Schedule(*ttlScanTask) error
+	PollTaskResult() *ttlScanTaskExecResult
+	CurrentTask() *ttlScanTask
 }

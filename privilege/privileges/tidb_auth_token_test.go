@@ -284,7 +284,11 @@ func TestAuthTokenClaims(t *testing.T) {
 			User: email1,
 		},
 		AuthTokenIssuer: issuer1,
-		Email:           email1,
+		UserAttributesInfo: UserAttributesInfo{
+			MetadataInfo: MetadataInfo{
+				Email: email1,
+			},
+		},
 	}
 
 	// Success

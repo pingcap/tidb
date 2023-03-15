@@ -55,6 +55,7 @@ STATICHECK_ANALYZERS = [
     "S1039",
     "S1040",
     "SA1019",
+    "SA1029",
     "SA2000",
     "SA2001",
     "SA2003",

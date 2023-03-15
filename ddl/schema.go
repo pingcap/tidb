@@ -312,6 +312,10 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			return ver, errors.Trace(err)
 		}
 		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+			if recoverInfo.TableInfo.TTLInfo != nil {
+				// force disable TTL job schedule for recovered table
+				recoverInfo.TableInfo.TTLInfo.Enable = false
+			}
 			ver, err = w.recoverTable(t, job, recoverInfo)
 			if err != nil {
 				return ver, errors.Trace(err)

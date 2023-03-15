@@ -28,6 +28,16 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
+// VerificationInfo records some information returned by Manager.ConnectionVerification
+type VerificationInfo struct {
+	// InSandBoxMode indicates that the session will enter sandbox mode, and only execute statement for resetting password.
+	InSandBoxMode bool
+	// FailedDueToWrongPassword indicates that the verification failed due to wrong password.
+	FailedDueToWrongPassword bool
+	// ResourceGroupName records the resource group name for the user.
+	ResourceGroupName string
+}
+
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
@@ -57,9 +67,18 @@ type Manager interface {
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
+	// VerifyAccountAutoLockInMemory automatically unlock when the time comes.
+	VerifyAccountAutoLockInMemory(user string, host string) (bool, error)
+
+	// IsAccountAutoLockEnabled verifies whether the account has enabled Failed-Login Tracking and Temporary Account Locking.
+	IsAccountAutoLockEnabled(user string, host string) bool
+
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.
-	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) error
+	ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, auth, salt []byte, sessionVars *variable.SessionVars) (VerificationInfo, error)
+
+	// AuthSuccess records auth success state
+	AuthSuccess(authUser, authHost string)
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
 	// Requires exact match on user name and host name.
@@ -67,6 +86,9 @@ type Manager interface {
 
 	// MatchIdentity matches an identity
 	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
+
+	// MatchUserResourceGroupName matches a user with specified resource group name
+	MatchUserResourceGroupName(resourceGroupName string) (string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool

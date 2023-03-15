@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -53,7 +54,7 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		}
 		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
 	}
-	require.True(t, isSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
+	require.True(t, internal.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
 func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
@@ -261,7 +262,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1, false)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1, false, handle.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 

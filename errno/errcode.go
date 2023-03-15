@@ -915,11 +915,14 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
+	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
@@ -1038,9 +1041,24 @@ const (
 	ErrLazyUniquenessCheckFailure          = 8147
 	ErrUnsupportedColumnInTTLConfig        = 8148
 	ErrTTLColumnCannotDrop                 = 8149
-	ErrSetTTLEnableForNonTTLTable          = 8150
+	ErrSetTTLOptionForNonTTLTable          = 8150
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
+	ErrLoadDataFromServerDisk              = 8154
+	ErrLoadParquetFromLocal                = 8155
+	ErrLoadDataEmptyPath                   = 8156
+	ErrLoadDataUnsupportedFormat           = 8157
+	ErrLoadDataInvalidURI                  = 8158
+	ErrLoadDataCantAccess                  = 8159
+	ErrLoadDataCantRead                    = 8160
+	ErrLoadDataPhysicalImportTableNotEmpty = 8161
+	ErrLoadDataWrongFormatConfig           = 8162
+	ErrUnknownOption                       = 8163
+	ErrInvalidOptionVal                    = 8164
+	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataJobNotFound                 = 8170
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1090,6 +1108,12 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
+	// Resource group errors.
+	ErrResourceGroupExists            = 8248
+	ErrResourceGroupNotExists         = 8249
+	ErrResourceGroupSupportDisabled   = 8250
+	ErrResourceGroupConfigUnavailable = 8251
+	ErrResourceGroupThrottled         = 8252
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

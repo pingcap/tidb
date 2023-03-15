@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type workerStatus int
@@ -96,6 +98,12 @@ func (w *baseWorker) Error() error {
 }
 
 func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) error {
+	// consider the situation when the worker has stopped, but the context has also stopped. We should
+	// return without error
+	if w.Status() == workerStatusStopped {
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	go func() {
 		w.wg.Wait()
@@ -109,9 +117,16 @@ func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) err
 	return nil
 }
 
+func (w *baseWorker) Send() chan<- interface{} {
+	return w.ch
+}
+
 func (w *baseWorker) loop() {
 	var err error
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r), zap.Stack("stack"))
+		}
 		w.Lock()
 		w.toStopped(err)
 		w.Unlock()

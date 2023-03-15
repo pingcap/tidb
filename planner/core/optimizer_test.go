@@ -16,8 +16,10 @@ package core
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -163,7 +165,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 
 	start := func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
-		handleFineGrainedShuffle(sctx, tableReader)
+		handleFineGrainedShuffle(nil, sctx, tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
 		clear(plans)
 	}
@@ -289,6 +291,111 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableScan1 = &PhysicalTableScan{}
 	hashSender1.children = []PhysicalPlan{tableScan1}
 	start(partWindow, expStreamCount, 3, 0)
+
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	fpName2 := "github.com/pingcap/tidb/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
+	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = 0
+
+	col0 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col0)
+	require.True(t, err == nil)
+	sf, isSF := cond.(*expression.ScalarFunction)
+	require.True(t, isSF)
+	var partitionCols = make([]*property.MPPPartitionColumn, 0, 1)
+	partitionCols = append(partitionCols, &property.MPPPartitionColumn{
+		Col:       col0,
+		CollateID: property.GetCollateIDByNameForPartition(col0.GetType().GetCollate()),
+	})
+
+	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender
+	tableReader.tablePlan = passSender
+	hashAgg = &PhysicalHashAgg{}
+	passSender.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
+	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0)
+	start(hashAgg, 8, 3, 0)
+
+	// Join(x) <- ExchangeReceiver <- ExchangeSender
+	//                   <- ExchangeReceiver <- ExchangeSender
+	tableReader.tablePlan = passSender
+	hashJoin = &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col0)
+	hashJoin.InnerChildIdx = 1
+	passSender.children = []PhysicalPlan{hashJoin}
+	recv = &PhysicalExchangeReceiver{}
+	recv1 = &PhysicalExchangeReceiver{}
+	tableScan = &PhysicalTableScan{}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender = &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashSender1 = &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
+	hashSender1.HashCols = partitionCols
+	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
+	handleFineGrainedShuffle(nil, sctx, tableReader)
+	require.Equal(t, uint64(8), hashJoin.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(8), recv1.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(8), hashSender1.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(0), recv.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(0), hashSender.TiFlashFineGrainedShuffleStreamCount)
+	clear(plans)
+
+	require.NoError(t, failpoint.Disable(fpName2))
+	require.NoError(t, failpoint.Enable(fpName2, `return("8000")`))
+	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender， exceed splitLimit
+	tableReader.tablePlan = passSender
+	hashAgg = &PhysicalHashAgg{}
+	passSender.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
+	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0)
+	start(hashAgg, 0, 3, 0)
+
+	// exceed splitLimit
+	// Join(x) <- ExchangeReceiver <- ExchangeSender
+	//                   <- ExchangeReceiver <- ExchangeSender
+	tableReader.tablePlan = passSender
+	hashJoin = &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.InnerChildIdx = 1
+	passSender.children = []PhysicalPlan{hashJoin}
+	recv1 = &PhysicalExchangeReceiver{}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender1 = &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
+	hashSender1.HashCols = partitionCols
+	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
+	start(hashJoin, 0, 3, 0)
+	require.NoError(t, failpoint.Disable(fpName2))
 }
 
 // Test for core.prunePhysicalColumns()

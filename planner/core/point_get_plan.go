@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -608,7 +609,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			if !sessVars.IsAutocommit() || sessVars.InTxn() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
@@ -730,7 +731,7 @@ func newBatchPointGetPlan(
 		}
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, indexHints) {
 			continue
 		}
@@ -1098,7 +1099,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	var err error
 
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
 			continue
 		}
@@ -1354,7 +1355,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}
@@ -1368,7 +1369,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}
@@ -1687,10 +1688,12 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	var err error
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
-	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-	if err != nil {
-		return nil
+	if t != nil {
+		tblID2Table := map[int64]table.Table{tbl.ID: t}
+		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+		if err != nil {
+			return nil
+		}
 	}
 	return delPlan
 }
@@ -1770,6 +1773,19 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 				return &pi.Definitions[pos], i, int(pos), false
 			}
 		}
+	case model.PartitionTypeKey:
+		// The key partition table supports FastPlan when it contains only one partition column
+		if len(pi.Columns) == 1 {
+			for i, pair := range pairs {
+				if pi.Columns[0].L == pair.colName {
+					pos, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{pair.value})
+					if err != nil {
+						return nil, 0, 0, false
+					}
+					return &pi.Definitions[pos], i, pos, false
+				}
+			}
+		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
 		if len(pi.Columns) == 0 {
@@ -1835,11 +1851,18 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		return 0, nil
 	}
 
-	var partitionName model.CIStr
+	var partitionColName model.CIStr
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		if col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr); ok {
-			partitionName = col.Name.Name
+			partitionColName = col.Name.Name
+		} else {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+	case model.PartitionTypeKey:
+		if len(partitionExpr.KeyPartCols) == 1 {
+			colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
@@ -1847,7 +1870,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left range columns partition for future development
 		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
 			colInfo := findColNameByColID(tbl.Columns, col)
-			partitionName = colInfo.Name
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
@@ -1855,27 +1878,23 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		// left list columns partition for future development
 		if locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column); ok && partitionExpr.ForListPruning.ColPrunes == nil {
 			colInfo := findColNameByColID(tbl.Columns, locateExpr)
-			partitionName = colInfo.Name
+			partitionColName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	}
 
-	for i, idxCol := range idx.Columns {
-		if partitionName.L == idxCol.Name.L {
-			return i, nil
-		}
-	}
-	panic("unique index must include all partition columns")
+	return getColumnPosInIndex(idx, &partitionColName), nil
 }
 
-// getHashPartitionColumnPos gets the hash partition column's position in the unique index.
-func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnName) int {
-	if partitionColName == nil {
+// getColumnPosInIndex gets the column's position in the index.
+// It is only used to get partition columns postition in unique index so far.
+func getColumnPosInIndex(idx *model.IndexInfo, colName *model.CIStr) int {
+	if colName == nil {
 		return 0
 	}
 	for i, idxCol := range idx.Columns {
-		if partitionColName.Name.L == idxCol.Name.L {
+		if colName.L == idxCol.Name.L {
 			return i
 		}
 	}
@@ -1895,20 +1914,15 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	}
 
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := partTable.PartitionExpr()
-	if err != nil {
-		return nil
-	}
-
-	return partitionExpr
+	return partTable.PartitionExpr()
 }
 
-func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
+func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
-	if pi.Type != model.PartitionTypeHash {
+	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
@@ -1917,16 +1931,20 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := table.(partitionTable).PartitionExpr()
-	if err != nil {
-		return nil
+	partitionExpr := table.(partitionTable).PartitionExpr()
+	if pi.Type == model.PartitionTypeKey {
+		// used to judge whether the key partition contains only one field
+		if len(pi.Columns) != 1 {
+			return nil
+		}
+		return &pi.Columns[0]
 	}
 	expr := partitionExpr.OrigExpr
 	col, ok := expr.(*ast.ColumnNameExpr)
 	if !ok {
 		return nil
 	}
-	return col.Name
+	return &col.Name.Name
 }
 
 func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {

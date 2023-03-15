@@ -17,12 +17,14 @@ package ingest
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -41,6 +43,7 @@ type engineInfo struct {
 	writerCache  generic.SyncMap[int, *backend.LocalEngineWriter]
 	memRoot      MemRoot
 	diskRoot     DiskRoot
+	rowSeq       atomic.Int64
 }
 
 // NewEngineInfo create a new EngineInfo struct.
@@ -76,12 +79,17 @@ func (ei *engineInfo) Clean() {
 		return
 	}
 	indexEngine := ei.openedEngine
-	closedEngine, err := indexEngine.Close(ei.ctx, ei.cfg)
+	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	ei.openedEngine = nil
+	err = ei.closeWriters()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
@@ -94,15 +102,21 @@ func (ei *engineInfo) ImportAndClean() error {
 	// Close engine and finish local tasks of lightning.
 	logutil.BgLogger().Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	indexEngine := ei.openedEngine
-	closeEngine, err1 := indexEngine.Close(ei.ctx, ei.cfg)
+	closeEngine, err1 := indexEngine.Close(ei.ctx)
 	if err1 != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err1),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err1
 	}
 	ei.openedEngine = nil
+	err := ei.closeWriters()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
+	}
 
-	err := ei.diskRoot.UpdateUsageAndQuota()
+	err = ei.diskRoot.UpdateUsageAndQuota()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
@@ -133,17 +147,18 @@ func (ei *engineInfo) ImportAndClean() error {
 // WriterContext is used to keep a lightning local writer for each backfill worker.
 type WriterContext struct {
 	ctx    context.Context
+	unique bool
 	lWrite *backend.LocalEngineWriter
 }
 
-func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
+func (ei *engineInfo) NewWriterCtx(id int, unique bool) (*WriterContext, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(ei.memRoot, ei.jobID, ei.indexID)
 	}
 
-	wCtx, err := ei.newWriterContext(id)
+	wCtx, err := ei.newWriterContext(id, unique)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
@@ -164,7 +179,7 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
+func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
@@ -175,17 +190,38 @@ func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
 	}
-	return &WriterContext{
+	wc := &WriterContext{
 		ctx:    ei.ctx,
+		unique: unique,
 		lWrite: lWrite,
-	}, nil
+	}
+	return wc, nil
+}
+
+func (ei *engineInfo) closeWriters() error {
+	var firstErr error
+	for _, wid := range ei.writerCache.Keys() {
+		if w, ok := ei.writerCache.Load(wid); ok {
+			_, err := w.Close(ei.ctx)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		ei.writerCache.Delete(wid)
+	}
+	return firstErr
 }
 
 // WriteRow Write one row into local writer buffer.
-func (wCtx *WriterContext) WriteRow(key, idxVal []byte) error {
+func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
+	if wCtx.unique {
+		kvs[0].RowID = handle.Encoded()
+	}
 	row := kv.MakeRowsFromKvPairs(kvs)
 	return wCtx.lWrite.WriteRows(wCtx.ctx, nil, row)
 }
