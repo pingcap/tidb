@@ -106,12 +106,15 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 }
 
 // RerwiteIndexInfo rewrites the table id of the items in the IngestRecorder
-func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, error)) error {
+func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, bool, error)) error {
 	newItems := make(map[int64]map[int64]*IngestIndexInfo)
 	for tableID, item := range i.items {
-		newTableID, err := rewriteFunc(tableID)
+		newTableID, skip, err := rewriteFunc(tableID)
 		if err != nil {
 			return errors.Annotatef(err, "failed to rewrite table id: %d", tableID)
+		}
+		if skip {
+			continue
 		}
 		newItems[newTableID] = item
 	}
