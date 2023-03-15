@@ -258,6 +258,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("id", taskID), zap.Any("state", task.State))
 			return
 		}
+		// TODO: intergrate with heartbeat mechanism
 		if exist, err := m.subtaskTable.HasSubtasksInStates(m.id, task.ID, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
 			m.onError(err)
 			return
