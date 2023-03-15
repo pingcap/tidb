@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -65,7 +66,7 @@ type brieTaskProgress struct {
 	current int64
 
 	// lock is the mutex protected the two fields below.
-	lock sync.Mutex
+	lock syncutil.Mutex
 	// cmd is the name of the step the BRIE task is currently performing.
 	cmd string
 	// total is the total progress of the task.

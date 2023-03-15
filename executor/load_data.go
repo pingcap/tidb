@@ -20,7 +20,6 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,15 +49,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
-
-	// InTest is a flag that bypass gcs authentication in unit tests.
-	InTest bool
 )
 
 // LoadDataExec represents a load data executor.
@@ -200,7 +197,7 @@ func (e *LoadDataExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadDataExec) Open(ctx context.Context) error {
+func (e *LoadDataExec) Open(_ context.Context) error {
 	if e.loadDataWorker.insertColumns != nil {
 		e.loadDataWorker.initEvalBuffer()
 	}
@@ -261,7 +258,7 @@ func NewLoadDataWorker(
 		Columns:        plan.Columns,
 		GenExprs:       plan.GenCols.Exprs,
 		isLoadData:     true,
-		txnInUse:       sync.Mutex{},
+		txnInUse:       syncutil.Mutex{},
 		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&

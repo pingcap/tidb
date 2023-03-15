@@ -15,19 +15,18 @@
 package executor
 
 import (
-	"sync"
-
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // applyCache is used in the apply executor. When we get the same value of the outer row.
 // We fetch the inner rows in the cache not to fetch them in the inner executor.
 type applyCache struct {
-	lock        sync.Mutex
+	lock        syncutil.Mutex
 	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.

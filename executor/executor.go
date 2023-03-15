@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
@@ -148,7 +149,7 @@ const (
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	memory.BaseOOMAction
-	mutex sync.Mutex // For synchronization.
+	mutex syncutil.Mutex // For synchronization.
 }
 
 func init() {
@@ -1843,7 +1844,7 @@ type UnionExec struct {
 	wg          sync.WaitGroup
 	initialized bool
 	mu          struct {
-		*sync.Mutex
+		*syncutil.Mutex
 		maxOpenedChildID int
 	}
 
@@ -1870,7 +1871,7 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
-	e.mu.Mutex = &sync.Mutex{}
+	e.mu.Mutex = &syncutil.Mutex{}
 	e.mu.maxOpenedChildID = -1
 	return nil
 }
