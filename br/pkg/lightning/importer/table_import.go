@@ -1312,7 +1312,7 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 // It returns both a single SQL statement that creates all indexes at once,
 // and a list of SQL statements that creates each index individually.
 func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
-	var addIndexSpecs []string
+	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
 	for _, desiredIdxInfo := range desiredTblInfo.Indices {
 		present := false
 		for _, curIdxInfo := range curTblInfo.Indices {
