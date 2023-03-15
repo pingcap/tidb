@@ -1018,7 +1018,9 @@ func (tr *TableImporter) postProcess(
 			var db *sql.DB
 			db, err = rc.tidbGlue.GetDB()
 			if err == nil {
+				w := rc.addIndexLimit.Apply()
 				err = tr.addIndexes(ctx, db)
+				rc.addIndexLimit.Recycle(w)
 			}
 			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
 			shouldSkipAnalyze = true

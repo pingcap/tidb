@@ -214,11 +214,13 @@ type Controller struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
-	store             storage.ExternalStorage
-	ownStore          bool
-	metaMgrBuilder    metaMgrBuilder
-	errorMgr          *errormanager.ErrorManager
-	taskMgr           taskMetaMgr
+	addIndexLimit     *worker.Pool
+
+	store          storage.ExternalStorage
+	ownStore       bool
+	metaMgrBuilder metaMgrBuilder
+	errorMgr       *errormanager.ErrorManager
+	taskMgr        taskMetaMgr
 
 	diskQuotaLock  sync.RWMutex
 	diskQuotaState atomic.Int32
@@ -446,6 +448,9 @@ func NewImportControllerWithPauser(
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
+		// Currently, TiDB add index acceration doesn't support multiple tables simultaneously.
+		// So we use a single worker to ensure at most one table is adding index at the same time.
+		addIndexLimit: worker.NewPool(ctx, 1, "add-index"),
 
 		store:          p.DumpFileStorage,
 		ownStore:       p.OwnExtStorage,
