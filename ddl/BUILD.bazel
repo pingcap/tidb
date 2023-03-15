@@ -56,7 +56,6 @@ go_library(
     ],
     deps = [
         "//br/pkg/lightning/common",
-        "//br/pkg/utils",
         "//config",
         "//ddl/ingest",
         "//ddl/label",
@@ -257,6 +256,7 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util",
+        "//util/chunk",
         "//util/codec",
         "//util/collate",
         "//util/dbterror",

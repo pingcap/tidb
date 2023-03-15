@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -34,7 +35,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -246,7 +246,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		}
 
 		// Add index engine checkpoint
-		cp.Engines[indexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+		cp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	}
 	task.End(zap.ErrorLevel, err,
 		zap.Int("enginesCnt", len(cp.Engines)),
@@ -324,7 +324,7 @@ func createColumnPermutation(
 }
 
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
-	indexEngineCp := cp.Engines[indexEngineID]
+	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
 		tr.logger.Error("fail to importEngines because indexengine is nil")
 		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
@@ -361,8 +361,8 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := estimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
-			idxEngineCfg.Local = &backend.LocalEngineConfig{
+			threshold := local.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
+			idxEngineCfg.Local = backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
 				CompactThreshold:   threshold,
@@ -373,11 +373,11 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		var indexEngine *backend.OpenedEngine
 		var err error
 		for engineID, engine := range cp.Engines {
-			if engineID == indexEngineID {
+			if engineID == common.IndexEngineID {
 				continue
 			}
 			if engine.Status < checkpoints.CheckpointStatusAllWritten {
-				indexEngine, err = rc.backend.OpenEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+				indexEngine, err = rc.backend.OpenEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -439,7 +439,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 					if err == nil {
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
-						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
+						err = tr.importEngine(ctx, dataClosedEngine, rc, ecp)
 						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.TotalSize())
@@ -466,18 +466,18 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		}
 
 		if indexEngine != nil {
-			closedIndexEngine, restoreErr = indexEngine.Close(ctx, idxEngineCfg)
+			closedIndexEngine, restoreErr = indexEngine.Close(ctx)
 		} else {
-			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 		}
 
-		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, indexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
+		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, common.IndexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
 			return errors.Trace(firstErr(restoreErr, err))
 		}
 	} else if indexEngineCp.Status == checkpoints.CheckpointStatusClosed {
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
-		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
@@ -500,7 +500,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				tr.logger.Warn(errMsg)
 				failpoint.Return(errors.New(errMsg))
 			})
-			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			err = tr.importKV(ctx, closedIndexEngine, rc)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
 				total := rc.status.TotalFileSize.Load()
@@ -568,12 +568,11 @@ func (tr *TableImporter) preprocessEngine(
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
-		Local:     &backend.LocalEngineConfig{},
 	}
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = compactionUpperThreshold
+		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
 	dataEngine, err := rc.backend.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -783,7 +782,7 @@ ChunkLoop:
 		// if process is canceled, we should flush all chunk checkpoints for local backend
 		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
-			if _, err2 := dataEngine.Close(context.Background(), dataEngineCfg); err2 != nil {
+			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
@@ -794,7 +793,7 @@ ChunkLoop:
 		return nil, errors.Trace(err)
 	}
 
-	closedDataEngine, err := dataEngine.Close(ctx, dataEngineCfg)
+	closedDataEngine, err := dataEngine.Close(ctx)
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && isLocalBackend(rc.cfg) {
@@ -817,7 +816,6 @@ func (tr *TableImporter) importEngine(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
-	engineID int32,
 	cp *checkpoints.EngineCheckpoint,
 ) error {
 	if cp.Status >= checkpoints.CheckpointStatusImported {
@@ -825,7 +823,7 @@ func (tr *TableImporter) importEngine(
 	}
 
 	// 1. calling import
-	if err := tr.importKV(ctx, closedEngine, rc, engineID); err != nil {
+	if err := tr.importKV(ctx, closedEngine, rc); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1110,7 +1108,6 @@ func (tr *TableImporter) importKV(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
-	engineID int32,
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
@@ -1135,7 +1132,7 @@ func (tr *TableImporter) importKV(
 		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
-	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
+	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {
 		err = multierr.Append(err, closedEngine.Cleanup(ctx))
@@ -1178,49 +1175,4 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) e
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
-}
-
-// estimate SST files compression threshold by total row file size
-// with a higher compression threshold, the compression time increases, but the iteration time decreases.
-// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
-// we set the upper bound to 32GB to avoid too long compression time.
-// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
-	totalRawFileSize := int64(0)
-	var lastFile string
-	fileSizeMap := make(map[string]int64, len(files))
-	for _, file := range files {
-		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
-	}
-
-	for _, engineCp := range cp.Engines {
-		for _, chunk := range engineCp.Chunks {
-			if chunk.FileMeta.Path == lastFile {
-				continue
-			}
-			size, ok := fileSizeMap[chunk.FileMeta.Path]
-			if !ok {
-				size = chunk.FileMeta.FileSize
-			}
-			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				// parquet file is compressed, thus estimates with a factor of 2
-				size *= 2
-			}
-			totalRawFileSize += size
-			lastFile = chunk.FileMeta.Path
-		}
-	}
-	totalRawFileSize *= factor
-
-	// try restrict the total file number within 512
-	threshold := totalRawFileSize / 512
-	threshold = utils.NextPowerOfTwo(threshold)
-	if threshold < compactionLowerThreshold {
-		// too may small SST files will cause inaccuracy of region range estimation,
-		threshold = compactionLowerThreshold
-	} else if threshold > compactionUpperThreshold {
-		threshold = compactionUpperThreshold
-	}
-
-	return threshold
 }

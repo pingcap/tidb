@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -286,6 +288,14 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("set @@foreign_key_checks=1")
 	tk2.MustExec("use test")
+
+	if !*realtikvtest.WithRealTiKV {
+		// Unistore doesn't write lock records on secondary keys with value unchanged, causing it incorrectly ignores
+		// conflicts between transactions on these kinds of keys. This may make the test fail if fair locking is
+		// enabled. So disable it if it's not running with real tikv.
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	}
 
 	cases := []struct {
 		prepareSQLs []string
@@ -1113,7 +1123,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1(id int primary key, pid int, index(pid), foreign key(pid) references t1(id) on delete cascade);")
 	tk.MustExec("insert into t1 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13),(15,14);")
-	tk.MustGetDBError("delete from t1 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("delete from t1 where id=0;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	tk.MustExec("delete from t1 where id=15;")
 	tk.MustExec("delete from t1 where id=0;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
@@ -1196,7 +1206,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t0 values (0)")
 	tk.MustExec("insert into t1 values (0, 0, 0)")
 	tk.MustExec("insert into t1 (id, pid) values(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13);")
-	tk.MustGetDBError("delete from t0 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("delete from t0 where id=0;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id=14;")
 	tk.MustExec("delete from t0 where id=0;")
@@ -1922,7 +1932,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t%v (id int, unique index(id), foreign key (id) references t%v(id) on update cascade)", i, i-1))
 		tk.MustExec(fmt.Sprintf("insert into t%v values (1)", i))
 	}
-	tk.MustGetDBError("update t0 set id=10 where id=1;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("update t0 set id=10 where id=1;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	tk.MustQuery("select id from t0").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from t15").Check(testkit.Rows("1"))
 	tk.MustExec("drop table if exists t16")
