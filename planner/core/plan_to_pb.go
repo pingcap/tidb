@@ -64,6 +64,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(groupByExprs, storeType)
 	aggExec := &tipb.Aggregation{
 		GroupBy: groupByExprs,
 	}
@@ -103,6 +104,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	aggExec := &tipb.Aggregation{
 		GroupBy: groupByExprs,
 	}
+	updateSFPushDownCount(groupByExprs, storeType)
 	for _, aggFunc := range p.AggFuncs {
 		agg, err := aggregation.AggFuncToPBExpr(ctx, client, aggFunc, storeType)
 		if err != nil {
@@ -133,6 +135,7 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	selExec := &tipb.Selection{
 		Conditions: conditions,
 	}
+	updateSFPushDownCount(conditions, storeType)
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
@@ -145,6 +148,24 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec, ExecutorId: &executorID}, nil
 }
 
+func updateSFPushDownCount(exprs []*tipb.Expr, storeType kv.StoreType) {
+	if storeType == kv.TiFlash {
+		funcCountMap := expression.FindPBScalarFuncs(exprs)
+		for sig, count := range funcCountMap {
+			switch sig {
+			case tipb.ScalarFuncSig_JsonExtractSig:
+				telemetry.CurrentTiflashJSONExtractPushDownCount.Add(count)
+			case tipb.ScalarFuncSig_RegexpLikeSig:
+				telemetry.CurrentTiflashRegexpLikePushDownCount.Add(count)
+			case tipb.ScalarFuncSig_RegexpInStrSig:
+				telemetry.CurrentTiflashRegexpInStrPushDownCount.Add(count)
+			case tipb.ScalarFuncSig_RegexpSubstrSig:
+				telemetry.CurrentTiflashRegexpSubstrPushDownCount.Add(count)
+			}
+		}
+	}
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -153,6 +174,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(exprs, storeType)
 	projExec := &tipb.Projection{
 		Exprs: exprs,
 	}
@@ -325,6 +347,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	updateSFPushDownCount(hashColPb, storeType)
 	ecExec := &tipb.ExchangeSender{
 		Tp:              e.ExchangeType,
 		EncodedTaskMeta: encodedTask,
@@ -456,19 +479,23 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(left, storeType)
 	right, err := expression.ExpressionsToPBList(sc, rightJoinKeys, client)
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(right, storeType)
 
 	leftConditions, err := expression.ExpressionsToPBList(sc, p.LeftConditions, client)
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(leftConditions, storeType)
 	rightConditions, err := expression.ExpressionsToPBList(sc, p.RightConditions, client)
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(rightConditions, storeType)
 
 	var otherConditionsInJoin expression.CNFExprs
 	var otherEqConditionsFromIn expression.CNFExprs
@@ -489,10 +516,12 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(otherConditions, storeType)
 	otherEqConditions, err := expression.ExpressionsToPBList(sc, otherEqConditionsFromIn, client)
 	if err != nil {
 		return nil, err
 	}
+	updateSFPushDownCount(otherEqConditions, storeType)
 
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {

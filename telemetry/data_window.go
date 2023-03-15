@@ -53,6 +53,14 @@ var (
 	CurrentTiflashTableScanCount atomic.Uint64
 	// CurrentTiflashTableScanWithFastScanCount count the number of tiflash table scan and tiflash partition table scan which use fastscan
 	CurrentTiflashTableScanWithFastScanCount atomic.Uint64
+	// CurrentTiflashJSONExtractPushDownCount count the number json_extract functions that are pushed down to tiflash
+	CurrentTiflashJSONExtractPushDownCount atomic.Uint64
+	// CurrentTiflashRegexpLikePushDownCount count the number regexp_like functions that are pushed down to tiflash
+	CurrentTiflashRegexpLikePushDownCount atomic.Uint64
+	// CurrentTiflashRegexpInStrPushDownCount count the number regexp_instr functions that are pushed down to tiflash
+	CurrentTiflashRegexpInStrPushDownCount atomic.Uint64
+	// CurrentTiflashRegexpSubstrPushDownCount count the number regexp_substr functions that are pushed down to tiflash
+	CurrentTiflashRegexpSubstrPushDownCount atomic.Uint64
 )
 
 const (
@@ -97,6 +105,10 @@ type tiFlashUsageData struct {
 	ExchangePushDown      uint64 `json:"exchangePushDown"`
 	TableScan             uint64 `json:"tableScan"`
 	TableScanWithFastScan uint64 `json:"tableScanWithFastScan"`
+	JSONExtractPushDown   uint64 `json:"jsonExtractPushDown"`
+	RegexpLikePushDown    uint64 `json:"regexpLikePushDown"`
+	RegexpInStrPushDown   uint64 `json:"regexpInStrPushDown"`
+	RegexpSubstrPushDown  uint64 `json:"regexpSubstrPushDown"`
 }
 
 // builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
@@ -235,6 +247,10 @@ func RotateSubWindow() {
 			ExchangePushDown:      CurrentTiFlashExchangePushDownCount.Swap(0),
 			TableScan:             CurrentTiflashTableScanCount.Swap(0),
 			TableScanWithFastScan: CurrentTiflashTableScanWithFastScanCount.Swap(0),
+			JSONExtractPushDown:   CurrentTiflashJSONExtractPushDownCount.Swap(0),
+			RegexpLikePushDown:    CurrentTiflashRegexpLikePushDownCount.Swap(0),
+			RegexpInStrPushDown:   CurrentTiflashRegexpInStrPushDownCount.Swap(0),
+			RegexpSubstrPushDown:  CurrentTiflashRegexpSubstrPushDownCount.Swap(0),
 		},
 		CoprCacheUsage: coprCacheUsageData{
 			GTE0:   CurrentCoprCacheHitRatioGTE0Count.Swap(0),
@@ -301,6 +317,10 @@ func getWindowData() []*windowData {
 			thisWindow.TiFlashUsage.ExchangePushDown += rotatedSubWindows[i].TiFlashUsage.ExchangePushDown
 			thisWindow.TiFlashUsage.TableScan += rotatedSubWindows[i].TiFlashUsage.TableScan
 			thisWindow.TiFlashUsage.TableScanWithFastScan += rotatedSubWindows[i].TiFlashUsage.TableScanWithFastScan
+			thisWindow.TiFlashUsage.JSONExtractPushDown += rotatedSubWindows[i].TiFlashUsage.JSONExtractPushDown
+			thisWindow.TiFlashUsage.RegexpLikePushDown += rotatedSubWindows[i].TiFlashUsage.RegexpLikePushDown
+			thisWindow.TiFlashUsage.RegexpInStrPushDown += rotatedSubWindows[i].TiFlashUsage.RegexpInStrPushDown
+			thisWindow.TiFlashUsage.RegexpSubstrPushDown += rotatedSubWindows[i].TiFlashUsage.RegexpSubstrPushDown
 			thisWindow.CoprCacheUsage.GTE0 += rotatedSubWindows[i].CoprCacheUsage.GTE0
 			thisWindow.CoprCacheUsage.GTE1 += rotatedSubWindows[i].CoprCacheUsage.GTE1
 			thisWindow.CoprCacheUsage.GTE10 += rotatedSubWindows[i].CoprCacheUsage.GTE10

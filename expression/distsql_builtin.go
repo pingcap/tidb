@@ -1103,6 +1103,28 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	}, nil
 }
 
+func findSinglePBScalarFuncs(expr *tipb.Expr, funcCountMap map[tipb.ScalarFuncSig]uint64) {
+	if expr.Tp != tipb.ExprType_ScalarFunc {
+		return
+	}
+	if _, found := funcCountMap[expr.Sig]; !found {
+		funcCountMap[expr.Sig] = 0
+	}
+	funcCountMap[expr.Sig] = funcCountMap[expr.Sig] + 1
+	for _, child := range expr.Children {
+		findSinglePBScalarFuncs(child, funcCountMap)
+	}
+}
+
+// FindPBScalarFuncs finds all scalar functions contained in pbExprs
+func FindPBScalarFuncs(pbExprs []*tipb.Expr) map[tipb.ScalarFuncSig]uint64 {
+	funcCountMap := make(map[tipb.ScalarFuncSig]uint64)
+	for _, expr := range pbExprs {
+		findSinglePBScalarFuncs(expr, funcCountMap)
+	}
+	return funcCountMap
+}
+
 // PBToExprs converts pb structures to expressions.
 func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) ([]Expression, error) {
 	exprs := make([]Expression, 0, len(pbExprs))

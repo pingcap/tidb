@@ -104,3 +104,47 @@ func TestTiflashUsage(t *testing.T) {
 	require.Equal(t, telemetry.CurrentTiflashTableScanCount.String(), "2")
 	require.Equal(t, telemetry.CurrentTiflashTableScanWithFastScanCount.String(), "1")
 }
+
+func TestTiflashFunctionPushDownUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id json, expr varchar(30), pattern varchar(30), match_type varchar(30))")
+	tk.MustExec("alter table t set tiflash replica 1")
+
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, _ := is.SchemaByName(model.NewCIStr("test"))
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	telemetry.CurrentTiFlashPushDownCount.Swap(0)
+	telemetry.CurrentTiflashJSONExtractPushDownCount.Swap(0)
+	telemetry.CurrentTiflashRegexpLikePushDownCount.Swap(0)
+	telemetry.CurrentTiflashRegexpSubstrPushDownCount.Swap(0)
+	telemetry.CurrentTiflashRegexpInStrPushDownCount.Swap(0)
+
+	require.Equal(t, telemetry.CurrentTiflashJSONExtractPushDownCount.String(), "0")
+	require.Equal(t, telemetry.CurrentTiflashRegexpSubstrPushDownCount.String(), "0")
+	require.Equal(t, telemetry.CurrentTiflashRegexpInStrPushDownCount.String(), "0")
+	require.Equal(t, telemetry.CurrentTiflashRegexpLikePushDownCount.String(), "0")
+
+	tk.MustExec("set session tidb_isolation_read_engines='tiflash';")
+	tk.MustQuery(`select json_extract(id, null) from t`)
+	tk.MustQuery(`select regexp_substr(expr, pattern, 1, 1, match_type) from t`)
+	tk.MustQuery(`select regexp_instr(expr, pattern, 1, 1, 0, match_type) from t`)
+	tk.MustQuery(`select regexp_like(expr, pattern, match_type) from t`)
+
+	tk.Session().Close()
+	require.Equal(t, telemetry.CurrentTiflashJSONExtractPushDownCount.String(), "1")
+	require.Equal(t, telemetry.CurrentTiflashRegexpSubstrPushDownCount.String(), "1")
+	require.Equal(t, telemetry.CurrentTiflashRegexpInStrPushDownCount.String(), "1")
+	require.Equal(t, telemetry.CurrentTiflashRegexpLikePushDownCount.String(), "1")
+}
