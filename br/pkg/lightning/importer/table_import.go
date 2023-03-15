@@ -1296,6 +1296,11 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 
 		if m, ok := metric.FromContext(ctx); ok {
 			totalRows := int64(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+			progress := float64(ddlStatus.rowCount) / float64(totalRows)
+			if progress > 1 {
+				progress = 1
+			}
+			web.BroadcastTableProgress(tr.tableName, "add-index", progress)
 			logger.Info("progress", zap.Int64("total-rows", totalRows), zap.Int64("index-rows", ddlStatus.rowCount))
 		}
 
