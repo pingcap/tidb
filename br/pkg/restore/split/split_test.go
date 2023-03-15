@@ -65,9 +65,8 @@ func TestScanRegionBackOfferWithStopRetry(t *testing.T) {
 
 		if counter < 5 {
 			return berrors.ErrPDBatchScanRegion
-		} else {
-			return berrors.ErrKVUnknown
 		}
+		return berrors.ErrKVUnknown
 	}, bo)
 	require.Error(t, err)
 	require.Equal(t, counter, 6)
