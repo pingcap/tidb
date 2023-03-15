@@ -1210,7 +1210,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	}()
 
 	tblInfo := tr.tableInfo
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	tableName := tr.tableName
 
 	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
 	if len(multiSQLs) == 0 {
@@ -1292,6 +1292,11 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 		if ddlStatus == nil {
 			logger.Warn("ddl job is not found, maybe it is not created")
 			return originErr
+		}
+
+		if m, ok := metric.FromContext(ctx); ok {
+			totalRows := int64(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+			logger.Info("progress", zap.Int64("total-rows", totalRows), zap.Int64("index-rows", ddlStatus.rowCount))
 		}
 
 		switch state := ddlStatus.state; state {

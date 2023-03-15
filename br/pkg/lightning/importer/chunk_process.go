@@ -518,6 +518,7 @@ func (cr *chunkProcessor) deliverLoop(
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
+				m.RowsCounter.WithLabelValues(t.tableName).Add(float64(dataChecksum.SumKVS()))
 			} else {
 				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
 					zap.Int64("start", lowOffset))
