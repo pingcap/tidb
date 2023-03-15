@@ -662,10 +662,15 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 }
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
-	if len(is.IdxCols) == 0 { // return full range when PhysicalIndexScan has no IdxCols
-		is.Ranges = ranger.FullRange()
-		return
+	if len(is.IdxCols) == 0 {
+		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
+			is.Ranges = ranger.FullRange()
+			return
+		} else {
+			return errors.New("unexpected range for PhysicalIndexScan")
+		}
 	}
+
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
