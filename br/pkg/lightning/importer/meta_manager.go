@@ -597,7 +597,7 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSou
 		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, tikv_source_bytes, tiflash_source_bytes) values (?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
+	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, tikv_source_bytes, tiflash_source_bytes) values (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
 	err := exec.Exec(ctx, "init task meta", stmt, m.taskID, taskMetaStatusInitial.String(), tikvSourceSize, tiflashSourceSize, taskStateNormal)
 	return errors.Trace(err)
 }
@@ -687,7 +687,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		}
 		for _, task := range newTasks {
 			// nolint:gosec
-			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
+			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)", m.tableName)
 			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.tikvSourceBytes, task.tiflashSourceBytes, task.tikvAvail, task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
