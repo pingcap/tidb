@@ -46,18 +46,20 @@ const (
 // TaskStep is the step of task.
 const (
 	StepInit int64 = -1
+	StepOne  int64 = 1
 )
 
 // Task represents the task of distribute framework.
 type Task struct {
-	ID           int64
-	Type         string
-	State        string
-	Step         int64
-	DispatcherID string
-	Concurrency  uint64
-	StartTime    time.Time
-	Meta         []byte
+	ID              int64
+	Type            string
+	State           string
+	Step            int64
+	DispatcherID    string
+	Concurrency     uint64
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	Meta            []byte
 }
 
 // Subtask represents the subtask of distribute framework.
@@ -68,10 +70,46 @@ type Subtask struct {
 	TaskID      int64
 	State       string
 	SchedulerID string
-	StartTime   time.Time
+	StartTime   uint64
+	EndTime     time.Time
 	Meta        []byte
+}
+
+// NewSubtask create a new subtask.
+func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+	return &Subtask{
+		Type:        tp,
+		TaskID:      taskID,
+		SchedulerID: schedulerID,
+		Meta:        meta,
+	}
 }
 
 // MinimalTask is the minimal task of distribute framework.
 // Each subtask is divided into multiple minimal tasks by scheduler.
 type MinimalTask interface{}
+
+const (
+	// TaskTypeExample is TaskType of Example.
+	TaskTypeExample = "Example"
+)
+
+// Type2Int converts task type to int.
+func Type2Int(t string) int {
+	switch t {
+	case TaskTypeExample:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// Int2Type converts int to task type.
+func Int2Type(i int) string {
+	switch i {
+	case 1:
+		return TaskTypeExample
+	default:
+		return ""
+	}
+}

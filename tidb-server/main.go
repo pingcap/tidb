@@ -854,17 +854,15 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
+// The amount of time we wait for the ongoing txt to finished.
+// We should better provider a dynamic way to set this value.
 var gracefulCloseConnectionsTimeout = 15 * time.Second
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
 	dom.StopAutoAnalyze()
 
-	var drainClientWait time.Duration
-	if graceful {
-		drainClientWait = 1<<63 - 1
-	} else {
-		drainClientWait = gracefulCloseConnectionsTimeout
-	}
+	drainClientWait := gracefulCloseConnectionsTimeout
+
 	cancelClientWait := time.Second * 1
 	svr.DrainClients(drainClientWait, cancelClientWait)
 

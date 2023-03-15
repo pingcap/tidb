@@ -1719,7 +1719,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	} else {
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
-	if len(stmts) != 1 {
+	if len(stmts) != 1 && err == nil {
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
@@ -2193,7 +2193,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().ResourceGroupName
-	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+	if len(resourceGroupName) > 0 {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
@@ -3711,7 +3711,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
 	})

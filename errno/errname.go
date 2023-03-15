@@ -1052,6 +1052,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
 	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
 	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
+	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
