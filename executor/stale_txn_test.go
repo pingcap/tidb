@@ -472,7 +472,9 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
+	time.Sleep(100*time.Millisecond)
 	tk.MustExec("alter table t add c int")
+	time.Sleep(300*time.Millisecond)
 
 	// confirm schema changed
 	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
@@ -484,6 +486,7 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 
 	// schema changed back to the newest
 	tk.MustExec("commit")
+	tk.Se.PrepareStmt("select 1")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 
 	// select does not affect the infoschema
@@ -844,7 +847,9 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
+	time.Sleep(100*time.Millisecond)
 	tk.MustExec("alter table t add c int")
+	time.Sleep(300*time.Millisecond)
 
 	// confirm schema changed
 	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
@@ -852,6 +857,7 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(schemaVer1, Less, schemaVer2)
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+
 	tk.MustExec("select * from t;")
 	tk.MustExec("alter table t add d int")
 	schemaVer3 := tk.Se.GetInfoSchema().SchemaMetaVersion()
@@ -863,6 +869,7 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	tk.MustExec("begin;")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 	tk.MustExec("commit")
+	tk.Se.PrepareStmt("select 1")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
 
