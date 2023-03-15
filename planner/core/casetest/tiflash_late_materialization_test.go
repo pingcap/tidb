@@ -50,7 +50,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		}
 	}
 	// Enable late materialization.
-	tk.MustExec("set @@tidb_enable_late_materialization = on")
+	tk.MustExec("set @@tidb_opt_enable_late_materialization = on")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
 	var input []string

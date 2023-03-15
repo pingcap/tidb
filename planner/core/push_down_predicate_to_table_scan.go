@@ -48,6 +48,8 @@ type expressionGroup struct {
 	selectivity float64
 }
 
+// predicatePushDownToTableScan is used find the selection just above the table scan
+// and try to push down the predicates to the table scan.
 func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
@@ -70,11 +72,8 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 }
 
-/**
- * @brief: This function is used to remove the empty selection in plan
- * 		   when late materialization is enabled and all conditions are pushed down.
- * @param: plan: the physical plan
- */
+// removeEmptySelection removes the empty selection in plan when late materialization is enabled and all conditions of a selection are pushed down.
+// @param: plan: the physical plan
 func removeEmptySelection(plan PhysicalPlan) {
 	if tableReader, isTableReader := plan.(*PhysicalTableReader); isTableReader && tableReader.StoreType == kv.TiFlash {
 		if selection, isSelection := tableReader.tablePlan.(*PhysicalSelection); isSelection && len(selection.Conditions) == 0 {
@@ -111,16 +110,16 @@ func removeEmptySelection(plan PhysicalPlan) {
 	}
 }
 
-/**
- * @brief: This function is used to transform the columns to a string of "0" and "1".
- * @param: cols: the columns of a Expression
- * @param: totalColumnCount: the total number of columns in the tablescan
- * @example: the columns of tablescan are [a, b, c, d, e, f, g, h]
- * 		 	 the expression are ["a > 1", "c > 1", "e > 1 or g > 1"]
- *           so the columns of the expression are [a, c, e, g] and the totalColumnCount is 8
- *           the return value is "10101010"
- * @return: the string of "0" and "1"
- */
+// transformColumnsToCode is used to transform the columns to a string of "0" and "1".
+// @param: cols: the columns of a Expression
+// @param: totalColumnCount: the total number of columns in the tablescan
+// @example: the columns of tablescan are [a, b, c, d, e, f, g, h]
+//
+//			 	 the expression are ["a > 1", "c > 1", "e > 1 or g > 1"]
+//	          so the columns of the expression are [a, c, e, g] and the totalColumnCount is 8
+//	          the return value is "10101010"
+//
+// @return: the string of "0" and "1"
 func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) string {
 	code := make([]byte, totalColumnCount)
 	for _, col := range cols {
@@ -129,17 +128,21 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 	return string(code)
 }
 
-/**
- *
- * @brief: This function is used to group the conditions by the column they use
- *         and sort the groups by the selectivity of the conditions in the group.
- * @param: conds: the conditions to be grouped
- * @return: the groups of conditions sorted by the selectivity of the conditions in the group
- * @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2]
- *           return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
- * @note: when the selectivity of one group is larger than the threshold,
- *  	  we will remove it from the returned result.
- */
+// groupByColumnsSortBySelectivity is used to group the conditions by the column they use
+// and sort the groups by the selectivity of the conditions in the group.
+// @param: conds: the conditions to be grouped
+// @return: the groups of conditions sorted by the selectivity of the conditions in the group
+// @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2]
+//
+//	return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
+//
+// @note: when the selectivity of one group is larger than the threshold,
+//
+//	we will remove it from the returned result.
+//
+// @note: when the number of columns of one group is larger than the threshold,
+//
+//	we will remove it from the returned result.
 func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
@@ -190,12 +193,9 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	return exprGroups
 }
 
-/**
- * @brief: This function is used to check if the condition contain heavy cost functions.
- * @param: cond: condition of PhysicalSelection to be checked
- * @note: heavy cost functions are functions that may cause a lot of memory allocation or disk IO.
- * 		  For example, JSON functions.(To be supplemented)
- */
+// withHeavyCostFunction is used to check if the condition contain heavy cost functions.
+// @param: cond: condition of PhysicalSelection to be checked
+// @note: heavy cost functions are functions that may cause a lot of memory allocation or disk IO.
 func withHeavyCostFunction(cond expression.Expression) bool {
 	if binop, ok := cond.(*expression.ScalarFunction); ok {
 		switch binop.FuncName.L {
@@ -221,11 +221,9 @@ func withHeavyCostFunction(cond expression.Expression) bool {
 	return false
 }
 
-/**
- * @brief: This function is used to remove the conditions that needed to be pushed down.
- * @param: physicalSelection: the PhysicalSelection to be modified
- * @param: exprs: the conditions to be removed
- */
+// removeSpecificExprsFromSelection is used to remove the conditions that needed to be pushed down.
+// @param: physicalSelection: the PhysicalSelection to be modified
+// @param: exprs: the conditions to be removed
 func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
 	newConds := make([]expression.Expression, 0, len(physicalSelection.Conditions))
 	for _, cond := range physicalSelection.Conditions {
@@ -236,12 +234,10 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 	physicalSelection.Conditions = newConds
 }
 
-/**
- * @brief: This function is used to push down the some filter conditions of the selection to the tablescan.
- * @param: sctx: the session context
- * @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
- * @param: physicalTableScan: the PhysicalTableScan to be pushed down to
- */
+// predicatePushDownToTableScanImpl is used to push down the some filter conditions of the selection to the tablescan.
+// @param: sctx: the session context
+// @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
+// @param: physicalTableScan: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
 	if physicalTableScan.tblColHists.Count <= tiflashDataPackSize {
@@ -295,7 +291,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Info("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", expression.ExplainExpressionList(selectedConds, physicalSelection.Schema())))
+	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", expression.ExplainExpressionList(selectedConds, physicalSelection.Schema())))
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
