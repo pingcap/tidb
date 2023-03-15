@@ -1776,7 +1776,7 @@ loop:
 				switch merr.Number {
 				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
 					remainIndexes = append(remainIndexes, idxInfo)
-					logger.Info("can't drop index, skip", zap.Error(err))
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
 					continue loop
 				}
 			}

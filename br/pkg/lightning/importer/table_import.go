@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/parser/format"
+
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1225,7 +1227,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-	logger.Warn("cannot add all indexes in one statement, try adding them one by one", zap.Strings("sqls", sqls), zap.Error(err))
+	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", sqls), zap.Error(err))
 
 	for _, sql := range sqls {
 		if err := tr.executeDDL(ctx, db, sql); err != nil {
@@ -1362,14 +1364,18 @@ func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableI
 			}
 			colStrs = append(colStrs, colStr)
 		}
+		fmt.Fprintf(&batchSQLBuf, "(%s)", strings.Join(colStrs, ","))
+		fmt.Fprintf(&singleSQLBuf, "(%s)", strings.Join(colStrs, ","))
 
-		batchSQLBuf.WriteByte('(')
-		batchSQLBuf.WriteString(strings.Join(colStrs, ","))
-		batchSQLBuf.WriteByte(')')
+		if desiredIdxInfo.Invisible {
+			fmt.Fprint(&batchSQLBuf, " INVISIBLE")
+			fmt.Fprint(&singleSQLBuf, " INVISIBLE")
+		}
+		if desiredIdxInfo.Comment != "" {
+			fmt.Fprintf(&batchSQLBuf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+			fmt.Fprintf(&singleSQLBuf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+		}
 
-		singleSQLBuf.WriteByte('(')
-		singleSQLBuf.WriteString(strings.Join(colStrs, ","))
-		singleSQLBuf.WriteByte(')')
 		sqls = append(sqls, singleSQLBuf.String())
 	}
 	return batchSQLBuf.String(), sqls

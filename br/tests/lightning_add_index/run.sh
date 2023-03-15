@@ -15,3 +15,15 @@
 # limitations under the License.
 
 set -eu
+
+LOG_FILE1="$TEST_DIR/lightning-add-index1.log"
+LOG_FILE2="$TEST_DIR/lightning-add-index2.log"
+
+run_lightning --config "tests/$TEST_NAME/config1.toml" --log-file "$LOG_FILE1"
+run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;"
+run_sql "SHOW CREATE TABLE add_index.multi_indexes;"
+
+run_sql "DROP DATABASE add_index;"
+run_lightning --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;"
+run_sql "SHOW CREATE TABLE add_index.multi_indexes;"
