@@ -1,2 +1,3 @@
 [tikv-importer]
-backend = 'tidb'
+backend = 'local'
+add-index-by-sql = false
