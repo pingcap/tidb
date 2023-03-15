@@ -1206,8 +1206,8 @@ func (local *local) executeJob(
 					// The available disk percent of TiKV
 					ratio := store.Status.Available * 100 / store.Status.Capacity
 					if ratio < 10 {
-						return errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
-							store.Store.Address, store.Status.Available, store.Status.Capacity)
+						return errors.Errorf("Need %s storage, but the TiKV node(%s) has only %s left. Please expand the storage capacity and try again later.",
+							units.BytesSize(float64(store.Status.Capacity)), store.Store.Address, units.BytesSize(float64(store.Status.Available)))
 					}
 				}
 				break

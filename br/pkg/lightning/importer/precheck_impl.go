@@ -320,7 +320,7 @@ func (ci *regionDistributionCheckItem) GetCheckItemID() CheckItemID {
 func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: Warn,
 		Passed:   true,
 		Message:  "Cluster region distribution is balanced",
 	}
