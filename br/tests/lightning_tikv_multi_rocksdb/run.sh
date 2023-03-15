@@ -24,7 +24,7 @@ start_services
 check_cluster_version 4 0 0 'local backend' || exit 0
 
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
-run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml" -L debug
+run_lightning --backend local --log-file "$TEST_DIR/lightning-local.log" -L debug
 
 # Check that everything is correctly imported
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
