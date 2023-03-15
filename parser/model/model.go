@@ -1843,14 +1843,42 @@ type ResourceGroupSettings struct {
 	BurstLimit       int64  `json:"burst_limit"`
 }
 
+func NewResourceGroupSettings() *ResourceGroupSettings {
+	return &ResourceGroupSettings{
+		RURate:           0,
+		Priority:         MediumPriorityValue,
+		CPULimiter:       "",
+		IOReadBandwidth:  "",
+		IOWriteBandwidth: "",
+		BurstLimit:       0,
+	}
+}
+
+func PriorityValueToName(value uint64) string {
+	switch value {
+	case LowPriorityValue:
+		return "LOW"
+	case MediumPriorityValue:
+		return "MEDIUM"
+	case HighPriorityValue:
+		return "HIGH"
+	default:
+		return "MEDIUM"
+	}
+}
+
+const (
+	LowPriorityValue = 0
+	MediumPriorityValue = 8
+	HighPriorityValue = 16
+)
+
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
-	if p.Priority != 0 {
-		writeSettingIntegerToBuilder(sb, "PRIORITY", p.Priority)
-	}
+	writeSettingStringToBuilder(sb, "PRIORITY", PriorityValueToName(p.Priority))
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
 	}

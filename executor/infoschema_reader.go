@@ -3339,6 +3339,12 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	for _, group := range resourceGroups {
 		//mode := ""
 		burstable := "NO"
+		priority := "MEDIUM"
+		if group.Priority == 0 {
+			priority = "LOW"	
+		} else if group.Priority == 16 {
+			priority = "HIGH"
+		}
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
@@ -3347,7 +3353,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
-				group.Priority,
+				priority,
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3356,7 +3362,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				nil,
-				nil,
+				nil,	
 				nil,
 			)
 			rows = append(rows, row)

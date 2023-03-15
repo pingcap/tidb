@@ -2139,7 +2139,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		case ResourcePriority:
 			ctx.WriteKeyWord("PRIORITY ")
 			ctx.WritePlain("= ")
-			ctx.WritePlainf("%d", n.UintValue)
+			ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
 		case ResourceUnitCPU:
 			ctx.WriteKeyWord("CPU ")
 			ctx.WritePlain("= ")
