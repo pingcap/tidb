@@ -34,9 +34,13 @@ var (
 )
 
 var (
+	// newPool is used to create a new Pool.
+	// use this variable to mock the Pool in unit test.
 	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return spool.NewPool(name, size, component, options...)
 	}
+	// newScheduler is used to create a new InternalScheduler.
+	// use this variable to mock the InternalScheduler in unit test.
 	newScheduler = NewInternalScheduler
 )
 
@@ -156,7 +160,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 	}
 }
 
-// onRunnableTask handles runnable tasks.
+// onRunnableTasks handles runnable tasks.
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
