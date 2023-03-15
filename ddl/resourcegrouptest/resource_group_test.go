@@ -17,6 +17,7 @@ package resourcegrouptest_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -38,16 +39,18 @@ func TestResourceGroupBasic(t *testing.T) {
 	re := require.New(t)
 
 	hook := &callback.TestDDLCallback{Do: dom}
-	var groupID int64
+	var groupID atomic.Int64
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// job.SchemaID will be assigned when the group is created.
 		if (job.SchemaName == "x" || job.SchemaName == "y") && job.Type == model.ActionCreateResourceGroup && job.SchemaID != 0 {
-			groupID = job.SchemaID
+			groupID.Store(job.SchemaID)
 			return
 		}
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
+
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 YES"))
 
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
@@ -57,11 +60,15 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
+	tk.MustExec("alter resource group `default` ru_per_sec=10000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 NO"))
+	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
+
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "x", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(1000), groupInfo.RURate)
 	}
 	// Check the group is correctly reloaded in the information schema.
@@ -105,7 +112,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(4000), groupInfo.RURate)
 		require.Equal(t, int64(4000), groupInfo.BurstLimit)
 	}
@@ -115,7 +122,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
-		require.Equal(t, groupID, groupInfo.ID)
+		require.Equal(t, groupID.Load(), groupInfo.ID)
 		require.Equal(t, uint64(5000), groupInfo.RURate)
 		require.Equal(t, int64(-1), groupInfo.BurstLimit)
 	}
@@ -134,7 +141,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
 	groups, err := infosync.ListResourceGroups(context.TODO())
-	require.Equal(t, 0, len(groups))
+	require.Equal(t, 1, len(groups))
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
@@ -154,7 +161,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 YES"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
 
-	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("3"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")

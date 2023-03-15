@@ -56,6 +56,7 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
         "@com_github_gogo_protobuf//proto",
+        "@com_github_google_uuid//:uuid",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
