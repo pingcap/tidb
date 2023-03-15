@@ -46,5 +46,29 @@ func TestScanRegionBackOfferWithFail(t *testing.T) {
 		return berrors.ErrPDBatchScanRegion
 	}, bo)
 	require.Error(t, err)
-	require.Equal(t, counter, 150)
+	require.Equal(t, counter, split.ScanRegionAttemptTimes)
+}
+
+func TestScanRegionBackOfferWithStopRetry(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/hint-scan-region-backoff", "return(true)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/hint-scan-region-backoff")
+	}()
+
+	var counter int
+	bo := split.NewScanRegionBackoffer()
+
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() {
+			counter++
+		}()
+
+		if counter < 5 {
+			return berrors.ErrPDBatchScanRegion
+		} else {
+			return berrors.ErrKVUnknown
+		}
+	}, bo)
+	require.Error(t, err)
+	require.Equal(t, counter, 6)
 }
