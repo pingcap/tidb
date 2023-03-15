@@ -600,10 +600,10 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-			Count:             500000,
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsVer:          2,
+			Count:     500000,
+			Histogram: *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
+			Info:      tblInfo.Columns[i-1],
+			StatsVer:  2,
 		}
 	}
 	generateMapsForMockStatsTbl(mockStatsTbl)
