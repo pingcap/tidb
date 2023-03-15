@@ -136,20 +136,20 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 }
 
 // Tune changes the capacity of this pool, note that it is noneffective to the infinite or pre-allocation pool.
-func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
+func (p *Pool[T, U, C, CT, TF]) Tune(size int32) {
 	capacity := p.Cap()
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
-	if p.taskManager.GetOriginConcurrency()+int32(util.MaxOverclockCount) < int32(size) {
+	if p.taskManager.GetOriginConcurrency()+int32(util.MaxOverclockCount) < size {
 		return
 	}
 	p.SetLastTuneTs(time.Now())
-	p.capacity.Store(int32(size))
+	p.capacity.Store(size)
 	p.concurrencyMetrics.Set(float64(size))
 	if size > capacity {
-		for i := 0; i < size-capacity; i++ {
-			if tid, boostTask := p.taskManager.Overclock(size); boostTask != nil {
+		for i := int32(0); i < size-capacity; i++ {
+			if tid, boostTask := p.taskManager.Overclock(int(size)); boostTask != nil {
 				p.addWaitingTask()
 				newTask := boostTask.Clone()
 				p.taskManager.AddSubTask(tid, newTask)
@@ -164,17 +164,17 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 		return
 	}
 	if size < capacity {
-		p.taskManager.Downclock(size)
+		p.taskManager.Downclock(int(size))
 	}
 }
 
 // Running returns the number of workers currently running.
-func (p *Pool[T, U, C, CT, TF]) Running() int {
-	return int(p.running.Load())
+func (p *Pool[T, U, C, CT, TF]) Running() int32 {
+	return p.running.Load()
 }
 
 // Free returns the number of available goroutines to work, -1 indicates this pool is unlimited.
-func (p *Pool[T, U, C, CT, TF]) Free() int {
+func (p *Pool[T, U, C, CT, TF]) Free() int32 {
 	c := p.Cap()
 	if c < 0 {
 		return -1
@@ -193,8 +193,8 @@ func (p *Pool[T, U, C, CT, TF]) IsClosed() bool {
 }
 
 // Cap returns the capacity of this pool.
-func (p *Pool[T, U, C, CT, TF]) Cap() int {
-	return int(p.capacity.Load())
+func (p *Pool[T, U, C, CT, TF]) Cap() int32 {
+	return p.capacity.Load()
 }
 
 func (p *Pool[T, U, C, CT, TF]) addRunning(delta int) {
@@ -412,7 +412,7 @@ func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) 
 			return
 		}
 
-		var nw int
+		var nw int32
 		if nw = p.Running(); nw == 0 { // awakened by the scavenger
 			p.lock.Unlock()
 			spawnWorker()

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
@@ -78,7 +79,7 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
+	txn.exitFairLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
@@ -88,7 +89,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
+	txn.exitFairLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
@@ -356,11 +357,11 @@ func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
 	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
 }
 
-func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, keys [][]byte) {
+func (txn *tikvTxn) exitFairLockingIfInapplicable(ctx context.Context, keys [][]byte) {
 	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
-		// Only allow aggressive locking if it only needs to lock one key. Considering that it's possible that a
-		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in aggressive
-		// locking mode), here we exit aggressive locking mode by calling DoneAggressiveLocking instead of cancelling.
+		// Only allow fair locking if it only needs to lock one key. Considering that it's possible that a
+		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in fair
+		// locking mode), here we exit fair locking mode by calling DoneFairLocking instead of cancelling.
 		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
 		// as if they were locked in normal way.
 		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
@@ -370,6 +371,7 @@ func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, key
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
+		failpoint.Inject("lockedWithConflictOccurs", func() {})
 		var bufTableID, bufRest bytes.Buffer
 		foundKey := false
 		for k, v := range lockCtx.Values {
@@ -390,29 +392,35 @@ func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockC
 	return nil
 }
 
-// StartAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+// StartFairLocking adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
 // TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
-func (txn *tikvTxn) StartAggressiveLocking() error {
+// TODO: Rename aggressive locking in client-go to fair locking.
+func (txn *tikvTxn) StartFairLocking() error {
 	txn.KVTxn.StartAggressiveLocking()
 	return nil
 }
 
-// RetryAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
-func (txn *tikvTxn) RetryAggressiveLocking(ctx context.Context) error {
+// RetryFairLocking adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
+func (txn *tikvTxn) RetryFairLocking(ctx context.Context) error {
 	txn.KVTxn.RetryAggressiveLocking(ctx)
 	return nil
 }
 
-// CancelAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
-func (txn *tikvTxn) CancelAggressiveLocking(ctx context.Context) error {
+// CancelFairLocking adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
+func (txn *tikvTxn) CancelFairLocking(ctx context.Context) error {
 	txn.KVTxn.CancelAggressiveLocking(ctx)
 	return nil
 }
 
-// DoneAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
-func (txn *tikvTxn) DoneAggressiveLocking(ctx context.Context) error {
+// DoneFairLocking adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
+func (txn *tikvTxn) DoneFairLocking(ctx context.Context) error {
 	txn.KVTxn.DoneAggressiveLocking(ctx)
 	return nil
+}
+
+// IsInFairLockingMode adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
+func (txn *tikvTxn) IsInFairLockingMode() bool {
+	return txn.KVTxn.IsInAggressiveLockingMode()
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

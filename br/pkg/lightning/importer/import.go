@@ -82,7 +82,7 @@ const (
 )
 
 const (
-	TaskMetaTableName  = "task_meta"
+	TaskMetaTableName  = "task_meta_v2"
 	TableMetaTableName = "table_meta"
 	// CreateTableMetadataTable stores the per-table sub jobs information used by TiDB Lightning
 	CreateTableMetadataTable = `CREATE TABLE IF NOT EXISTS %s (
@@ -107,8 +107,10 @@ const (
 		pd_cfgs VARCHAR(2048) NOT NULL DEFAULT '',
 		status  VARCHAR(32) NOT NULL,
 		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
-		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
-		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tikv_source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tiflash_source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tikv_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		tiflash_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 )
@@ -1975,6 +1977,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
 	estimatedDataSizeWithIndex := estimatedSizeResult.SizeWithIndex
+	estimatedTiflashDataSize := estimatedSizeResult.TiFlashSize
 
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if estimatedSizeResult.HasUnsortedBigTables {
@@ -1999,7 +2002,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 		}
 		if !taskExist {
-			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex); err != nil {
+			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex, estimatedTiflashDataSize); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
 		}

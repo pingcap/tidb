@@ -381,19 +381,19 @@ func TestCheckTasksExclusively(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from `test`.`t1` FOR UPDATE").
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "source_bytes", "cluster_avail"}).
-			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("2", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("3", "", taskMetaStatusInitial.String(), "0", "0", "0").
-			AddRow("4", "", taskMetaStatusInitial.String(), "0", "0", "0"))
+	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from `test`.`t1` FOR UPDATE").
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "tikv_source_bytes", "tiflash_source_bytes", "tiflash_avail", "tiflash_avail"}).
+			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("2", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("3", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
+			AddRow("4", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0"))
 
-	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
-		WithArgs(int64(2), "", taskMetaStatusInitial.String(), int(0), uint64(2048), uint64(0)).
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(2), "", taskMetaStatusInitial.String(), int(0), uint64(2048), uint64(2048), uint64(0), uint64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
-		WithArgs(int64(3), "", taskMetaStatusInitial.String(), int(0), uint64(3072), uint64(0)).
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(3), "", taskMetaStatusInitial.String(), int(0), uint64(3072), uint64(3072), uint64(0), uint64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mockDB.ExpectCommit()
 
@@ -409,7 +409,8 @@ func TestCheckTasksExclusively(t *testing.T) {
 		var newTasks []taskMeta
 		for j := 2; j < 4; j++ {
 			task := tasks[j]
-			task.sourceBytes = uint64(j * 1024)
+			task.tikvSourceBytes = uint64(j * 1024)
+			task.tiflashSourceBytes = uint64(j * 1024)
 			newTasks = append(newTasks, task)
 		}
 		return newTasks, nil
@@ -437,7 +438,7 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	err = metaMgr.InitTask(context.Background(), 1<<30)
+	err = metaMgr.InitTask(context.Background(), 1<<30, 1<<30)
 	require.NoError(t, err)
 
 	ok, err = metaMgr.CheckTaskExist(context.Background())
@@ -446,7 +447,8 @@ func TestSingleTaskMetaMgr(t *testing.T) {
 
 	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
 		require.Len(t, tasks, 1)
-		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		require.Equal(t, uint64(1<<30), tasks[0].tikvSourceBytes)
+		require.Equal(t, uint64(1<<30), tasks[0].tiflashSourceBytes)
 		return nil, nil
 	})
 	require.NoError(t, err)
