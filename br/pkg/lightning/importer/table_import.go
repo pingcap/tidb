@@ -1217,11 +1217,12 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		return nil
 	}
 
+	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL)
-	if err == nil || shouldIgnoreDDLError(err) {
+	if err == nil || !isDupKeyError(err) {
 		return nil
 	}
-	// No need to retry if there is only one statement.
+	// No need to retry one by one if there is only one statement.
 	if len(multiSQLs) == 1 {
 		return err
 	}
@@ -1231,7 +1232,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	for _, ddl := range multiSQLs {
 		if err := tr.executeDDL(ctx, db, ddl); err != nil {
-			if shouldIgnoreDDLError(err) {
+			if isDupKeyError(err) {
 				continue
 			}
 			return err
@@ -1375,7 +1376,7 @@ func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableI
 	return singleSQL, multiSQLs
 }
 
-func shouldIgnoreDDLError(err error) bool {
+func isDupKeyError(err error) bool {
 	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 		switch merr.Number {
 		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
