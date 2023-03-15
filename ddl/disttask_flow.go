@@ -121,7 +121,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 }
 
 // ProcessErrFlow processes the error flow
-func (h *litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
+func (_ *litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
 	var globalTaskMeta LitBackfillGlobalTaskMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
