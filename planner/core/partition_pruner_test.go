@@ -696,7 +696,12 @@ func TestIssue42135(t *testing.T) {
 	tk.MustQuery(`select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows("1 1 1 501 1 1 1 1 1 1 501"))
 	tk.MustQuery(`explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows(""+
 		"HashJoin 1.00 root  inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]",
-		`xxx`))
+		`├─TableReader(Build) 1.00 root partition:all data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:tx2 keep order:false`,
+		`└─TableReader(Probe) 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  not(isnull(issue42135.tx1.id))`,
+		`    └─TableFullScan 1.00 cop[tikv] table:tx1 keep order:false`))
 
 	tk.MustExec(`drop table tx2`)
 	tk.MustExec("CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST COLUMNS (`ltype`,d) (PARTITION `p1` VALUES IN ((501,1)), PARTITION `p2` VALUES IN ((502,1)))")
