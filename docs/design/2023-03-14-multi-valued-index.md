@@ -47,7 +47,7 @@ A common scenario involves having rows with associated tags and the need to effi
 
 - Using `cast(... as ... array)` to define a multi-valued index, which is essentially an expression index whose virtual column type is "array with type". The index is encoded in the same way as normal secondary indexes.
 - The update of the multi-valued index behaves the same as the normal secondary index but the modification of one row may produce changes to multiple index records. If the type of array element is not satisfied the index definition, an error will be reported.
-- Use MEMBER OF, JSON_CONTAINS(subset), JSON_OVERLAPS(intersection) functions in where condition to using the multi-valued index.
+- Use `MEMBER OF`, `JSON_CONTAINS(subset)`, `JSON_OVERLAPS(intersection)` functions in where condition to using the multi-valued index.
 
 ### Encoding
 
