@@ -32,6 +32,12 @@ var retryableServerError = []string{
 	"body write aborted",
 	"error during dispatch",
 	"put object timeout",
+<<<<<<< HEAD
+=======
+	"internalerror",
+	"not read from or written to within the timeout period",
+	"<code>requesttimeout</code>",
+>>>>>>> 7b5c65f108f (br: add <Code>RequestTimeout</Code> to list of retryable errors (#41759))
 }
 
 // RetryableFunc presents a retryable operation.
