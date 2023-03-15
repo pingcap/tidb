@@ -107,4 +107,13 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		resultMessage:  "canceled by user",
 	}
 	e.checkIgnoreTimes(s.T(), row)
+
+	// cancel again is OK
+
+	err := s.tk.ExecToErr("CANCEL LOAD DATA JOB " + jobID)
+	require.ErrorContains(s.T(), err, "The current job status cannot perform the operation. need status running or paused, but got canceled")
+	rows = s.tk.MustQuery("SHOW LOAD DATA JOB " + jobID).Rows()
+	require.Len(s.T(), rows, 1)
+	row = rows[0]
+	e.checkIgnoreTimes(s.T(), row)
 }

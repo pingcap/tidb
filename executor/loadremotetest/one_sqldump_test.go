@@ -48,6 +48,8 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
 	require.Greater(s.T(), len(rows), 0)
 	jobID := rows[len(rows)-1][0].(string)
+	err := s.tk.ExecToErr("CANCEL LOAD DATA JOB " + jobID)
+	require.ErrorContains(s.T(), err, "The current job status cannot perform the operation. need status running or paused, but got finished")
 	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
 	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs WHERE job_id = " + jobID).Check(testkit.Rows())
 }

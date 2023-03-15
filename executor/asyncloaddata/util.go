@@ -209,7 +209,7 @@ func CancelJob(
 		rows []chunk.Row
 	)
 	rs, err = conn.ExecuteInternal(ctx,
-		`SELECT expected_status FROM mysql.load_data_jobs
+		`SELECT expected_status, end_time, error_message FROM mysql.load_data_jobs
 		WHERE job_id = %? AND create_user = %?;`,
 		jobID, user)
 	if err != nil {
@@ -227,6 +227,14 @@ func CancelJob(
 	status := rows[0].GetEnum(0).String()
 	if status != "running" && status != "paused" {
 		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs(fmt.Sprintf("need status running or paused, but got %s", status))
+	}
+	endTimeIsNull := rows[0].IsNull(1)
+	if !endTimeIsNull {
+		hasError := !rows[0].IsNull(2)
+		if hasError {
+			return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got failed")
+		}
+		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got finished")
 	}
 
 	_, err = conn.ExecuteInternal(ctx,
