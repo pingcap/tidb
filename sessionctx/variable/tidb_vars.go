@@ -1226,7 +1226,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
-  DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptEnableLateMaterialization              = false
 )
 
 // Process global variables.

@@ -113,9 +113,10 @@ func removeEmptySelection(plan PhysicalPlan) {
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
 // @param: totalColumnCount: the total number of columns in the tablescan
-// @example: the columns of tablescan are [a, b, c, d, e, f, g, h]
+// @example:
 //
-//			 	 the expression are ["a > 1", "c > 1", "e > 1 or g > 1"]
+//			  the columns of tablescan are [a, b, c, d, e, f, g, h]
+//			  the expression are ["a > 1", "c > 1", "e > 1 or g > 1"]
 //	          so the columns of the expression are [a, c, e, g] and the totalColumnCount is 8
 //	          the return value is "10101010"
 //
@@ -132,17 +133,9 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 // and sort the groups by the selectivity of the conditions in the group.
 // @param: conds: the conditions to be grouped
 // @return: the groups of conditions sorted by the selectivity of the conditions in the group
-// @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2]
-//
-//	return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
-//
-// @note: when the selectivity of one group is larger than the threshold,
-//
-//	we will remove it from the returned result.
-//
-// @note: when the number of columns of one group is larger than the threshold,
-//
-//	we will remove it from the returned result.
+// @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2], return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
+// @note: when the selectivity of one group is larger than the threshold, we will remove it from the returned result.
+// @note: when the number of columns of one group is larger than the threshold, we will remove it from the returned result.
 func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
@@ -297,5 +290,5 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// add the pushed down conditions to table scan
 	physicalTableScan.prewhereFilterCondition = append(physicalTableScan.prewhereFilterCondition, selectedConds...)
 	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.stats.RowCount *= float64(selectedSelectivity)
+	physicalTableScan.stats.RowCount *= selectedSelectivity
 }
