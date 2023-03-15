@@ -38,6 +38,9 @@ func GetPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
+		if traceCost(option) {
+			genPlanCostTrace(p, planCost.cost, taskType, option)
+		}
 		return planCost.cost, err
 	}
 	return p.getPlanCostVer1(taskType, option)
@@ -95,20 +98,18 @@ func (p *PhysicalProjection) getPlanCostVer2(taskType property.TaskType, option 
 		return p.planCostVer2, nil
 	}
 
-	inputRows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
+	inputRows := getCardinality(p.children[0], option.CostFlag)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	concurrency := newCostItem("concurrency", float64(p.ctx.GetSessionVars().ProjectionConcurrency()))
-	builder := newCostBuilder(inputRows)
+	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency())
 
-	builder.mul(numFunctionsFactor("expr_count", p.Exprs)).mul(cpuFactor).div(concurrency)
+	projCost := filterCostVer2(option, inputRows, p.Exprs, cpuFactor)
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
 
-	builder.plus(childCost).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
+	p.planCostVer2 = sumCostVer2(childCost, divCostVer2(projCost, concurrency))
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -339,9 +340,8 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	rows := newCostItem("rows", math.Max(getCardinality(p.children[0], option.CostFlag), 1))
-	builder := newCostBuilder(rows, traceCost(option))
-	rowSize := newCostItem("rows", getAvgRowSize(p.statsInfo(), p.Schema().Columns))
+	rows := math.Max(getCardinality(p.children[0], option.CostFlag), 1)
+	rowSize := getAvgRowSize(p.statsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -352,22 +352,21 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		memQuota > 0 && // mem-quota is set
 		rowSize*rows > float64(memQuota) // exceed the mem-quota
 
-	sortCPUCost := orderCostVer2(builder, rows, rows.GetCost(), p.ByItems, cpuFactor)
-	sortCPUCost.setName("sortCPU")
+	sortCPUCost := orderCostVer2(option, rows, rows, p.ByItems, cpuFactor)
 
 	var sortMemCost, sortDiskCost costVer2
 	if !spill {
-		builder.reset(rows)
-		builder.mul(rowSize).mul(memFactor).setName("sortMem")
-		sortMemCost = builder.Value()
+		sortMemCost = newCostVer2(option, memFactor,
+			rows*rowSize*memFactor.Value,
+			func() string { return fmt.Sprintf("sortMem(%v*%v*%v)", rows, rowSize, memFactor) })
 		sortDiskCost = zeroCostVer2
 	} else {
-		builder.reset(rows)
-		builder.mul(newCostItem("memQuota", float64(memQuota))).mul(memFactor).setName("sortMem")
-		sortMemCost = builder.Value()
-		builder.reset(rows)
-		builder.mul(rowSize).mul(diskFactor).setName("sortDisk")
-		sortDiskCost = builder.Value()
+		sortMemCost = newCostVer2(option, memFactor,
+			float64(memQuota)*memFactor.Value,
+			func() string { return fmt.Sprintf("sortMem(%v*%v)", memQuota, memFactor) })
+		sortDiskCost = newCostVer2(option, diskFactor,
+			rows*rowSize*diskFactor.Value,
+			func() string { return fmt.Sprintf("sortDisk(%v*%v*%v)", rows, rowSize, diskFactor) })
 	}
 
 	childCost, err := p.children[0].getPlanCostVer2(taskType, option)
@@ -375,8 +374,7 @@ func (p *PhysicalSort) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return zeroCostVer2, err
 	}
 
-	builder.reset(rows)
-	p.planCostVer2 = builder.sumAll(childCost, sortCPUCost, sortMemCost, sortDiskCost).setName(p.ExplainID().String()).Value()
+	p.planCostVer2 = sumCostVer2(childCost, sortCPUCost, sortMemCost, sortDiskCost)
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -512,27 +510,19 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 		build, probe = probe, build
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
-	buildRows := newCostItem("build_rows", getCardinality(build, option.CostFlag))
-	probeRows := newCostItem("probe_rows", getCardinality(probe, option.CostFlag))
-	buildRowSize := newCostItem("build_row_size", getAvgRowSize(build.Stats(), build.Schema().Columns))
-	tidbConcurrency := newCostItem("tidb_concurrency", float64(p.Concurrency))
-	mppConcurrency := newCostItem("mpp_concurrency", float64(3)) // TODO: remove this empirical value
+	buildRows := getCardinality(build, option.CostFlag)
+	probeRows := getCardinality(probe, option.CostFlag)
+	buildRowSize := getAvgRowSize(build.Stats(), build.Schema().Columns)
+	tidbConcurrency := float64(p.Concurrency)
+	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
-	builder := newCostBuilder(buildRows)
-	builder.mul(cpuFactor).mul(newCostItem("build_filter_count", numFunctions(buildFilters))).setName("buildFilterCost")
+	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
+	buildHashCost := hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(buildKeys)), cpuFactor, memFactor)
 
-	hashBuilder := newCostBuilder(buildRows)
-	hashBuilder.mul(cpuFactor).mul(newCostItem("build_key_count", float64(len(buildKeys))))
-	hashBuilder.plus(buildRows).mul(buildRowSize).mul(memFactor)
-	hashBuilder.plus(buildRows).mul(cpuFactor).setName("buildHashCost")
-
-	probeFilterBuilder := newCostBuilder(probeRows)
-	probeFilterBuilder.mul(newCostItem("probe_filter_count", numFunctions(probeFilters))).mul(cpuFactor).setName("probeFilterCost")
-
-	probeHashBuilder := newCostBuilder(probeRows)
-	probeHashBuilder.mul(newCostItem("probe_key_count", float64(len(probeKeys)))).mul(cpuFactor).plus(probeRows).mul(cpuFactor).setName("probeHashCost")
+	probeFilterCost := filterCostVer2(option, probeRows, probeFilters, cpuFactor)
+	probeHashCost := hashProbeCostVer2(option, probeRows, float64(len(probeKeys)), cpuFactor)
 
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
 	if err != nil {
@@ -544,14 +534,14 @@ func (p *PhysicalHashJoin) getPlanCostVer2(taskType property.TaskType, option *P
 	}
 
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
-		builder.sumAll(hashBuilder.curr, probeFilterBuilder.curr, probeHashBuilder.curr).divA(mppConcurrency).setName("probeCost").sumAll(buildChildCost, probeChildCost).setName(p.ExplainID().String())
-		p.planCostVer2 = builder.Value()
+		p.planCostVer2 = sumCostVer2(buildChildCost, probeChildCost,
+			divCostVer2(sumCostVer2(buildHashCost, buildFilterCost, probeHashCost, probeFilterCost), mppConcurrency))
 	} else { // TiDB HashJoin
-		probeFilterBuilder.plus(probeHashBuilder.curr).divA(tidbConcurrency).setName("probeCost")
-		startCostBuilder := newCostBuilder(cpuFactor)
-		startCostBuilder.mul(newCostItem("10", 10)).mul(newCostItem("3", 3)).setName("startCost")
-		probeFilterBuilder.sumAll(startCostBuilder.curr, buildChildCost, probeChildCost, hashBuilder.curr, builder.curr).setName(p.ExplainID().String())
-		p.planCostVer2 = probeFilterBuilder.Value()
+		startCost := newCostVer2(option, cpuFactor,
+			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
+			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
+		p.planCostVer2 = sumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
+			divCostVer2(sumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.planCostInit = true
 	return p.planCostVer2, nil
@@ -810,15 +800,20 @@ func numFunctions(exprs []expression.Expression) float64 {
 	return num
 }
 
-func orderCostVer2(builder *CostBuilder, rows CostItem, N float64, byItems []*util.ByItems, cpuFactor CostItem) CostItem {
+func orderCostVer2(option *PlanCostOption, rows, N float64, byItems []*util.ByItems, cpuFactor costVer2Factor) costVer2 {
 	numFuncs := 0
 	for _, byItem := range byItems {
 		if _, ok := byItem.Expr.(*expression.ScalarFunction); ok {
 			numFuncs++
 		}
 	}
-	builder.mul(newCostItem("func_num", numFuncs)).mul(cpuFactor).plus(rows).mul(newCostItem("logN", math.Log2(N))).mul(cpuFactor)
-	return builder.Value()
+	exprCost := newCostVer2(option, cpuFactor,
+		rows*float64(numFuncs)*cpuFactor.Value,
+		func() string { return fmt.Sprintf("exprCPU(%v*%v*%v)", rows, numFuncs, cpuFactor) })
+	orderCost := newCostVer2(option, cpuFactor,
+		rows*math.Log2(N)*cpuFactor.Value,
+		func() string { return fmt.Sprintf("orderCPU(%v*log(%v)*%v)", rows, N, cpuFactor) })
+	return sumCostVer2(exprCost, orderCost)
 }
 
 func hashBuildCostVer2(option *PlanCostOption, buildRows, buildRowSize, nKeys float64, cpuFactor, memFactor costVer2Factor) costVer2 {
@@ -853,46 +848,12 @@ func doubleReadCostVer2(option *PlanCostOption, numTasks float64, requestFactor 
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
 }
 
-type CostItem interface {
-	IsSimple() bool
-	GetCost() float64
-	SetCost(v float64)
-	AsFormula() string
-	GetName() string
-	SetName(v string)
-}
-
 type costVer2Factor struct {
 	Name  string
 	Value float64
 }
 
-// IsSimple used to indentify costVer2Factor with costVer2
-func (costVer2Factor) IsSimple() bool {
-	return true
-}
-
-func (f *costVer2Factor) GetCost() float64 {
-	return f.Value
-}
-
-func (f *costVer2Factor) SetCost(v float64) {
-	f.Value = v
-}
-
-func (f *costVer2Factor) AsFormula() string {
-	return f.Name
-}
-
-func (f *costVer2Factor) GetName() string {
-	return f.Name
-}
-
-func (f *costVer2Factor) SetName(v string) {
-	f.Name = v
-}
-
-func (f *costVer2Factor) String() string {
+func (f costVer2Factor) String() string {
 	return fmt.Sprintf("%s(%v)", f.Name, f.Value)
 }
 
@@ -1045,319 +1006,35 @@ func cols2Exprs(cols []*expression.Column) []expression.Expression {
 }
 
 type costTrace struct {
+	name        string
 	factorCosts map[string]float64 // map[factorName]cost, used to calibrate the cost model
 	formula     string             // It used to trace the cost calculation.
+	costParams  map[string]interface{}
 }
 
 type costVer2 struct {
-	name    string
-	cost    float64
-	formula string // It used to trace the cost calculation.
-	factors map[string]CostItem
+	cost  float64
+	trace *costTrace
 }
 
-func (costVer2) IsSimple() bool {
+func traceCost(option *PlanCostOption) bool {
+	if option != nil && hasCostFlag(option.CostFlag, CostFlagTrace) {
+		return true
+	}
 	return false
 }
 
-func (c *costVer2) SetCost(v float64) {
-	c.cost = v
-}
-
-func (c *costVer2) GetCost() float64 {
-	return c.cost
-}
-
-func (c *costVer2) GetName() string {
-	return c.name
-}
-
-func (c *costVer2) AsFormula() string {
-	if len(c.name) > 0 {
-		return c.name
+func newZeroCostVer2(trace bool) (ret costVer2) {
+	if trace {
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 	}
-	return c.formula
-}
-
-func (c *costVer2) SetName(name string) {
-	c.name = name
-}
-
-func newCostItem(name string, cost float64) CostItem {
-	return &costVer2Factor{Name: name, Value: cost}
-}
-
-func newCostVer2New(formula string, cost float64) *costVer2 {
-	return &costVer2{formula: formula, cost: cost, factors: make(map[string]CostItem)}
-}
-
-const (
-	PLUS = '+'
-	SUB  = '-'
-	MUL  = '*'
-	DIV  = '/'
-	MULA = '0'
-	DIVA = '1'
-)
-
-// CostBuilder use to calculate cost and generate formula
-type CostBuilder struct {
-	curr    CostItem
-	lastV   float64
-	lastOp  byte
-	isTrace bool
-}
-
-func newCostBuilder(init CostItem, isTrace bool) *CostBuilder {
-	if !isTrace {
-		// if no trace, calcCost will update Cost on the init CostItem, if const factor such as cupFactor/memFactor used to init CostBuilder, it's value will be changed, so just copy its value as a new CostItem
-		return &CostBuilder{
-			curr:    newCostItem(init.Name, init.Value),
-			isTrace: isTrace,
-		}
-	} else {
-		return &CostBuilder{
-			curr:    init,
-			isTrace: isTrace,
-		}
-	}
-
-}
-
-func (builder *CostBuilder) reset(init CostItem) {
-	builder.curr = init
-	builder.lastV = 0
-	builder.lastOp = 0
-}
-
-func (builder *CostBuilder) Value() CostItem {
-	return builder.curr
-}
-
-func (builder *CostBuilder) setName(name string) *CostBuilder {
-	// whether isTrace enabled or not, if setName called, we will treat curr as an entity, think "a + b * c" named plan1Cost, "c + d * e" named plan2Cost, plan1Cost.mul(plan2Cost), the formula will be "plan1Cost * plan2Cost", but if we don't treat as an entity, the cost will be "a + b * c * (c + d * e)", got an incorrect result. so we should clear lastOp and lastV to get correct result
-	builder.lastOp = 0
-	builder.lastV = 0
-	builder.curr.SetName(name)
-	return builder
-}
-
-// calcCost use to calc cost
-func (builder *CostBuilder) calcCost(curOp byte, cost float64) float64 {
-	var curCost float64
-	curCost = builder.curr.GetCost()
-
-	switch curOp {
-	case PLUS:
-		builder.lastV = cost
-		builder.lastOp = curOp
-		builder.curr.SetCost(curCost + cost)
-		return builder.curr.GetCost()
-	case SUB:
-		builder.lastV = cost
-		builder.lastOp = curOp
-		builder.curr.SetCost(curCost - cost)
-		return builder.curr.GetCost()
-	case MULA:
-		builder.lastV = cost
-		builder.lastOp = curOp
-		builder.curr.SetCost(curCost * cost)
-		return builder.curr.GetCost()
-	case DIVA:
-		builder.lastV = cost
-		builder.lastOp = curOp
-		builder.curr.SetCost(curCost / cost)
-		return builder.curr.GetCost()
-	}
-	// We should do special action here. for example "a + b * c", we already calc the cost, and then mul("d") called, if using cost * d, the formula is "(a + b * c) * d", but "a + b * c * d" is expected. so I use lastV to record value since last +/-, lastV is "b * c" in this example, when mul/div called, firstly cost +/- lastV("b * c"), then cost -/+ lastV*d("b * c * d")
-	switch builder.lastOp {
-	case PLUS:
-		curCost -= builder.lastV
-		if curOp == MUL {
-			builder.lastV *= cost
-		} else if curOp == DIV {
-			builder.lastV /= cost
-		}
-		curCost += builder.lastV
-	case SUB:
-		curCost += builder.lastV
-		if curOp == MUL {
-			builder.lastV *= cost
-		} else if curOp == DIV {
-			builder.lastV /= cost
-		}
-		curCost -= builder.lastV
-	default:
-		if curOp == MUL {
-			curCost *= cost
-		} else if curOp == DIV {
-			curCost /= cost
-		}
-	}
-	builder.curr.SetCost(curCost)
-	return curCost
-}
-
-// isAnnoymous check whether CostItem have name or not, if no name, the formula will be complicated
-func isAnnoymous(v CostItem) bool {
-	return !v.IsSimple() && len(v.GetName()) == 0
-}
-
-// opFinish use to generate formula
-func (builder *CostBuilder) opFinish(op byte, v CostItem, cost float64) {
-	// if trace not enabled, skip to calc formula
-	if !builder.isTrace {
-		return
-	}
-
-	var formula string
-
-	curFormula := builder.curr.AsFormula()
-	vformula := v.AsFormula()
-	// if not a named CostVer2, should add "()", otherwise formula is incorrect
-	if isAnnoymous(v) {
-		vformula = "( " + vformula + " )"
-	}
-
-	switch op {
-	case MULA:
-		if isAnnoymous(builder.curr) {
-			curFormula = "( " + curFormula + " )"
-		}
-		formula = curFormula + " * " + vformula
-	case DIVA:
-		if isAnnoymous(builder.curr) {
-			curFormula = "( " + curFormula + " )"
-		}
-		formula = curFormula + " / " + vformula
-	default:
-		formula = curFormula + " " + string(op) + " " + vformula
-	}
-
-	// if v is costVer2, allocate new one as parent
-	if !v.IsSimple() {
-		newCurr := newCostVer2New(formula, cost)
-		// for costVer2Factor or named costVer2, we should add itself to factors,
-		// otherwise we should move it's params to the newCurr
-		if len(v.GetName()) > 0 {
-			newCurr.factors[v.AsFormula()] = v
-		} else {
-			cv := v.(*costVer2)
-			for k, v := range cv.factors {
-				newCurr.factors[k] = v
-			}
-		}
-
-		// same logic with previous to handle builder.curr
-		if len(builder.curr.GetName()) > 0 {
-			newCurr.factors[builder.curr.AsFormula()] = builder.curr
-		} else if !builder.curr.IsSimple() {
-			cv := builder.curr.(*costVer2)
-			for k, v := range cv.factors {
-				newCurr.factors[k] = v
-			}
-		}
-
-		builder.curr = newCurr
-	} else {
-		// if v is a const item, only add to factors
-
-		// if builder.curr is a simple item, create new costver2 to store factors
-		if builder.curr.IsSimple() {
-			newCurr := newCostVer2New(formula, cost)
-			// add curr to factors
-			newCurr.factors[builder.curr.AsFormula()] = builder.curr
-			newCurr.factors[v.AsFormula()] = v
-			builder.curr = newCurr
-		} else {
-			// just update formula and factors, cost already updated in calcCost
-			cv := builder.curr.(*costVer2)
-			cv.formula = formula
-			cv.factors[v.AsFormula()] = v
-		}
-	}
-}
-
-func (builder *CostBuilder) sumAll(params ...CostItem) *CostBuilder {
-	for _, param := range params {
-		builder.plus(param)
-	}
-	return builder
-}
-
-func (builder *CostBuilder) plus(v CostItem) *CostBuilder {
-	cost := builder.calcCost(PLUS, v.GetCost())
-	builder.opFinish(PLUS, v, cost)
-	return builder
-}
-
-func (builder *CostBuilder) sub(v CostItem) *CostBuilder {
-	cost := builder.calcCost(SUB, v.GetCost())
-	builder.opFinish(SUB, v, cost)
-	return builder
-}
-
-func (builder *CostBuilder) mul(v CostItem) *CostBuilder {
-	cost := builder.calcCost(MUL, v.GetCost())
-	builder.opFinish(MUL, v, cost)
-	return builder
-}
-
-func (builder *CostBuilder) div(v CostItem) *CostBuilder {
-	cost := builder.calcCost(DIV, v.GetCost())
-	builder.opFinish(DIV, v, cost)
-	return builder
-}
-
-func (builder *CostBuilder) mulA(v CostItem) *CostBuilder {
-	cost := builder.calcCost(MULA, v.GetCost())
-	builder.opFinish(MULA, v, cost)
-	return builder
-}
-
-func (builder *CostBuilder) divA(v CostItem) *CostBuilder {
-	cost := builder.calcCost(DIVA, v.GetCost())
-	builder.opFinish(DIVA, v, cost)
-	return builder
-}
-
-// for test only
-func GetCostBuilderForTest(init CostItem, isTrace bool) *CostBuilder {
-	return newCostBuilder(init, isTrace)
-}
-
-// for test only
-func (builder *CostBuilder) EvalOpForTest(op string, v CostItem) {
-	switch op {
-	case "+":
-		builder.plus(v)
-	case "-":
-		builder.sub(v)
-	case "*":
-		builder.mul(v)
-	case "/":
-		builder.div(v)
-	case ")*":
-		builder.mulA(v)
-	case ")/":
-		builder.divA(v)
-	}
-}
-
-// for test only
-func (builder *CostBuilder) SetNameForTest(name string) *CostBuilder {
-	return builder.setName(name)
-}
-
-// for test only
-func NewCostItemForTest(name string, cost float64) CostItem {
-	return newCostItem(name, cost)
+	return
 }
 
 func newCostVer2(option *PlanCostOption, factor costVer2Factor, cost float64, lazyFormula func() string) (ret costVer2) {
 	ret.cost = cost
 	if traceCost(option) {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		ret.trace.factorCosts[factor.Name] = cost
 		ret.trace.formula = lazyFormula()
 	}
@@ -1372,7 +1049,7 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 		ret.cost += c.cost
 		if c.trace != nil {
 			if i == 0 { // init
-				ret.trace = &costTrace{make(map[string]float64), ""}
+				ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 			}
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
@@ -1389,7 +1066,7 @@ func sumCostVer2(costs ...costVer2) (ret costVer2) {
 func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 	ret.cost = cost.cost / denominator
 	if cost.trace != nil {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c / denominator
 		}
@@ -1398,24 +1075,10 @@ func divCostVer2(cost costVer2, denominator float64) (ret costVer2) {
 	return ret
 }
 
-func traceCost(option *PlanCostOption) bool {
-	if option != nil && hasCostFlag(option.CostFlag, CostFlagTrace) {
-		return true
-	}
-	return false
-}
-
-func newZeroCostVer2(trace bool) (ret costVer2) {
-	if trace {
-		ret.trace = &costTrace{make(map[string]float64), ""}
-	}
-	return
-}
-
 func mulCostVer2(cost costVer2, scale float64) (ret costVer2) {
 	ret.cost = cost.cost * scale
 	if cost.trace != nil {
-		ret.trace = &costTrace{make(map[string]float64), ""}
+		ret.trace = &costTrace{"", make(map[string]float64), "", make(map[string]interface{})}
 		for f, c := range cost.trace.factorCosts {
 			ret.trace.factorCosts[f] = c * scale
 		}
