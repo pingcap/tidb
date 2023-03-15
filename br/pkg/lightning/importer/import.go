@@ -1733,58 +1733,57 @@ func (rc *Controller) dropAllIndexes(ctx context.Context) error {
 
 func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
 	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 
-	var (
-		sqls     []string
-		reserved []*model.IndexInfo
-	)
+	var remainIndexes []*model.IndexInfo
 	cols := tblInfo.Core.Columns
 loop:
 	for _, idxInfo := range tblInfo.Core.Indices {
 		if idxInfo.State != model.StatePublic {
-			reserved = append(reserved, idxInfo)
+			remainIndexes = append(remainIndexes, idxInfo)
 			continue
 		}
 		// Primary key is a cluster index.
 		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
-			reserved = append(reserved, idxInfo)
+			remainIndexes = append(remainIndexes, idxInfo)
 			continue
 		}
-		// Skip the index that contains auto-increment column.
+		// Skip index that contains auto-increment column.
 		// Because auto colum must be defined as a key.
 		for _, idxCol := range idxInfo.Columns {
 			flag := cols[idxCol.Offset].GetFlag()
 			if mysql.HasAutoIncrementFlag(flag) {
-				reserved = append(reserved, idxInfo)
+				remainIndexes = append(remainIndexes, idxInfo)
 				continue loop
 			}
 		}
 
+		var sqlStr string
 		if idxInfo.Primary {
-			sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName))
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
 		} else {
-			sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O)))
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
 		}
-	}
-	if len(sqls) == 0 {
-		return nil
-	}
-	// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
-	tblInfo.Core = tblInfo.Core.Clone()
-	tblInfo.Core.Indices = reserved
 
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-	logger.Info("drop indexes", zap.Strings("sqls", sqls))
-
-	db := rc.tidbGlue.GetSQLExecutor()
-	for _, sql := range sqls {
-		if err := db.ExecuteWithLog(ctx, sql, "drop index", logger); err != nil {
-			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok && merr.Number == errno.ErrCantDropFieldOrKey {
-				logger.Warn("cannot drop index, maybe it has been dropped", zap.Error(err), zap.String("sql", sql))
-				continue
+		db := rc.tidbGlue.GetSQLExecutor()
+		logger.Info("drop index", zap.String("sql", sqlStr))
+		if err := db.ExecuteWithLog(ctx, sqlStr, "drop index", logger); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.Error(err))
+					continue loop
+				}
 			}
+			// TODO: pretty return error
 			return err
 		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
 	}
 	return nil
 }
