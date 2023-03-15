@@ -116,7 +116,7 @@ Data changes cause index changes, which are handled in the same way as normal se
 ### Column substitute
 
 The column in the where condition will substituted with the corresponding expression in the index definition if the query meet the following 3 requirements
-- Where condition contains any of the 3 functions: MEMBER OF/JSON_CONTAINS/JSON_OVERLAPS.
+- Where condition contains any of the 3 functions: `MEMBER OF`/`JSON_CONTAINS`/`JSON_OVERLAPS`.
 - Functions' parameter type must consistent with multi-valued index definitions.
 - The expression is consistent with multi-valued index definition.
 
