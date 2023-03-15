@@ -20,6 +20,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,14 +50,18 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 	s.T().Cleanup(func() {
 		HeartBeatInSec = backup
 	})
+	user := &auth.UserIdentity{
+		AuthUsername: "test-detached",
+		AuthHostname: "test-host",
+	}
+	s.tk.Session().GetSessionVars().User = user
 
 	s.tk.MustExec("SET SESSION TIME_ZONE = '+08:00';")
 	for _, ca := range detachedCases {
 		s.tk.MustExec("DROP DATABASE IF EXISTS test_detached;")
 		s.tk.MustExec("CREATE DATABASE test_detached;")
-		s.tk.MustExec("USE test_detached;")
-		s.tk.MustExec("CREATE TABLE t1 " + ca.tableCols)
-		s.tk.MustExec("CREATE TABLE t2 " + ca.tableCols)
+		s.tk.MustExec("CREATE TABLE test_detached.t1 " + ca.tableCols)
+		s.tk.MustExec("CREATE TABLE test_detached.t2 " + ca.tableCols)
 
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{
@@ -66,9 +71,9 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 			Content: []byte(ca.data),
 		})
 		s.tk.MustExec(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
-			IGNORE INTO TABLE t1;`, gcsEndpoint))
+			IGNORE INTO TABLE test_detached.t1;`, gcsEndpoint))
 		rows := s.tk.MustQuery(fmt.Sprintf(`LOAD DATA INFILE 'gs://test-detached/1.txt?endpoint=%s'
-			IGNORE INTO TABLE t2 WITH DETACHED;`, gcsEndpoint)).Rows()
+			IGNORE INTO TABLE test_detached.t2 WITH DETACHED;`, gcsEndpoint)).Rows()
 		require.Len(s.T(), rows, 1)
 		jobID := rows[0][0].(string)
 		require.Eventually(s.T(), func() bool {
@@ -77,7 +82,7 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 			return rows[0][9] == "finished"
 		}, 5*time.Second, time.Second)
 
-		r1 := s.tk.MustQuery("SELECT * FROM t1").Sort().Rows()
-		s.tk.MustQuery("SELECT * FROM t2").Sort().Check(r1)
+		r1 := s.tk.MustQuery("SELECT * FROM test_detached.t1").Sort().Rows()
+		s.tk.MustQuery("SELECT * FROM test_detached.t2").Sort().Check(r1)
 	}
 }
