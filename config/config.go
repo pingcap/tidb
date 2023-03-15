@@ -489,8 +489,8 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
-	// Make the write log operation nonblock, so even removing the disk would not make TiDB hang.
-	Nonblock  nullableBool `toml:"nonblock" json:"nonblock"`
+	// Make tidb panic if write log operation hang in `Timeout` seconds
+	Timeout  int `toml:"timeout" json:"timeout"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1428,7 +1428,7 @@ var TableLockDelayClean = func() uint64 {
 func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
-		func(config *zaplog.Config) {config.Nonblock = l.Nonblock.IsValid && l.Nonblock.IsTrue},
+		func(config *zaplog.Config) {config.Timeout = l.Timeout},
 	)
 }
 
