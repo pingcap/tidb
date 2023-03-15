@@ -181,17 +181,17 @@ func ScanRegionsWithRetry(
 }
 
 type scanRegionBackoffer struct {
-	attempt      int
-	delayTime    time.Duration
-	maxDelayTime time.Duration
+	stat utils.RetryState
 }
 
 // NewScanRegionBackoffer create a backoff to retry to scan regions.
 func NewScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt:      ScanRegionAttemptTimes,
-		delayTime:    time.Millisecond * 10,
-		maxDelayTime: time.Second * 2,
+		stat: utils.InitialRetryState(
+			ScanRegionAttemptTimes,
+			time.Millisecond*10,
+			time.Second*2,
+		),
 	}
 }
 
@@ -200,14 +200,7 @@ func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
-		b.attempt--
-		b.delayTime *= 2
-		if b.delayTime > b.maxDelayTime {
-			b.delayTime = b.maxDelayTime
-		}
-
-		delayTime := b.delayTime
-
+		delayTime := b.stat.ExponentialBackoff()
 		failpoint.Inject("hint-scan-region-backoff", func(val failpoint.Value) {
 			if val.(bool) {
 				delayTime = time.Microsecond
@@ -215,11 +208,11 @@ func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
-	b.attempt = 0
+	b.stat.StopRetry()
 	return 0
 }
 
 // Attempt returns the remain attempt times
 func (b *scanRegionBackoffer) Attempt() int {
-	return b.attempt
+	return b.stat.Attempt()
 }
