@@ -51,13 +51,6 @@ type calibrateResourceExec struct {
 	done bool
 }
 
-func (e *calibrateResourceExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
