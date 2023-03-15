@@ -57,6 +57,7 @@ func TestIlike(t *testing.T) {
 
 		// escape tests
 		{"abc", "ABC", int('a'), 1, 1},
+		{"abc", "ABC", int('A'), 0, 0},
 		{"aaz", "Aaaz", int('a'), 1, 1},
 		{"AAz", "AAAAz", int('a'), 0, 0},
 		{"a", "Aa", int('A'), 1, 1},
