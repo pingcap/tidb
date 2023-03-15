@@ -1768,9 +1768,16 @@ func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (back
 	defer func() {
 		logSlowOperations(time.Since(oprStartTime), "writeIndexKVsToLocal", 3000)
 	}()
+	var finish func()
+	if w.id == 0 {
+		finish = ddlutil.InjectSpan(handleRange.jobID, "BackfillData-Read")
+	}
 	copChunk, nextKey, taskDone, err := w.copReqSenderPool.fetchRowColValsFromCop(handleRange)
 	if err != nil {
 		return taskCtx, err
+	}
+	if finish != nil {
+		finish()
 	}
 	taskCtx.nextKey = nextKey
 	taskCtx.done = taskDone
@@ -1781,9 +1788,15 @@ func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (back
 
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
+	if w.id == 0 {
+		finish = ddlutil.InjectSpan(handleRange.jobID, "BackfillData-Write")
+	}
 	count, err := writeChunkToLocal(w.writerCtx, w.index, copCtx, vars, copChunk)
 	if err != nil {
 		return taskCtx, err
+	}
+	if finish != nil {
+		finish()
 	}
 	taskCtx.scanCount = count
 	taskCtx.addedCount = count
