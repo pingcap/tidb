@@ -299,17 +299,6 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	}
 	logutil.BgLogger().Info("process normal flow", zap.Uint64("con", gTask.Concurrency),
 		zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Int("subtasks", len(metas)))
-	if len(metas) == 0 {
-		gTask.State = proto.TaskStateSucceed
-		gTask.StateUpdateTime = time.Now().UTC()
-		// Write the global task meta into the storage.
-		err = d.gTaskMgr.UpdateTask(gTask)
-		if err != nil {
-			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
-			return err
-		}
-		return nil
-	}
 
 	// Adjust the global task's concurrency.
 	if gTask.Concurrency == 0 {
@@ -325,6 +314,17 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		gTask.StartTime = time.Now().UTC()
 		gTask.State = proto.TaskStateRunning
 		gTask.StateUpdateTime = time.Now().UTC()
+	}
+	if len(metas) == 0 {
+		gTask.State = proto.TaskStateSucceed
+		gTask.StateUpdateTime = time.Now().UTC()
+		// Write the global task meta into the storage.
+		err = d.gTaskMgr.UpdateTask(gTask)
+		if err != nil {
+			logutil.BgLogger().Warn("update global task failed", zap.Error(err))
+			return err
+		}
+		return nil
 	}
 
 	// TODO: UpdateTask and addSubtasks in a txn.
