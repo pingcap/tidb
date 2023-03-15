@@ -66,9 +66,6 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// DefaultResourceGroupName is the default resource group name.
-const DefaultResourceGroupName = "default"
-
 var (
 	// PreparedStmtCount is exported for test.
 	PreparedStmtCount int64
@@ -242,13 +239,13 @@ type TxnCtxNoNeedToRestore struct {
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
-	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode.
-	AggressiveLockingUsed bool
-	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode.
+	FairLockingUsed bool
+	// FairLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
-	AggressiveLockingEffective bool
+	FairLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -1367,9 +1364,9 @@ type SessionVars struct {
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
 
-	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	PessimisticTransactionAggressiveLocking bool
+	PessimisticTransactionFairLocking bool
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user

@@ -241,7 +241,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoIDReqDuration)
 	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
 	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
-	prometheus.MustRegister(AggressiveLockingUsageCount)
+	prometheus.MustRegister(FairLockingUsageCount)
 
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
