@@ -472,9 +472,9 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
-	time.Sleep(100*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
-	time.Sleep(300*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// confirm schema changed
 	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
@@ -847,9 +847,9 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
-	time.Sleep(100*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
-	time.Sleep(300*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// confirm schema changed
 	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
