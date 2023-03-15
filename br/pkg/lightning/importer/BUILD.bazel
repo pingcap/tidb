@@ -146,6 +146,7 @@ go_test(
         "//table/tables",
         "//types",
         "//util",
+        "//util/dbutil",
         "//util/mock",
         "//util/promutil",
         "//util/table-filter",

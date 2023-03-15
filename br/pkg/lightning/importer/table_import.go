@@ -15,6 +15,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -22,8 +23,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/pingcap/tidb/parser/format"
 
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -1216,20 +1216,20 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	tblInfo := tr.tableInfo
 	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 
-	batchSQL, sqls := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
-	if len(sqls) == 0 {
+	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	if len(multiSQLs) == 0 {
 		return nil
 	}
 
-	err := tr.executeDDL(ctx, db, batchSQL)
-	if err == nil || !shouldIgnoreDDLError(err) || len(sqls) == 1 {
+	err := tr.executeDDL(ctx, db, singleSQL)
+	if err == nil || !shouldIgnoreDDLError(err) || len(multiSQLs) == 1 {
 		return err
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
-	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", sqls), zap.Error(err))
+	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
-	for _, sql := range sqls {
+	for _, sql := range multiSQLs {
 		if err := tr.executeDDL(ctx, db, sql); err != nil {
 			if shouldIgnoreDDLError(err) {
 				continue
@@ -1309,10 +1309,10 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 }
 
 // buildAddIndexSQL builds the SQL statement to create missing indexes.
-// It returns both a batch SQL statement that creates all indexes at once,
+// It returns both a single SQL statement that creates all indexes at once,
 // and a list of SQL statements that creates each index individually.
-func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (batchSQL string, sqls []string) {
-	var batchSQLBuf strings.Builder
+func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
+	var addIndexSpecs []string
 	for _, desiredIdxInfo := range desiredTblInfo.Indices {
 		present := false
 		for _, curIdxInfo := range curTblInfo.Indices {
@@ -1324,31 +1324,17 @@ func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableI
 			continue
 		}
 
-		if len(sqls) == 0 {
-			batchSQLBuf.WriteString("ALTER TABLE ")
-			batchSQLBuf.WriteString(tableName)
-		} else {
-			batchSQLBuf.WriteString(",")
-		}
-
-		var singleSQLBuf strings.Builder
-		singleSQLBuf.WriteString("ALTER TABLE ")
-		singleSQLBuf.WriteString(tableName)
-
+		var buf bytes.Buffer
 		if desiredIdxInfo.Primary {
-			batchSQLBuf.WriteString(" ADD PRIMARY KEY ")
-			singleSQLBuf.WriteString(" ADD PRIMARY KEY ")
+			buf.WriteString("ADD PRIMARY KEY ")
 		} else if desiredIdxInfo.Unique {
-			batchSQLBuf.WriteString(" ADD UNIQUE KEY ")
-			singleSQLBuf.WriteString(" ADD UNIQUE KEY ")
+			buf.WriteString("ADD UNIQUE KEY ")
 		} else {
-			batchSQLBuf.WriteString(" ADD KEY ")
-			singleSQLBuf.WriteString(" ADD KEY ")
+			buf.WriteString("ADD KEY ")
 		}
 		// "primary" is a special name for primary key, we should not use it as index name.
 		if desiredIdxInfo.Name.L != "primary" {
-			batchSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
-			singleSQLBuf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+			buf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
 		}
 
 		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
@@ -1364,21 +1350,25 @@ func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableI
 			}
 			colStrs = append(colStrs, colStr)
 		}
-		fmt.Fprintf(&batchSQLBuf, "(%s)", strings.Join(colStrs, ","))
-		fmt.Fprintf(&singleSQLBuf, "(%s)", strings.Join(colStrs, ","))
+		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
 
 		if desiredIdxInfo.Invisible {
-			fmt.Fprint(&batchSQLBuf, " INVISIBLE")
-			fmt.Fprint(&singleSQLBuf, " INVISIBLE")
+			fmt.Fprint(&buf, " INVISIBLE")
 		}
 		if desiredIdxInfo.Comment != "" {
-			fmt.Fprintf(&batchSQLBuf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
-			fmt.Fprintf(&singleSQLBuf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
 		}
-
-		sqls = append(sqls, singleSQLBuf.String())
+		addIndexSpecs = append(addIndexSpecs, buf.String())
 	}
-	return batchSQLBuf.String(), sqls
+	if len(addIndexSpecs) == 0 {
+		return "", nil
+	}
+
+	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
+	for _, spec := range addIndexSpecs {
+		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
+	}
+	return singleSQL, multiSQLs
 }
 
 func shouldIgnoreDDLError(err error) bool {
