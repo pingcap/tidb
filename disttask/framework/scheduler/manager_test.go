@@ -28,7 +28,8 @@ import (
 )
 
 func TestManageTask(t *testing.T) {
-	m, err := NewManager(context.Background(), "test", nil, nil)
+	b := NewManagerBuilder()
+	m, err := b.BuildManager(context.Background(), "test", nil, nil)
 	require.NoError(t, err)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
 	newTasks := m.filterAlreadyHandlingTasks(tasks)
@@ -69,23 +70,19 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
-	originSchedulerFunc := newScheduler
-	newScheduler = func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
+
+	b := NewManagerBuilder()
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
-	}
-	originPoolFunc := newPool
-	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+	})
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
-	}
-	defer func() {
-		newScheduler = originSchedulerFunc
-		newPool = originPoolFunc
-	}()
+	})
 	id := "test"
 	taskID := int64(1)
 	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: 0, Type: "type"}
 
-	m, err := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
 	require.NoError(t, err)
 
 	// no task
@@ -145,25 +142,18 @@ func TestManager(t *testing.T) {
 	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}
-	originSchedulerFunc := newScheduler
-	newScheduler = func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
+	b := NewManagerBuilder()
+	b.setSchedulerFactory(func(ctx context.Context, id string, taskID int64, subtaskTable SubtaskTable, pool Pool) InternalScheduler {
 		return mockInternalScheduler
-	}
-	originPoolFunc := newPool
-	newPool = func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+	})
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 		return mockPool, nil
-	}
+	})
 	RegisterSubtaskExectorConstructor("type", func(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
 		return &MockSubtaskExecutor{}, nil
 	}, func(opts *subtaskExecutorRegisterOptions) {
 		opts.PoolSize = 1
 	})
-	defer func() {
-		newScheduler = originSchedulerFunc
-		newPool = originPoolFunc
-		delete(subtaskExecutorConstructors, "type")
-		delete(subtaskExecutorOptions, "type")
-	}()
 	id := "test"
 	taskID1 := int64(1)
 	taskID2 := int64(2)
@@ -196,7 +186,7 @@ func TestManager(t *testing.T) {
 	}, func(opts *subtaskExecutorRegisterOptions) {
 		opts.PoolSize = 1
 	})
-	m, err := NewManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
+	m, err := b.BuildManager(context.Background(), id, mockTaskTable, mockSubtaskTable)
 	require.NoError(t, err)
 	m.Start()
 	time.Sleep(5 * time.Second)
