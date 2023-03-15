@@ -30,7 +30,7 @@ import (
 // We use income is avoid the following case:
 // selectivity is 0.7, restColumnCount is 10, income is 3
 // after push down a predicate, selectivity becomes 0.6, restColumnCount becomes 7, income becomes 2.8, which is smaller than 3
-// but the predicate is not pushed down, which is not expected
+// but the predicate should not be pushed down.
 
 const (
 	selectivityThreshold        = 0.7
@@ -56,7 +56,7 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
 			// Only when the table scan is a full scan and the store type is TiFlash,
 			// we will try to push down predicates.
 			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
-		} else {
+		} else if !ok {
 			for _, child := range plan.Children() {
 				predicatePushDownToTableScan(sctx, child)
 			}
@@ -200,22 +200,20 @@ func withHeavyCostFunction(cond expression.Expression) bool {
 	if binop, ok := cond.(*expression.ScalarFunction); ok {
 		switch binop.FuncName.L {
 		// JSON functions
-		case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONObject, ast.JSONMerge, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONOverlaps, ast.JSONContains:
+		case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONObject, ast.JSONMerge, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove:
 			return true
-		case ast.JSONMemberOf, ast.JSONContainsPath, ast.JSONValid, ast.JSONArrayAppend, ast.JSONArrayInsert, ast.JSONMergePatch, ast.JSONMergePreserve, ast.JSONPretty, ast.JSONQuote, ast.JSONSearch:
+		case ast.JSONMemberOf, ast.JSONContainsPath, ast.JSONValid, ast.JSONArrayAppend, ast.JSONArrayInsert, ast.JSONMergePatch, ast.JSONMergePreserve, ast.JSONPretty:
 			return true
-		case ast.JSONStorageFree, ast.JSONStorageSize, ast.JSONDepth, ast.JSONKeys, ast.JSONLength:
+		case ast.JSONStorageFree, ast.JSONStorageSize, ast.JSONDepth, ast.JSONKeys, ast.JSONLength, ast.JSONContains, ast.JSONSearch, ast.JSONOverlaps, ast.JSONQuote:
 			return true
-		// time functions
-		case ast.AddDate, ast.AddTime, ast.ConvertTz, ast.Curdate, ast.CurrentDate, ast.CurrentTime, ast.CurrentTimestamp, ast.Curtime, ast.Date, ast.DateLiteral, ast.DateAdd, ast.DateFormat:
+		// some time functions
+		case ast.AddDate, ast.AddTime, ast.ConvertTz, ast.DateLiteral, ast.DateAdd, ast.DateFormat, ast.FromUnixTime, ast.GetFormat, ast.UTCTimestamp:
 			return true
-		case ast.DateSub, ast.DateDiff, ast.Day, ast.DayName, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.FromDays, ast.FromUnixTime, ast.GetFormat, ast.Hour, ast.LocalTime:
+		case ast.DateSub, ast.DateDiff, ast.DayOfYear, ast.Extract, ast.FromDays, ast.TimestampLiteral, ast.TimestampAdd, ast.UnixTimestamp:
 			return true
-		case ast.LocalTimestamp, ast.MakeDate, ast.MakeTime, ast.MicroSecond, ast.Minute, ast.Month, ast.MonthName, ast.Now, ast.PeriodAdd, ast.PeriodDiff, ast.Quarter, ast.SecToTime, ast.Second:
+		case ast.LocalTimestamp, ast.MakeDate, ast.MakeTime, ast.MonthName, ast.PeriodAdd, ast.PeriodDiff, ast.Quarter, ast.SecToTime, ast.ToSeconds:
 			return true
-		case ast.StrToDate, ast.SubDate, ast.SubTime, ast.Sysdate, ast.Time, ast.TimeLiteral, ast.TimeFormat, ast.TimeToSec, ast.TimeDiff, ast.Timestamp, ast.TimestampLiteral, ast.TimestampAdd:
-			return true
-		case ast.TimestampDiff, ast.ToDays, ast.ToSeconds, ast.UnixTimestamp, ast.UTCDate, ast.UTCTime, ast.UTCTimestamp, ast.Week, ast.Weekday, ast.WeekOfYear, ast.Year, ast.YearWeek, ast.LastDay:
+		case ast.StrToDate, ast.SubDate, ast.SubTime, ast.TimeLiteral, ast.TimeFormat, ast.TimeToSec, ast.TimeDiff, ast.TimestampDiff:
 			return true
 			// TODO: add more heavy cost functions
 		}
@@ -280,7 +278,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		colCnt := len(colSet)
 		income := (1 - selectivity) * (float64(totalColumnCount) - float64(colCnt))
 		// If selectedColumnCount does not change,
-		// or the income increase larger than the threshold after pushing down the group, push down it.
+		// or the income increases after pushing down the group, push down it.
 		if colCnt == selectedColumnCount || income > selectedIncome {
 			selectedConds = mergedConds
 			selectedColumnCount = colCnt
@@ -302,7 +300,6 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
 	physicalTableScan.prewhereFilterCondition = append(physicalTableScan.prewhereFilterCondition, selectedConds...)
-	//TODO: update the row count of the table scan
-	// Keep the row count unchanged for test now
-	// physicalTableScan.stats.RowCount *= float64(selectedSelectivity)
+	// Update the row count of table scan after pushing down the conditions.
+	physicalTableScan.stats.RowCount *= float64(selectedSelectivity)
 }
