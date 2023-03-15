@@ -43,7 +43,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, unlimitedWriteSpeed, e.maxWriteSpeed)
 	require.Equal(t, false, e.splitFile)
 	require.Equal(t, int64(100), e.maxRecordedErrors)
-	require.Equal(t, false, e.detached)
+	require.Equal(t, false, e.Detached)
 
 	e = LoadDataController{Format: LoadDataFormatParquet}
 	e.initDefaultOptions()
@@ -169,7 +169,7 @@ func TestInitOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(200<<20), e.maxWriteSpeed, sql)
 	require.True(t, e.splitFile, sql)
 	require.Equal(t, int64(123), e.maxRecordedErrors, sql)
-	require.True(t, e.detached, sql)
+	require.True(t, e.Detached, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {

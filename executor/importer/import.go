@@ -56,10 +56,10 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
-	detachedOption      = "detached"
 )
 
 var (
+	detachedOption = plannercore.DetachedOption
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
@@ -138,7 +138,7 @@ type LoadDataController struct {
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
-	detached          bool
+	Detached          bool
 }
 
 // NewLoadDataController create new controller.
@@ -246,7 +246,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
 	e.maxRecordedErrors = 100
-	e.detached = false
+	e.Detached = false
 }
 
 func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -374,7 +374,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
-		e.detached = true
+		e.Detached = true
 	}
 
 	e.adjustOptions()
