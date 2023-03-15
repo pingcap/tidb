@@ -229,9 +229,6 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
-		if x.ID() == 359 {
-			logutil.BgLogger().Warn("1")
-		}
 		p, err := stack[0].Clone()
 		if err != nil {
 			return errors.Trace(err)
@@ -325,8 +322,6 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 	if cached, ok := e.cache[s.ID()]; ok {
 		return cached.tasks, cached.frags, nil
 	}
-	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToStringNewForMPP(s)), zap.Int64("mpp-version", mppVersion.ToInt64()))
 	frags, err := e.buildFragments(s)
 	if err != nil {
 		return nil, nil, errors.Trace(err)

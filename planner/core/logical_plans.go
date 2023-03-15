@@ -2043,8 +2043,6 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 type LogicalSequence struct {
 	baseLogicalPlan
-
-	ctes []*cteInfo
 }
 
 func (p *LogicalSequence) Schema() *expression.Schema {

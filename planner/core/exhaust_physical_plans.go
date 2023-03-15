@@ -2809,15 +2809,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		case *LogicalLimit, *LogicalTopN:
 			return false
 		case *LogicalSequence:
-			if storeTp == kv.TiFlash {
-				for _, cte := range c.ctes {
-					if cte.cteClass.recursivePartLogicalPlan != nil || !cte.cteClass.seedPartLogicalPlan.canPushToCop(storeTp) {
-						return false
-					}
-				}
-				return true
-			}
-			return false
+			return storeTp == kv.TiFlash
 		case *LogicalCTE:
 			if storeTp != kv.TiFlash {
 				return false

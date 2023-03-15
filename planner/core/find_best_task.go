@@ -248,9 +248,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			}
 		}
 
-		if _, ok := pp.(*PhysicalCTEStorage); ok {
-			logutil.BgLogger().Warn("xxxxx")
-		}
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 

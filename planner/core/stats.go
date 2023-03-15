@@ -116,10 +116,6 @@ func GetStats4Test(p LogicalPlan) *property.StatsInfo {
 }
 
 func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if len(p.self.Schema().Columns) == 0 {
-		logutil.BgLogger().Warn("xxxx", zap.String("the plan", fmt.Sprintf("%v", p.ExplainID())), zap.String("tree", ToString(p.self)))
-		return nil, errors.Errorf("?????")
-	}
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
@@ -1059,32 +1055,3 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 	p.stats = childStats[len(childStats)-1]
 	return p.stats, nil
 }
-
-// func (p *LogicalCTE) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-// 	if len(p.children) == 0 {
-// 		return p.DeriveStats(nil, p.self.Schema(), nil, colGroups)
-// 	}
-// 	var err error
-// 	if len(p.cte.pushDownPredicates) > 0 {
-// 		newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
-// 		sel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.ctx, p.blockOffset)
-// 		sel.SetChildren(p.children[0])
-// 		p.SetChildren(sel)
-// 	}
-// 	p.children[0], err = logicalOptimize(context.TODO(), p.cte.optFlag, p.children[0])
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	childStats := make([]*property.StatsInfo, len(p.children))
-// 	childSchema := make([]*expression.Schema, len(p.children))
-// 	cumColGroups := p.self.ExtractColGroups(colGroups)
-// 	for i, child := range p.children {
-// 		childProfile, err := child.recursiveDeriveStats(cumColGroups)
-// 		if err != nil {
-// 			return nil, err
-// 		}
-// 		childStats[i] = childProfile
-// 		childSchema[i] = child.Schema()
-// 	}
-// 	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
-// }

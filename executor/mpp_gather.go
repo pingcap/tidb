@@ -90,16 +90,6 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	// for _, mppTask := range pf.ExchangeSender.Tasks {
-	// 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
-	// 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
-	// 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-	// 			zap.String("plan", plannercore.ToStringNewForMPP(pf.ExchangeSender)),
-	// 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-	// 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
-	// 		)
-	// }
-	// return nil
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
@@ -242,7 +232,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	// return errors.Errorf("break for debugging")
 	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
 		if val.(int) != len(e.mppReqs) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
