@@ -617,10 +617,10 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 			"├─TableReader(Build) 1000.00 root  data:Selection",
 			"│ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
 			"│   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-			"└─IndexLookUp(Probe) 1000000.00 root  ",
-			"  ├─Selection(Build) 1000000.00 cop[tikv]  not(isnull(test.t.b))",
-			"  │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
-			"  └─Selection(Probe) 1000000.00 cop[tikv]  eq(test.t.a, 0)",
-			"    └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"└─IndexLookUp(Probe) 1000.00 root  ",
+			"  ├─Selection(Build) 1000.00 cop[tikv]  not(isnull(test.t.b))",
+			"  │ └─IndexRangeScan 1000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+			"  └─Selection(Probe) 1000.00 cop[tikv]  eq(test.t.a, 0)",
+			"    └─TableRowIDScan 1000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 		))
 }
