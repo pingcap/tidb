@@ -354,19 +354,21 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		if cfg.TikvImporter.AddIndexBySQL == config.BoolAuto {
+		if cfg.TikvImporter.AddIndexBySQL == nil {
 			versionStr, err := version.FetchVersion(ctx, db)
 			if err != nil {
 				return nil, err
 			}
 			if err := version.CheckTiDBVersion(versionStr, minTiDBVersionForAutoEnableAddIndexBySql, version.NextMajorVersion()); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					cfg.TikvImporter.AddIndexBySQL = config.BoolFalse
+					falseVal := false
+					cfg.TikvImporter.AddIndexBySQL = &falseVal
 				} else {
 					return nil, err
 				}
 			} else {
-				cfg.TikvImporter.AddIndexBySQL = config.BoolTrue
+				trueVal := true
+				cfg.TikvImporter.AddIndexBySQL = &trueVal
 				log.FromContext(ctx).Info("auto enable add-index-by-sql", zap.String("tidb_version", versionStr))
 			}
 		}
@@ -1553,7 +1555,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL == config.BoolTrue {
+		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
 			if err := rc.dropAllIndexes(ctx); err != nil {
 				return err
 			}

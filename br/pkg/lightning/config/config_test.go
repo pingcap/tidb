@@ -17,7 +17,6 @@ package config_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -1126,15 +1125,19 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
 
+	var (
+		trueVal  = true
+		falseVal = false
+	)
 	cfg.TikvImporter.IncrementalImport = true
-	cfg.TikvImporter.AddIndexBySQL = config.BoolTrue
+	cfg.TikvImporter.AddIndexBySQL = &trueVal
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.ErrorContains(t, err, "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 
-	cfg.TikvImporter.AddIndexBySQL = config.BoolAuto
+	cfg.TikvImporter.AddIndexBySQL = nil
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.NoError(t, err)
-	require.Equal(t, config.BoolFalse, cfg.TikvImporter.AddIndexBySQL)
+	require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
@@ -1187,36 +1190,4 @@ func TestCompressionType(t *testing.T) {
 
 	require.Equal(t, "", config.CompressionNone.String())
 	require.Equal(t, "gzip", config.CompressionGzip.String())
-}
-
-func TestBool(t *testing.T) {
-	var cfg struct {
-		Value config.Bool `toml:"value" json:"value"`
-	}
-	md, err := toml.Decode(``, &cfg)
-	require.NoError(t, err)
-	require.False(t, md.IsDefined("value"))
-	require.Equal(t, config.BoolAuto, cfg.Value)
-
-	md, err = toml.Decode(`value = true`, &cfg)
-	require.NoError(t, err)
-	require.True(t, md.IsDefined("value"))
-	require.Equal(t, config.BoolTrue, cfg.Value)
-
-	md, err = toml.Decode(`value = false`, &cfg)
-	require.NoError(t, err)
-	require.True(t, md.IsDefined("value"))
-	require.Equal(t, config.BoolFalse, cfg.Value)
-
-	err = json.Unmarshal([]byte(`{"value": true}`), &cfg)
-	require.NoError(t, err)
-	require.Equal(t, config.BoolTrue, cfg.Value)
-
-	err = json.Unmarshal([]byte(`{"value": false}`), &cfg)
-	require.NoError(t, err)
-	require.Equal(t, config.BoolFalse, cfg.Value)
-
-	err = json.Unmarshal([]byte(`{"value": null}`), &cfg)
-	require.NoError(t, err)
-	require.Equal(t, config.BoolAuto, cfg.Value)
 }
