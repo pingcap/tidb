@@ -161,7 +161,7 @@ If the multi-valued index is unique, it can be further optimized to `PointGet`.
 ## Impacts & Risks
 
 ### Limitations, and Characteristics
-- Multi-valued index will only be used when the where condition contains any of the function MEMBER OF/JSON_CONTAINS/JSON_OVERLAPS. So even if SQL contains hint, force index, use index, etc., it is not necessarily possible to force multi-valued index.
+- Multi-valued index will only be used when the where condition contains any of the functions `MEMBER OF`/`JSON_CONTAINS`/`JSON_OVERLAPS`. So even if SQL contains hint, force index, use index, etc., it is not necessarily possible to force multi-valued index.
 - `cast(... as ... array)` can only appear once in the composite index definition, and the casted column must be a JSON column.
 - If multi-valued index is a unique index, then we have
 ```sql
