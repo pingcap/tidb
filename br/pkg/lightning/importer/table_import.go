@@ -1222,15 +1222,19 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	}
 
 	err := tr.executeDDL(ctx, db, singleSQL)
-	if err == nil || !shouldIgnoreDDLError(err) || len(multiSQLs) == 1 {
+	if err == nil || shouldIgnoreDDLError(err) {
+		return nil
+	}
+	// No need to retry if there is only one statement.
+	if len(multiSQLs) == 1 {
 		return err
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
-	for _, sql := range multiSQLs {
-		if err := tr.executeDDL(ctx, db, sql); err != nil {
+	for _, ddl := range multiSQLs {
+		if err := tr.executeDDL(ctx, db, ddl); err != nil {
 			if shouldIgnoreDDLError(err) {
 				continue
 			}
