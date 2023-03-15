@@ -799,6 +799,7 @@ type PhysicalTableScan struct {
 	filterCondition []expression.Expression
 	// prewhereFilterCondition is used to record the filter conditions
 	// that are pushed down to table scan from selection by late materialization.
+	// TODO: remove this field after we support pushing down selection to coprocessor.
 	prewhereFilterCondition []expression.Expression
 
 	Table   *model.TableInfo

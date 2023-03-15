@@ -257,14 +257,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
-		var cols []*expression.Column
-		cols = expression.ExtractColumnsFromExpressions(cols, mergedConds, nil)
-		// Remove the duplicated columns
-		colSet := make(map[int64]struct{}, len(cols))
-		for _, col := range cols {
-			colSet[col.UniqueID] = struct{}{}
-		}
-		colCnt := len(colSet)
+		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
 		income := (1 - selectivity) * (float64(totalColumnCount) - float64(colCnt))
 		// If selectedColumnCount does not change,
 		// or the income increases after pushing down the group, push down it.
