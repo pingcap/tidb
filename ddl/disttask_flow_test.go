@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
@@ -60,7 +59,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// test normal table ProcessErrFlow
 	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
-	require.Nil(t, errMeta)
+	var rollbackMeta ddl.LitBackfillSubTaskRollbackMeta
+	err = json.Unmarshal(errMeta, &rollbackMeta)
+	require.NoError(t, err)
+	require.Equal(t, baseMeta, rollbackMeta.LitBackfillTaskMetaBase)
 
 	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
@@ -93,7 +95,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// test partition table ProcessErrFlow
 	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
-	require.Nil(t, errMeta)
+	rollbackMeta = ddl.LitBackfillSubTaskRollbackMeta{}
+	err = json.Unmarshal(errMeta, &rollbackMeta)
+	require.NoError(t, err)
+	require.Equal(t, baseMeta, rollbackMeta.LitBackfillTaskMetaBase)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
@@ -107,14 +112,18 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 
 	taskMeta := &ddl.LitBackfillGlobalTaskMeta{
 		LitBackfillTaskMetaBase: ddl.LitBackfillTaskMetaBase{
-			JobID:             time.Now().UnixMicro(),
-			SchemaID:          db.ID,
-			TableID:           tblInfo.ID,
-			ElementID:         10,
-			ElementKeyEncoded: hex.EncodeToString(meta.IndexElementKey),
-			IsUnique:          true,
-			SQLMode:           defaultSQLMode,
-			Location:          &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+			JobID:      time.Now().UnixMicro(),
+			SchemaID:   db.ID,
+			TableID:    tblInfo.ID,
+			ElementID:  10,
+			ElementKey: meta.IndexElementKey,
+			IsUnique:   true,
+			ReorgMeta: model.DDLReorgMeta{
+				SQLMode:     defaultSQLMode,
+				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+				ReorgTp:     model.ReorgTypeLitMerge,
+				IsDistReorg: true,
+			},
 		},
 	}
 

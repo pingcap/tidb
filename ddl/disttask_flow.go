@@ -24,20 +24,18 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 )
 
 const FlowHandleLitBackfill = "flowHandleLitBackfill"
 
 type LitBackfillTaskMetaBase struct {
-	JobID             int64                   `json:"job_id"`
-	SchemaID          int64                   `json:"schema_id"`
-	TableID           int64                   `json:"table_id"`
-	ElementID         int64                   `json:"element_id"`
-	ElementKeyEncoded string                  `json:"element_key_encoded"`
-	IsUnique          bool                    `json:"is_unique"`
-	SQLMode           mysql.SQLMode           `json:"sql_mode"`
-	Location          *model.TimeZoneLocation `json:"location"`
+	JobID      int64              `json:"job_id"`
+	SchemaID   int64              `json:"schema_id"`
+	TableID    int64              `json:"table_id"`
+	ElementID  int64              `json:"element_id"`
+	ElementKey []byte             `json:"element_key"`
+	IsUnique   bool               `json:"is_unique"`
+	ReorgMeta  model.DDLReorgMeta `json:"reorg_meta"`
 }
 
 type LitBackfillGlobalTaskMeta struct {
@@ -47,6 +45,10 @@ type LitBackfillGlobalTaskMeta struct {
 type LitBackfillSubTaskMeta struct {
 	LitBackfillTaskMetaBase
 	PhysicalTableID int64
+}
+
+type LitBackfillSubTaskRollbackMeta struct {
+	LitBackfillTaskMetaBase
 }
 
 type litBackfillFlowHandle struct {
@@ -111,6 +113,15 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	return subTaskMetas, nil
 }
 
-func (h *litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, _ *proto.Task, _ string) (meta []byte, err error) {
-	return nil, nil
+func (h *litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
+	var globalTaskMeta LitBackfillGlobalTaskMeta
+	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
+		return nil, err
+	}
+
+	subTaskMeta := &LitBackfillSubTaskMeta{
+		LitBackfillTaskMetaBase: globalTaskMeta.LitBackfillTaskMetaBase,
+	}
+
+	return json.Marshal(subTaskMeta)
 }
