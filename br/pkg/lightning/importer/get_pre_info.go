@@ -54,14 +54,19 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// compressionRatio is the tikv/tiflash's compression ratio
+const compressionRatio = float64(1) / 3
+
 // EstimateSourceDataSizeResult is the object for estimated data size result.
 type EstimateSourceDataSizeResult struct {
-	// SizeWithIndex is the size with the index.
+	// SizeWithIndex is the tikv size with the index.
 	SizeWithIndex int64
-	// SizeWithoutIndex is the size without the index.
+	// SizeWithoutIndex is the tikv size without the index.
 	SizeWithoutIndex int64
 	// HasUnsortedBigTables indicates whether the source data has unsorted big tables or not.
 	HasUnsortedBigTables bool
+	// TiFlashSize is the size of tiflash.
+	TiFlashSize int64
 }
 
 // PreImportInfoGetter defines the operations to get information from sources and target.
@@ -512,11 +517,16 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 	if result != nil && !getPreInfoCfg.ForceReloadCache {
 		return result, nil
 	}
-	sizeWithIndex := int64(0)
-	sourceTotalSize := int64(0)
-	tableCount := 0
-	unSortedBigTableCount := 0
-	errMgr := errormanager.New(nil, p.cfg, log.FromContext(ctx))
+
+	var (
+		sizeWithIndex         = int64(0)
+		tiflashSize           = int64(0)
+		sourceTotalSize       = int64(0)
+		tableCount            = 0
+		unSortedBigTableCount = 0
+		errMgr                = errormanager.New(nil, p.cfg, log.FromContext(ctx))
+	)
+
 	dbInfos, err := p.GetAllTableStructures(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -531,10 +541,10 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 			sourceTotalSize += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
+				tableSize := tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
 				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config.SplitRegionSize) {
-					sizeWithIndex += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
@@ -545,26 +555,38 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 					tbl.IndexRatio = sampledIndexRatio
 					tbl.IsRowOrdered = isRowOrderedFromSample
 
-					if tbl.IndexRatio > 0 {
-						sizeWithIndex += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
-					} else {
-						// if sample data failed due to max-error, fallback to use source size
-						sizeWithIndex += tbl.TotalSize
-					}
+					tableSize = int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
 						unSortedBigTableCount++
 					}
+				}
+
+				sizeWithIndex += tableSize
+				if tableInfo.Core.TiFlashReplica != nil && tableInfo.Core.TiFlashReplica.Available {
+					tiflashSize += tableSize * int64(tableInfo.Core.TiFlashReplica.Count)
 				}
 				tableCount += 1
 			}
 		}
 	}
 
+	replConfig, err := p.targetInfoGetter.GetReplicationConfig(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sizeWithIndex *= int64(replConfig.MaxReplicas)
+
+	if isLocalBackend(p.cfg) {
+		sizeWithIndex = int64(float64(sizeWithIndex) * compressionRatio)
+		tiflashSize = int64(float64(tiflashSize) * compressionRatio)
+	}
+
 	result = &EstimateSourceDataSizeResult{
 		SizeWithIndex:        sizeWithIndex,
 		SizeWithoutIndex:     sourceTotalSize,
 		HasUnsortedBigTables: (unSortedBigTableCount > 0),
+		TiFlashSize:          tiflashSize,
 	}
 	p.estimatedSizeCache = result
 	return result, nil

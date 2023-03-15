@@ -539,7 +539,7 @@ func TestOptimisticConflicts(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	// This SQL use BatchGet and cache data in the txn snapshot.
 	// It can be changed to other SQLs that use BatchGet.
-	tk.MustExec("insert ignore into conflict values (1, 2)")
+	tk.MustExec("select * from conflict where id in (1, 2, 3)")
 
 	tk2.MustExec("update conflict set c = c - 1")
 
@@ -1168,6 +1168,10 @@ func TestPessimisticReadCommitted(t *testing.T) {
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	// Avoid issue https://github.com/pingcap/tidb/issues/41792
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	// test SI
 	tk.MustExec("drop table if exists t;")
@@ -3069,16 +3073,16 @@ func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 	panic("unreachable")
 }
 
-func TestAggressiveLockingBasic(t *testing.T) {
+func TestFairLockingBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	// TODO: Check aggressive locking is indeed used and the RPC is avoided when doing pessimistic retry.
+	// TODO: Check fair locking is indeed used and the RPC is avoided when doing pessimistic retry.
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, k int unique, v int)")
 	tk.MustExec("insert into t values (1, 1, 1)")
 
@@ -3118,7 +3122,7 @@ func TestAggressiveLockingBasic(t *testing.T) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 6"))
 
-	// Lock one key (the row key) in aggressive locking mode, and then falls back due to multiple keys needs to be
+	// Lock one key (the row key) in fair locking mode, and then falls back due to multiple keys needs to be
 	// locked then (the unique index keys, one deleted and one added).
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -3159,14 +3163,14 @@ func TestAggressiveLockingBasic(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestAggressiveLockingInsert(t *testing.T) {
+func TestFairLockingInsert(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 
 	tk.MustExec("begin pessimistic")
@@ -3194,7 +3198,7 @@ func TestAggressiveLockingInsert(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
 }
 
-func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
+func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3203,7 +3207,7 @@ func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
 	tk2.Session().SetConnectionID(0)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 	tk.MustExec("insert into t values (1, 1)")
 
@@ -3221,7 +3225,7 @@ func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 12"))
 }
 
-func TestAggressiveLockingRetry(t *testing.T) {
+func TestFairLockingRetry(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3236,7 +3240,7 @@ func TestAggressiveLockingRetry(t *testing.T) {
 		tk.MustExec("rollback")
 	}
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("create table t3 (id int primary key, v int, v2 int)")
@@ -3357,11 +3361,11 @@ func TestIssue40114(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
 }
 
-func TestPointLockNonExistentKeyWithAggressiveLockingUnderRC(t *testing.T) {
+func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking=1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("begin pessimistic")

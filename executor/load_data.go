@@ -20,7 +20,6 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,15 +49,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
-
-	// InTest is a flag that bypass gcs authentication in unit tests.
-	InTest bool
 )
 
 // LoadDataExec represents a load data executor.
@@ -68,34 +65,62 @@ type LoadDataExec struct {
 	FileLocRef     ast.FileLocRefTp
 	OnDuplicate    ast.OnDuplicateKeyHandlingType
 	loadDataWorker *LoadDataWorker
+	detachHandled  bool
 }
 
 // Next implements the Executor Next interface.
-func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		// in happy path the detached worker will release the system session in
+		// e.loadDataWorker.doLoad, and it must have no error after e.loadDataWorker.doLoad.
+		// Here we handle the case that error occurred before e.loadDataWorker.doLoad/
+		if err != nil && e.loadDataWorker.controller.Detached {
+			ctx2 := context.Background()
+			ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
+			e.loadDataWorker.releaseSysSession(ctx2, e.loadDataWorker.Ctx)
+		}
+	}()
+
 	req.GrowAndReset(e.maxChunkSize)
+	if e.detachHandled {
+		// need to return an empty req to indicate all results have been written
+		return nil
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		u, err := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+		u, err2 := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
 		}
 		path := strings.Trim(u.Path, "/")
 		u.Path = ""
-		b, err := storage.ParseBackendFromURL(u, nil)
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
+		b, err2 := storage.ParseBackendFromURL(u, nil)
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err2))
 		}
 		if b.GetLocal() != nil {
 			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
 		}
 		// try to find pattern error in advance
-		_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
-		if err != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
+		_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+		if err2 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 		}
-		return e.loadFromRemote(ctx, b, path)
+		jobID, err2 := e.loadFromRemote(ctx, b, path)
+		if err2 != nil {
+			return err2
+		}
+		if e.loadDataWorker.controller.Detached {
+			req.AppendInt64(0, jobID)
+			e.detachHandled = true
+		}
 	case ast.FileLocClient:
+		if e.loadDataWorker.controller.Detached {
+			return exeerrors.ErrLoadDataCantDetachWithLocal
+		}
+
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.ctx
 		val := sctx.Value(LoadDataVarKey)
@@ -112,14 +137,14 @@ func (e *LoadDataExec) loadFromRemote(
 	ctx context.Context,
 	b *backup.StorageBackend,
 	path string,
-) error {
+) (int64, error) {
 	opt := &storage.ExternalStorageOptions{}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess
+		return 0, exeerrors.ErrLoadDataCantAccess
 	}
 
 	idx := strings.IndexByte(path, '*')
@@ -185,7 +210,7 @@ func (e *LoadDataExec) loadFromRemote(
 			return nil
 		})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	return e.loadDataWorker.Load(ctx, readerInfos)
@@ -200,7 +225,7 @@ func (e *LoadDataExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadDataExec) Open(ctx context.Context) error {
+func (e *LoadDataExec) Open(_ context.Context) error {
 	if e.loadDataWorker.insertColumns != nil {
 		e.loadDataWorker.initEvalBuffer()
 	}
@@ -228,6 +253,7 @@ type loadRemoteInfo struct {
 type LoadDataWorker struct {
 	*InsertValues
 
+	// TODO: remove this field, use embedded InsertValues.ctx instead.
 	Ctx sessionctx.Context
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -249,27 +275,63 @@ type LoadDataWorker struct {
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
 func NewLoadDataWorker(
-	sctx sessionctx.Context,
+	userSctx sessionctx.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
 	getSysSessionFn func() (sessionctx.Context, error),
 	putSysSessionFn func(context.Context, sessionctx.Context),
-) (*LoadDataWorker, error) {
+) (w *LoadDataWorker, err error) {
+	ownSession := false
+	defer func() {
+		if err != nil && ownSession {
+			ctx := context.Background()
+			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+			putSysSessionFn(ctx, userSctx)
+		}
+	}()
+
+	controller := importer.NewLoadDataController(plan, tbl)
+	if err = controller.Init(userSctx, plan.Options); err != nil {
+		return nil, err
+	}
+
+	sctx := userSctx
+	if controller.Detached {
+		if plan.FileLocRef == ast.FileLocClient {
+			return nil, exeerrors.ErrLoadDataCantDetachWithLocal
+		}
+		sysSession, err2 := getSysSessionFn()
+		if err2 != nil {
+			return nil, err2
+		}
+		ownSession = true
+
+		err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
+		if err != nil {
+			return nil, err
+		}
+		// copy the related variables to the new session
+		// I have no confident that all needed variables are copied :(
+		from := userSctx.GetSessionVars()
+		to := sysSession.GetSessionVars()
+		to.User = from.User
+		to.CurrentDB = from.CurrentDB
+		to.SQLMode = from.SQLMode
+		sctx = sysSession
+	}
+
 	insertVal := &InsertValues{
 		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
 		Table:          tbl,
 		Columns:        plan.Columns,
 		GenExprs:       plan.GenCols.Exprs,
 		isLoadData:     true,
-		txnInUse:       sync.Mutex{},
+		txnInUse:       syncutil.Mutex{},
 		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	controller := importer.NewLoadDataController(plan, tbl)
-	if err := controller.Init(sctx, plan.Options); err != nil {
-		return nil, err
-	}
+
 	if !restrictive {
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
@@ -288,7 +350,7 @@ func NewLoadDataWorker(
 		getSysSessionFn: getSysSessionFn,
 		putSysSessionFn: putSysSessionFn,
 	}
-	if err := loadDataWorker.initInsertValues(); err != nil {
+	if err = loadDataWorker.initInsertValues(); err != nil {
 		return nil, err
 	}
 	loadDataWorker.ResetBatch()
@@ -324,21 +386,19 @@ type LoadDataReaderInfo struct {
 	Remote *loadRemoteInfo
 }
 
-// Load reads from readerFn and do load data job.
+// Load reads from readerInfos and do load data job.
 func (e *LoadDataWorker) Load(
 	ctx context.Context,
 	readerInfos []LoadDataReaderInfo,
-) error {
+) (int64, error) {
 	var (
-		jobID  int64
-		parser mydump.Parser
-		err    error
+		jobID int64
+		err   error
 	)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 
 	s, err := e.getSysSessionFn()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer e.putSysSessionFn(ctx, s)
 
@@ -346,7 +406,7 @@ func (e *LoadDataWorker) Load(
 	// TODO: move it to bootstrap
 	_, err = sqlExec.ExecuteInternal(ctx, asyncloaddata.CreateLoadDataJobs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
@@ -359,13 +419,49 @@ func (e *LoadDataWorker) Load(
 		e.Ctx.GetSessionVars().User.String(),
 	)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	if e.controller.Detached {
+		go func() {
+			detachedCtx := context.Background()
+			detachedCtx = kv.WithInternalSourceType(detachedCtx, kv.InternalLoadData)
+			// error is stored in system table, so we can ignore it here
+			//nolint: errcheck
+			_ = e.doLoad(detachedCtx, readerInfos, jobID)
+		}()
+		return jobID, nil
+	}
+	return jobID, e.doLoad(ctx, readerInfos, jobID)
+}
+
+func (e *LoadDataWorker) doLoad(
+	ctx context.Context,
+	readerInfos []LoadDataReaderInfo,
+	jobID int64,
+) (err error) {
 	defer func() {
+		if e.controller.Detached {
+			e.putSysSessionFn(ctx, e.Ctx)
+		}
+	}()
+
+	// get a session for UpdateJobProgress. e.Ctx is exclusively used by commitWork.
+	s, err := e.getSysSessionFn()
+	if err != nil {
+		return err
+	}
+	defer e.putSysSessionFn(ctx, s)
+
+	sqlExec := s.(sqlexec.SQLExecutor)
+
+	defer func() {
+		// write the ending status even if user context is canceled.
+		ctx2 := context.Background()
+		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
 		if err == nil {
 			err2 := asyncloaddata.FinishJob(
-				ctx,
+				ctx2,
 				sqlExec,
 				jobID,
 				e.Ctx.GetSessionVars().StmtCtx.GetMessage())
@@ -380,7 +476,7 @@ func (e *LoadDataWorker) Load(
 			}
 		}
 
-		err2 := asyncloaddata.FailJob(ctx, sqlExec, jobID, errMsg)
+		err2 := asyncloaddata.FailJob(ctx2, sqlExec, jobID, errMsg)
 		terror.Log(err2)
 	}()
 
@@ -418,8 +514,14 @@ func (e *LoadDataWorker) Load(
 	// done is used to let commitWork goroutine notify UpdateJobProgress
 	// goroutine that the job is finished.
 	done := make(chan struct{})
+	// both processStream and commitWork goroutines will use this txn.
+	err = sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
 
 	// processStream goroutine.
+	var parser mydump.Parser
 	group.Go(func() error {
 		for _, info := range readerInfos {
 			reader, err2 := info.Opener(ctx)
@@ -444,6 +546,7 @@ func (e *LoadDataWorker) Load(
 	})
 	// commitWork goroutine.
 	group.Go(func() error {
+		failpoint.Inject("BeforeCommitWork", nil)
 		err2 := e.commitWork(groupCtx)
 		if err2 == nil {
 			close(done)
@@ -632,11 +735,6 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-
-	err = sessiontxn.NewTxn(ctx, e.Ctx)
-	if err != nil {
-		return err
-	}
 
 	var (
 		tasks               uint64
@@ -887,6 +985,7 @@ func (e *LoadDataWorker) parserData2TableData(
 			return nil, err
 		}
 		e.handleWarning(err)
+		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
 		// TODO: should not return nil! caller will panic when lookup index
 		return nil, nil
 	}
