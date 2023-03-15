@@ -20,10 +20,52 @@ LOG_FILE1="$TEST_DIR/lightning-add-index1.log"
 LOG_FILE2="$TEST_DIR/lightning-add-index2.log"
 
 run_lightning --config "tests/$TEST_NAME/config1.toml" --log-file "$LOG_FILE1"
-run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;"
-run_sql "SHOW CREATE TABLE add_index.multi_indexes;"
+expect_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
+expect_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
 
 run_sql "DROP DATABASE add_index;"
 run_lightning --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
-run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;"
+actual_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
+actual_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
+
+if [ "$expect_kvs" != "$actual_kvs" ]; then
+    echo "kvs not match, expect $expect_kvs, got $actual_kvs"
+    exit 1
+fi
+if [ "$expect_cksum" != "$actual_cksum" ]; then
+    echo "checksum not match, expect $expect_cksum, got $actual_cksum"
+    exit 1
+fi
+
+# Check column options
 run_sql "SHOW CREATE TABLE add_index.multi_indexes;"
+check_contains "INVISIBLE"
+check_contains "'single column index with invisible'"
+
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c2\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c2_c3\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`uniq_c4\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`uniq_c4_c5\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c6\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c7\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c6_c7\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c8\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_c9\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_lower_c10\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`idx_prefix_c11\`" "$LOG_FILE2"
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` DROP INDEX \`c2\`" "$LOG_FILE2"
+
+grep -Fq "ALTER TABLE \`add_index\`.\`multi_indexes\` "\
+           "ADD KEY \`idx_c2\`(\`c2\`) COMMENT 'single column index', "\
+           "ADD KEY \`idx_c2_c3\`(\`c2\`,\`c3\`) COMMENT 'multiple column index', "\
+           "ADD UNIQUE KEY \`uniq_c4\`(\`c4\`) COMMENT 'single column unique key', "\
+           "ADD UNIQUE KEY \`uniq_c4_c5\`(\`c4\`,\`c5\`) COMMENT 'multiple column unique key', "\
+           "ADD KEY \`idx_c6\`(\`c6\`) COMMENT 'single column index with asc order', "\
+           "ADD KEY \`idx_c7\`(\`c7\`) COMMENT 'single column index with desc order', "\
+           "ADD KEY \`idx_c6_c7\`(\`c6\`,\`c7\`) COMMENT 'multiple column index with asc and desc order', "\
+           "ADD KEY \`idx_c8\`(\`c8\`) COMMENT 'single column index with visible', "\
+           "ADD KEY \`idx_c9\`(\`c9\`) INVISIBLE COMMENT 'single column index with invisible', "\
+           "ADD KEY \`idx_lower_c10\`((lower(\`c10\`))) COMMENT 'single column index with function', "\
+           "ADD KEY \`idx_prefix_c11\`(\`c11\`(3)) COMMENT 'single column index with prefix', "\
+           "ADD UNIQUE KEY \`c2\`(\`c2\`)" \
+           "$LOG_FILE2"
