@@ -2014,6 +2014,8 @@ type LogicalCTE struct {
 	cteName        model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+
+	onlyUsedAsStorage bool
 }
 
 // LogicalCTETable is for CTE table

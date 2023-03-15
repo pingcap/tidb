@@ -274,20 +274,16 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
+func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
 
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
-		return nil, 0, err
-	}
-
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		logutil.BgLogger().Warn("optimizing", zap.String("plan", ToString(logic)))
+		return nil, nil, 0, err
 	}
 
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
@@ -295,11 +291,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	finalPlan, err := postOptimize(ctx, sctx, physical)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
@@ -308,7 +304,13 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace {
 		sctx.GetSessionVars().StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
-	return finalPlan, cost, nil
+	return logic, finalPlan, cost, nil
+}
+
+// DoOptimize optimizes a logical plan to a physical plan.
+func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	return finalPlan, cost, err
 }
 
 // refineCETrace will adjust the content of CETrace.

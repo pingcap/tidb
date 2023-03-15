@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -415,21 +414,15 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 }
 
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
-	if cteReader.CTE.IDForStorage == 2 {
-		logutil.BgLogger().Warn("1")
-	}
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
 	if group.StroageFragments == nil {
-		exchangeSender := PhysicalExchangeSender{
-			ExchangeType: tipb.ExchangeType(property.BroadcastType),
-		}.Init(group.CTEStorage.SCtx(), group.CTEStorage.children[0].statsInfo())
-		exchangeSender.SetChildren(group.CTEStorage.children[0])
-		group.StroageTasks, group.StroageFragments, err = e.generateMPPTasksForExchangeSender(exchangeSender)
+		group.CTEStorage.storageSender.SetChildren(group.CTEStorage.children...)
+		group.StroageTasks, group.StroageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
 		if err != nil {
 			return err
 		}
 	}
-	receiver := PhysicalExchangeReceiver{IsCTEReader: true}.Init(cteReader.SCtx(), group.CTEStorage.statsInfo())
+	receiver := cteReader.readerRecevier
 	receiver.Tasks = group.StroageTasks
 	receiver.frags = group.StroageFragments
 	cteReader.SetChildren(receiver)

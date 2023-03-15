@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -3270,6 +3271,11 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 
 func (p *LogicalCTE) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.ctx, p.stats)
+	if prop.IsFlashProp() {
+		pcte.storageSender = PhysicalExchangeSender{
+			ExchangeType: tipb.ExchangeType_Broadcast,
+		}.Init(p.ctx, p.stats)
+	}
 	pcte.SetSchema(p.schema)
 	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
 	return []PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil

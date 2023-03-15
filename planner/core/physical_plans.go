@@ -2424,6 +2424,9 @@ type PhysicalCTE struct {
 	CTE       *CTEClass
 	cteAsName model.CIStr
 	cteName   model.CIStr
+
+	readerRecevier *PhysicalExchangeReceiver
+	storageSender  *PhysicalExchangeSender
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2483,6 +2486,20 @@ func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
 	}
 	cloned.cteAsName, cloned.cteName = p.cteAsName, p.cteName
 	cloned.CTE = p.CTE
+	if p.storageSender != nil {
+		clonedSender, err := p.storageSender.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
+	}
+	if p.readerRecevier != nil {
+		clonedReceiver, err := p.readerRecevier.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned.readerRecevier = clonedReceiver.(*PhysicalExchangeReceiver)
+	}
 	return cloned, nil
 }
 

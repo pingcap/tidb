@@ -4271,14 +4271,14 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p LogicalPlan) Logical
 	lctes := make([]LogicalPlan, 0, len(ctes)+1)
 	for _, cte := range ctes {
 		lcte := LogicalCTE{
-			cte:       cte.cteClass,
-			cteAsName: cte.def.Name,
-			cteName:   cte.def.Name,
-			seedStat:  cte.seedStat,
+			cte:               cte.cteClass,
+			cteAsName:         cte.def.Name,
+			cteName:           cte.def.Name,
+			seedStat:          cte.seedStat,
+			onlyUsedAsStorage: true,
 		}.Init(b.ctx, b.getSelectOffset())
 		lcte.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 		lctes = append(lctes, lcte)
-		lcte.SetChildren(cte.seedLP)
 	}
 	seq := LogicalSequence{
 		ctes: ctes,
