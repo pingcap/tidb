@@ -365,7 +365,7 @@ func NewImportControllerWithPauser(
 				}
 			} else {
 				cfg.TikvImporter.AddIndexBySQL = config.BoolTrue
-				log.FromContext(ctx).Info("lightning will use SQL to add index")
+				log.FromContext(ctx).Info("auto enable add-index-by-sql", zap.String("tidb_version", versionStr))
 			}
 		}
 
