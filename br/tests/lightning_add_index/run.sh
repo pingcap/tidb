@@ -16,6 +16,8 @@
 
 set -eu
 
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexFail=return()"
+
 LOG_FILE1="$TEST_DIR/lightning-add-index1.log"
 LOG_FILE2="$TEST_DIR/lightning-add-index2.log"
 

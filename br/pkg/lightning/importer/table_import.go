@@ -1264,6 +1264,9 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 	}
 
 	originErr := s.Exec(ctx, "add index", ddl)
+	failpoint.Inject("AddIndexFail", func() {
+		originErr = errors.New("injected error")
+	})
 	if originErr == nil || log.IsContextCanceledError(originErr) {
 		return originErr
 	}
