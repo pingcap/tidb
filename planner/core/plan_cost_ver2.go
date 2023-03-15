@@ -39,7 +39,7 @@ func getPlanCost(p PhysicalPlan, taskType property.TaskType, option *PlanCostOpt
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.getPlanCostVer2(taskType, option)
 		if traceCost(option) {
-			genPlanCostTrace(p, planCost.cost, taskType, option)
+			genPlanCostTrace(p, planCost, taskType, option)
 		}
 		return planCost.cost, err
 	}

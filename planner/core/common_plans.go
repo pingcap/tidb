@@ -800,26 +800,28 @@ func (e *Explain) RenderResult() error {
 			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
 				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
-				trace := cost.trace
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
-				data, err := json.Marshal(trace.factorCosts)
-				if err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
-				}
-				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
-
-				// output cost factor weights for cost calibration
-				factors := defaultVer2Factors.tolist()
-				weights := make(map[string]float64)
-				for _, factor := range factors {
-					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
-						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+				if cost.trace != nil {
+					trace := cost.trace
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+					data, err := json.Marshal(trace.factorCosts)
+					if err != nil {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
 					}
-				}
-				if wstr, err := json.Marshal(weights); err != nil {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
-				} else {
-					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+
+					// output cost factor weights for cost calibration
+					factors := defaultVer2Factors.tolist()
+					weights := make(map[string]float64)
+					for _, factor := range factors {
+						if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
+							weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+						}
+					}
+					if wstr, err := json.Marshal(weights); err != nil {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+					} else {
+						pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+					}
 				}
 			}
 		} else {

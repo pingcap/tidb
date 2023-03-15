@@ -15,8 +15,11 @@
 package core
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -28,30 +31,51 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func buildPlanCostDetail(tp string, id int, cost costVer2) *tracing.PhysicalPlanCostDetail {
+func convertToCostVer2(cv CostItem) *costVer2 {
+	if cv.IsSimple() {
+		return &costVer2{cost: cv.GetCost(), trace: &costTrace{cv.GetName(), make(map[string]float64), cv.ToString(), make(map[string]interface{})}}
+	}
+	vtrace := cv.(*CostVerTrace)
+	ret := &costVer2{cost: vtrace.GetCost(), trace: &costTrace{vtrace.GetName(), make(map[string]float64), vtrace.ToString(), make(map[string]interface{})}}
+
+	for name, value := range vtrace.factors {
+		if value.IsSimple() {
+			ret.trace.factorCosts[name] = value.GetCost()
+		} else {
+			ret.trace.costParams[name] = convertToCostVer2(value.(*CostVerTrace))
+		}
+	}
+	return ret
+}
+
+func buildPlanCostDetail(tp string, id int, cost CostItem) *tracing.PhysicalPlanCostDetail {
 	d := &tracing.PhysicalPlanCostDetail{}
 	d.TP = tp
 	d.ID = id
-	d.Desc = cost.trace.formula
+	d.Desc = cost.AsFormula()
+	d.Cost = cost.GetCost()
 	d.Params = make(map[string]interface{})
-	for name, value := range cost.trace.factorCosts {
+	ret := convertToCostVer2(cost)
+	for name, value := range ret.trace.factorCosts {
 		d.Params[name] = value
 	}
-	for name, param := range cost.trace.costParams {
-		d.Params[name] = param
+	for name, value := range ret.trace.costParams {
+		d.Params[name] = value
 	}
 	return d
 }
 
-func genPlanCostTrace(p PhysicalPlan, cost float64, taskType property.TaskType, option *PlanCostOption) error {
+func genPlanCostTrace(p PhysicalPlan, costV costVer2, taskType property.TaskType, option *PlanCostOption) error {
 	ret, _ := getPlanCostTrace(p, taskType, option)
 
-	if ret.GetCost() != cost {
-		panic("costVer2 not equal with cost")
+	absDiff := math.Abs(costV.cost - ret.GetCost())
+	ok := false
+	if absDiff < 1 || absDiff/costV.cost < 0.01 {
+		ok = true
 	}
-
-	//p.planCostVer2.SetName(p.ExplainID().String())
-	//p.planCostInit = true
+	if !ok {
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost mismatch: trace cost(%v), actual cost(%v)", ret.GetCost(), costV.cost))
+	}
 
 	if option.tracer != nil {
 		option.tracer.appendPlanCostDetail(buildPlanCostDetail(p.TP(), p.ID(), ret))
@@ -59,8 +83,8 @@ func genPlanCostTrace(p PhysicalPlan, cost float64, taskType property.TaskType, 
 	return nil
 }
 
-func getPlanCostTrace(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	var ret costVer2
+func getPlanCostTrace(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	var ret CostItem
 	var err error
 	switch p.(type) {
 	case *basePhysicalPlan:
@@ -110,113 +134,113 @@ func getPlanCostTrace(p PhysicalPlan, taskType property.TaskType, option *PlanCo
 	case *BatchPointGetPlan:
 		ret, err = p.(*BatchPointGetPlan).getPlanCostTrace(taskType, option)
 	default:
-		ret, err = p.(*basePhysicalPlan).getPlanCostTrace(taskType, option)
+		ret, err = getBasePlanCostTrace(p, taskType, option)
 	}
 	return ret, err
 }
 
-// getPlanCostTrace calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *basePhysicalPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
+func isTraceEnabled(option *PlanCostOption) bool {
+	return traceCost(option)
+}
+
+func getBasePlanCostTrace(p PhysicalPlan, taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	childCosts := make([]CostItem, 0, len(p.Children()))
+	builder := newCostBuilder(isTraceEnabled(option))
+	for _, child := range p.Children() {
+		childCost, err := getPlanCostTrace(child, taskType, option)
+		if err != nil {
+			return zeroCostItem, err
+		}
+		childCosts = append(childCosts, childCost)
 	}
+	var ret CostItem
+	if len(childCosts) == 0 {
+		ret = newCostItem("", 0)
+	} else {
+		ret = builder.sumAll(childCosts...).curr
+	}
+	return ret, nil
+}
+
+// getPlanCostTrace calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *basePhysicalPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	childCosts := make([]CostItem, 0, len(p.children))
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 	for _, child := range p.children {
 		childCost, err := getPlanCostTrace(child, taskType, option)
 		if err != nil {
-			return zeroCostVer2, err
+			return zeroCostItem, err
 		}
-		childCosts = append(childCosts, &childCost)
+		childCosts = append(childCosts, childCost)
 	}
+	var ret CostItem
 	if len(childCosts) == 0 {
-		p.planCostVer2 = newZeroCostVer2(true)
+		ret = newCostItem("", 0)
 	} else {
-		p.planCostVer2 = builder.sumAll(childCosts...).Value()
+		ret = builder.sumAll(childCosts...).curr
 	}
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + filter-cost
-func (p *PhysicalSelection) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalSelection) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	inputRows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.filterCostVer2(inputRows, p.Conditions, cpuFactor)
+	filterCost := builder.filterCostVer2(inputRows, p.Conditions, cpuFactor).curr
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.plus(&childCost).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(filterCost, childCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + proj-cost / concurrency
 // proj-cost = input-rows * len(expressions) * cpu-factor
-func (p *PhysicalProjection) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalProjection) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	inputRows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	concurrency := newCostItem("concurrency", float64(p.ctx.GetSessionVars().ProjectionConcurrency()))
-	builder := newArgCostBuilder(inputRows, traceCost(option))
+	builder := newArgCostBuilder(inputRows, isTraceEnabled(option))
 
-	builder.mul(newCostItem("expr_count", numFunctions(p.Exprs))).mul(&cpuFactor).div(concurrency)
+	exprCost := builder.mul(newCostItem("expr_count", numFunctions(p.Exprs))).mul(&cpuFactor).div(concurrency).curr
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.plus(&childCost).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(exprCost, childCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalIndexScan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
-	rows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
+func (p *PhysicalIndexScan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	rows := newCostItem("rows", getCardinality(p, option.CostFlag))
 	rowSize := newCostItem("rowSize", math.Max(getAvgRowSize(p.stats, p.schema.Columns), 2.0)) // consider all index columns
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.scanCostVer2(rows, rowSize, scanFactor)
-	builder.setName(p.ExplainID().String())
-
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.scanCostVer2(rows, rowSize, scanFactor).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalTableScan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalTableScan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p, option.CostFlag))
 	var rowSize float64
 	if p.StoreType == kv.TiKV {
@@ -226,59 +250,46 @@ func (p *PhysicalTableScan) getPlanCostTrace(taskType property.TaskType, option 
 	}
 	myRowSize := newCostItem("rowSize", math.Max(rowSize, 2.0))
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.scanCostVer2(rows, myRowSize, scanFactor)
-	builder.setName(p.ExplainID().String())
-
-	p.planCostVer2 = builder.Value()
+	ret := builder.scanCostVer2(rows, myRowSize, scanFactor).curr
 
 	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 	if p.StoreType == kv.TiFlash {
 		startRows := newCostItem("10000", 10000)
-		builder.scanCostVer2(startRows, myRowSize, scanFactor)
-		builder.plus(&p.planCostVer2).setName(p.ExplainID().String())
-		p.planCostVer2 = builder.Value()
+		ret = builder.scanCostVer2(startRows, myRowSize, scanFactor).plus(ret).curr
 	}
 
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret.SetName(p.ExplainID().String())
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-func (p *PhysicalIndexReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalIndexReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p.indexPlan, option.CostFlag))
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.stats, p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := newCostItem("concurrency", float64(p.ctx.GetSessionVars().DistSQLScanConcurrency()))
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.netCostVer2(rows, rowSize, netFactor)
+	netCost := builder.netCostVer2(rows, rowSize, netFactor).curr
 
 	childCost, err := getPlanCostTrace(p.indexPlan, property.CopSingleReadTaskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
-	builder.plus(&childCost).divA(concurrency).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(netCost, childCost).divA(concurrency).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-func (p *PhysicalTableReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalTableReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p.tablePlan, option.CostFlag))
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.stats, p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
@@ -288,24 +299,24 @@ func (p *PhysicalTableReader) getPlanCostTrace(taskType property.TaskType, optio
 		childType = property.MppTaskType
 	}
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.netCostVer2(rows, rowSize, netFactor)
+	netCost := builder.netCostVer2(rows, rowSize, netFactor).curr
 
 	childCost, err := getPlanCostTrace(p.tablePlan, childType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
-	builder.plus(&childCost).divA(concurrency).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
+	ret := builder.sumAll(netCost, childCost).divA(concurrency).curr
 
 	// consider tidb_enforce_mpp
 	if p.StoreType == kv.TiFlash && p.ctx.GetSessionVars().IsMPPEnforced() &&
 		!hasCostFlag(option.CostFlag, CostFlagRecalculate) { // show the real cost in explain-statements
-		p.planCostVer2 = builder.divA(newCostItem("1000000000", 1000000000)).setName(p.ExplainID().String()).Value()
+		ret = builder.reset(ret).divA(newCostItem("1000000000", 1000000000)).curr
 	}
-	return p.planCostVer2, nil
+	ret.SetName(p.ExplainID().String())
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
@@ -316,11 +327,7 @@ func (p *PhysicalTableReader) getPlanCostTrace(taskType property.TaskType, optio
 // double-read-request-cost = double-read-tasks * request-factor
 // double-read-cpu-cost = index-rows * cpu-factor
 // double-read-tasks = index-rows / batch-size * task-per-batch # task-per-batch is a magic number now
-func (p *PhysicalIndexLookUpReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalIndexLookUpReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	indexRows := newCostItem("indexRows", getCardinality(p.indexPlan, option.CostFlag))
 	tableRows := newCostItem("tableRows", getCardinality(p.indexPlan, option.CostFlag))
 	indexRowSize := newCostItem("indexRowSize", getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false))
@@ -330,71 +337,64 @@ func (p *PhysicalIndexLookUpReader) getPlanCostTrace(taskType property.TaskType,
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
 	distConcurrency := newCostItem("distConcurrency", float64(p.ctx.GetSessionVars().DistSQLScanConcurrency()))
 	doubleReadConcurrency := newCostItem("doubleReadConcurrency", float64(p.ctx.GetSessionVars().IndexLookupConcurrency()))
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	// index-side
-	builder.netCostVer2(indexRows, indexRowSize, netFactor)
 	indexChildCost, err := getPlanCostTrace(p.indexPlan, property.CopMultiReadTaskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
-	indexSideCost := builder.plus(&indexChildCost).divA(distConcurrency).setName("indexSideCost").curr
+	// index-side
+	indexNetCost := builder.netCostVer2(indexRows, indexRowSize, netFactor).curr
+	indexSideCost := builder.sumAll(indexNetCost, indexChildCost).divA(distConcurrency).setName("indexSideCost").curr
 
 	tableChildCost, err := getPlanCostTrace(p.tablePlan, property.CopMultiReadTaskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 	// table-side
-	builder.netCostVer2(tableRows, tableRowSize, netFactor)
-	tableSideCost := builder.plus(&tableChildCost).divA(distConcurrency).setName("tableSideCost").curr
+	tableNetCost := builder.netCostVer2(tableRows, tableRowSize, netFactor).curr
+	tableSideCost := builder.sumAll(tableNetCost, tableChildCost).divA(distConcurrency).setName("tableSideCost").curr
 
 	doubleReadRows := newCostItem("doubleReadRows", indexRows.GetCost())
-	builder.reset(doubleReadRows)
-	doubleReadCPUCost := builder.mul(&cpuFactor).curr
+	doubleReadCPUCost := builder.reset(doubleReadRows).mul(&cpuFactor).curr
 
 	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := newCostItem("doubleReadTasks", float64(doubleReadRows.GetCost()/batchSize*taskPerBatch))
-	builder.reset(doubleReadTasks).mul(&requestFactor).plus(doubleReadCPUCost).setName("doubleReadCost")
-	builder.plus(tableSideCost).divA(doubleReadConcurrency).plus(indexSideCost).setName(p.ExplainID().String())
-
-	p.planCostVer2 = builder.Value()
+	doubleReadCost := builder.reset(doubleReadTasks).mul(&requestFactor).plus(doubleReadCPUCost).setName("doubleReadCost").curr
+	ret := builder.sumAll(doubleReadCost, tableSideCost).divA(doubleReadConcurrency).plus(indexSideCost).curr
 
 	if p.ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
 		// if the expectCnt is below the paging threshold, using paging API
 		p.Paging = true // TODO: move this operation from cost model to physical optimization
-		p.planCostVer2 = builder.divA(newCostItem("0.6", 0.6)).setName(p.ExplainID().String()).Value()
+		ret = builder.reset(ret).divA(newCostItem("0.6", 0.6)).curr
 	}
-
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret.SetName(p.ExplainID().String())
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = table-side-cost + sum(index-side-cost)
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
 // table-side-cost = (table-child-cost + table-net-cost) / dist-concurrency # same with TableReader
-func (p *PhysicalIndexMergeReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalIndexMergeReader) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	distConcurrency := newCostItem("distConcurrency", float64(p.ctx.GetSessionVars().DistSQLScanConcurrency()))
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	var tableSideCost CostItem
 	if tablePath := p.tablePlan; tablePath != nil {
 		rows := newCostItem("rows", getCardinality(tablePath, option.CostFlag))
 		rowSize := newCostItem("rowSize", getAvgRowSize(tablePath.Stats(), tablePath.Schema().Columns))
 
-		builder.netCostVer2(rows, rowSize, netFactor)
 		tableChildCost, err := getPlanCostTrace(tablePath, taskType, option)
 		if err != nil {
-			return zeroCostVer2, err
+			return zeroCostItem, err
 		}
-		tableSideCost = builder.plus(&tableChildCost).divA(distConcurrency).setName("tablePathCost").curr
+		tableNetCost := builder.netCostVer2(rows, rowSize, netFactor).curr
+		tableSideCost = builder.sumAll(tableNetCost, tableChildCost).divA(distConcurrency).setName("tablePathCost").curr
 	}
 
 	indexSideCost := make([]CostItem, 0, len(p.partialPlans))
@@ -404,18 +404,15 @@ func (p *PhysicalIndexMergeReader) getPlanCostTrace(taskType property.TaskType, 
 
 		indexChildCost, err := getPlanCostTrace(indexPath, taskType, option)
 		if err != nil {
-			return zeroCostVer2, err
+			return zeroCostItem, err
 		}
 
-		builder.netCostVer2(rows, rowSize, netFactor)
-		indexSideCost = append(indexSideCost, builder.plus(&indexChildCost).divA(distConcurrency).curr)
+		indexNetCost := builder.netCostVer2(rows, rowSize, netFactor).curr
+		indexSideCost = append(indexSideCost, builder.sumAll(indexNetCost, indexChildCost).divA(distConcurrency).curr)
 	}
-	builder.reset(nil)
-	builder.sumAll(indexSideCost...).plus(tableSideCost).setName(p.ExplainID().String())
-
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(indexSideCost...).plus(tableSideCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
@@ -427,13 +424,9 @@ func (p *PhysicalIndexMergeReader) getPlanCostTrace(taskType property.TaskType, 
 // else if spill:
 // 1. sort-mem-cost = mem-quota * mem-factor
 // 2. sort-disk-cost = rows * row-size * disk-factor
-func (p *PhysicalSort) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalSort) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", math.Max(getCardinality(p.children[0], option.CostFlag), 1))
-	rowSize := newCostItem("rows", getAvgRowSize(p.statsInfo(), p.Schema().Columns))
+	rowSize := newCostItem("rowSize", getAvgRowSize(p.statsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -444,7 +437,7 @@ func (p *PhysicalSort) getPlanCostTrace(taskType property.TaskType, option *Plan
 		memQuota > 0 && // mem-quota is set
 		rowSize.GetCost()*rows.GetCost() > float64(memQuota) // exceed the mem-quota
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	sortCPUCost := builder.orderCostVer2(rows, rows.GetCost(), p.ByItems, cpuFactor).setName("sortCPU").curr
 
@@ -453,7 +446,7 @@ func (p *PhysicalSort) getPlanCostTrace(taskType property.TaskType, option *Plan
 		builder.reset(rows)
 		builder.mul(rowSize).mul(&memFactor).setName("sortMem")
 		sortMemCost = builder.curr
-		sortDiskCost = &zeroCostVer2
+		sortDiskCost = newCostItem("sortDisk", 0)
 	} else {
 		builder.reset(rows)
 		builder.mul(newCostItem("memQuota", float64(memQuota))).mul(&memFactor).setName("sortMem")
@@ -465,85 +458,70 @@ func (p *PhysicalSort) getPlanCostTrace(taskType property.TaskType, option *Plan
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.reset(rows)
-	p.planCostVer2 = builder.sumAll(&childCost, sortCPUCost, sortMemCost, sortDiskCost).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(childCost, sortCPUCost, sortMemCost, sortDiskCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + topn-cpu-cost + topn-mem-cost
 // topn-cpu-cost = rows * log2(N) * len(sort-items) * cpu-factor
 // topn-mem-cost = N * row-size * mem-factor
-func (p *PhysicalTopN) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalTopN) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
 	N := newCostItem("N", math.Max(1, float64(p.Count+p.Offset)))
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.statsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.orderCostVer2(rows, N.GetCost(), p.ByItems, cpuFactor)
-	builder.plus(N).mul(rowSize).mul(&memFactor)
+	topNCPUCost := builder.orderCostVer2(rows, N.GetCost(), p.ByItems, cpuFactor).curr
+	topNMemCost := builder.reset(N).mul(rowSize).mul(&memFactor).curr
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	p.planCostVer2 = builder.plus(&childCost).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(childCost, topNCPUCost, topNMemCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + agg-cost + group-cost
-func (p *PhysicalStreamAgg) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalStreamAgg) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p.children[0], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	aggCost := builder.aggCostVer2(rows, p.AggFuncs, cpuFactor).curr
+	groupCost := builder.groupCostVer2(rows, p.GroupByItems, cpuFactor).curr
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.groupCostVer2(rows, p.GroupByItems, cpuFactor)
-	builder.sumAll(&childCost, aggCost).setName(p.ExplainID().String())
-
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(childCost, aggCost, groupCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
-func (p *PhysicalHashAgg) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalHashAgg) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	inputRows := newCostItem("inputRows", getCardinality(p.children[0], option.CostFlag))
 	outputRows := newCostItem("outputRows", getCardinality(p, option.CostFlag))
 	outputRowSize := newCostItem("outputRowSize", getAvgRowSize(p.Stats(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := newCostItem("concurrency", float64(p.ctx.GetSessionVars().HashAggFinalConcurrency()))
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	aggCost := builder.aggCostVer2(inputRows, p.AggFuncs, cpuFactor).setName("aggCost").curr
 	groupCost := builder.groupCostVer2(inputRows, p.GroupByItems, cpuFactor).setName("groupCost").curr
@@ -554,60 +532,50 @@ func (p *PhysicalHashAgg) getPlanCostTrace(taskType property.TaskType, option *P
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 	builder.reset(nil)
-	builder.sumAll(aggCost, groupCost, hashBuildCost, hashProbeCost).divA(concurrency).plus(startCost).plus(&childCost).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(aggCost, groupCost, hashBuildCost, hashProbeCost).divA(concurrency).plus(startCost).plus(childCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
-func (p *PhysicalMergeJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalMergeJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	leftRows := newCostItem("leftRows", getCardinality(p.children[0], option.CostFlag))
 	rightRows := newCostItem("rightRows", getCardinality(p.children[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	leftFilterCost := builder.filterCostVer2(leftRows, p.LeftConditions, cpuFactor).curr
-	builder.filterCostVer2(rightRows, p.RightConditions, cpuFactor)
-	filterCost := builder.plus(leftFilterCost).setName("filterCost").curr
+	rightFilterCost := builder.filterCostVer2(rightRows, p.RightConditions, cpuFactor).curr
+	filterCost := builder.sumAll(leftFilterCost, rightFilterCost).setName("filterCost").curr
 
 	leftGroupCost := builder.groupCostVer2(leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor).curr
+	rightGroupCost := builder.groupCostVer2(rightRows, cols2Exprs(p.LeftJoinKeys), cpuFactor).curr
+	groupCost := builder.sumAll(leftGroupCost, rightGroupCost).setName("groupCost").curr
 
 	leftChildCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 	rightChildCost, err := getPlanCostTrace(p.children[1], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.groupCostVer2(rightRows, cols2Exprs(p.LeftJoinKeys), cpuFactor)
-	builder.plus(leftGroupCost).setName("groupCost")
-	builder.sumAll(&leftChildCost, &rightChildCost, filterCost).setName(p.ExplainID().String())
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(leftChildCost, rightChildCost, filterCost, groupCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
 // build-hash-cost + build-filter-cost +
 // (probe-filter-cost + probe-hash-cost) / concurrency
-func (p *PhysicalHashJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalHashJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	build, probe := p.children[0], p.children[1]
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
 	buildKeys, probeKeys := p.LeftJoinKeys, p.RightJoinKeys
@@ -623,7 +591,7 @@ func (p *PhysicalHashJoin) getPlanCostTrace(taskType property.TaskType, option *
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	buildFilterCost := builder.filterCostVer2(buildRows, buildFilters, cpuFactor).setName("buildFilterCost").curr
 
@@ -635,32 +603,26 @@ func (p *PhysicalHashJoin) getPlanCostTrace(taskType property.TaskType, option *
 
 	buildChildCost, err := getPlanCostTrace(build, taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 	probeChildCost, err := getPlanCostTrace(probe, taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
-
+	var ret CostItem
 	if taskType == property.MppTaskType { // BCast or Shuffle Join, use mppConcurrency
-		builder.reset(buildHashCost).sumAll(buildFilterCost, probeFilterCost, probeHashCost).divA(mppConcurrency).setName("probeCost").sumAll(&buildChildCost, &probeChildCost).setName(p.ExplainID().String())
-		p.planCostVer2 = builder.Value()
+		probeCost := builder.sumAll(buildHashCost, buildFilterCost, probeFilterCost, probeHashCost).divA(mppConcurrency).setName("probeCost").curr
+		ret = builder.sumAll(buildChildCost, probeChildCost, probeCost).setName(p.ExplainID().String()).curr
 	} else { // TiDB HashJoin
 		startCost := builder.reset(&cpuFactor).mul(newCostItem("10", 10)).mul(newCostItem("3", 3)).setName("startCost").curr
-		builder.reset(probeFilterCost).plus(probeHashCost).divA(tidbConcurrency).setName("probeCost")
-
-		builder.sumAll(startCost, &buildChildCost, &probeChildCost, buildHashCost, buildFilterCost).setName(p.ExplainID().String())
-		p.planCostVer2 = builder.Value()
+		probeCost := builder.sumAll(probeFilterCost, probeHashCost).divA(tidbConcurrency).setName("probeCost").curr
+		ret = builder.sumAll(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost, probeCost).setName(p.ExplainID().String()).curr
 	}
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
-func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, option *PlanCostOption, indexJoinType int) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalIndexJoin) getIndexJoinCostVerTrace(taskType property.TaskType, option *PlanCostOption, indexJoinType int) (CostItem, error) {
 	build, probe := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	buildRows := newCostItem("buildRows", getCardinality(build, option.CostFlag))
 	buildRowSize := newCostItem("buildRowSize", getAvgRowSize(build.Stats(), build.Schema().Columns))
@@ -673,12 +635,12 @@ func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, op
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	buildFilterCost := builder.filterCostVer2(buildRows, buildFilters, cpuFactor).setName("buildFilterCost").curr
 	buildChildCost, err := getPlanCostTrace(build, taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 	buildTaskCost := builder.reset(buildRows).mul(newCostItem("10", 10)).mul(&cpuFactor).setName("buildTaskCost").curr
 	startCost := builder.reset(&cpuFactor).mul(newCostItem("10", 10)).mul(newCostItem("3", 3)).setName("startCost").curr
@@ -686,7 +648,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, op
 	probeFilterCost := builder.filterCostVer2(probeRowsTot, probeFilters, cpuFactor).setName("probeFilterCost").curr
 	probeChildCost, err := getPlanCostTrace(probe, taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
 	var hashTableCost CostItem
@@ -694,7 +656,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, op
 	case 1: // IndexHashJoin
 		hashTableCost = builder.hashBuildCostVer2(buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor).curr
 	case 2: // IndexMergeJoin
-		hashTableCost = newZeroCostVer2Ptr()
+		hashTableCost = newCostItem("", 0)
 	default: // IndexJoin
 		hashTableCost = builder.hashBuildCostVer2(probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor).curr
 	}
@@ -704,10 +666,10 @@ func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, op
 	// Use an empirical value batchRatio to handle this now.
 	// TODO: remove this empirical value.
 	batchRatio := 6.0
-	probeCost := builder.reset(&probeChildCost).mul(buildRows).divA(newCostItem("batchRatio", batchRatio)).setName("probeCost").curr
+	probeCost := builder.reset(probeChildCost).mul(buildRows).divA(newCostItem("batchRatio", batchRatio)).setName("probeCost").curr
 
 	// Double Read Cost
-	doubleReadCost := newCostItem("", 0)
+	doubleReadCost := newCostItem("doubleReadCost", 0)
 	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
 		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
 		taskPerBatch := 1024.0 // TODO: remove this magic number
@@ -715,90 +677,79 @@ func (p *PhysicalIndexJoin) getIndexJoinCostTrace(taskType property.TaskType, op
 		doubleReadCost = builder.reset(doubleReadTasks).mul(&requestFactor).mul(newCostItem("IndexJoinDoubleReadPenaltyCostRate", p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)).setName("doubleReadCost").curr
 	}
 
-	p.planCostVer2 = builder.reset(doubleReadCost).sumAll(probeCost, probeFilterCost, hashTableCost).divA(probeConcurrency).sumAll(startCost, &buildChildCost, buildFilterCost, buildTaskCost).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(doubleReadCost, probeCost, probeFilterCost, hashTableCost).divA(probeConcurrency).curr
+	ret = builder.sumAll(ret, startCost, buildChildCost, buildFilterCost, buildTaskCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost +
 // (probe-cost + probe-filter-cost) / concurrency
 // probe-cost = probe-child-cost * build-rows / batchRatio
-func (p *PhysicalIndexJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	return p.getIndexJoinCostTrace(taskType, option, 0)
+func (p *PhysicalIndexJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	return p.getIndexJoinCostVerTrace(taskType, option, 0)
 }
 
-func (p *PhysicalIndexHashJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	return p.getIndexJoinCostTrace(taskType, option, 1)
+func (p *PhysicalIndexHashJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	return p.getIndexJoinCostVerTrace(taskType, option, 1)
 }
 
-func (p *PhysicalIndexMergeJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	return p.getIndexJoinCostTrace(taskType, option, 2)
+func (p *PhysicalIndexMergeJoin) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
+	return p.getIndexJoinCostVerTrace(taskType, option, 2)
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
-func (p *PhysicalApply) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalApply) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	buildRows := newCostItem("buildRows", getCardinality(p.children[0], option.CostFlag))
 	probeRowsOne := newCostItem("probeRows", getCardinality(p.children[1], option.CostFlag))
 	probeRowsTot := newCostItem("probeRowTot", buildRows.GetCost()*probeRowsOne.GetCost())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
 	buildFilterCost := builder.filterCostVer2(buildRows, p.LeftConditions, cpuFactor).setName("buildFilterCost").curr
 	buildChildCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
 	probeFilterCost := builder.filterCostVer2(probeRowsTot, p.RightConditions, cpuFactor).setName("probeFilterCost").curr
 	probeChildCost, err := getPlanCostTrace(p.children[1], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	builder.reset(&probeChildCost).divA(buildRows).setName("probeCost")
-	p.planCostVer2 = builder.sumAll(&buildChildCost, buildFilterCost, probeFilterCost).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	probeCost := builder.reset(probeChildCost).divA(buildRows).setName("probeCost").curr
+	ret := builder.sumAll(buildChildCost, buildFilterCost, probeCost, probeFilterCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace calculates the cost of the plan if it has not been calculated yet and returns the cost.
 // plan-cost = sum(child-cost) / concurrency
-func (p *PhysicalUnionAll) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalUnionAll) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	concurrency := newCostItem("concurrency", float64(p.ctx.GetSessionVars().UnionConcurrency()))
 	childCosts := make([]CostItem, 0, len(p.children))
 	for _, child := range p.children {
 		childCost, err := getPlanCostTrace(child, taskType, option)
 		if err != nil {
-			return zeroCostVer2, err
+			return zeroCostItem, err
 		}
-		childCosts = append(childCosts, &childCost)
+		childCosts = append(childCosts, childCost)
 	}
 
-	builder := newCostBuilder(traceCost(option))
-	p.planCostVer2 = builder.sumAll(childCosts...).divA(concurrency).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	builder := newCostBuilder(isTraceEnabled(option))
+	ret := builder.sumAll(childCosts...).divA(concurrency).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + net-cost
-func (p *PhysicalExchangeReceiver) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PhysicalExchangeReceiver) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	rows := newCostItem("rows", getCardinality(p, option.CostFlag))
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.stats, p.Schema().Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
@@ -808,64 +759,50 @@ func (p *PhysicalExchangeReceiver) getPlanCostTrace(taskType property.TaskType, 
 	}
 	numNode := float64(3) // TODO: remove this empirical value
 
-	builder := newCostBuilder(traceCost(option))
+	builder := newCostBuilder(isTraceEnabled(option))
 
-	builder.netCostVer2(rows, rowSize, netFactor)
+	netCost := builder.netCostVer2(rows, rowSize, netFactor).curr
 	if isBCast {
-		builder.mul(newCostItem("node_num", numNode))
+		builder.reset(netCost).mul(newCostItem("node_num", numNode))
 	}
 
 	childCost, err := getPlanCostTrace(p.children[0], taskType, option)
 	if err != nil {
-		return zeroCostVer2, err
+		return zeroCostItem, err
 	}
 
-	p.planCostVer2 = builder.plus(&childCost).setName(p.ExplainID().String()).Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	ret := builder.sumAll(childCost, netCost).setName(p.ExplainID().String()).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
-func (p *PointGetPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *PointGetPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	if p.accessCols == nil { // from fast plan code path
-		p.planCostVer2 = zeroCostVer2
-		p.planCostInit = true
-		return zeroCostVer2, nil
+		return zeroCostItem, nil
 	}
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.stats, p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
-	builder.netCostVer2(newCostItem("1", 1), rowSize, netFactor)
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	builder := newCostBuilder(isTraceEnabled(option))
+	ret := builder.netCostVer2(newCostItem("1", 1), rowSize, netFactor).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 // getPlanCostTrace returns the plan-cost of this sub-plan, which is:
-func (p *BatchPointGetPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (costVer2, error) {
-	if p.planCostInit && !hasCostFlag(option.CostFlag, CostFlagRecalculate) {
-		return p.planCostVer2, nil
-	}
-
+func (p *BatchPointGetPlan) getPlanCostTrace(taskType property.TaskType, option *PlanCostOption) (CostItem, error) {
 	if p.accessCols == nil { // from fast plan code path
-		p.planCostVer2 = zeroCostVer2
-		p.planCostInit = true
-		return zeroCostVer2, nil
+		return zeroCostItem, nil
 	}
 	rows := newCostItem("rows", getCardinality(p, option.CostFlag))
 	rowSize := newCostItem("rowSize", getAvgRowSize(p.stats, p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 
-	builder := newCostBuilder(traceCost(option))
-	builder.netCostVer2(rows, rowSize, netFactor)
-	p.planCostVer2 = builder.Value()
-	p.planCostInit = true
-	return p.planCostVer2, nil
+	builder := newCostBuilder(isTraceEnabled(option))
+	ret := builder.netCostVer2(rows, rowSize, netFactor).curr
+	p.planCostVer2 = *convertToCostVer2(ret)
+	return ret, nil
 }
 
 func (builder *CostBuilder) scanCostVer2(rows, rowSize CostItem, scanFactor costVer2Factor) *CostBuilder {
@@ -930,6 +867,7 @@ type CostItem interface {
 	AsFormula() string
 	GetName() string
 	SetName(v string)
+	ToString() string
 }
 
 // IsSimple used to indentify costVer2Factor with costVer2
@@ -957,58 +895,63 @@ func (f *costVer2Factor) SetName(v string) {
 	f.Name = v
 }
 
-/*
-type costVer2 struct {
-	name    string
-	cost    float64
-	formula string // It used to trace the cost calculation.
-	factors map[string]CostItem
+func (f costVer2Factor) ToString() string {
+	return fmt.Sprintf("%s(%v)", f.Name, f.Value)
 }
-*/
 
-func (costVer2) IsSimple() bool {
+type CostVerTrace struct {
+	name    string              `json:"name"`
+	cost    float64             `json:"cost"`
+	formula string              `json:"formula"`
+	factors map[string]CostItem `json:"factors"`
+}
+
+func (CostVerTrace) IsSimple() bool {
 	return false
 }
 
-func (c *costVer2) SetCost(v float64) {
+func (c *CostVerTrace) SetCost(v float64) {
 	c.cost = v
 }
 
-func (c *costVer2) GetCost() float64 {
+func (c *CostVerTrace) GetCost() float64 {
 	return c.cost
 }
 
-func (c *costVer2) GetName() string {
-	return c.trace.name
+func (c *CostVerTrace) GetName() string {
+	return c.name
 }
 
-func (c *costVer2) AsFormula() string {
-	if len(c.trace.name) > 0 {
-		return c.trace.name
+func (c *CostVerTrace) AsFormula() string {
+	if len(c.name) > 0 {
+		return c.name
 	}
-	return c.trace.formula
+	return c.formula
 }
 
-func (c *costVer2) SetName(name string) {
-	c.trace.name = name
+func (c *CostVerTrace) SetName(name string) {
+	c.name = name
+}
+
+func (f *CostVerTrace) ToString() string {
+	formula := f.formula
+	for k, v := range f.factors {
+		val := fmt.Sprintf("%s(%v)", k, v.GetCost())
+		formula = strings.ReplaceAll(formula, k, val)
+	}
+	return formula
 }
 
 func newCostItem(name string, cost float64) CostItem {
 	return &costVer2Factor{Name: name, Value: cost}
 }
 
-func newZeroCostVer2Ptr() *costVer2 {
-	return &costVer2{cost: 0, trace: nil}
-}
-
-func newCostVer2New(formula string, cost float64) *costVer2 {
-	return &costVer2{
-		cost: cost,
-		trace: &costTrace{
-			formula:     formula,
-			costParams:  make(map[string]interface{}),
-			factorCosts: make(map[string]float64),
-		},
+func newCostVer2New(formula string, cost float64) *CostVerTrace {
+	return &CostVerTrace{
+		cost:    cost,
+		name:    "",
+		formula: formula,
+		factors: make(map[string]CostItem),
 	}
 }
 
@@ -1053,21 +996,22 @@ func newArgCostBuilder(init CostItem, isTrace bool) *CostBuilder {
 }
 
 func (builder *CostBuilder) reset(init CostItem) *CostBuilder {
-	if !builder.isTrace && init.IsSimple() {
-		builder.curr = newCostItem(init.GetName(), init.GetCost())
+	if init == nil {
+		builder.curr = nil
 	} else {
-		builder.curr = init
+		if !builder.isTrace || init.IsSimple() {
+			builder.curr = newCostItem(init.GetName(), init.GetCost())
+		} else {
+			builder.curr = init
+		}
 	}
 	builder.lastV = 0
 	builder.lastOp = 0
 	return builder
 }
 
-func (builder *CostBuilder) Value() costVer2 {
-	if builder.curr.IsSimple() {
-		return costVer2{cost: builder.curr.GetCost(), trace: nil}
-	}
-	return *builder.curr.(*costVer2)
+func (builder *CostBuilder) Value() CostItem {
+	return builder.curr
 }
 
 func (builder *CostBuilder) setName(name string) *CostBuilder {
@@ -1076,6 +1020,13 @@ func (builder *CostBuilder) setName(name string) *CostBuilder {
 	builder.lastV = 0
 	builder.curr.SetName(name)
 	return builder
+}
+
+func (builder *CostBuilder) checkAndSetCost(cost float64) float64 {
+	if !builder.isTrace {
+		builder.curr.SetCost(cost)
+	}
+	return cost
 }
 
 // calcCost use to calc cost
@@ -1087,23 +1038,19 @@ func (builder *CostBuilder) calcCost(curOp byte, cost float64) float64 {
 	case PLUS:
 		builder.lastV = cost
 		builder.lastOp = curOp
-		builder.curr.SetCost(curCost + cost)
-		return builder.curr.GetCost()
+		return builder.checkAndSetCost(curCost + cost)
 	case SUB:
 		builder.lastV = cost
 		builder.lastOp = curOp
-		builder.curr.SetCost(curCost - cost)
-		return builder.curr.GetCost()
+		return builder.checkAndSetCost(curCost - cost)
 	case MULA:
 		builder.lastV = cost
 		builder.lastOp = curOp
-		builder.curr.SetCost(curCost * cost)
-		return builder.curr.GetCost()
+		return builder.checkAndSetCost(curCost * cost)
 	case DIVA:
 		builder.lastV = cost
 		builder.lastOp = curOp
-		builder.curr.SetCost(curCost / cost)
-		return builder.curr.GetCost()
+		return builder.checkAndSetCost(curCost / cost)
 	}
 	// We should do special action here. for example "a + b * c", we already calc the cost, and then mul("d") called, if using cost * d, the formula is "(a + b * c) * d", but "a + b * c * d" is expected. so I use lastV to record value since last +/-, lastV is "b * c" in this example, when mul/div called, firstly cost +/- lastV("b * c"), then cost -/+ lastV*d("b * c * d")
 	switch builder.lastOp {
@@ -1130,8 +1077,7 @@ func (builder *CostBuilder) calcCost(curOp byte, cost float64) float64 {
 			curCost /= cost
 		}
 	}
-	builder.curr.SetCost(curCost)
-	return curCost
+	return builder.checkAndSetCost(curCost)
 }
 
 // isAnnoymous check whether CostItem have name or not, if no name, the formula will be complicated
@@ -1176,27 +1122,21 @@ func (builder *CostBuilder) opFinish(op byte, v CostItem, cost float64) {
 		// for costVer2Factor or named costVer2, we should add itself to factors,
 		// otherwise we should move it's params to the newCurr
 		if len(v.GetName()) > 0 {
-			newCurr.trace.costParams[v.AsFormula()] = v
+			newCurr.factors[v.AsFormula()] = v
 		} else {
-			cv := v.(*costVer2)
-			for k, v1 := range cv.trace.factorCosts {
-				newCurr.trace.factorCosts[k] = v1
-			}
-			for k, v1 := range cv.trace.costParams {
-				newCurr.trace.costParams[k] = v1
+			cv := v.(*CostVerTrace)
+			for k, v1 := range cv.factors {
+				newCurr.factors[k] = v1
 			}
 		}
 
 		// same logic with previous to handle builder.curr
 		if len(builder.curr.GetName()) > 0 {
-			newCurr.trace.costParams[builder.curr.AsFormula()] = builder.curr
+			newCurr.factors[builder.curr.AsFormula()] = builder.curr
 		} else if !builder.curr.IsSimple() {
-			cv := builder.curr.(*costVer2)
-			for k, v := range cv.trace.factorCosts {
-				newCurr.trace.factorCosts[k] = v
-			}
-			for k, v := range cv.trace.costParams {
-				newCurr.trace.costParams[k] = v
+			cv := builder.curr.(*CostVerTrace)
+			for k, v := range cv.factors {
+				newCurr.factors[k] = v
 			}
 		}
 
@@ -1208,19 +1148,21 @@ func (builder *CostBuilder) opFinish(op byte, v CostItem, cost float64) {
 		if builder.curr.IsSimple() {
 			newCurr := newCostVer2New(formula, cost)
 			// add curr to factors
-			newCurr.trace.factorCosts[builder.curr.AsFormula()] = builder.curr.GetCost()
-			newCurr.trace.factorCosts[v.AsFormula()] = v.GetCost()
+			newCurr.factors[builder.curr.AsFormula()] = builder.curr
+			newCurr.factors[v.AsFormula()] = v
 			builder.curr = newCurr
 		} else {
-			// just update formula and factors, cost already updated in calcCost
-			cv := builder.curr.(*costVer2)
-			cv.trace.formula = formula
-			cv.trace.factorCosts[v.AsFormula()] = v.GetCost()
+			// just update formula, cost and factors
+			cv := builder.curr.(*CostVerTrace)
+			cv.cost = cost
+			cv.formula = formula
+			cv.factors[v.AsFormula()] = v
 		}
 	}
 }
 
 func (builder *CostBuilder) sumAll(params ...CostItem) *CostBuilder {
+	builder.reset(nil)
 	for _, param := range params {
 		if builder.curr == nil {
 			builder.reset(param)
@@ -1232,12 +1174,18 @@ func (builder *CostBuilder) sumAll(params ...CostItem) *CostBuilder {
 }
 
 func (builder *CostBuilder) plus(v CostItem) *CostBuilder {
+	if v.GetCost() == 0 {
+		return builder
+	}
 	cost := builder.calcCost(PLUS, v.GetCost())
 	builder.opFinish(PLUS, v, cost)
 	return builder
 }
 
 func (builder *CostBuilder) sub(v CostItem) *CostBuilder {
+	if v.GetCost() == 0 {
+		return builder
+	}
 	cost := builder.calcCost(SUB, v.GetCost())
 	builder.opFinish(SUB, v, cost)
 	return builder
@@ -1299,3 +1247,5 @@ func (builder *CostBuilder) SetNameForTest(name string) *CostBuilder {
 func NewCostItemForTest(name string, cost float64) CostItem {
 	return newCostItem(name, cost)
 }
+
+var zeroCostItem = newCostItem("", 0)

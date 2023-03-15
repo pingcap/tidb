@@ -434,6 +434,7 @@ func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCo
 		return nil
 	}
 	op.tracer = tracer
+	op.CostFlag |= CostFlagTrace
 	return op
 }
 

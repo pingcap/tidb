@@ -252,6 +252,7 @@ type PhysicalPlanCostDetail struct {
 	TP     string                 `json:"type"`
 	Desc   string                 `json:"desc"`
 	ID     int                    `json:"id"`
+	Cost   float64                `json:"cost"`
 }
 
 // NewPhysicalPlanCostDetail creates a cost detail
