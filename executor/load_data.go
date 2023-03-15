@@ -415,6 +415,11 @@ func (e *LoadDataWorker) Load(
 	// done is used to let commitWork goroutine notify UpdateJobProgress
 	// goroutine that the job is finished.
 	done := make(chan struct{})
+	// both processStream and commitWork goroutines will use this txn.
+	err = sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
 
 	// processStream goroutine.
 	group.Go(func() error {
@@ -441,6 +446,7 @@ func (e *LoadDataWorker) Load(
 	})
 	// commitWork goroutine.
 	group.Go(func() error {
+		failpoint.Inject("BeforeCommitWork", nil)
 		err2 := e.commitWork(groupCtx)
 		if err2 == nil {
 			close(done)
@@ -629,11 +635,6 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 			err = errors.Errorf("%v", r)
 		}
 	}()
-
-	err = sessiontxn.NewTxn(ctx, e.Ctx)
-	if err != nil {
-		return err
-	}
 
 	var (
 		tasks               uint64
