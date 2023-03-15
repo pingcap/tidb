@@ -39,7 +39,8 @@ const (
 	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
 	LoadDataFormatParquet = "parquet"
 
-	logicalImportMode   = "logical"  // tidb backend
+	// LogicalImportMode represents the import mode is SQL-like.
+	LogicalImportMode   = "logical"  // tidb backend
 	physicalImportMode  = "physical" // local backend
 	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
@@ -236,7 +237,7 @@ func (e *LoadDataController) initDefaultOptions() {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	e.importMode = logicalImportMode
+	e.importMode = LogicalImportMode
 	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	e.checksum = config.OpLevelRequired
 	e.addIndex = true
@@ -278,13 +279,13 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		v = strings.ToLower(v)
-		if v != logicalImportMode && v != physicalImportMode {
+		if v != LogicalImportMode && v != physicalImportMode {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		e.importMode = v
 	}
 
-	if e.importMode == logicalImportMode {
+	if e.importMode == LogicalImportMode {
 		// some options are only allowed in physical mode
 		for _, opt := range specifiedOptions {
 			if _, ok := optionsForPhysicalImport[opt.Name]; ok {

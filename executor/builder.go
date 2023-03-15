@@ -795,6 +795,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		GlobalScope:           v.GlobalScope,
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
+		LoadDataJobID:         v.LoadDataJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -3359,6 +3360,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
 		desc:             ts.Desc,
+		byItems:          ts.ByItems,
 		columns:          ts.Columns,
 		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.TablePlans),
@@ -3668,6 +3670,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		keepOrder:        is.KeepOrder,
 		desc:             is.Desc,
 		columns:          is.Columns,
+		byItems:          is.ByItems,
 		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
 		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
@@ -4389,6 +4392,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID).
 		Build()
 	if err != nil {
 		return nil, err
