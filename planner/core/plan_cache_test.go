@@ -1443,3 +1443,27 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		require.Equal(t, reasons[idx], warn[2])
 	}
 }
+
+func TestPlanCacheSwitchCanEffectImmediately(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	// before prepare
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: plan cache is disabled"))
+	// after prepare
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: plan cache is disabled"))
+}
