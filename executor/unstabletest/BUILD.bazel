@@ -8,7 +8,6 @@ go_test(
         "unstable_test.go",
     ],
     flaky = True,
-    race = "on",
     shard_count = 2,
     deps = [
         "//config",
