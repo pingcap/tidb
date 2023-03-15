@@ -1237,6 +1237,9 @@ type DataSource struct {
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
 
+	// accessPathMinSelectivity is the minimal selectivity among the access paths.
+	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
+	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	accessPathMinSelectivity float64
 }
 
