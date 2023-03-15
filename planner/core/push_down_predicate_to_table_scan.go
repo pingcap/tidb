@@ -50,64 +50,33 @@ type expressionGroup struct {
 
 // predicatePushDownToTableScan is used find the selection just above the table scan
 // and try to push down the predicates to the table scan.
-func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) {
+func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
-		physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan)
-		if ok && physicalTableScan.isFullScan() && physicalTableScan.StoreType == kv.TiFlash {
+		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
 			// Only when the table scan is a full scan and the store type is TiFlash,
 			// we will try to push down predicates.
 			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
-		} else if !ok {
-			for _, child := range plan.Children() {
-				predicatePushDownToTableScan(sctx, child)
+			if len(p.Conditions) == 0 {
+				return p.Children()[0]
 			}
+		} else if !ok {
+			newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
+			for _, child := range plan.Children() {
+				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
+			}
+			plan.SetChildren(newChildren...)
 		}
 	case *PhysicalTableReader:
 		predicatePushDownToTableScan(sctx, p.tablePlan)
 	default:
+		newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
 		for _, child := range plan.Children() {
-			predicatePushDownToTableScan(sctx, child)
+			newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
 		}
+		plan.SetChildren(newChildren...)
 	}
-}
-
-// removeEmptySelection removes the empty selection in plan when late materialization is enabled and all conditions of a selection are pushed down.
-// @param: plan: the physical plan
-func removeEmptySelection(plan PhysicalPlan) {
-	if tableReader, isTableReader := plan.(*PhysicalTableReader); isTableReader && tableReader.StoreType == kv.TiFlash {
-		if selection, isSelection := tableReader.tablePlan.(*PhysicalSelection); isSelection && len(selection.Conditions) == 0 {
-			if len(tableReader.tablePlan.Children()) == 1 {
-				tableReader.tablePlan = tableReader.tablePlan.Children()[0]
-			} else {
-				logutil.BgLogger().Warn("invalid table plan", zap.String("plan", plan.ExplainID().String()))
-			}
-		}
-		removeEmptySelection(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
-	} else {
-		var newChildren []PhysicalPlan
-		removed := false
-		for _, child := range plan.Children() {
-			switch x := child.(type) {
-			case *PhysicalSelection:
-				if len(x.Conditions) == 0 {
-					newChildren = append(newChildren, x.children...)
-					removed = true
-				} else {
-					newChildren = append(newChildren, x)
-				}
-			default:
-				newChildren = append(newChildren, x)
-			}
-		}
-		if removed && len(newChildren) > 0 {
-			plan.SetChildren(newChildren...)
-		}
-		for _, child := range plan.Children() {
-			removeEmptySelection(child)
-		}
-	}
+	return plan
 }
 
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".

@@ -556,8 +556,6 @@ func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().EnableLateMaterialization {
 		logutil.BgLogger().Info("EnableLateMaterialization is set, try to push down some predicates to table scan.")
 		predicatePushDownToTableScan(sctx, plan)
-		// remove the empty selection after pushing down predicates
-		removeEmptySelection(plan)
 	}
 }
 
