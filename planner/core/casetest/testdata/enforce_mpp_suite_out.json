@@ -1511,7 +1511,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two one join keyd",
+        "SQL": "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
         "Plan": [
           "TableReader_27 8000.00 root  MppVersion: 1, data:ExchangeSender_26",
           "└─ExchangeSender_26 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1563,7 +1563,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two one join keyd",
+        "SQL": "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
         "Plan": [
           "TableReader_27 10000.00 root  MppVersion: 1, data:ExchangeSender_26",
           "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
