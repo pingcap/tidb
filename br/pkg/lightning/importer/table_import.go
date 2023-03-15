@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/dumpling/export"
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -55,11 +54,6 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-)
-
-const (
-	getDDLStatusInterval = 30 * time.Second
-	getDDLStatusMaxRetry = 10
 )
 
 type TableImporter struct {
@@ -1245,7 +1239,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 }
 
 func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string) error {
-	logger := log.With(zap.String("ddl", ddl))
+	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
 
 	s := common.SQLWithRetry{
@@ -1253,12 +1247,12 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 		Logger: logger,
 	}
 
-	var ddlCreateTime int64
-	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &ddlCreateTime); err != nil {
-		ddlCreateTime = time.Now().Unix()
+	var now int64
+	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &now); err != nil {
+		now = time.Now().Unix()
 		logger.Warn(
 			"failed to query current time, will use local time as ddl create time",
-			zap.Int64("ddl-create-time", ddlCreateTime),
+			zap.Int64("ddl-create-time", now),
 			zap.Error(err),
 		)
 	}
@@ -1274,11 +1268,11 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 
 	for {
 		var (
-			status string
-			err    error
+			ddlStatus *ddlStatus
+			err       error
 		)
 		for i := 0; i < getDDLStatusMaxRetry; i++ {
-			status, err = getDDLStatusFromTiDB(ctx, db, ddl, ddlCreateTime)
+			ddlStatus, err = getDDLStatus(ctx, db, ddl, time.Unix(now, 0))
 			if err == nil {
 				break
 			}
@@ -1292,18 +1286,19 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 		if err != nil {
 			return originErr
 		}
-
-		switch status {
-		case model.JobStateDone.String(), model.JobStateSynced.String():
-			logger.Info("ddl job is finished", zap.String("status", status))
-			return nil
-		case model.JobStateRunning.String(), model.JobStateQueueing.String(), model.JobStateNone.String():
-			logger.Info("ddl job is running", zap.String("status", status))
-		case "":
-			logger.Warn("ddl status not found, maybe ddl job is not created")
+		if ddlStatus == nil {
+			logger.Warn("ddl job is not found, maybe it is not created")
 			return originErr
+		}
+
+		switch state := ddlStatus.state; state {
+		case model.JobStateDone, model.JobStateSynced:
+			logger.Info("ddl job is finished", zap.Stringer("state", state))
+			return nil
+		case model.JobStateRunning, model.JobStateQueueing, model.JobStateNone:
+			logger.Info("ddl job is running", zap.Stringer("state", state))
 		default:
-			logger.Warn("ddl job is canceled or rollbacked", zap.String("status", status))
+			logger.Warn("ddl job is canceled or rollbacked", zap.Stringer("state", state))
 			return originErr
 		}
 
@@ -1388,104 +1383,99 @@ func shouldIgnoreDDLError(err error) bool {
 	return false
 }
 
-// getDDLStatusFromTiDB retrieves the synchronizing status of DDL from TiDB
-// hence here db should be TiDB database
-// createTime should be based on the timezone of downstream, and its unit is second.
-//
-// Copied from https://github.com/pingcap/tiflow/blob/7c65f8c5ec2e232a2c37d1a189cde4f611dfdd8a/dm/syncer/util.go#L236.
-func getDDLStatusFromTiDB(ctx context.Context, db *sql.DB, ddl string, createTime int64) (string, error) {
-	const linesOfRows = 10
-	rowNum := linesOfRows
-	rowOffset := 0
-	queryMap := make(map[int]string)
+const (
+	getDDLStatusInterval = 30 * time.Second
+	getDDLStatusMaxRetry = 10
+	getDDLStatusMaxJobs  = 50
+)
 
-	for {
-		// every attempt try 10 history jobs
-		showJobs := fmt.Sprintf("ADMIN SHOW DDL JOBS %d", rowNum)
-		//nolint:rowserrcheck
-		jobsRows, err := db.QueryContext(ctx, showJobs)
-		if err != nil {
-			return "", err
-		}
+type ddlStatus struct {
+	state    model.JobState
+	rowCount int64
+}
 
-		var jobsResults [][]string
-		jobsResults, err = export.GetSpecifiedColumnValuesAndClose(jobsRows, "JOB_ID", "CREATE_TIME", "STATE")
-		if err != nil {
-			return "", err
-		}
+func getDDLStatus(
+	ctx context.Context,
+	db *sql.DB,
+	query string,
+	minCreateTime time.Time,
+) (*ddlStatus, error) {
+	jobID, err := getDDLJobIDByQuery(ctx, db, query)
+	if err != nil || jobID == 0 {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOBS %d WHERE job_id = %d", getDDLStatusMaxJobs, jobID))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
 
-		for i := rowNum - linesOfRows; i < rowNum && i < len(jobsResults); i++ {
-			ddlCreateTimeStr := jobsResults[i][1]
-			if ddlCreateTimeStr == "" {
-				continue
-			}
-			var ddlCreateTimeParse time.Time
-			ddlCreateTimeParse, err = time.Parse("2006-01-02 15:04:05", ddlCreateTimeStr)
-			if err != nil {
-				return "", err
-			}
-			ddlCreateTime := ddlCreateTimeParse.Unix()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-			// ddlCreateTime and createTime are both based on timezone of downstream
-			if ddlCreateTime >= createTime {
-				var jobID int
-				jobID, err = strconv.Atoi(jobsResults[i][0])
-				if err != nil {
-					return "", err
-				}
-
-				for {
-					ddlQuery, ok := queryMap[jobID]
-					if !ok {
-						// jobID does not exist, expand queryMap for deeper search
-						showJobsLimitNext := fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT 10 OFFSET %d", rowOffset)
-						var rowsLimitNext *sql.Rows
-						//nolint:rowserrcheck
-						rowsLimitNext, err = db.QueryContext(ctx, showJobsLimitNext)
-						if err != nil {
-							return "", err
-						}
-
-						var resultsLimitNext [][]string
-						resultsLimitNext, err = export.GetSpecifiedColumnValuesAndClose(rowsLimitNext, "JOB_ID", "QUERY")
-						if err != nil {
-							return "", err
-						}
-						if len(resultsLimitNext) == 0 {
-							// JOB QUERIES has been used up
-							// requested DDL cannot be found
-							return "", nil
-						}
-
-						// if new DDLs are written to TiDB after the last query 'ADMIN SHOW DDL JOB QUERIES LIMIT 10 OFFSET'
-						// we may get duplicate rows here, but it does not affect the checking
-						for k := range resultsLimitNext {
-							var jobIDForLimit int
-							jobIDForLimit, err = strconv.Atoi(resultsLimitNext[k][0])
-							if err != nil {
-								return "", err
-							}
-							queryMap[jobIDForLimit] = resultsLimitNext[k][1]
-						}
-						rowOffset += linesOfRows
-					} else {
-						if ddl == ddlQuery {
-							return jobsResults[i][2], nil
-						}
-						break
-					}
-				}
-			} else {
-				// ddlCreateTime is monotonous in jobsResults
-				// requested DDL cannot be found
-				return "", nil
-			}
-		}
-		if len(jobsResults) == rowNum {
-			rowNum += linesOfRows
-		} else {
-			// jobsResults has been checked thoroughly
-			return "", nil
+	var (
+		rowCount      int64
+		state         string
+		createTimeStr sql.NullString
+	)
+	dest := make([]any, len(cols))
+	for i, col := range cols {
+		switch strings.ToLower(col) {
+		case "row_count":
+			dest[i] = &rowCount
+		case "state":
+			dest[i] = &state
+		case "create_time":
+			dest[i] = &createTimeStr
+		default:
+			var anyStr sql.NullString
+			dest[i] = &anyStr
 		}
 	}
+	status := &ddlStatus{}
+
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return nil, errors.Trace(err)
+		}
+		status.rowCount += rowCount
+		// subjob doesn't have create_time, ignore it.
+		if !createTimeStr.Valid || createTimeStr.String == "" {
+			continue
+		}
+		createTime, err := time.Parse(time.DateTime, createTimeStr.String)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// The job is not created by the current task, ignore it.
+		if createTime.Before(minCreateTime) {
+			return nil, nil
+		}
+		status.state = model.StrToJobState(state)
+	}
+	return status, errors.Trace(rows.Err())
+}
+
+func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int64, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT %d", getDDLStatusMaxJobs))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			jobID int64
+			query string
+		)
+		if err := rows.Scan(&jobID, &query); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if query == wantQuery {
+			return jobID, errors.Trace(rows.Err())
+		}
+	}
+	return 0, errors.Trace(rows.Err())
 }
