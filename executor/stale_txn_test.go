@@ -23,6 +23,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/testkit"
+>>>>>>> ee7c089e55e (session: use TxnCtx.InfoSchema, no matter vars.InTxn() or not (#42027))
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/oracle"
@@ -499,6 +505,7 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 
 	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+<<<<<<< HEAD
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
 
 	// schema changed back to the newest
@@ -508,6 +515,17 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	// select does not affect the infoschema
 	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+=======
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+
+	// schema changed back to the newest
+	tk.MustExec("commit")
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+
+	// select does not affect the infoschema
+	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+>>>>>>> ee7c089e55e (session: use TxnCtx.InfoSchema, no matter vars.InTxn() or not (#42027))
 }
 
 func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
@@ -859,18 +877,27 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
+<<<<<<< HEAD
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+=======
+	schemaVer1 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
+>>>>>>> ee7c089e55e (session: use TxnCtx.InfoSchema, no matter vars.InTxn() or not (#42027))
 	time1 := time.Now()
 	tk.MustExec("alter table t add c int")
 
 	// confirm schema changed
+<<<<<<< HEAD
 	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+=======
+	schemaVer2 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
+>>>>>>> ee7c089e55e (session: use TxnCtx.InfoSchema, no matter vars.InTxn() or not (#42027))
 	time2 := time.Now()
 	c.Assert(schemaVer1, Less, schemaVer2)
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
 	tk.MustExec("select * from t;")
 	tk.MustExec("alter table t add d int")
+<<<<<<< HEAD
 	schemaVer3 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	tk.MustExec("begin;")
@@ -881,6 +908,18 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 	tk.MustExec("commit")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
+=======
+	schemaVer3 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	tk.MustExec("begin;")
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+	tk.MustExec("commit")
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	tk.MustExec("begin;")
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+	tk.MustExec("commit")
+	require.Equal(t, schemaVer3, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
+>>>>>>> ee7c089e55e (session: use TxnCtx.InfoSchema, no matter vars.InTxn() or not (#42027))
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleSelect(c *C) {
