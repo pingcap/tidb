@@ -849,6 +849,14 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 		require.Nil(t, err)
 	}
 	{
+		tk.MustExec("set @@session.tidb_broadcast_join_cost_model_version=-1")
+		tk.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1292 Truncated incorrect tidb_broadcast_join_cost_model_version value: '-1'"))
+		tk.MustExec("set @@session.tidb_broadcast_join_cost_model_version=2")
+		tk.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1292 Truncated incorrect tidb_broadcast_join_cost_model_version value: '2'"))
+	}
+	{
 		// no BCJ if `tidb_broadcast_join_cost_model_version` EQ 0
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=0")
