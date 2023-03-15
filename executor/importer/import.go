@@ -154,7 +154,7 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		OnDuplicate:        plan.OnDuplicate,
 		SchemaName:         plan.Table.Schema.O,
 		Table:              tbl,
-		LineFieldsInfo:     plan.LineFieldsInfo,
+		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err

@@ -110,7 +110,7 @@ func TestNewLineFieldsInfo(t *testing.T) {
 		stmt, err := p.ParseOneStmt(c.sql, "", "")
 		require.NoError(t, err, c.sql)
 		ldStmt := stmt.(*ast.LoadDataStmt)
-		lineFieldsInfo := newLineFieldsInfo(ldStmt.FieldsInfo, ldStmt.LinesInfo)
+		lineFieldsInfo := NewLineFieldsInfo(ldStmt.FieldsInfo, ldStmt.LinesInfo)
 		require.Equal(t, c.expected, lineFieldsInfo)
 	}
 }

@@ -555,7 +555,6 @@ type LoadData struct {
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
-	LineFieldsInfo
 	IgnoreLines *uint64
 
 	ColumnAssignments  []*ast.Assignment
@@ -673,7 +672,8 @@ type LineFieldsInfo struct {
 	LinesTerminatedBy  string
 }
 
-func newLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
+// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
+func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
 	e := LineFieldsInfo{
 		FieldsTerminatedBy: "\t",
 		FieldsEnclosedBy:   "",
