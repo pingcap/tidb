@@ -252,8 +252,17 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
 		}
 		stmt.StoreResultSet(rs)
+<<<<<<< HEAD
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
+=======
+		// also store the preparedParams in the stmt, so we could restore the params in the following fetch command
+		// the params should have been parsed in `(&cc.ctx).ExecuteStmt(ctx, execStmt)`.
+		stmt.StorePreparedCtx(&PreparedStatementCtx{
+			Params: vars.PreparedParams,
+		})
+		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
+>>>>>>> 5f8002fec7f (session, com_stmt: store and restore the params for cursor fetch (#41441))
 			return false, err
 		}
 		if cl, ok := rs.(fetchNotifier); ok {
@@ -288,6 +297,9 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
+
+	cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params
+
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
