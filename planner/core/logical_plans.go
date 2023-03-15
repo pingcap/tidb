@@ -1236,6 +1236,11 @@ type DataSource struct {
 	// colsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
+
+	// accessPathMinSelectivity is the minimal selectivity among the access paths.
+	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
+	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
+	accessPathMinSelectivity float64
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1582,6 +1587,8 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		} else {
 			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
 		}
+	} else {
+		path.CountAfterIndex = path.CountAfterAccess
 	}
 }
 

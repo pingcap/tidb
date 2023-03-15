@@ -412,7 +412,26 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
+	ds.accessPathMinSelectivity = getMinSelectivityFromPaths(ds.possibleAccessPaths, float64(ds.TblColHists.Count))
+
 	return ds.stats, nil
+}
+
+func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64) float64 {
+	minSelectivity := 1.0
+	if totalRowCount <= 0 {
+		return minSelectivity
+	}
+	for _, path := range paths {
+		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
+		// but we still consider their AccessPath.CountAfterAccess.
+		if path.IsTablePath() || path.PartialIndexPaths != nil {
+			minSelectivity = mathutil.Min(minSelectivity, path.CountAfterAccess/totalRowCount)
+			continue
+		}
+		minSelectivity = mathutil.Min(minSelectivity, path.CountAfterIndex/totalRowCount)
+	}
+	return minSelectivity
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
