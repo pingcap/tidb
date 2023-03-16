@@ -477,19 +477,19 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) []error {
 	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
 	if missingColName != "" {
 		errs = append(errs, dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list"))
-	}
-
-	for _, col := range cols {
-		if !col.IsGenerated() {
-			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.insertColumns = append(e.insertColumns, col)
+	} else {
+		for _, col := range cols {
+			if !col.IsGenerated() {
+				// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
+				e.insertColumns = append(e.insertColumns, col)
+			}
 		}
-	}
 
-	// e.insertColumns is appended according to the original tables' column sequence.
-	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
-	if err = e.reorderColumns(columnNames); err != nil {
-		errs = append(errs, err)
+		// e.insertColumns is appended according to the original tables' column sequence.
+		// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
+		if err = e.reorderColumns(columnNames); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	// Check column whether is specified only once.
