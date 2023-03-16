@@ -46,6 +46,7 @@ const (
 // TaskStep is the step of task.
 const (
 	StepInit int64 = -1
+	StepOne  int64 = 1
 )
 
 // Task represents the task of distribute framework.
@@ -74,12 +75,25 @@ type Subtask struct {
 	Meta        []byte
 }
 
+// NewSubtask create a new subtask.
+func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+	return &Subtask{
+		Type:        tp,
+		TaskID:      taskID,
+		SchedulerID: schedulerID,
+		Meta:        meta,
+	}
+}
+
 // MinimalTask is the minimal task of distribute framework.
 // Each subtask is divided into multiple minimal tasks by scheduler.
-type MinimalTask interface{}
+type MinimalTask interface {
+	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
+	IsMinimalTask()
+}
 
-// TaskTypeExample is TaskType of Example.
 const (
+	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
 )
 

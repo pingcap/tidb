@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -1644,15 +1644,6 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
 ) error {
-	// For TiDB 6.6, we do not support recover TiFlash replica while enabling API V2.
-	// TODO(iosmanthus): remove this after TiFlash support API V2.
-	if rc.GetDomain().Store().GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
-		log.Warn("TiFlash does not support API V2, reset replica count to 0")
-		for _, table := range tables {
-			table.Info.TiFlashReplica = nil
-		}
-		return nil
-	}
 	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
 		return err
@@ -2443,6 +2434,78 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
+	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
+	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+)
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	ingestRecorder.UpdateIndexInfo(allSchema)
+	console := glue.GetConsole(g)
+	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+		var (
+			addSQL        strings.Builder
+			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+		)
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+		if info.IsPrimary {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.Unique {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// USING BTREE/HASH/RTREE
+		indexTypeStr := info.IndexInfo.Tp.String()
+		if len(indexTypeStr) > 0 {
+			addSQL.WriteString(" USING ")
+			addSQL.WriteString(indexTypeStr)
+		}
+
+		// COMMENT [...]
+		if len(info.IndexInfo.Comment) > 0 {
+			addSQL.WriteString(" COMMENT %?")
+			addArgs = append(addArgs, info.IndexInfo.Comment)
+		}
+
+		if info.IndexInfo.Invisible {
+			addSQL.WriteString(" INVISIBLE")
+		} else {
+			addSQL.WriteString(" VISIBLE")
+		}
+
+		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
+			return errors.Trace(err)
+		}
+		w.Inc()
+		if err := w.Wait(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		w.Close()
+		return nil
+	})
+	return errors.Trace(err)
+}
+
+const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
 
@@ -2659,6 +2722,39 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 		}
 		return nil
 	})
+}
+
+// RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
+// TODO: need to implement the range filter out feature
+func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
+	err := recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
+		rewriteRule, exists := rewriteRules[tableID]
+		if !exists {
+			// since the table's files will be skipped restoring, here also skips.
+			return 0, true, nil
+		}
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			return 0, false, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+		}
+		return newTableID, false, nil
+	})
+	return errors.Trace(err)
+	/* TODO: we can use range filter to skip restoring the index kv using accelerated indexing feature
+	filter := rtree.NewRangeTree()
+	err = recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		// range after table ID rewritten
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		rg := rtree.Range{
+			StartKey: codec.EncodeBytes([]byte{}, startKey),
+			EndKey:   codec.EncodeBytes([]byte{}, endKey),
+		}
+		filter.InsertRange(rg)
+		return nil
+	})
+	return errors.Trace(err)
+	*/
 }
 
 // MockClient create a fake client used to test.
