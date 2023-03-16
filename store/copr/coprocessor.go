@@ -1131,7 +1131,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		busyThresholdMs = uint32(worker.req.StoreBusyThreshold.Milliseconds())
 	}
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		StartTs:           worker.req.StartTs,
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:          priorityToPB(worker.req.Priority),
 		NotFillCache:      worker.req.NotFillCache,

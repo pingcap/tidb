@@ -2,11 +2,6 @@ module github.com/pingcap/tidb
 
 go 1.20
 
-replace (
-	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20230313095855-d6780293a06a
-	github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20230313100019-21aa2e2388db
-)
-
 require (
 	cloud.google.com/go/storage v1.28.1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0
@@ -97,7 +92,7 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.7-0.20230309100832-f555fdd2c9d8
+	github.com/tikv/client-go/v2 v2.0.7-0.20230316021936-9d950905d743
 	github.com/tikv/pd/client v0.0.0-20230313083840-3e3ae55f68ac
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.6
