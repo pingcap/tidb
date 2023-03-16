@@ -1491,7 +1491,7 @@
           "└─ExchangeSender_26 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_25 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1504,7 +1504,7 @@
           "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_26 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1517,7 +1517,7 @@
           "└─ExchangeSender_26 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_25 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1530,7 +1530,7 @@
           "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_26 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1543,7 +1543,7 @@
           "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_25 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1556,7 +1556,7 @@
           "└─ExchangeSender_27 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_26 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1569,7 +1569,7 @@
           "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_25 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_11(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1582,7 +1582,7 @@
           "└─ExchangeSender_27 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_26 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
