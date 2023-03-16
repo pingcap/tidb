@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// LowerAlphaAscii only lowers alpha ascii
-func LowerAlphaAscii(loweredCol *chunk.Column, rowNum int) {
+// LowerAlphaASCII only lowers alpha ascii
+func LowerAlphaASCII(loweredCol *chunk.Column, rowNum int) {
 	for i := 0; i < rowNum; i++ {
 		str := loweredCol.GetString(i)
 		strBytes := hack.Slice(str)
@@ -32,8 +32,8 @@ func LowerAlphaAscii(loweredCol *chunk.Column, rowNum int) {
 	}
 }
 
-// LowerAlphaAsciiExcludeEscapeChar lower alpha ascii exclude escape char
-func LowerAlphaAsciiExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excludedChar int64) int64 {
+// LowerAlphaASCIIExcludeEscapeChar lower alpha ascii exclude escape char
+func LowerAlphaASCIIExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excludedChar int64) int64 {
 	actualEscapeChar := excludedChar
 	for i := 0; i < rowNum; i++ {
 		str := loweredCol.GetString(i)
