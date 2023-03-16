@@ -813,51 +813,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.String("index", indexInfo.Name.O))
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
-			bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-			if ok && bc.Done() {
-				break
-			}
-			if !ok && job.SnapshotVer != 0 {
-				// The owner is crashed or changed, we need to restart the backfill.
-				job.SnapshotVer = 0
-				job.RowCount = 0
-				return false, ver, nil
-			}
-			bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
-			if err != nil {
-				err = tryFallbackToTxnMerge(job, err)
-				return false, ver, errors.Trace(err)
-			}
-			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
-			if err != nil {
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-				err = tryFallbackToTxnMerge(job, err)
-				return false, ver, errors.Trace(err)
-			}
-			if !done {
-				return false, ver, nil
-			}
-			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
-			if err != nil {
-				if common.ErrFoundDuplicateKeys.Equal(err) {
-					err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-				}
-				if kv.ErrKeyExists.Equal(err) {
-					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-				} else {
-					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-					err = tryFallbackToTxnMerge(job, err)
-				}
-				ingest.LitBackCtxMgr.Unregister(job.ID)
-				return false, ver, errors.Trace(err)
-			}
-			bc.SetDone()
+			done, ver, err = runIngestReorgJob(w, d, t, job, tbl, indexInfo)
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
-			if err != nil || !done {
-				return false, ver, errors.Trace(err)
-			}
+		}
+		if err != nil || !done {
+			return false, ver, errors.Trace(err)
 		}
 		indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
@@ -882,6 +843,51 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
 	}
+}
+
+func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if ok && bc.Done() {
+		return true, 0, nil
+	}
+	if !ok && job.SnapshotVer != 0 {
+		// The owner is crashed or changed, we need to restart the backfill.
+		job.SnapshotVer = 0
+		job.RowCount = 0
+		return false, ver, nil
+	}
+	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+	if err != nil {
+		err = tryFallbackToTxnMerge(job, err)
+		return false, ver, errors.Trace(err)
+	}
+	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+	if err != nil {
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+		err = tryFallbackToTxnMerge(job, err)
+		return false, ver, errors.Trace(err)
+	}
+	if !done {
+		return false, ver, nil
+	}
+	err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+		}
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+		} else {
+			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
+			err = tryFallbackToTxnMerge(job, err)
+		}
+		ingest.LitBackCtxMgr.Unregister(job.ID)
+		return false, ver, errors.Trace(err)
+	}
+	bc.SetDone()
+	return true, ver, nil
 }
 
 func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
