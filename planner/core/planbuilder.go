@@ -4264,7 +4264,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 FinishHandleGenCols:
 
 	var (
-		detached = false
+		detached bool
 		errs2    []error
 	)
 	p.Controller, detached, errs2 = NewLoadDataController(b.ctx, p, tableInPlan)
@@ -4275,7 +4275,6 @@ FinishHandleGenCols:
 	if p.FileLocRef == ast.FileLocClient {
 		if detached {
 			errs = append(errs, ErrLoadDataCantDetachWithLocal)
-
 		}
 	} else {
 		_, _, err = ResolveLoadDataRemoteURI(p.Path)
