@@ -69,7 +69,7 @@ func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
 
 func (b *builtinIlikeSig) getEscape(input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
 	rowNum := input.NumRows()
-	escape := int64(int64('\\'))
+	escape := int64('\\')
 
 	if !b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 		return escape, true, errors.Errorf("escape should be const")
