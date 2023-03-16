@@ -489,7 +489,7 @@ type Log struct {
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
 	// Make tidb panic if write log operation hang in `Timeout` seconds
-	Timeout  int `toml:"timeout" json:"timeout"`
+	Timeout int `toml:"timeout" json:"timeout"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1427,7 +1427,7 @@ var TableLockDelayClean = func() uint64 {
 func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
-		func(config *zaplog.Config) {config.Timeout = l.Timeout},
+		func(config *zaplog.Config) { config.Timeout = l.Timeout },
 	)
 }
 
