@@ -34,7 +34,8 @@ const (
 	defaultInfosyncTimeout = 5 * time.Second
 
 	defaultGroupName = "default"
-	alreadyExists    = "already exists"
+	// FIXME: this is a workaround for the compatibility, format the error code.
+	alreadyExists = "already exists"
 )
 
 func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -66,9 +67,9 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {
-			logutil.BgLogger().Warn("create resource group failed", zap.Error(err))
+			logutil.BgLogger().Warn("create resource group failed", zap.String("group-name", groupInfo.Name.L), zap.Error(err))
 			// TiDB will add the group to the resource manager when it bootstraps.
-			// add judge here to compatible with keyspace mode TiDB to skip the exist error with default group.
+			// here order to compatible with keyspace mode TiDB to skip the exist error with default group.
 			if !strings.Contains(err.Error(), alreadyExists) || groupInfo.Name.L != defaultGroupName {
 				return ver, errors.Trace(err)
 			}

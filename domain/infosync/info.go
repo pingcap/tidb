@@ -256,11 +256,37 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initResourceGroupManager(pdCli pd.Client) pd.ResourceManagerClient {
+func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	if pdCli == nil {
-		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
+		cli = &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
 	}
-	return pdCli
+	cli = pdCli
+	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
+		if val.(bool) {
+			println("failpoint: managerAlreadyCreateSomeGroups", val.(bool))
+			cli.AddResourceGroup(context.TODO(),
+				&rmpb.ResourceGroup{
+					Name: "default",
+					Mode: rmpb.GroupMode_RUMode,
+					RUSettings: &rmpb.GroupRequestUnitSettings{
+						RU: &rmpb.TokenBucket{
+							Settings: &rmpb.TokenLimitSettings{FillRate: 1000000, BurstLimit: -1},
+						},
+					},
+				})
+			cli.AddResourceGroup(context.TODO(),
+				&rmpb.ResourceGroup{
+					Name: "oltp",
+					Mode: rmpb.GroupMode_RUMode,
+					RUSettings: &rmpb.GroupRequestUnitSettings{
+						RU: &rmpb.TokenBucket{
+							Settings: &rmpb.TokenLimitSettings{FillRate: 1000000, BurstLimit: -1},
+						},
+					},
+				})
+		}
+	})
+	return
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
