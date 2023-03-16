@@ -415,7 +415,7 @@ func toUpperIfAlphaASCII(c byte) byte {
 	return c ^ 0x20
 }
 
-// Judge if this is capital alphabet
+// IsUpperASCII judges if this is capital alphabet
 func IsUpperASCII(c byte) bool {
 	if c >= 'A' && c <= 'Z' {
 		return true
@@ -423,7 +423,7 @@ func IsUpperASCII(c byte) bool {
 	return false
 }
 
-// Judge if this is lower alphabet
+// IsLowerASCII judges if this is lower alphabet
 func IsLowerASCII(c byte) bool {
 	if c >= 'a' && c <= 'z' {
 		return true
@@ -431,7 +431,7 @@ func IsLowerASCII(c byte) bool {
 	return false
 }
 
-// Lower the ascii characters in a string
+// LowerOneString lowers the ascii characters in a string
 func LowerOneString(str []byte) {
 	strLen := len(str)
 	for i := 0; i < strLen; i++ {
@@ -441,7 +441,7 @@ func LowerOneString(str []byte) {
 	}
 }
 
-// LowerOneStringExcludeEscapeChar, Sometimes we want to lower strings and exclude an escape char
+// LowerOneStringExcludeEscapeChar lowers strings and exclude an escape char
 //
 // When escape_char is a capital char, we shouldn't lower the escape char.
 // For example, 'aaaa' ilike 'AAAA' escape 'A', we should convert 'AAAA' to 'AaAa'.
