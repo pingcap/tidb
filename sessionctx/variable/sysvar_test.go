@@ -112,7 +112,7 @@ func TestTiFlashMaxBytes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "100", val)
 
-		val, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
+		_, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
 		// can not autoconvert because the input is out of the range of Int64
 		require.Error(t, err)
 
