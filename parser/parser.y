@@ -6536,11 +6536,11 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
-|   "PRIORITY"
-|   "HIGH"
-|   "MEDIUM"
-|   "LOW"
-|   "BURSTABLE"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
+|	"BURSTABLE"
 
 /************************************************************************************
  *
