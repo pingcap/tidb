@@ -204,6 +204,19 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 {
+		buffer.WriteString("pushed down filter:")
+		if len(p.lateMaterializationFilterCondition) > 0 {
+			if normalized {
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+			} else {
+				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+			}
+		} else {
+			buffer.WriteString("empty")
+		}
+		buffer.WriteString(", ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {

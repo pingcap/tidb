@@ -228,6 +228,16 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 
+	if len(p.lateMaterializationFilterCondition) > 0 {
+		sc := ctx.GetSessionVars().StmtCtx
+		client := ctx.GetClient()
+		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
+		if err != nil {
+			return nil, err
+		}
+		tsExec.PushedDownFilterConditions = conditions
+	}
+
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -424,31 +434,28 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
-	var leftJoinKeys, rightJoinKeys []expression.Expression
 
 	if len(p.LeftJoinKeys) > 0 && len(p.LeftNAJoinKeys) > 0 {
 		return nil, errors.Errorf("join key and na join key can not both exist")
 	}
 
 	isNullAwareSemiJoin := len(p.LeftNAJoinKeys) > 0
+	var leftJoinKeys, rightJoinKeys []*expression.Column
 	if isNullAwareSemiJoin {
-		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftNAJoinKeys))
-		rightJoinKeys = make([]expression.Expression, 0, len(p.RightNAJoinKeys))
-		for _, leftKey := range p.LeftNAJoinKeys {
-			leftJoinKeys = append(leftJoinKeys, leftKey)
-		}
-		for _, rightKey := range p.RightNAJoinKeys {
-			rightJoinKeys = append(rightJoinKeys, rightKey)
-		}
+		leftJoinKeys = p.LeftNAJoinKeys
+		rightJoinKeys = p.RightNAJoinKeys
 	} else {
-		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftJoinKeys))
-		rightJoinKeys = make([]expression.Expression, 0, len(p.RightJoinKeys))
-		for _, leftKey := range p.LeftJoinKeys {
-			leftJoinKeys = append(leftJoinKeys, leftKey)
-		}
-		for _, rightKey := range p.RightJoinKeys {
-			rightJoinKeys = append(rightJoinKeys, rightKey)
-		}
+		leftJoinKeys = p.LeftJoinKeys
+		rightJoinKeys = p.RightJoinKeys
+	}
+
+	leftKeys := make([]expression.Expression, 0, len(leftJoinKeys))
+	rightKeys := make([]expression.Expression, 0, len(rightJoinKeys))
+	for _, leftKey := range leftJoinKeys {
+		leftKeys = append(leftKeys, leftKey)
+	}
+	for _, rightKey := range rightJoinKeys {
+		rightKeys = append(rightKeys, rightKey)
 	}
 
 	lChildren, err := p.children[0].ToPB(ctx, storeType)
@@ -460,11 +467,11 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		return nil, errors.Trace(err)
 	}
 
-	left, err := expression.ExpressionsToPBList(sc, leftJoinKeys, client)
+	left, err := expression.ExpressionsToPBList(sc, leftKeys, client)
 	if err != nil {
 		return nil, err
 	}
-	right, err := expression.ExpressionsToPBList(sc, rightJoinKeys, client)
+	right, err := expression.ExpressionsToPBList(sc, rightKeys, client)
 	if err != nil {
 		return nil, err
 	}
@@ -517,9 +524,16 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	case AntiLeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
 	}
-	probeFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
-	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
-	for _, equalCondition := range p.EqualConditions {
+
+	var equalConditions []*expression.ScalarFunction
+	if isNullAwareSemiJoin {
+		equalConditions = p.NAEqualConditions
+	} else {
+		equalConditions = p.EqualConditions
+	}
+	probeFiledTypes := make([]*tipb.FieldType, 0, len(equalConditions))
+	buildFiledTypes := make([]*tipb.FieldType, 0, len(equalConditions))
+	for _, equalCondition := range equalConditions {
 		retType := equalCondition.RetType.Clone()
 		chs, coll := equalCondition.CharsetAndCollation()
 		retType.SetCharset(chs)
