@@ -75,7 +75,7 @@ func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 
 var (
 	compactMemory      = 1 * size.GB
-	compactConcurrency = 4
+	compactConcurrency = 8
 )
 
 func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineConfig {
