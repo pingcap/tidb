@@ -1226,7 +1226,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL, len(multiSQLs), func(p float64) {
 		web.BroadcastTableProgress(tableName, progressStep, p)
-		logger.Info("add index progress", zap.Float64("progress", p))
+		logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", p*100)))
 	})
 	if err == nil || !isDupKeyError(err) {
 		web.BroadcastTableProgress(tableName, progressStep, 1)
@@ -1244,7 +1244,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		err := tr.executeDDL(ctx, db, ddl, 1, func(p float64) {
 			progress := baseProgress + p/float64(len(multiSQLs))
 			web.BroadcastTableProgress(tableName, progressStep, baseProgress+p/float64(len(multiSQLs)))
-			logger.Info("add index progress", zap.Float64("progress", progress))
+			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		})
 		if err != nil && !isDupKeyError(err) {
 			return err
@@ -1410,7 +1410,9 @@ func isDupKeyError(err error) bool {
 
 const (
 	getDDLStatusInterval = time.Minute
-	getDDLStatusMaxJobs  = 50
+	// Limit the number of jobs to query. Large limit may result in empty result. See https://github.com/pingcap/tidb/issues/42298.
+	// A new TiDB cluster has at least 40 jobs in the history queue, so 30 is a reasonable value.
+	getDDLStatusMaxJobs = 30
 )
 
 type ddlStatus struct {
