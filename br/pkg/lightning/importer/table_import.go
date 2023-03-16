@@ -1228,15 +1228,12 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		web.BroadcastTableProgress(tableName, progressStep, p)
 		logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", p*100)))
 	})
-	if err == nil || !isDupKeyError(err) {
-		web.BroadcastTableProgress(tableName, progressStep, 1)
+	if err == nil {
 		return nil
 	}
-	// No need to retry one by one if there is only one statement.
-	if len(multiSQLs) == 1 {
+	if !isDupKeyError(err) || len(multiSQLs) == 1 {
 		return err
 	}
-
 	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
 	baseProgress := float64(0)
