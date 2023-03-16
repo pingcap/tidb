@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -127,7 +126,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	e.ctx.GetSessionVars().PlanID = 0
-	e.ctx.GetSessionVars().PlanColumnID = atomic.NewInt64(0)
+	e.ctx.GetSessionVars().PlanColumnID.Store(0)
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
 	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.

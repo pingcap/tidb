@@ -52,9 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -536,7 +534,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	}
 
 	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = atomic.NewInt64(0)
+	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
