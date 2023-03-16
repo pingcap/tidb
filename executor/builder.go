@@ -977,11 +977,11 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
 		indexAdviseInfo: &IndexAdviseInfo{
-			Path:        v.Path,
-			MaxMinutes:  v.MaxMinutes,
-			MaxIndexNum: v.MaxIndexNum,
-			LinesInfo:   v.LinesInfo,
-			Ctx:         b.ctx,
+			Path:           v.Path,
+			MaxMinutes:     v.MaxMinutes,
+			MaxIndexNum:    v.MaxIndexNum,
+			LineFieldsInfo: v.LineFieldsInfo,
+			Ctx:            b.ctx,
 		},
 	}
 	return e
@@ -1225,8 +1225,9 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 		return nil
 	}
 	return &SelectIntoExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
-		intoOpt:      v.IntoOpt,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
+		intoOpt:        v.IntoOpt,
+		LineFieldsInfo: v.LineFieldsInfo,
 	}
 }
 
