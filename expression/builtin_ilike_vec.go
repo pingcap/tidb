@@ -22,24 +22,24 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-func LowerAlphaAscii(lowered_col *chunk.Column, row_num int) {
-	for i := 0; i < row_num; i++ {
+func LowerAlphaAscii(lowered_col *chunk.Column, rowNum int) {
+	for i := 0; i < rowNum; i++ {
 		str := lowered_col.GetString(i)
-		str_bytes := hack.Slice(str)
+		strBytes := hack.Slice(str)
 
-		stringutil.LowerOneString(str_bytes)
+		stringutil.LowerOneString(strBytes)
 	}
 }
 
-func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, row_num int, excluded_char int64) int64 {
-	actual_escape_char := excluded_char
-	for i := 0; i < row_num; i++ {
+func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, rowNum int, excludedChar int64) int64 {
+	actualEscapeChar := excludedChar
+	for i := 0; i < rowNum; i++ {
 		str := lowered_col.GetString(i)
-		str_bytes := hack.Slice(str)
+		strBytes := hack.Slice(str)
 
-		actual_escape_char = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(excluded_char)))
+		actualEscapeChar = int64(stringutil.LowerOneStringExcludeEscapeChar(strBytes, byte(excludedChar)))
 	}
-	return actual_escape_char
+	return actualEscapeChar
 }
 
 func (b *builtinIlikeSig) vectorized() bool {
@@ -89,8 +89,8 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		str_bytes := hack.Slice(str)
-		stringutil.LowerOneString(str_bytes)
+		strBytes := hack.Slice(str)
+		stringutil.LowerOneString(strBytes)
 		param.setStrVal(str)
 		return
 	}
@@ -104,8 +104,8 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		str_bytes := hack.Slice(str)
-		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(str_bytes, byte(escape)))
+		strBytes := hack.Slice(str)
+		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(strBytes, byte(escape)))
 		param.setStrVal(str)
 		return escape
 	}
