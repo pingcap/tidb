@@ -1198,10 +1198,10 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
-		// If the resource group name is not empty or "default", we could collect and display the RU
+		// If the resource group name is not empty, we could collect and display the RU
 		// runtime stats for analyze executor.
 		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
-		if len(resourceGroupName) > 0 && resourceGroupName != ddl.DefaultResourceGroupName {
+		if len(resourceGroupName) > 0 {
 			// Try to register the RU runtime stats for analyze executor.
 			if store, ok := b.ctx.GetStore().(interface {
 				CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
