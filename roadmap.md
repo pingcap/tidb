@@ -8,9 +8,9 @@ This roadmap brings you what's coming in the future, so you can see the new feat
   <thead>
     <tr>
       <th>Category</th>
-      <th>Mid-year LTS release</th>
-      <th>End-of-year LTS release</th>
-      <th>2-3 year projection</th>
+      <th>Mid-calendar-year LTS release</th>
+      <th>End-calendar-year LTS release</th>
+      <th>Future releases</th>
     </tr>
   </thead>
   <tbody valign="top">
