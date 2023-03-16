@@ -1207,6 +1207,9 @@ CheckAndInsert:
 						return err2
 					}
 					if unchanged {
+						// we don't need to add the identical row again, but the
+						// counter should act as if we did.
+						e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 						continue
 					}
 				} else {
