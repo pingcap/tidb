@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
