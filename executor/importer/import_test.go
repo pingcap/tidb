@@ -176,12 +176,10 @@ func TestAdjustOptions(t *testing.T) {
 	e := LoadDataController{
 		diskQuota:     1,
 		threadCnt:     100000000,
-		batchSize:     1,
 		maxWriteSpeed: 10,
 	}
 	e.adjustOptions()
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, minBatchSize, e.batchSize)
 	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
 }
