@@ -202,5 +202,5 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return b.ilikeWithoutMemorization(params, rowNum, escape, result)
 	}
 
-	return b.ilikeWithMemorization(params[0], rowNum, escape, result)
+	return b.ilikeWithMemorization(params[0], rowNum, result)
 }
