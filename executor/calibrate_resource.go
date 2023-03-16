@@ -27,14 +27,16 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// workloadBaseRUCostMap contains the base resource cost per 1 kv cpu,
-// the data is calculated by the benchmark result.
+// workloadBaseRUCostMap contains the base resource cost rate per 1 kv cpu within 1 second,
+// the data is calculated from benchmark result, these data might not be very accurate,
+// but is enough here because the maximum RU capacity is depend on both the cluster and
+// the workload.
 var workloadBaseRUCostMap = map[string]*baseResourceCost{
 	"tpcc": {
 		tidbCPU:       0.6,
 		kvCPU:         0.15,
-		readBytes:     units.MiB / 2, // 0.5MiB
-		writeBytes:    units.MiB,     // 1MiB
+		readBytes:     units.MiB / 2,
+		writeBytes:    units.MiB,
 		readReqCount:  300,
 		writeReqCount: 1750,
 	},
@@ -98,12 +100,18 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 
 // the resource cost of a specified workload per 1 tikv cpu
 type baseResourceCost struct {
+	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// or tidb cpu is the performance bottle neck.
 	tidbCPU float64
 	// the kv CPU time for calculate RU, it's smaller than the actually cpu usage.
-	kvCPU         float64
-	readBytes     uint64
-	writeBytes    uint64
-	readReqCount  uint64
+	kvCPU float64
+	// the read bytes rate per 1 tikv cpu.
+	readBytes uint64
+	// the write bytes rate per 1 tikv cpu.
+	writeBytes uint64
+	// the average tikv read request count per 1 tikv cpu.
+	readReqCount uint64
+	// the average tikv write request count per 1 tikv cpu.
 	writeReqCount uint64
 }
 
