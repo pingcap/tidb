@@ -1207,6 +1207,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+					}
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
@@ -1239,6 +1243,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedRowKey(uk.newKey)
+					}
 					skip = true
 					break
 				}
@@ -1293,6 +1301,10 @@ func (e *InsertValues) removeRow(
 	if identical {
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
+		if err != nil {
+			return false, err
 		}
 		return true, nil
 	}
