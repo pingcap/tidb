@@ -16,6 +16,7 @@ go_library(
         "builtin_convert_charset.go",
         "builtin_encryption.go",
         "builtin_encryption_vec.go",
+        "builtin_func_param.go",
         "builtin_ilike.go",
         "builtin_ilike_vec.go",
         "builtin_info.go",
