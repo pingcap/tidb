@@ -32,15 +32,14 @@ func TestCartesianJoinPanic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("set tidb_mem_quota_query = 1 << 28")
 	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
 	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = off;")
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	require.ErrorContains(t, err, "Out Of Memory Quota!")
 }
 
 func TestGlobalMemoryControl(t *testing.T) {

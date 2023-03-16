@@ -1385,6 +1385,11 @@ type SessionVars struct {
 	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
 	// If exceeding the threshold, try other stores using replica read.
 	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
