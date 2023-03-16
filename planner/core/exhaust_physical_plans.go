@@ -2088,11 +2088,6 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
-// canPushToCop checks if it can be pushed to some stores.
-func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
-	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
-}
-
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -2259,10 +2254,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
-	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
-		return nil
-	}
-	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,

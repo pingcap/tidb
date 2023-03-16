@@ -98,6 +98,10 @@ func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
 }
 
+func (rs *RetryState) StopRetry() {
+	rs.retryTimes = rs.maxRetry
+}
+
 // NextBackoff implements the `Backoffer`.
 func (rs *RetryState) NextBackoff(error) time.Duration {
 	return rs.ExponentialBackoff()

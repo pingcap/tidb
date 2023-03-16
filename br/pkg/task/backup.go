@@ -57,7 +57,6 @@ const (
 
 	defaultBackupConcurrency = 4
 	maxBackupConcurrency     = 256
-	checkpointDefaultGCTTL   = 72 * 60 // 72 minutes
 )
 
 const (
@@ -192,12 +191,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	gcTTL, err := flags.GetInt64(flagGCTTL)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// if use checkpoint and gcTTL is the default value
-	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && gcTTL == utils.DefaultBRGCSafePointTTL {
-		gcTTL = checkpointDefaultGCTTL
-		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", gcTTL))
 	}
 	cfg.GCTTL = gcTTL
 	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
@@ -365,6 +358,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// if use noop as external storage, turn off the checkpoint mode
+	if u.GetNoop() != nil {
+		log.Info("since noop external storage is used, turn off checkpoint mode")
+		cfg.UseCheckpoint = false
+	}
 	skipStats := cfg.IgnoreStats
 	// For backup, Domain is not needed if user ignores stats.
 	// Domain loads all table info into memory. By skipping Domain, we save
@@ -428,6 +426,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	err = client.SetLockFile(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// if use checkpoint and gcTTL is the default value
+	// update gcttl to checkpoint's default gc ttl
+	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
 
