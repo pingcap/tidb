@@ -1533,6 +1533,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
+			// for LOAD DATA we have a precheck that return all errors at once, here
+			// we ignore this error
+			if p.flag&inLoadData > 0 {
+				return
+			}
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}

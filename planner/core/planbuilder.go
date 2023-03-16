@@ -4229,11 +4229,19 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	var (
 		schema      *expression.Schema
 		names       []*types.FieldName
+		tableInfo   *model.TableInfo
 		tableInPlan table.Table
 		ok          bool
 	)
-	db := b.ctx.GetSessionVars().CurrentDB
-	tableInfo := p.Table.TableInfo
+	db := p.Table.Schema.O
+	if db == "" {
+		db = b.ctx.GetSessionVars().CurrentDB
+	}
+	if db == "" {
+		errs = append(errs, ErrNoDB)
+		goto FinishHandleGenCols
+	}
+	tableInfo = p.Table.TableInfo
 	if tableInfo == nil {
 		errs = append(errs, infoschema.ErrTableNotExists.GenWithStackByArgs(db, p.Table.Name.O))
 		goto FinishHandleGenCols
