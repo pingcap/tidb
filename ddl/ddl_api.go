@@ -3062,7 +3062,6 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = uintVal
 	case ast.ResourcePriority:
-		// TODO: set default priority
 		resourceGroupSettings.Priority = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal

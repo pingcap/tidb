@@ -1622,7 +1622,7 @@ ResourceGroupOptionList:
 ResourceGroupPriorityOption:
 	"LOW"
 	{
-		$$ = uint64(0)
+		$$ = uint64(1)
 	}
 |	"MEDIUM"
 	{
