@@ -87,7 +87,10 @@ func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 
 // MinimalTask is the minimal task of distribute framework.
 // Each subtask is divided into multiple minimal tasks by scheduler.
-type MinimalTask interface{}
+type MinimalTask interface {
+	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
+	IsMinimalTask()
+}
 
 const (
 	// TaskTypeExample is TaskType of Example.
