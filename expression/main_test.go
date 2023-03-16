@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/atomic"
 	"go.uber.org/goleak"
 )
 
@@ -61,6 +62,6 @@ func createContext(t *testing.T) *mock.Context {
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.TruncateAsWarning = true
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
-	ctx.GetSessionVars().PlanColumnID = 0
+	ctx.GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 	return ctx
 }

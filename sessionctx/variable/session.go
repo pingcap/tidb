@@ -702,7 +702,7 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int64
+	PlanColumnID *atomic2.Int64
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -1948,8 +1948,8 @@ func (s *SessionVars) CleanBuffers() {
 
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
-	s.PlanColumnID++
-	return s.PlanColumnID
+	s.PlanColumnID.Add(1)
+	return s.PlanColumnID.Load()
 }
 
 // GetCharsetInfo gets charset and collation for current context.

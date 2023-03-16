@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func TestGroupNDVs(t *testing.T) {
@@ -57,7 +58,7 @@ func TestGroupNDVs(t *testing.T) {
 		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		tk.Session().GetSessionVars().PlanColumnID = 0
+		tk.Session().GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)

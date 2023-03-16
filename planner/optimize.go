@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -493,7 +494,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
 	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {

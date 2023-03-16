@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func testGetIS(t *testing.T, ctx sessionctx.Context) infoschema.InfoSchema {
@@ -218,7 +219,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
-		tk.Session().GetSessionVars().PlanColumnID = 0
+		tk.Session().GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
@@ -317,7 +318,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
-		tk.Session().GetSessionVars().PlanColumnID = 0
+		tk.Session().GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
@@ -365,7 +366,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
-		tk.Session().GetSessionVars().PlanColumnID = 0
+		tk.Session().GetSessionVars().PlanColumnID = atomic.NewInt64(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
