@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/driver/backoff"
@@ -55,7 +54,7 @@ func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 		return nil, err
 	}
 	for _, store := range stores {
-		if store.ServerType == kv.TiFlash.Name() {
+		if infoschema.IsTiFlashWriteRelated(store.ServerType) {
 			aliveTiFlashStores = append(aliveTiFlashStores, store)
 		}
 	}
