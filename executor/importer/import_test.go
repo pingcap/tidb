@@ -140,8 +140,9 @@ func TestInitOptions(t *testing.T) {
 		stmt, err2 := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err2, sql)
 		e := LoadDataController{}
-		err := e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
-		require.ErrorIs(t, err, c.Err, sql)
+		errs := e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
+		require.Len(t, errs, 1)
+		require.ErrorIs(t, errs[0], c.Err, sql)
 	}
 	e := LoadDataController{}
 	sql := fmt.Sprintf(sqlTemplate, importModeOption+"='physical', "+
@@ -157,8 +158,8 @@ func TestInitOptions(t *testing.T) {
 		detachedOption)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
-	err = e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
-	require.NoError(t, err, sql)
+	errs := e.initOptions(ctx, convertOptions(stmt.(*ast.LoadDataStmt).Options))
+	require.Len(t, errs, 0)
 	require.Equal(t, physicalImportMode, e.importMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), e.diskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, e.checksum, sql)
