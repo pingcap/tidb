@@ -391,14 +391,14 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustExec(`explain format = 'plan_cache' select * from (select * from t) tx`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported`))
 
-	// no warning if disable this feature
+	// cache disabled warning if disable this feature
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a+1=1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a in (select a from t)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 }
 
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
