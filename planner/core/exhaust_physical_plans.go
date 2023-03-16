@@ -1179,7 +1179,7 @@ func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *stati
 		orderedIdxCols := make([]int64, len(idxCols))
 		copy(orderedIdxCols, idxCols)
 		slices.Sort(orderedIdxCols)
-		if !slices.Equal(idxCols, colUIDs) {
+		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
 		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
