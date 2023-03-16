@@ -265,11 +265,8 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	checkEqualIgnoreTimes(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
-	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
-	require.NoError(t, err)
-	checkEqualIgnoreTimes(t, expected, info)
+	err = CancelJob(ctx, tk.Session(), id, "user")
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. need status running or paused, but got failed")
 
 	// add job of another user and test GetAllJobInfo
 
