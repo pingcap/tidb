@@ -829,11 +829,13 @@ const (
 	version136 = 136
 	// version137 introduces some reserved resource groups
 	version137 = 137
+	// version 138 set tidb_enable_null_aware_anti_join to true
+	version138 = 138
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version137
+var currentBootstrapVersion int64 = version138
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -959,6 +961,7 @@ var (
 		upgradeToVer135,
 		upgradeToVer136,
 		upgradeToVer137,
+		upgradeToVer138,
 	}
 )
 
@@ -2389,6 +2392,14 @@ func upgradeToVer137(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateDefaultResourceGroup)
+}
+
+// For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
+func upgradeToVer138(s Session, ver int64) {
+	if ver >= version138 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
 }
 
 func writeOOMAction(s Session) {
