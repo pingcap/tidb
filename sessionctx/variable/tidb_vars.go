@@ -829,6 +829,8 @@ const (
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
 	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
 	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
 
@@ -1227,6 +1229,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptEnableLateMaterialization              = false
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 

@@ -1372,6 +1372,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1790,6 +1793,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)

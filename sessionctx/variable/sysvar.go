@@ -2398,6 +2398,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForSubquery = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableLateMaterialization, Value: BoolToOnOff(DefTiDBOptEnableLateMaterialization), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLateMaterialization = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBLoadBasedReplicaReadThreshold, Value: time.Duration(DefTiDBLoadBasedReplicaReadThreshold).String(), Type: TypeDuration, MaxValue: uint64(time.Hour), SetSession: func(s *SessionVars, val string) error {
 		d, err := time.ParseDuration(val)
 		if err != nil {

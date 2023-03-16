@@ -69,6 +69,7 @@ go_library(
         "stringer.go",
         "task.go",
         "telemetry.go",
+        "tiflash_selection_late_materialization.go",
         "trace.go",
         "util.go",
     ],
