@@ -1117,7 +1117,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1155,7 +1155,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN anti left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -7531,7 +7531,7 @@
       {
         "SQL": "select t1.a, t1.b not in (select t3.b from t3) from t1",
         "Plan": [
-          "HashJoin 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.b, test.t3.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t1.b, test.t3.b)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -7546,7 +7546,7 @@
       {
         "SQL": "select t1.a, t1.b not in (select /*+ no_decorrelate() */ t3.b from t3) from t1",
         "Plan": [
-          "HashJoin 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.b, test.t3.b)",
+          "HashJoin 10000.00 root  Null-aware anti left outer semi join, equal:[eq(test.t1.b, test.t3.b)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",

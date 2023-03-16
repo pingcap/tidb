@@ -98,7 +98,6 @@ go_library(
     deps = [
         "//bindinfo",
         "//br/pkg/glue",
-        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
@@ -206,6 +205,7 @@ go_library(
         "//util/stmtsummary",
         "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
+        "//util/syncutil",
         "//util/table-filter",
         "//util/timeutil",
         "//util/tls",
@@ -436,6 +436,7 @@ go_test(
         "//util/sqlexec",
         "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
+        "//util/syncutil",
         "//util/tableutil",
         "//util/timeutil",
         "//util/topsql/state",

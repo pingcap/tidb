@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
@@ -98,7 +98,7 @@ type InsertValues struct {
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
-	txnInUse   sync.Mutex
+	txnInUse   syncutil.Mutex
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
@@ -1207,6 +1207,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+					}
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
@@ -1239,6 +1243,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedRowKey(uk.newKey)
+					}
 					skip = true
 					break
 				}
@@ -1293,6 +1301,10 @@ func (e *InsertValues) removeRow(
 	if identical {
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
+		if err != nil {
+			return false, err
 		}
 		return true, nil
 	}

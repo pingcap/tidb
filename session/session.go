@@ -2193,7 +2193,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().ResourceGroupName
-	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+	if len(resourceGroupName) > 0 {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
@@ -3977,7 +3977,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
-	} else if vars.TxnCtx != nil && vars.InTxn() {
+	} else if vars.TxnCtx != nil {
 		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
 			is = tmp
 		}
