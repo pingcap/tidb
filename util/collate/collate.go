@@ -327,6 +327,7 @@ func IsCICollation(collate string) bool {
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci"
 }
 
+// ConvertAndGetBinCollation converts collator to binary collator
 func ConvertAndGetBinCollation(collate string) Collator {
 	switch collate {
 	case "utf8_general_ci":
