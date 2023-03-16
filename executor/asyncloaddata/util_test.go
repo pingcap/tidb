@@ -201,13 +201,14 @@ func TestKeepAlive(t *testing.T) {
 	expected.StatusMessage = ""
 	checkEqualIgnoreTimes(t, expected, info)
 
-	// Now the worker calls FailJob
+	// Now the worker calls FailJob, but the status should still be canceled,
+	// that's more friendly.
 
 	err = FailJob(ctx, tk.Session(), id, "failed to keepalive")
 	require.NoError(t, err)
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	expected.Status = JobFailed
+	expected.Status = JobCanceled
 	expected.StatusMessage = "failed to keepalive"
 	checkEqualIgnoreTimes(t, expected, info)
 }

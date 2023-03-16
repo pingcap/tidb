@@ -578,7 +578,7 @@ func (e *LoadDataWorker) doLoad(
 					return err2
 				}
 				if !ok {
-					return errors.Errorf("failed to keepalive for LOAD DATA job %d", jobID)
+					return errors.Errorf("failed to update job progress, the job %d is interrupted by user or failed to keepalive", jobID)
 				}
 			}
 		}
