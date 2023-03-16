@@ -149,7 +149,7 @@ func (b *builtinIlikeSig) constVec(expr string, param *funcParam, rowNum int, es
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(exprParam.getCol())
 	i64s := result.Int64s()
