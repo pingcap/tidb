@@ -111,6 +111,25 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}
 	defer rawSess.Close()
 
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, time.Now())
+	if err != nil {
+		return t.result(err)
+	}
+	safeExpire = safeExpire.Add(time.Minute)
+
+	// Check the expired time to avoid to delete some unexpected rows.
+	// It can happen that the table metas used by job and task is different. For example:
+	// 	1. Job computes TTL expire time with expired interval 2 days
+	//  2. User updates the expired interval to 1 day after job submitted
+	//  3. A task deserialized and begins to execute. The expired time it uses is computed by job
+	//     but table meta is the latest one that got from the information schema.
+	// If we do not make this check, the scan task will continue to run without any error
+	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
+	// In this case, some rows will be deleted unexpectedly.
+	if t.ExpireTime.After(safeExpire) {
+		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.UnixMilli(), safeExpire.UnixMilli()))
+	}
+
 	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
 	if _, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
 		return t.result(err)
