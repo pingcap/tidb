@@ -139,6 +139,7 @@ func TestOnRunnableTasks(t *testing.T) {
 
 func TestManager(t *testing.T) {
 	mockTaskTable := &MockTaskTable{}
+	// TODO(gmhdbjd): use real subtask table instead of mock
 	mockSubtaskTable := &MockSubtaskTable{}
 	mockInternalScheduler := &MockInternalScheduler{}
 	mockPool := &MockPool{}

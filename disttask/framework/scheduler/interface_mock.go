@@ -22,6 +22,7 @@ import (
 )
 
 // MockTaskTable is a mock of TaskTable.
+// TODO(gmhdbjd): move this to storage package.
 type MockTaskTable struct {
 	mock.Mock
 }
