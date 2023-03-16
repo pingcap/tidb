@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/pipeline"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -647,13 +648,15 @@ func (rc *Client) CreateTables(
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
 	newTables := make([]*model.TableInfo, 0, len(tables))
-	errCh := make(chan error, 1)
 	tbMapping := map[string]int{}
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
-	for et := range dataCh {
+	data, err := pipeline.Execute(context.TODO(), NewCreateTablesPipe(rc, dom, tables, newTS)).Collect(context.TODO())
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, et := range data {
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 		newTables = append(newTables, et.Table)
@@ -662,14 +665,6 @@ func (rc *Client) CreateTables(
 	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
 		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
 	})
-
-	select {
-	case err, ok := <-errCh:
-		if ok {
-			return nil, nil, errors.Trace(err)
-		}
-	default:
-	}
 	return rewriteRules, newTables, nil
 }
 func (rc *Client) createTables(
@@ -748,94 +743,6 @@ func (rc *Client) createTable(
 	return et, nil
 }
 
-// GoCreateTables create tables, and generate their information.
-// this function will use workers as the same number of sessionPool,
-// leave sessionPool nil to send DDLs sequential.
-func (rc *Client) GoCreateTables(
-	ctx context.Context,
-	dom *domain.Domain,
-	tables []*metautil.Table,
-	newTS uint64,
-	errCh chan<- error,
-) <-chan CreatedTable {
-	// Could we have a smaller size of tables?
-	log.Info("start create tables")
-
-	rc.GenerateRebasedTables(tables)
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	outCh := make(chan CreatedTable, len(tables))
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
-		return outCh
-	}
-
-	var err error
-
-	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
-		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
-
-		if err == nil {
-			defer log.Debug("all tables are created")
-			close(outCh)
-			return outCh
-		} else if utils.FallBack2CreateTable(err) {
-			// fall back to old create table (sequential create table)
-			log.Info("fall back to the sequential create table")
-		} else {
-			errCh <- err
-			close(outCh)
-			return outCh
-		}
-	}
-
-	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
-		select {
-		case <-c.Done():
-			return c.Err()
-		default:
-		}
-		rt, err := rc.createTable(c, db, dom, t, newTS)
-		if err != nil {
-			log.Error("create table failed",
-				zap.Error(err),
-				zap.Stringer("db", t.DB.Name),
-				zap.Stringer("table", t.Info.Name))
-			return errors.Trace(err)
-		}
-		log.Debug("table created and send to next",
-			zap.Int("output chan size", len(outCh)),
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		outCh <- rt
-		rater.Inc()
-		rater.L().Info("table created",
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		return nil
-	}
-	go func() {
-		defer close(outCh)
-		defer log.Debug("all tables are created")
-		var err error
-		if len(rc.dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables)
-		} else {
-			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
-		}
-		if err != nil {
-			errCh <- err
-		}
-	}()
-
-	return outCh
-}
-
 func (rc *Client) createTablesWithSoleDB(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
 	tables []*metautil.Table) error {
@@ -862,7 +769,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh pipeline.Context[CreatedTable]) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -887,10 +794,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 			}
 			for _, ct := range cts {
 				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
 					zap.Stringer("table", ct.OldTable.Info.Name),
 					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
+				if err := outCh.Emit(ct); err != nil {
+					return err
+				}
 				rater.Inc()
 				rater.L().Info("table created",
 					zap.Stringer("table", ct.OldTable.Info.Name),

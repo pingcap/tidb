@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/utils/pipeline"
 	"go.uber.org/zap"
 )
 
@@ -48,12 +49,38 @@ type Batcher struct {
 	// sendCh is for communiate with sendWorker.
 	sendCh chan<- SendType
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
-	outCh chan<- CreatedTable
+	outCh chan CreatedTable
 
 	sender             BatchSender
 	manager            ContextManager
 	batchSizeThreshold int
 	size               int32
+}
+
+func (b *Batcher) MainLoop(ctx pipeline.Context[CreatedTable], input <-chan TableWithRange) {
+	defer ctx.Finish()
+
+	for {
+		select {
+		case <-ctx.Done():
+			ctx.EmitErr(ctx.Err())
+			return
+		case in, ok := <-input:
+			if !ok {
+				b.Close()
+				input = nil
+				continue
+			}
+			b.Add(in)
+		case out, ok := <-b.outCh:
+			if !ok {
+				return
+			}
+			if !pipeline.TryEmit(ctx, out) {
+				return
+			}
+		}
+	}
 }
 
 // Len calculate the current size of this batcher.
@@ -102,7 +129,7 @@ func NewBatcher(
 	sender BatchSender,
 	manager ContextManager,
 	errCh chan<- error,
-) (*Batcher, <-chan CreatedTable) {
+) *Batcher {
 	output := make(chan CreatedTable, defaultChannelSize)
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
@@ -122,7 +149,7 @@ func NewBatcher(
 	go b.contextCleaner(ctx, restoredTables)
 	sink := chanTableSink{restoredTables, errCh}
 	sender.PutSink(sink)
-	return b, output
+	return b
 }
 
 // EnableAutoCommit enables the batcher commit batch periodically even batcher size isn't big enough.
