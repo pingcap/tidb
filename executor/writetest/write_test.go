@@ -2016,9 +2016,9 @@ func TestLoadDataInitParam(t *testing.T) {
 
 	require.ErrorIs(t, tk.ExecToErr("load data infile '' into table load_data_test"),
 		exeerrors.ErrLoadDataEmptyPath)
-	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format '' into table load_data_test"),
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' format '' into table load_data_test"),
 		exeerrors.ErrLoadDataUnsupportedFormat)
-	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'aaa' into table load_data_test"),
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/a' format 'aaa' into table load_data_test"),
 		exeerrors.ErrLoadDataUnsupportedFormat)
 	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),
 		"cannot specify FIELDS ... or LINES")

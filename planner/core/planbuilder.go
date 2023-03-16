@@ -4284,7 +4284,7 @@ FinishHandleGenCols:
 		if detached {
 			errs = append(errs, ErrLoadDataCantDetachWithLocal)
 		}
-	} else {
+	} else if p.Path != "" {
 		_, _, err = ResolveLoadDataRemoteURI(p.Path)
 		if err != nil {
 			errs = append(errs, err)
