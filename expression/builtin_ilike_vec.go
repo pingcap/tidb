@@ -98,7 +98,7 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	}
 
 	tmpExprCol := param.getCol().CopyConstruct(nil)
-	LowerAlphaAscii(tmpExprCol, rowNum)
+	LowerAlphaASCII(tmpExprCol, rowNum)
 	param.setCol(tmpExprCol)
 }
 
@@ -113,7 +113,7 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	}
 
 	tmpPatternCol := param.getCol().CopyConstruct(nil)
-	escape = LowerAlphaAsciiExcludeEscapeChar(tmpPatternCol, rowNum, escape)
+	escape = LowerAlphaASCIIExcludeEscapeChar(tmpPatternCol, rowNum, escape)
 	param.setCol(tmpPatternCol)
 
 	return escape
