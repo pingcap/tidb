@@ -31,6 +31,7 @@ go_test(
     ],
     embed = [":asyncloaddata"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/lightning/config",
         "//executor/importer",
