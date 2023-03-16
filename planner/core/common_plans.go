@@ -550,13 +550,12 @@ type LoadData struct {
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
-	Format      string
+	Format      *string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
-	NullInfo    *ast.NullDefinedBy
-	IgnoreLines uint64
+	IgnoreLines *uint64
 
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -614,7 +613,7 @@ type IndexAdvise struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
+	LineFieldsInfo
 }
 
 // SplitRegion represents a split regions plan.
@@ -660,6 +659,51 @@ type SelectInto struct {
 
 	TargetPlan Plan
 	IntoOpt    *ast.SelectIntoOption
+	LineFieldsInfo
+}
+
+// LineFieldsInfo used in load-data/select-into/index-advise stmt.
+type LineFieldsInfo struct {
+	FieldsTerminatedBy string
+	FieldsEnclosedBy   string // length always <= 1, see parser.y
+	FieldsEscapedBy    string // length always <= 1, see parser.y
+	FieldsOptEnclosed  bool
+	LinesStartingBy    string
+	LinesTerminatedBy  string
+}
+
+// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
+func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
+	e := LineFieldsInfo{
+		FieldsTerminatedBy: "\t",
+		FieldsEnclosedBy:   "",
+		FieldsEscapedBy:    "\\",
+		FieldsOptEnclosed:  false,
+		LinesStartingBy:    "",
+		LinesTerminatedBy:  "\n",
+	}
+
+	if fieldsInfo != nil {
+		if fieldsInfo.Terminated != nil {
+			e.FieldsTerminatedBy = *fieldsInfo.Terminated
+		}
+		if fieldsInfo.Enclosed != nil {
+			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
+		}
+		if fieldsInfo.Escaped != nil {
+			e.FieldsEscapedBy = *fieldsInfo.Escaped
+		}
+		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
+	}
+	if linesInfo != nil {
+		if linesInfo.Starting != nil {
+			e.LinesStartingBy = *linesInfo.Starting
+		}
+		if linesInfo.Terminated != nil {
+			e.LinesTerminatedBy = *linesInfo.Terminated
+		}
+	}
+	return e
 }
 
 // ExplainInfoForEncode store explain info for JSON encode

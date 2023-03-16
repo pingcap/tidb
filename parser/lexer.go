@@ -275,6 +275,19 @@ func (s *Scanner) Lex(v *yySymType) int {
 			return toTimestamp
 		}
 	}
+	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED
+	if tok == optionally {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == enclosed && tok2 == by {
+			_, _, lit = s.scan()
+			_, pos2, lit2 := s.scan()
+			v.ident = fmt.Sprintf("%s %s %s", v.ident, lit, lit2)
+			s.lastKeyword = optionallyEnclosedBy
+			s.lastScanOffset = pos2.Offset
+			v.offset = pos2.Offset
+			return optionallyEnclosedBy
+		}
+	}
 
 	switch tok {
 	case intLit:

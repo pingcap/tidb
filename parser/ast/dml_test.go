@@ -413,6 +413,66 @@ func TestWindowSpecRestore(t *testing.T) {
 func TestLoadDataRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
+			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
+		},
+		// ignore N lines
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 0 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 0 LINES",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` ignore 11 lines",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` IGNORE 11 LINES",
+		},
+		// fields
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields terminated by 'a\\t'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS TERMINATED BY 'a\t'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` FIELDS OPTIONALLY ENCLOSED BY 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields enclosed by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS ENCLOSED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields escaped by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS ESCAPED BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a' optionally enclosed",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields defined null by 'a' optionally enclosed  optionally  enclosed  by  'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a' DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` fields optionally  enclosed  by  'a'  defined null by 'a' optionally enclosed",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` FIELDS OPTIONALLY ENCLOSED BY 'a' DEFINED NULL BY 'a' OPTIONALLY ENCLOSED",
+		},
+		// lines
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines starting by 'a'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES STARTING BY 'a'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines terminated by '\\n'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES TERMINATED BY '\n'",
+		},
+		{
+			sourceSQL: "load data infile '/a.csv' into table `t` lines starting by 'a' terminated by '\\n'",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES STARTING BY 'a' TERMINATED BY '\n'",
+		},
+		// with options
+		{
 			sourceSQL: "load data infile '/a.csv' into table `t` with detached",
 			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
 		},

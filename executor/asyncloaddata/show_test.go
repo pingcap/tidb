@@ -25,8 +25,8 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/executor"
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/testkit"
@@ -400,10 +400,10 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	s.T().Cleanup(func() {
 		HeartBeatInSec = backup
 	})
-	backup2 := executor.LoadDataReadBlockSize
-	executor.LoadDataReadBlockSize = 1
+	backup2 := importer.LoadDataReadBlockSize
+	importer.LoadDataReadBlockSize = 1
 	s.T().Cleanup(func() {
-		executor.LoadDataReadBlockSize = backup2
+		importer.LoadDataReadBlockSize = backup2
 	})
 	backup3 := config.BufferSizeScale
 	config.BufferSizeScale = 1

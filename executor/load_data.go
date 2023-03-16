@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -290,8 +289,8 @@ func NewLoadDataWorker(
 		}
 	}()
 
-	controller := importer.NewLoadDataController(plan, tbl)
-	if err = controller.Init(userSctx, plan.Options); err != nil {
+	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
+	if err != nil {
 		return nil, err
 	}
 
@@ -331,7 +330,6 @@ func NewLoadDataWorker(
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-
 	if !restrictive {
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
@@ -373,9 +371,6 @@ func (e *LoadDataWorker) initInsertValues() error {
 
 	return nil
 }
-
-// LoadDataReadBlockSize is exposed for test.
-var LoadDataReadBlockSize = int64(config.ReadBlockSize)
 
 // LoadDataReaderInfo provides information for a data reader of LOAD DATA.
 type LoadDataReaderInfo struct {
@@ -594,14 +589,14 @@ func (e *LoadDataWorker) buildParser(
 	reader io.ReadSeekCloser,
 	remote *loadRemoteInfo,
 ) (parser mydump.Parser, err error) {
-	switch strings.ToLower(e.controller.Format) {
-	case "":
+	switch e.controller.Format {
+	case importer.LoadDataFormatDelimitedData:
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
 			e.controller.GenerateCSVConfig(),
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 			false,
 			// TODO: support charset conversion
@@ -611,7 +606,7 @@ func (e *LoadDataWorker) buildParser(
 			ctx,
 			e.Ctx.GetSessionVars().SQLMode,
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 		)
 	case importer.LoadDataFormatParquet:

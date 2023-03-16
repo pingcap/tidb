@@ -197,9 +197,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'NULL';`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL'
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -210,9 +209,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'NULL' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -223,9 +221,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'mynull' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n'`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\N \N`,
@@ -245,9 +242,8 @@ mynull,"mynull"
 %s,"%s"`, ascii0, ascii0)),
 	})
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY ''
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY x'00' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '' DEFINED NULL BY x'00' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\0 \0`,
@@ -256,9 +252,8 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY x'00';`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY x'00'
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"<nil> \000",
@@ -267,8 +262,7 @@ mynull,"mynull"
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
-		FIELDS TERMINATED BY ','
-		LINES TERMINATED BY '\n'
-		NULL DEFINED BY 'mynull' OPTIONALLY ENCLOSED;`, gcsEndpoint)
+		FIELDS TERMINATED BY ',' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
+		LINES TERMINATED BY '\n';`, gcsEndpoint)
 	s.tk.MustMatchErrMsg(sql, `must specify FIELDS \[OPTIONALLY\] ENCLOSED BY`)
 }

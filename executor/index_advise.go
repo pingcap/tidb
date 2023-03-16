@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -42,7 +43,7 @@ func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.indexAdviseInfo.Path == "" {
 		return errors.New("Index Advise: infile path is empty")
 	}
-	if len(e.indexAdviseInfo.LinesInfo.Terminated) == 0 {
+	if len(e.indexAdviseInfo.LinesTerminatedBy) == 0 {
 		return errors.New("Index Advise: don't support advise index for SQL terminated by nil")
 	}
 
@@ -69,19 +70,19 @@ type IndexAdviseInfo struct {
 	Path        string
 	MaxMinutes  uint64
 	MaxIndexNum *ast.MaxIndexNumClause
-	LinesInfo   *ast.LinesClause
-	Ctx         sessionctx.Context
-	StmtNodes   [][]ast.StmtNode
-	Result      *IndexAdvice
+	core.LineFieldsInfo
+	Ctx       sessionctx.Context
+	StmtNodes [][]ast.StmtNode
+	Result    *IndexAdvice
 }
 
 func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {
 	str := string(data)
-	sqls := strings.Split(str, e.LinesInfo.Terminated)
+	sqls := strings.Split(str, e.LinesTerminatedBy)
 
 	j := 0
 	for i, sql := range sqls {
-		if sql != "\n" && sql != "" && strings.HasPrefix(sql, e.LinesInfo.Starting) {
+		if sql != "\n" && sql != "" && strings.HasPrefix(sql, e.LinesStartingBy) {
 			sqls[j] = sqls[i]
 			j++
 		}
