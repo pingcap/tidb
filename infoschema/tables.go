@@ -1639,6 +1639,11 @@ const (
 	ForeignKeyType = "FOREIGN KEY"
 )
 
+const (
+	// TiFlashWrite is the TiFlash write node in disaggregated mode.
+	TiFlashWrite = "tiflash_write"
+)
+
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1648,6 +1653,7 @@ type ServerInfo struct {
 	GitHash        string
 	StartTimestamp int64
 	ServerID       uint64
+	EngineRole     string
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1915,16 +1921,14 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			if isTiFlashWriteNode(store) {
-				// tiflash_write is not a storeType in client-go, so we just judge based on the label here.
-				tp = "tiflash_write"
-			} else {
-				tp = kv.TiFlash.Name()
-			}
+			tp = kv.TiFlash.Name()
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
-
+		var engineRole string
+		if isTiFlashWriteNode(store) {
+			engineRole = placement.EngineRoleLabelWrite
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1932,6 +1936,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
+			EngineRole:     engineRole,
 		})
 	}
 	return servers, nil
