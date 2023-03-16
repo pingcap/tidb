@@ -1843,6 +1843,7 @@ type ResourceGroupSettings struct {
 	BurstLimit       int64  `json:"burst_limit"`
 }
 
+// NewResourceGroupSettings creates a new ResourceGroupSettings.
 func NewResourceGroupSettings() *ResourceGroupSettings {
 	return &ResourceGroupSettings{
 		RURate:           0,
@@ -1854,6 +1855,7 @@ func NewResourceGroupSettings() *ResourceGroupSettings {
 	}
 }
 
+// PriorityValueToName converts the priority value to corresponding name
 func PriorityValueToName(value uint64) string {
 	switch value {
 	case LowPriorityValue:
@@ -1867,6 +1869,7 @@ func PriorityValueToName(value uint64) string {
 	}
 }
 
+//revive:disable:exported
 const (
 	LowPriorityValue    = 1
 	MediumPriorityValue = 8
