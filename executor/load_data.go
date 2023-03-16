@@ -304,7 +304,7 @@ func NewLoadDataWorker(
 		GenExprs:       plan.GenCols.Exprs,
 		isLoadData:     true,
 		txnInUse:       syncutil.Mutex{},
-		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
+		maxRowsInBatch: uint64(controller.GetBatchSize()),
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore

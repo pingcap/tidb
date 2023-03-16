@@ -28,3 +28,6 @@ type SubtaskExample struct{}
 
 // MinimalTaskExample is the minimal example task.
 type MinimalTaskExample struct{}
+
+// IsMinimalTask is used to implement the proto.MinimalTask interface.
+func (MinimalTaskExample) IsMinimalTask() {}

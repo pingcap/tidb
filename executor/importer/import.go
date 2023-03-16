@@ -55,7 +55,6 @@ const (
 	physicalImportMode  = "physical" // local backend
 	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
-	minBatchSize        = config.ByteSize(1 << 10)  // 1KiB
 	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
 
 	importModeOption    = "import_mode"
@@ -141,7 +140,7 @@ type LoadDataController struct {
 	addIndex          bool
 	analyze           config.PostOpLevel
 	threadCnt         int64
-	batchSize         config.ByteSize
+	batchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
@@ -260,7 +259,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.addIndex = true
 	e.analyze = config.OpLevelOptional
 	e.threadCnt = int64(threadCnt)
-	_ = e.batchSize.UnmarshalText([]byte("100MiB")) // todo confirm with pm
+	e.batchSize = 1000
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
 	e.maxRecordedErrors = 100
@@ -361,10 +360,8 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
-		} else if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
+		e.batchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || e.batchSize < 0 {
 			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
@@ -412,9 +409,6 @@ func (e *LoadDataController) adjustOptions() {
 	numCPU := int64(runtime.NumCPU())
 	if e.threadCnt > numCPU {
 		e.threadCnt = numCPU
-	}
-	if e.batchSize < minBatchSize {
-		e.batchSize = minBatchSize
 	}
 	if e.maxWriteSpeed < minWriteSpeed {
 		e.maxWriteSpeed = minWriteSpeed
@@ -545,6 +539,11 @@ func (e *LoadDataController) GetFieldMapping() []*FieldMapping {
 // GetFieldCount get field count.
 func (e *LoadDataController) GetFieldCount() int {
 	return len(e.fieldMappings)
+}
+
+// GetBatchSize get batch size.
+func (e *LoadDataController) GetBatchSize() int64 {
+	return e.batchSize
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
