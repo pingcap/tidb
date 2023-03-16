@@ -95,7 +95,7 @@ type Client struct {
 
 	cipher           *backuppb.CipherInfo
 	checkpointMeta   *checkpoint.CheckpointMetadata
-	checkpointRunner *checkpoint.CheckpointRunner
+	checkpointRunner *checkpoint.CheckpointBackupRunner
 
 	gcTTL int64
 }
@@ -274,7 +274,7 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 	return nil
 }
 
-func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner {
+func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointBackupRunner {
 	return bc.checkpointRunner
 }
 

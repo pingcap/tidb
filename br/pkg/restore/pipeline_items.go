@@ -234,7 +234,7 @@ func NewTiKVSender(
 	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
-	runner *checkpoint.CheckpointRunner,
+	runner *checkpoint.CheckpointRestoreRunner,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan drainResultAndDone, defaultChannelSize)
@@ -358,7 +358,21 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 	}
 }
 
-func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone, runner *checkpoint.CheckpointRunner) {
+func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.CheckpointRestoreRunner, result DrainResult) {
+	if runner == nil {
+		return
+	}
+	var startOffset int = 0
+	for i, endOffset := range result.TableEndOffsetInRanges {
+		table := result.TablesToSend[i]
+		ranges := result.Ranges[startOffset:endOffset]
+		runner.AppendRanges(ctx, table.Table.ID, ranges)
+		// update start offset
+		startOffset = endOffset
+	}
+}
+
+func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone, runner *checkpoint.CheckpointRestoreRunner) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		log.Info("TiKV Sender: restore worker prepare to close.")
@@ -388,7 +402,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
-				runner.AppendRanges(ectx, r.result.Ranges)
+				appendRangesToCheckpoint(ctx, runner, r.result)
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
 				b.sink.EmitTables(r.result.BlankTablesAfterSend...)

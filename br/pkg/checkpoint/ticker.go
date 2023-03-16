@@ -29,10 +29,6 @@ func (ticker timeTicker) Ch() <-chan time.Time {
 	return ticker.C
 }
 
-func (ticker timeTicker) Stop() {
-	ticker.Stop()
-}
-
 type nonTicker struct {
 	C chan time.Time
 }

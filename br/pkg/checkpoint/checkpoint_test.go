@@ -69,8 +69,8 @@ func TestCheckpointRunner(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	os.MkdirAll(base+checkpoint.CheckpointDataDir, 0o755)
-	os.MkdirAll(base+checkpoint.CheckpointChecksumDir, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
 
 	cipher := &backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
@@ -159,7 +159,7 @@ func TestCheckpointRunner(t *testing.T) {
 		require.Equal(t, d.Name2, resp.Files[1].Name)
 	}
 
-	_, err = checkpoint.WalkCheckpointFile(ctx, s, cipher, checker)
+	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
 	require.NoError(t, err)
 
 	checkpointMeta := &checkpoint.CheckpointMetadata{
@@ -179,7 +179,7 @@ func TestCheckpointRunner(t *testing.T) {
 
 	// only 2 checksum files exists, they are t2_and__ and t4_and__
 	count := 0
-	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDir}, func(s string, i int64) error {
+	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDirForBackup}, func(s string, i int64) error {
 		count += 1
 		if !strings.Contains(s, "t2") {
 			require.True(t, strings.Contains(s, "t4"))
@@ -203,8 +203,8 @@ func TestCheckpointRunnerLock(t *testing.T) {
 	base := t.TempDir()
 	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	os.MkdirAll(base+checkpoint.CheckpointDataDir, 0o755)
-	os.MkdirAll(base+checkpoint.CheckpointChecksumDir, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
 
 	cipher := &backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
@@ -213,7 +213,7 @@ func TestCheckpointRunnerLock(t *testing.T) {
 
 	data, err := getLockData(10, 20)
 	require.NoError(t, err)
-	err = s.WriteFile(ctx, checkpoint.CheckpointLockPath, data)
+	err = s.WriteFile(ctx, checkpoint.CheckpointLockPathForBackup, data)
 	require.NoError(t, err)
 
 	_, err = checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))

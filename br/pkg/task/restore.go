@@ -608,7 +608,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	tree, id, err := client.InitCheckpoint(ctx, &restoreTS)
+	tree, id, err := client.InitCheckpoint(ctx, s, &restoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -780,7 +780,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(tree)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)

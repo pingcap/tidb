@@ -11,6 +11,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"go.uber.org/zap"
@@ -51,12 +52,14 @@ type Batcher struct {
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
 	outCh chan<- CreatedTable
 
+	updateCh glue.Progress
+
 	sender             BatchSender
 	manager            ContextManager
 	batchSizeThreshold int
 	size               int32
 
-	tree rtree.RangeTree
+	tree map[int64]rtree.RangeTree
 }
 
 // Len calculate the current size of this batcher.
@@ -105,6 +108,7 @@ func NewBatcher(
 	sender BatchSender,
 	manager ContextManager,
 	errCh chan<- error,
+	updateCh glue.Progress,
 ) (*Batcher, <-chan CreatedTable) {
 	output := make(chan CreatedTable, defaultChannelSize)
 	sendChan := make(chan SendType, 2)
@@ -115,6 +119,7 @@ func NewBatcher(
 		sender:             sender,
 		manager:            manager,
 		sendCh:             sendChan,
+		updateCh:           updateCh,
 		cachedTablesMu:     new(sync.Mutex),
 		everythingIsDone:   new(sync.WaitGroup),
 		batchSizeThreshold: 1,
@@ -223,6 +228,8 @@ type DrainResult struct {
 	BlankTablesAfterSend []CreatedTable
 	RewriteRules         *RewriteRules
 	Ranges               []rtree.Range
+	// Record which part of ranges belongs to the table
+	TableEndOffsetInRanges []int
 }
 
 // Files returns all files of this drain result.
@@ -234,26 +241,29 @@ func (result DrainResult) Files() []*backuppb.File {
 	return files
 }
 
-func (result DrainResult) Clean(tree rtree.RangeTree) []rtree.Range {
-	newRanges := make([]rtree.Range, 0, len(result.Ranges))
-	for _, rg := range result.Ranges {
+func newDrainResult() DrainResult {
+	return DrainResult{
+		TablesToSend:           make([]CreatedTable, 0),
+		BlankTablesAfterSend:   make([]CreatedTable, 0),
+		RewriteRules:           EmptyRewriteRule(),
+		Ranges:                 make([]rtree.Range, 0),
+		TableEndOffsetInRanges: make([]int, 0),
+	}
+}
+
+func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
+	newRanges := make([]rtree.Range, 0, len(drained))
+	progress := int64(0)
+	for _, rg := range drained {
 		if r := tree.Find(&rg); r != nil {
+			progress += 2 // split/scatter + download/ingest
 			log.Info("find range is completed to ingest", logutil.Key("start-key", rg.StartKey), logutil.Files(rg.Files))
 		} else {
 			newRanges = append(newRanges, rg)
 		}
 	}
-	result.Ranges = newRanges
+	b.updateCh.IncBy(progress)
 	return newRanges
-}
-
-func newDrainResult() DrainResult {
-	return DrainResult{
-		TablesToSend:         make([]CreatedTable, 0),
-		BlankTablesAfterSend: make([]CreatedTable, 0),
-		RewriteRules:         EmptyRewriteRule(),
-		Ranges:               make([]rtree.Range, 0),
-	}
 }
 
 // drainRanges 'drains' ranges from current tables.
@@ -281,6 +291,7 @@ func (b *Batcher) drainRanges() DrainResult {
 	defer b.cachedTablesMu.Unlock()
 
 	for offset, thisTable := range b.cachedTables {
+		t, exists := b.tree[thisTable.Table.ID]
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
@@ -302,7 +313,11 @@ func (b *Batcher) drainRanges() DrainResult {
 				zap.Int("size", thisTableLen),
 				zap.Int("drained", drainSize),
 			)
+			if exists {
+				drained = b.filterOutRanges(t, drained)
+			}
 			result.Ranges = append(result.Ranges, drained...)
+			result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 			b.cachedTables = b.cachedTables[offset:]
 			atomic.AddInt32(&b.size, -int32(len(drained)))
 			return result
@@ -310,7 +325,8 @@ func (b *Batcher) drainRanges() DrainResult {
 
 		result.BlankTablesAfterSend = append(result.BlankTablesAfterSend, thisTable.CreatedTable)
 		// let's 'drain' the ranges of current table. This op must not make the batch full.
-		result.Ranges = append(result.Ranges, thisTable.Range...)
+		result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Range)...)
+		result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 		atomic.AddInt32(&b.size, -int32(len(thisTable.Range)))
 		// clear the table length.
 		b.cachedTables[offset].Range = []rtree.Range{}
@@ -336,7 +352,6 @@ func (b *Batcher) Send(ctx context.Context) {
 	}
 
 	drainResult := b.drainRanges()
-	drainResult.Clean(b.tree)
 	tbs := drainResult.TablesToSend
 	ranges := drainResult.Ranges
 	log.Info("restore batch start", rtree.ZapRanges(ranges), ZapTables(tbs))
@@ -390,6 +405,6 @@ func (b *Batcher) SetThreshold(newThreshold int) {
 	b.batchSizeThreshold = newThreshold
 }
 
-func (b *Batcher) SetCheckpoint(tree rtree.RangeTree) {
+func (b *Batcher) SetCheckpoint(tree map[int64]rtree.RangeTree) {
 	b.tree = tree
 }
