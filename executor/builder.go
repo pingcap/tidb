@@ -1201,20 +1201,18 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		// If the resource group name is not empty, we could collect and display the RU
 		// runtime stats for analyze executor.
 		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
-		if len(resourceGroupName) > 0 {
-			// Try to register the RU runtime stats for analyze executor.
-			if store, ok := b.ctx.GetStore().(interface {
-				CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
-			}); ok {
-				// StartTS will be used to identify this SQL, so that the runtime stats could
-				// aggregate the RU stats beneath the KV storage client.
-				startTS, err := b.getSnapshotTS()
-				if err != nil {
-					b.err = err
-					return nil
-				}
-				explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
+		// Try to register the RU runtime stats for analyze executor.
+		if store, ok := b.ctx.GetStore().(interface {
+			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+		}); len(resourceGroupName) > 0 && ok {
+			// StartTS will be used to identify this SQL, so that the runtime stats could
+			// aggregate the RU stats beneath the KV storage client.
+			startTS, err := b.getSnapshotTS()
+			if err != nil {
+				b.err = err
+				return nil
 			}
+			explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
