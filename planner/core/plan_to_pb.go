@@ -220,6 +220,16 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 
+	if len(p.lateMaterializationFilterCondition) > 0 {
+		sc := ctx.GetSessionVars().StmtCtx
+		client := ctx.GetClient()
+		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
+		if err != nil {
+			return nil, err
+		}
+		tsExec.PushedDownFilterConditions = conditions
+	}
+
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
