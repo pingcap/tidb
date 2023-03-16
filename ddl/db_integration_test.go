@@ -543,9 +543,7 @@ func TestErrnoErrorCode(t *testing.T) {
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
-	sql = "create table t2 (id int auto_increment);"
-	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
-	sql = "create table t2 (id int auto_increment, a int key);"
+	sql = "create table t2 (id int auto_increment, c int auto_increment);"
 	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
 	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, errno.ErrInvalidDefault)
