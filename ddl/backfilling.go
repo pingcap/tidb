@@ -841,10 +841,9 @@ func (b *backfillScheduler) expectedWorkerSize() (readerSize int, writerSize int
 		readerSize = mathutil.Max(readerSize, 1)
 		writerSize = mathutil.Min(workerCnt/2+2, b.maxSize)
 		return readerSize, writerSize
-	} else {
-		workerCnt = mathutil.Min(workerCnt, b.maxSize)
-		return workerCnt, workerCnt
 	}
+	workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	return workerCnt, workerCnt
 }
 
 func (b *backfillScheduler) workerSize() int {
