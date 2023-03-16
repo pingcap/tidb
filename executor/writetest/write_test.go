@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1879,9 +1880,9 @@ func checkCases(
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
-	origin := ld.IgnoreLines
+	origin := ld.GetController().IgnoreLines
 	for _, tt := range tests {
-		ld.IgnoreLines = origin
+		ld.GetController().IgnoreLines = origin
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
@@ -1890,7 +1891,7 @@ func checkCases(
 
 		parser, err := mydump.NewCSVParser(
 			context.Background(),
-			ld.GenerateCSVConfig(),
+			ld.GetController().GenerateCSVConfig(),
 			mydump.NewStringReader(string(tt.data)),
 			1,
 			nil,
@@ -1898,7 +1899,13 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		err1 := ld.ReadRows(context.Background(), parser)
+		for ld.GetController().IgnoreLines > 0 {
+			ld.GetController().IgnoreLines--
+			//nolint: errcheck
+			_ = parser.ReadRow()
+		}
+
+		err1 := ld.ReadOneBatchRows(context.Background(), parser)
 		require.NoError(t, err1)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		require.NoError(t, err1)
@@ -1932,14 +1939,14 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader(""),
 		1,
 		nil,
 		false,
 		nil)
 	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	require.Len(t, ld.GetRows(), 0)
 	r := tk.MustQuery(selectSQL)
@@ -1997,7 +2004,7 @@ func TestIssue18681(t *testing.T) {
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
-func TestIssue33298(t *testing.T) {
+func TestLoadDataInitParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
@@ -2007,11 +2014,69 @@ func TestIssue33298(t *testing.T) {
 	tk.MustExec("drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
 
+	require.ErrorIs(t, tk.ExecToErr("load data infile '' into table load_data_test"),
+		exeerrors.ErrLoadDataEmptyPath)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format '' into table load_data_test"),
+		exeerrors.ErrLoadDataUnsupportedFormat)
+	require.ErrorIs(t, tk.ExecToErr("load data infile '/a' format 'aaa' into table load_data_test"),
+		exeerrors.ErrLoadDataUnsupportedFormat)
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test fields terminated by 'a'"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test fields terminated by 'a'"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'sql file' into table load_data_test lines terminated by 'a'"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test lines terminated by 'a'"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test ignore 0 lines"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' format 'parquet' into table load_data_test ignore 3 lines"),
+		"cannot specify FIELDS ... or LINES")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed"),
+		"must specify FIELDS [OPTIONALLY] ENCLOSED BY")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test lines terminated by ''"),
+		"LINES TERMINATED BY is empty")
+	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields enclosed by 'a' terminated by 'a'"),
+		"must not be prefix of each other")
+
+	// null def values
+	testFunc := func(sql string, expectedNullDef []string, expectedNullOptEnclosed bool) {
+		require.NoError(t, tk.ExecToErr(sql))
+		defer ctx.SetValue(executor.LoadDataVarKey, nil)
+		ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
+		require.True(t, ok)
+		require.NotNil(t, ld)
+		require.Equal(t, expectedNullDef, ld.GetController().FieldNullDef)
+		require.Equal(t, expectedNullOptEnclosed, ld.GetController().NullValueOptEnclosed)
+	}
+	testFunc("load data local infile '/a' into table load_data_test",
+		[]string{"\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by ''",
+		[]string{"\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields defined null by 'a'",
+		[]string{"a", "\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b' defined null by 'a' optionally enclosed",
+		[]string{"a", "\\N"}, true)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b'",
+		[]string{"NULL", "\\N"}, false)
+	testFunc("load data local infile '/a' into table load_data_test fields enclosed by 'b' escaped by ''",
+		[]string{"NULL"}, false)
+
+	// positive case
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'parquet' into table load_data_test"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'delimited data' into table load_data_test fields terminated by 'a'"))
+	ctx.SetValue(executor.LoadDataVarKey, nil)
+
 	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
 	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
 	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
-	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
+	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"),
+		exeerrors.ErrLoadDataWrongFormatConfig)
 }
 
 func TestIssue34358(t *testing.T) {
@@ -2058,14 +2123,14 @@ func TestLoadData(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader(""),
 		1,
 		nil,
 		false,
 		nil)
 	require.NoError(t, err)
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)
@@ -2079,7 +2144,7 @@ func TestLoadData(t *testing.T) {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
 	sc.IgnoreTruncate = false
-	// fields and lines are default, ReadRows returns data is nil
+	// fields and lines are default, ReadOneBatchRows returns data is nil
 	tests := []testCase{
 		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"
 		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -2099,8 +2164,8 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
-	ld.LinesInfo.Terminated = "||"
+	// lines starting symbol is "" and terminated symbol length is 2, ReadOneBatchRows returns data is nil
+	ld.GetController().LinesTerminatedBy = "||"
 	tests = []testCase{
 		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -2114,10 +2179,10 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// fields and lines aren't default, ReadRows returns data is nil
-	ld.FieldsInfo.Terminated = "\\"
-	ld.LinesInfo.Starting = "xxx"
-	ld.LinesInfo.Terminated = "|!#^"
+	// fields and lines aren't default, ReadOneBatchRows returns data is nil
+	ld.GetController().FieldsTerminatedBy = "\\"
+	ld.GetController().LinesStartingBy = "xxx"
+	ld.GetController().LinesTerminatedBy = "|!#^"
 	tests = []testCase{
 		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
@@ -2155,7 +2220,7 @@ func TestLoadData(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// TODO: not support it now
-	// lines starting symbol is the same as terminated symbol, ReadRows returns data is nil
+	// lines starting symbol is the same as terminated symbol, ReadOneBatchRows returns data is nil
 	//ld.LinesInfo.Terminated = "xxx"
 	//tests = []testCase{
 	//	// data1 = nil, data2 != nil
@@ -2178,7 +2243,7 @@ func TestLoadData(t *testing.T) {
 	//	{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
 	//		[]string{"34|2|3|4", "35|22|33|<nil>", "36|222|<nil>|<nil>"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
 	//
-	//	// ReadRows returns data isn't nil
+	//	// ReadOneBatchRows returns data isn't nil
 	//	{[]byte("\\2\\3\\4xxxx"), nil, []byte("xxxx"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 	//	{[]byte("\\2\\3\\4xxx"), nil, []string{"37|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	//	{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
@@ -2191,16 +2256,15 @@ func TestLoadData(t *testing.T) {
 	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// test line terminator in field quoter
-	ld.LinesInfo.Terminated = "\n"
-	tt := byte('"')
-	ld.FieldsInfo.Enclosed = &tt
+	ld.GetController().LinesTerminatedBy = "\n"
+	ld.GetController().FieldsEnclosedBy = `"`
 	tests = []testCase{
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	ld.LinesInfo.Terminated = "#\n"
-	ld.FieldsInfo.Terminated = "#"
+	ld.GetController().LinesTerminatedBy = "#\n"
+	ld.GetController().FieldsTerminatedBy = "#"
 	tests = []testCase{
 		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
@@ -2406,7 +2470,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
-		ld.GenerateCSVConfig(),
+		ld.GetController().GenerateCSVConfig(),
 		mydump.NewStringReader("1,2\n3,4\n5,6\n7,8\n9,10\n"),
 		1,
 		nil,
@@ -2414,7 +2478,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 		nil)
 	require.NoError(t, err)
 
-	err = ld.ReadRows(context.Background(), parser)
+	err = ld.ReadOneBatchRows(context.Background(), parser)
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)

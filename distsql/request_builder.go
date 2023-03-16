@@ -419,6 +419,12 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 	return builder
 }
 
+// SetConnID sets connection id for the builder.
+func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
+	builder.ConnID = connID
+	return builder
+}
+
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) (*kv.KeyRanges, error) {
 	if !isCommonHandle {

@@ -11,7 +11,9 @@ go_library(
     deps = [
         "//kv",
         "//parser/terror",
+        "//types",
         "//util/chunk",
+        "//util/dbterror/exeerrors",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//util",
@@ -22,6 +24,7 @@ go_test(
     name = "asyncloaddata_test",
     timeout = "short",
     srcs = [
+        "detach_test.go",
         "main_test.go",
         "show_test.go",
         "util_test.go",
@@ -30,7 +33,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/config",
-        "//executor",
+        "//executor/importer",
         "//kv",
         "//parser/auth",
         "//testkit",

@@ -424,15 +424,33 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
-	// todo: mpp na-key toPB.
-	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
-	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
-	for _, leftKey := range p.LeftJoinKeys {
-		leftJoinKeys = append(leftJoinKeys, leftKey)
+	var leftJoinKeys, rightJoinKeys []expression.Expression
+
+	if len(p.LeftJoinKeys) > 0 && len(p.LeftNAJoinKeys) > 0 {
+		return nil, errors.Errorf("join key and na join key can not both exist")
 	}
-	for _, rightKey := range p.RightJoinKeys {
-		rightJoinKeys = append(rightJoinKeys, rightKey)
+
+	isNullAwareSemiJoin := len(p.LeftNAJoinKeys) > 0
+	if isNullAwareSemiJoin {
+		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftNAJoinKeys))
+		rightJoinKeys = make([]expression.Expression, 0, len(p.RightNAJoinKeys))
+		for _, leftKey := range p.LeftNAJoinKeys {
+			leftJoinKeys = append(leftJoinKeys, leftKey)
+		}
+		for _, rightKey := range p.RightNAJoinKeys {
+			rightJoinKeys = append(rightJoinKeys, rightKey)
+		}
+	} else {
+		leftJoinKeys = make([]expression.Expression, 0, len(p.LeftJoinKeys))
+		rightJoinKeys = make([]expression.Expression, 0, len(p.RightJoinKeys))
+		for _, leftKey := range p.LeftJoinKeys {
+			leftJoinKeys = append(leftJoinKeys, leftKey)
+		}
+		for _, rightKey := range p.RightJoinKeys {
+			rightJoinKeys = append(rightJoinKeys, rightKey)
+		}
 	}
+
 	lChildren, err := p.children[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -513,7 +531,6 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		probeFiledTypes = append(probeFiledTypes, ty)
 		buildFiledTypes = append(buildFiledTypes, ty)
 	}
-	// todo: arenatlx, push down hash join
 	join := &tipb.Join{
 		JoinType:                pbJoinType,
 		JoinExecType:            tipb.JoinExecType_TypeHashJoin,
@@ -527,6 +544,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		OtherConditions:         otherConditions,
 		OtherEqConditionsFromIn: otherEqConditions,
 		Children:                []*tipb.Executor{lChildren, rChildren},
+		IsNullAwareSemiJoin:     &isNullAwareSemiJoin,
 	}
 
 	executorID := p.ExplainID().String()
