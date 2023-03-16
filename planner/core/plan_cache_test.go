@@ -1466,4 +1466,12 @@ func TestPlanCacheSwitchCanEffectImmediately(t *testing.T) {
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: plan cache is disabled"))
+	// non-prepare
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
+	tk.MustExec("select * from t")
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 0")
+	tk.MustExec("select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("explain format = 'plan_cache' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 }

@@ -221,6 +221,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			return cachedPlan, names, nil
 		}
 	}
+	// we only throw warning when explain format == 'plan_cache'
+	if explainStmt, isExplain := stmtNode.(*ast.ExplainStmt); isExplain &&
+		!sctx.GetSessionVars().EnableNonPreparedPlanCache &&
+		explainStmt.Format == types.ExplainFormatPlanCache {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip non-prepared plan-cache: plan cache is disabled"))
+	}
 
 	var (
 		names                      types.NameSlice
