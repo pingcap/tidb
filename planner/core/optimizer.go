@@ -554,7 +554,6 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	// check if EnableLateMaterialization is set
 	if sctx.GetSessionVars().EnableLateMaterialization {
-		logutil.BgLogger().Info("EnableLateMaterialization is set, try to push down some predicates to table scan.")
 		predicatePushDownToTableScan(sctx, plan)
 	}
 }

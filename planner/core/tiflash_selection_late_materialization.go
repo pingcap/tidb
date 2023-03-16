@@ -15,14 +15,13 @@
 package core
 
 import (
-	"sort"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // selectivity = (row count after filter) / (row count before filter), smaller is better
@@ -55,8 +54,7 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) Ph
 	switch p := plan.(type) {
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
-			// Only when the table scan is a full scan and the store type is TiFlash,
-			// we will try to push down predicates.
+			// Only when the the store type is TiFlash, we will try to push down predicates.
 			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
 			if len(p.Conditions) == 0 {
 				return p.Children()[0]
@@ -115,7 +113,7 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 		// If excuting light cost condition first,
 		// the rows needed to be exucuted by the heavy cost condition will be reduced.
 		// So if the cond contains heavy cost functions, skip it.
-		if withHeavyCostFunction(cond) {
+		if withHeavyCostFunctionForTiFlashPrefetch(cond) {
 			continue
 		}
 
@@ -149,17 +147,17 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	}
 
 	// Sort exprGroups by selectivity in ascending order
-	sort.SliceStable(exprGroups, func(i, j int) bool {
-		return exprGroups[i].selectivity < exprGroups[j].selectivity || (exprGroups[i].selectivity == exprGroups[j].selectivity && len(exprGroups[i].exprs) < len(exprGroups[j].exprs))
+	slices.SortStableFunc(exprGroups, func(x, y expressionGroup) bool {
+		return x.selectivity < y.selectivity || (x.selectivity == y.selectivity && len(x.exprs) < len(y.exprs))
 	})
 
 	return exprGroups
 }
 
-// withHeavyCostFunction is used to check if the condition contain heavy cost functions.
+// withHeavyCostFunctionForTiFlashPrefetch is used to check if the condition contain heavy cost functions.
 // @param: cond: condition of PhysicalSelection to be checked
 // @note: heavy cost functions are functions that may cause a lot of memory allocation or disk IO.
-func withHeavyCostFunction(cond expression.Expression) bool {
+func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 	if binop, ok := cond.(*expression.ScalarFunction); ok {
 		switch binop.FuncName.L {
 		// JSON functions
@@ -188,13 +186,13 @@ func withHeavyCostFunction(cond expression.Expression) bool {
 // @param: physicalSelection: the PhysicalSelection to be modified
 // @param: exprs: the conditions to be removed
 func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
-	newConds := make([]expression.Expression, 0, len(physicalSelection.Conditions))
-	for _, cond := range physicalSelection.Conditions {
-		if !expression.Contains(exprs, cond) {
-			newConds = append(newConds, cond)
+	conditions := physicalSelection.Conditions
+	for i := len(conditions) - 1; i >= 0; i-- {
+		if expression.Contains(exprs, conditions[i]) {
+			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}
-	physicalSelection.Conditions = newConds
+	physicalSelection.Conditions = conditions
 }
 
 // predicatePushDownToTableScanImpl is used to push down the some filter conditions of the selection to the tablescan.
@@ -251,7 +249,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.lateMaterializationFilterCondition = append(physicalTableScan.lateMaterializationFilterCondition, selectedConds...)
+	physicalTableScan.lateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
 	physicalTableScan.stats.RowCount *= selectedSelectivity
 }
