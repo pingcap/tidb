@@ -44,8 +44,8 @@ func (re *funcParam) setIntVal(val int64) {
 	re.defaultIntVal = val
 }
 
-func (re *funcParam) setCol(new_col *chunk.Column) {
-	re.col = new_col
+func (re *funcParam) setCol(newCol *chunk.Column) {
+	re.col = newCol
 }
 
 func (re *funcParam) getCol() *chunk.Column {

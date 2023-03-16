@@ -90,13 +90,13 @@ func TestIlike(t *testing.T) {
 		}
 	}
 
-	var charset_and_collation_unicode = [][]string{
+	var charsetAndCollationUnicode = [][]string{
 		{"utf8mb4", "utf8mb4_bin"},
 		{"utf8mb4", "utf8mb4_unicode_ci"},
 		{"utf8", "utf8_bin"},
 		{"utf8", "utf8_unicode_ci"}}
 
-	for _, charsetAndCollation := range charset_and_collation_unicode {
+	for _, charsetAndCollation := range charsetAndCollationUnicode {
 		for _, tt := range tests {
 			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charsetAndCollation[1])
 			fc := funcs[ast.Ilike]
