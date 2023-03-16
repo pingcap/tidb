@@ -224,9 +224,8 @@ func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
 }
 
 // Check https://github.com/pingcap/tidb/issues/41773.
-func TestIssue41773(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite1) TestIssue41773(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists xx (id int)")
 	tk.MustExec("CREATE USER 't1234'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
