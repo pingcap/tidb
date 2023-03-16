@@ -1204,9 +1204,13 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) e
 }
 
 func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
+	const progressStep = "add-index"
 	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
 	defer func() {
 		task.End(zap.ErrorLevel, retErr)
+		if retErr == nil {
+			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+		}
 	}()
 
 	tblInfo := tr.tableInfo
@@ -1217,9 +1221,15 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		return nil
 	}
 
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+
 	// Try to add all indexes in one statement.
-	err := tr.executeDDL(ctx, db, singleSQL)
+	err := tr.executeDDL(ctx, db, singleSQL, len(multiSQLs), func(p float64) {
+		web.BroadcastTableProgress(tableName, progressStep, p)
+		logger.Info("add index progress", zap.Float64("progress", p))
+	})
 	if err == nil || !isDupKeyError(err) {
+		web.BroadcastTableProgress(tableName, progressStep, 1)
 		return nil
 	}
 	// No need to retry one by one if there is only one statement.
@@ -1227,21 +1237,31 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		return err
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
+	baseProgress := float64(0)
 	for _, ddl := range multiSQLs {
-		if err := tr.executeDDL(ctx, db, ddl); err != nil {
-			if isDupKeyError(err) {
-				continue
-			}
+		err := tr.executeDDL(ctx, db, ddl, 1, func(p float64) {
+			progress := baseProgress + p/float64(len(multiSQLs))
+			web.BroadcastTableProgress(tableName, progressStep, baseProgress+p/float64(len(multiSQLs)))
+			logger.Info("add index progress", zap.Float64("progress", progress))
+		})
+		if err != nil && !isDupKeyError(err) {
 			return err
 		}
+		baseProgress += 1.0 / float64(len(multiSQLs))
+		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
 	}
 	return nil
 }
 
-func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string) error {
+func (tr *TableImporter) executeDDL(
+	ctx context.Context,
+	db *sql.DB,
+	ddl string,
+	indexCount int,
+	updateProgress func(float64),
+) error {
 	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
 
@@ -1250,75 +1270,67 @@ func (tr *TableImporter) executeDDL(ctx context.Context, db *sql.DB, ddl string)
 		Logger: logger,
 	}
 
-	var now int64
-	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &now); err != nil {
-		now = time.Now().Unix()
-		logger.Warn(
-			"failed to query current time, will use local time as ddl create time",
-			zap.Int64("ddl-create-time", now),
-			zap.Error(err),
-		)
+	var currentTS int64
+	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &currentTS); err != nil {
+		currentTS = time.Now().Unix()
+		logger.Warn("failed to query current timestamp, use current time instead", zap.Int64("currentTS", currentTS), zap.Error(err))
 	}
 
-	originErr := s.Exec(ctx, "add index", ddl)
-	failpoint.Inject("AddIndexFail", func() {
-		originErr = errors.New("injected error")
-	})
-	if originErr == nil || log.IsContextCanceledError(originErr) {
-		return originErr
-	}
-	logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(originErr))
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- s.Exec(ctx, "add index", ddl)
+	}()
 
+	var ddlErr error
 	for {
-		var (
-			ddlStatus *ddlStatus
-			err       error
-		)
-		for i := 0; i < getDDLStatusMaxRetry; i++ {
-			ddlStatus, err = getDDLStatus(ctx, db, ddl, time.Unix(now, 0))
-			if err == nil {
-				break
+		select {
+		case <-ctx.Done():
+		case ddlErr = <-resultCh:
+			failpoint.Inject("AddIndexFail", func() {
+				ddlErr = errors.New("injected error")
+			})
+			if ddlErr == nil {
+				updateProgress(1.0)
+				return nil
 			}
+			logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(ddlErr))
+		case <-time.After(getDDLStatusInterval):
+		}
+
+		var status *ddlStatus
+		err := common.Retry("query ddl status", logger, func() error {
+			var err error
+			status, err = getDDLStatus(ctx, db, ddl, time.Unix(currentTS, 0))
+			return err
+		})
+		if err != nil || status == nil {
 			logger.Warn("failed to query ddl status", zap.Error(err))
-			select {
-			case <-ctx.Done():
-				return originErr
-			case <-time.After(getDDLStatusInterval):
+			if ddlErr != nil {
+				return ddlErr
 			}
-		}
-		if err != nil {
-			return originErr
-		}
-		if ddlStatus == nil {
-			logger.Warn("ddl job is not found, maybe it is not created")
-			return originErr
+			continue
 		}
 
 		if m, ok := metric.FromContext(ctx); ok {
-			totalRows := int64(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
-			progress := float64(ddlStatus.rowCount) / float64(totalRows)
+			totalRows := int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+			progress := float64(status.rowCount) / float64(totalRows*indexCount)
 			if progress > 1 {
 				progress = 1
 			}
-			web.BroadcastTableProgress(tr.tableName, "add-index", progress)
-			logger.Info("progress", zap.Int64("total-rows", totalRows), zap.Int64("index-rows", ddlStatus.rowCount))
+			updateProgress(progress)
 		}
 
-		switch state := ddlStatus.state; state {
-		case model.JobStateDone, model.JobStateSynced:
-			logger.Info("ddl job is finished", zap.Stringer("state", state))
-			return nil
-		case model.JobStateRunning, model.JobStateQueueing, model.JobStateNone:
-			logger.Info("ddl job is running", zap.Stringer("state", state))
-		default:
-			logger.Warn("ddl job is canceled or rollbacked", zap.Stringer("state", state))
-			return originErr
-		}
-
-		select {
-		case <-ctx.Done():
-			return originErr
-		case <-time.After(getDDLStatusInterval):
+		if ddlErr != nil {
+			switch state := status.state; state {
+			case model.JobStateDone, model.JobStateSynced:
+				logger.Info("ddl job is finished", zap.Stringer("state", state))
+				return nil
+			case model.JobStateRunning, model.JobStateQueueing, model.JobStateNone:
+				logger.Info("ddl job is running", zap.Stringer("state", state))
+			default:
+				logger.Warn("ddl job is canceled or rollbacked", zap.Stringer("state", state))
+				return ddlErr
+			}
 		}
 	}
 }
@@ -1397,8 +1409,7 @@ func isDupKeyError(err error) bool {
 }
 
 const (
-	getDDLStatusInterval = 30 * time.Second
-	getDDLStatusMaxRetry = 10
+	getDDLStatusInterval = time.Minute
 	getDDLStatusMaxJobs  = 50
 )
 
