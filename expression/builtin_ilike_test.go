@@ -73,9 +73,9 @@ func TestIlike(t *testing.T) {
 		{"啊aAa啊啊啊aA", "啊AAA啊啊啊AA", int('a'), 1, 1},
 		{"啊aaa啊啊啊aa", "啊aaa啊啊啊aa", int('a'), 0, 0},
 	}
-	var charset_and_collation_general = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
+	var charsetAndCollationGeneral = [][]string{{"utf8mb4", "utf8mb4_general_ci"}, {"utf8", "utf8_general_ci"}}
 
-	for _, charset_and_collation := range charset_and_collation_general {
+	for _, charset_and_collation := range charsetAndCollationGeneral {
 		for _, tt := range tests {
 			comment := fmt.Sprintf(`for input = "%s", pattern = "%s", escape = "%s", collation = "%s"`, tt.input, tt.pattern, string(rune(tt.escape)), charset_and_collation[1])
 			fc := funcs[ast.Ilike]

@@ -23,9 +23,9 @@ import (
 )
 
 // LowerAlphaAscii only lowers alpha ascii
-func LowerAlphaAscii(lowered_col *chunk.Column, rowNum int) {
+func LowerAlphaAscii(loweredCol *chunk.Column, rowNum int) {
 	for i := 0; i < rowNum; i++ {
-		str := lowered_col.GetString(i)
+		str := loweredCol.GetString(i)
 		strBytes := hack.Slice(str)
 
 		stringutil.LowerOneString(strBytes)
@@ -33,10 +33,10 @@ func LowerAlphaAscii(lowered_col *chunk.Column, rowNum int) {
 }
 
 // LowerAlphaAsciiExcludeEscapeChar lower alpha ascii exclude escape char
-func LowerAlphaAsciiExcludeEscapeChar(lowered_col *chunk.Column, rowNum int, excludedChar int64) int64 {
+func LowerAlphaAsciiExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excludedChar int64) int64 {
 	actualEscapeChar := excludedChar
 	for i := 0; i < rowNum; i++ {
-		str := lowered_col.GetString(i)
+		str := loweredCol.GetString(i)
 		strBytes := hack.Slice(str)
 
 		actualEscapeChar = int64(stringutil.LowerOneStringExcludeEscapeChar(strBytes, byte(excludedChar)))
