@@ -1741,6 +1741,12 @@ error = '''
 The job can not be DETACHED when LOAD DATA LOCAL INFILE
 '''
 
+["executor:8173"]
+error = '''
+Found multiple errors in precheck:
+%s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

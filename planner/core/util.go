@@ -16,15 +16,22 @@ package core
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
+	"github.com/pingcap/errors"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
 )
 
@@ -405,4 +412,69 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 		cloned = append(cloned, c)
 	}
 	return cloned, nil
+}
+
+func buildLoadDataMultiErr(errs []error) error {
+	var (
+		b      strings.Builder
+		first  = true
+		errMsg string
+	)
+	for _, e := range errs {
+		cause := errors.Cause(e)
+		terr, ok := cause.(*errors.Error)
+		if ok {
+			errMsg = terror.ToSQLError(terr).Error()
+		} else {
+			errMsg = e.Error()
+		}
+		if !first {
+			b.WriteByte('\n')
+		}
+		b.WriteString("  ")
+		b.WriteString(errMsg)
+		first = false
+	}
+	return ErrLoadDataMultiError.GenWithStackByArgs(b.String())
+}
+
+// ResolveLoadDataRemoteURI converts a cloud storage URI to (StorageBackend, path, error).
+func ResolveLoadDataRemoteURI(uri string) (*backup.StorageBackend, string, error) {
+	u, err2 := storage.ParseRawURL(uri)
+	if err2 != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+	}
+	path := strings.Trim(u.Path, "/")
+	u.Path = ""
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+	}
+	if b.GetLocal() != nil {
+		return nil, "", exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(uri)
+	}
+	// try to find pattern error in advance
+	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	if err2 != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+	}
+	return b, path, nil
+}
+
+// GetMsgFromBRError gets the message from a BR error. see TestGetMsgFromBRError
+// for more details.
+// TODO: add GetMsg() to errors package to replace this function.
+func GetMsgFromBRError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if berr, ok := err.(*errors.Error); ok {
+		return berr.GetMsg()
+	}
+	raw := err.Error()
+	berrMsg := errors.Cause(err).Error()
+	if len(raw) <= len(berrMsg)+len(": ") {
+		return raw
+	}
+	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }

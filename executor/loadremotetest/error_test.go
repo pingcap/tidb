@@ -270,3 +270,16 @@ func (s *mockGCSSuite) TestDataError() {
 	s.tk.MustQuery("SELECT * FROM t3;").Check(testkit.Rows(
 		"3 100"))
 }
+
+func TestMultiError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("DROP DATABASE IF EXISTS load_multi_error;")
+	tk.MustExec("CREATE DATABASE load_multi_error;")
+	tk.MustExec("USE load_multi_error;")
+	err := tk.ExecToErr("load data local infile '/tmp/123' into table ttt with aaa = 1, detached;")
+	checkClientErrorMessage(t, err, `ERROR 8173 (HY000): Found multiple errors in precheck:
+  ERROR 1146 (42S02): Table 'load_multi_error.ttt' doesn't exist
+  ERROR 8163 (HY000): Unknown option aaa
+  ERROR 8172 (HY000): The job can not be DETACHED when LOAD DATA LOCAL INFILE`)
+}

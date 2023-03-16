@@ -4178,26 +4178,26 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
-// DetachedOption is a special option in load data statement that need to be handled separately.
-const DetachedOption = "detached"
+// NewLoadDataController is initialized by importer package.
+var NewLoadDataController func(sctx sessionctx.Context, plan *LoadData, tbl table.Table) (controller any, detached bool, errs []error)
 
+// buildLoadData builds the plan for LOAD DATA statement. We also try to do "precheck"
+// to find all errors here.
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
+	errs := make([]error, 0, 1)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
-		err      error
-		options  = make([]*LoadDataOpt, 0, len(ld.Options))
-		detached = false
+		err     error
+		options = make([]*LoadDataOpt, 0, len(ld.Options))
 	)
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
 		if opt.Value != nil {
 			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
 			if err != nil {
-				return nil, err
+				loadDataOpt.Value = expression.NewNull()
+				errs = append(errs, err)
 			}
-		}
-		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
-			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4225,22 +4225,70 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
 	}
+
+	var (
+		schema      *expression.Schema
+		names       []*types.FieldName
+		tableInPlan table.Table
+		ok          bool
+	)
+	db := b.ctx.GetSessionVars().CurrentDB
 	tableInfo := p.Table.TableInfo
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+	if tableInfo == nil {
+		errs = append(errs, infoschema.ErrTableNotExists.GenWithStackByArgs(db, p.Table.Name.O))
+		goto FinishHandleGenCols
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	tableInPlan, ok = b.is.TableByID(tableInfo.ID)
+	if !ok {
+		errs = append(errs, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O))
+		goto FinishHandleGenCols
+	}
+	if !tableInPlan.Meta().IsBaseTable() {
+		errs = append(errs, ErrNonUpdatableTable.GenWithStackByArgs(tableInPlan.Meta().Name.O, "LOAD"))
+	}
+
+	schema, names, err = expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
 	if err != nil {
-		return nil, err
+		errs = append(errs, err)
+		goto FinishHandleGenCols
 	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
-		return nil, err
+		errs = append(errs, err)
+		goto FinishHandleGenCols
+	}
+
+FinishHandleGenCols:
+
+	var (
+		detached = false
+		errs2    []error
+	)
+	p.Controller, detached, errs2 = NewLoadDataController(b.ctx, p, tableInPlan)
+	if len(errs2) > 0 {
+		errs = append(errs, errs2...)
+	}
+
+	if p.FileLocRef == ast.FileLocClient {
+		if detached {
+			errs = append(errs, ErrLoadDataCantDetachWithLocal)
+
+		}
+	} else {
+		_, _, err = ResolveLoadDataRemoteURI(p.Path)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) == 1 {
+		return nil, errs[0]
+	}
+	if len(errs) > 0 {
+		return nil, buildLoadDataMultiErr(errs)
 	}
 
 	if detached {

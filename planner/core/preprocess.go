@@ -157,6 +157,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inLoadData is set when visiting a LOAD DATA statement
+	inLoadData
 )
 
 // Make linter happy.
@@ -390,6 +392,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.LoadDataStmt:
+		p.flag |= inLoadData
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1566,6 +1570,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	table, err := p.tableByName(tn)
 	if err != nil {
+		// for LOAD DATA we have a precheck that return all errors at once, here
+		// we ignore this error
+		if p.flag&inLoadData > 0 {
+			return
+		}
 		p.err = err
 		return
 	}

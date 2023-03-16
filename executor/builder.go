@@ -924,20 +924,10 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
 	if !ok {
+		// should not happen
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	if !tbl.Meta().IsBaseTable() {
-		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
-		return nil
-	}
-
-	errMsg := []string{
-		plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD").Error(),
-		exeerrors.ErrLoadDataCantDetachWithLocal.Error(),
-	}
-	b.err = exeerrors.ErrLoadDataMultiError.GenWithStackByArgs(strings.Join(errMsg, "\n"))
-	return nil
 
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	worker, err := NewLoadDataWorker(b.ctx, v, tbl, base.getSysSession, base.releaseSysSession)

@@ -562,6 +562,10 @@ type LoadData struct {
 	Options            []*LoadDataOpt
 
 	GenCols InsertGeneratedColumns
+
+	// its type should be importer.LoadDataController, but to resolve cycle
+	// import we erase the type.
+	Controller any
 }
 
 // LoadDataOpt represents load data option.

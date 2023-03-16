@@ -117,4 +117,7 @@ var (
 	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
 	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
+
+	ErrLoadDataCantDetachWithLocal = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantDetachWithLocal)
+	ErrLoadDataMultiError          = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataMultiError)
 )

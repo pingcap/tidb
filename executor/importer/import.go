@@ -31,6 +31,17 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 )
 
+func init() {
+	plannercore.NewLoadDataController = func(sctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (any, bool, []error) {
+		c, errs := NewLoadDataController(sctx, plan, tbl)
+		detached := false
+		if c != nil {
+			detached = c.Detached
+		}
+		return c, detached, errs
+	}
+}
+
 const (
 	// LoadDataFormatDelimitedData delimited data.
 	LoadDataFormatDelimitedData = "delimited data"
@@ -57,11 +68,10 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
+	detachedOption      = "detached"
 )
 
 var (
-	detachedOption = plannercore.DetachedOption
-
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		importModeOption:    true,
@@ -138,9 +148,18 @@ type LoadDataController struct {
 	Detached          bool
 }
 
-// NewLoadDataController create new controller.
-func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
-	var format string
+// NewLoadDataController create new controller and returns all errors it can
+// find. The `tbl` can be nil which means during precheck we already meet "table
+// not found", but we still want to reveal more errors from this function.
+func NewLoadDataController(
+	sctx sessionctx.Context,
+	plan *plannercore.LoadData,
+	tbl table.Table,
+) (*LoadDataController, []error) {
+	var (
+		format string
+		errs   []error
+	)
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
@@ -157,34 +176,32 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 	}
-	if err := c.initFieldParams(plan); err != nil {
-		return nil, err
-	}
-	if err := c.initOptions(sctx, plan.Options); err != nil {
-		return nil, err
+	errs = append(errs, c.initFieldParams(plan)...)
+	errs = append(errs, c.initOptions(sctx, plan.Options)...)
+	if tbl != nil {
+		columnNames := c.initFieldMappings()
+		errs = append(errs, c.initLoadColumns(columnNames)...)
 	}
 
-	columnNames := c.initFieldMappings()
-	if err := c.initLoadColumns(columnNames); err != nil {
-		return nil, err
-	}
-	return c, nil
+	return c, errs
 }
 
-func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
+func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) []error {
+	var errs []error
 	if e.Path == "" {
-		return exeerrors.ErrLoadDataEmptyPath
+		errs = append(errs, exeerrors.ErrLoadDataEmptyPath)
 	}
 	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
-		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
+		errs = append(errs, exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format))
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
 		if plan.FieldsInfo != nil || plan.LinesInfo != nil || plan.IgnoreLines != nil {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
+			errs = append(errs, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format)))
+		} else {
+			// no need to init those param for sql/parquet
+			return errs
 		}
-		// no need to init those param for sql/parquet
-		return nil
 	}
 
 	if plan.IgnoreLines != nil {
@@ -212,23 +229,23 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	e.NullValueOptEnclosed = nullValueOptEnclosed
 
 	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
+		errs = append(errs, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED"))
 	}
 	// moved from planerbuilder.buildLoadData
 	// see https://github.com/pingcap/tidb/issues/33298
 	if len(e.FieldsTerminatedBy) == 0 {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
+		errs = append(errs, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator"))
 	}
 	// TODO: support lines terminated is "".
 	if len(e.LinesTerminatedBy) == 0 {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+		errs = append(errs, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty"))
 	}
 	if len(e.FieldsEnclosedBy) > 0 &&
 		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
-		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
+		errs = append(errs, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other"))
 	}
 
-	return nil
+	return errs
 }
 
 func (e *LoadDataController) initDefaultOptions() {
@@ -250,20 +267,24 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.Detached = false
 }
 
-func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) []error {
+	var errs []error
 	e.initDefaultOptions()
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
 		hasValue, ok := supportedOptions[opt.Name]
 		if !ok {
-			return exeerrors.ErrUnknownOption.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrUnknownOption.FastGenByArgs(opt.Name))
+			continue
 		}
 		if hasValue && opt.Value == nil || !hasValue && opt.Value != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+			continue
 		}
 		if _, ok = specifiedOptions[opt.Name]; ok {
-			return exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name))
+			continue
 		}
 		specifiedOptions[opt.Name] = opt
 	}
@@ -276,101 +297,102 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 	if opt, ok := specifiedOptions[importModeOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else {
+			v = strings.ToLower(v)
+			if v != LogicalImportMode && v != physicalImportMode {
+				errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+			} else {
+				e.importMode = v
+			}
 		}
-		v = strings.ToLower(v)
-		if v != LogicalImportMode && v != physicalImportMode {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		e.importMode = v
 	}
 
 	if e.importMode == LogicalImportMode {
 		// some options are only allowed in physical mode
 		for _, opt := range specifiedOptions {
 			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+				errs = append(errs, exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode))
 			}
 		}
 	}
 	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else if err = e.diskQuota.UnmarshalText([]byte(v)); err != nil || e.diskQuota <= 0 {
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[checksumOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.checksum.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else if err = e.checksum.FromStringValue(v); err != nil {
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[addIndexOption]; ok {
 		var vInt int64
 		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else {
+			vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+			if err != nil || isNull {
+				errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+			} else {
+				e.addIndex = vInt == 1
+			}
 		}
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		e.addIndex = vInt == 1
 	}
 	if opt, ok := specifiedOptions[analyzeOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.analyze.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else if err = e.analyze.FromStringValue(v); err != nil {
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[threadOption]; ok {
 		// boolean true will be taken as 1
 		e.threadCnt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
 		if err != nil || isNull || e.threadCnt <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else if err = e.batchSize.UnmarshalText([]byte(v)); err != nil || e.batchSize <= 0 {
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
 		v, isNull, err = opt.Value.EvalString(seCtx, chunk.Row{})
 		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else if err = e.maxWriteSpeed.UnmarshalText([]byte(v)); err != nil || e.maxWriteSpeed <= 0 {
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 	}
 	if opt, ok := specifiedOptions[splitFileOption]; ok {
 		if !mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+		} else {
+			var vInt int64
+			vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+			if err != nil || isNull {
+				errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
+			} else {
+				e.splitFile = vInt == 1
+			}
 		}
-		var vInt int64
-		vInt, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		e.splitFile = vInt == 1
 	}
 	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
 		e.maxRecordedErrors, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
 		if err != nil || isNull || e.maxRecordedErrors < -1 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			errs = append(errs, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name))
 		}
 		// todo: set a max value for this param?
 	}
@@ -379,7 +401,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 	}
 
 	e.adjustOptions()
-	return nil
+	return errs
 }
 
 func (e *LoadDataController) adjustOptions() {
@@ -439,10 +461,11 @@ func (e *LoadDataController) initFieldMappings() []string {
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
-func (e *LoadDataController) initLoadColumns(columnNames []string) error {
+func (e *LoadDataController) initLoadColumns(columnNames []string) []error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
+	var errs []error
 	tableCols := e.Table.Cols()
 
 	if len(columnNames) != len(tableCols) {
@@ -453,7 +476,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 
 	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
 	if missingColName != "" {
-		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
+		errs = append(errs, dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list"))
 	}
 
 	for _, col := range cols {
@@ -466,16 +489,16 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	// e.insertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
 	if err = e.reorderColumns(columnNames); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return nil
+	return errs
 }
 
 // reorderColumns reorder the e.insertColumns according to the order of columnNames

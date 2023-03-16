@@ -89,24 +89,8 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		u, err2 := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
-		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
-		}
-		path := strings.Trim(u.Path, "/")
-		u.Path = ""
-		b, err2 := storage.ParseBackendFromURL(u, nil)
-		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err2))
-		}
-		if b.GetLocal() != nil {
-			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
-		}
-		// try to find pattern error in advance
-		_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
-		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
-		}
+		//nolint: errcheck
+		b, path, _ := plannercore.ResolveLoadDataRemoteURI(e.loadDataWorker.GetInfilePath())
 		jobID, err2 := e.loadFromRemote(ctx, b, path)
 		if err2 != nil {
 			return err2
@@ -116,10 +100,6 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			e.detachHandled = true
 		}
 	case ast.FileLocClient:
-		if e.loadDataWorker.controller.Detached {
-			return exeerrors.ErrLoadDataCantDetachWithLocal
-		}
-
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataWorker.ctx
 		val := sctx.Value(LoadDataVarKey)
@@ -152,7 +132,7 @@ func (e *LoadDataExec) loadFromRemote(
 		opener := func(ctx context.Context) (io.ReadSeekCloser, error) {
 			fileReader, err2 := s.Open(ctx, path)
 			if err2 != nil {
-				return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err2), "Please check the INFILE path is correct")
+				return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(plannercore.GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 			}
 			return fileReader, nil
 		}
@@ -196,7 +176,7 @@ func (e *LoadDataExec) loadFromRemote(
 				Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
 					fileReader, err2 := s.Open(ctx, remotePath)
 					if err2 != nil {
-						return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(getMsgFromBRError(err2), "Please check the INFILE path is correct")
+						return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(plannercore.GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 					}
 					return fileReader, nil
 				},
@@ -289,16 +269,14 @@ func NewLoadDataWorker(
 		}
 	}()
 
-	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
-	if err != nil {
-		return nil, err
+	controller, ok := plan.Controller.(*importer.LoadDataController)
+	if !ok {
+		// should not happen
+		return nil, errors.Errorf("unexpected plan.Controller %T", plan.Controller)
 	}
 
 	sctx := userSctx
 	if controller.Detached {
-		if plan.FileLocRef == ast.FileLocClient {
-			return nil, exeerrors.ErrLoadDataCantDetachWithLocal
-		}
 		sysSession, err2 := getSysSessionFn()
 		if err2 != nil {
 			return nil, err2
