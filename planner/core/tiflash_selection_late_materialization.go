@@ -50,6 +50,7 @@ type expressionGroup struct {
 
 // predicatePushDownToTableScan is used find the selection just above the table scan
 // and try to push down the predicates to the table scan.
+// Used for TiFlash late materialization.
 func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
@@ -250,7 +251,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.prewhereFilterCondition = append(physicalTableScan.prewhereFilterCondition, selectedConds...)
+	physicalTableScan.lateMaterializationFilterCondition = append(physicalTableScan.lateMaterializationFilterCondition, selectedConds...)
 	// Update the row count of table scan after pushing down the conditions.
 	physicalTableScan.stats.RowCount *= selectedSelectivity
 }
