@@ -23,21 +23,26 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
-	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/resourcemanager/pool/spool"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 const (
-	// DefaultDispatchConcurrency is the default concurrency for handling global task.
-	DefaultDispatchConcurrency = 8
 	// DefaultSubtaskConcurrency is the default concurrency for handling subtask.
 	DefaultSubtaskConcurrency = 16
 	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
-	MaxSubtaskConcurrency     = 256
-	checkTaskFinishedInterval = 300 * time.Millisecond
-	checkTaskRunningInterval  = 300 * time.Millisecond
+	MaxSubtaskConcurrency = 256
+	dispatcherPoolSize    = 8
+)
+
+var (
+	// DefaultDispatchConcurrency is the default concurrency for handling global task.
+	DefaultDispatchConcurrency = 8
+	checkTaskFinishedInterval  = 500 * time.Millisecond
+	checkTaskRunningInterval   = 300 * time.Millisecond
 )
 
 // Dispatch defines the interface for operations inside a dispatcher.
@@ -50,22 +55,30 @@ type Dispatch interface {
 	Stop()
 }
 
-func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
-	d.runningGlobalTasks.RLock()
-	defer d.runningGlobalTasks.RUnlock()
-	return d.runningGlobalTasks.tasks
+func (d *dispatcher) getRunningGTaskCnt() int {
+	d.runningGTasks.RLock()
+	defer d.runningGTasks.RUnlock()
+	return len(d.runningGTasks.taskIDs)
 }
 
-func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
-	d.runningGlobalTasks.Lock()
-	defer d.runningGlobalTasks.Unlock()
-	d.runningGlobalTasks.tasks[gTask.ID] = gTask
+func (d *dispatcher) setRunningGTask(gTask *proto.Task) {
+	d.runningGTasks.Lock()
+	d.runningGTasks.taskIDs[gTask.ID] = struct{}{}
+	d.runningGTasks.Unlock()
+	d.detectPendingGTaskCh <- gTask
 }
 
-func (d *dispatcher) delRunningGlobalTasks(globalTaskID int64) {
-	d.runningGlobalTasks.Lock()
-	defer d.runningGlobalTasks.Unlock()
-	delete(d.runningGlobalTasks.tasks, globalTaskID)
+func (d *dispatcher) isRunningGTask(globalTaskID int64) bool {
+	d.runningGTasks.Lock()
+	defer d.runningGTasks.Unlock()
+	_, ok := d.runningGTasks.taskIDs[globalTaskID]
+	return ok
+}
+
+func (d *dispatcher) delRunningGTask(globalTaskID int64) {
+	d.runningGTasks.Lock()
+	defer d.runningGTasks.Unlock()
+	delete(d.runningGTasks.taskIDs, globalTaskID)
 }
 
 type dispatcher struct {
@@ -73,36 +86,43 @@ type dispatcher struct {
 	cancel     context.CancelFunc
 	gTaskMgr   *storage.GlobalTaskManager
 	subTaskMgr *storage.SubTaskManager
-	wg         tidbutil.WaitGroupWrapper
+	gPool      *spool.Pool
 
-	runningGlobalTasks struct {
+	runningGTasks struct {
 		syncutil.RWMutex
-		tasks map[int64]*proto.Task
+		taskIDs map[int64]struct{}
 	}
+	detectPendingGTaskCh chan *proto.Task
 }
 
 // NewDispatcher creates a dispatcher struct.
 func NewDispatcher(ctx context.Context, globalTaskTable *storage.GlobalTaskManager, subtaskTable *storage.SubTaskManager) (Dispatch, error) {
 	dispatcher := &dispatcher{
-		gTaskMgr:   globalTaskTable,
-		subTaskMgr: subtaskTable,
+		gTaskMgr:             globalTaskTable,
+		subTaskMgr:           subtaskTable,
+		detectPendingGTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
 	}
+	pool, err := spool.NewPool("dispatch_pool", dispatcherPoolSize, util.DistTask)
+	if err != nil {
+		return nil, err
+	}
+	dispatcher.gPool = pool
 	dispatcher.ctx, dispatcher.cancel = context.WithCancel(ctx)
-	dispatcher.runningGlobalTasks.tasks = make(map[int64]*proto.Task)
+	dispatcher.runningGTasks.taskIDs = make(map[int64]struct{})
 
 	return dispatcher, nil
 }
 
 // Start implements Dispatch.Start interface.
 func (d *dispatcher) Start() {
-	d.wg.Run(d.DispatchTaskLoop)
-	d.wg.Run(d.DetectTaskLoop)
+	d.gPool.Run(d.DispatchTaskLoop)
+	d.gPool.Run(d.DetectTaskLoop)
 }
 
 // Stop implements Dispatch.Stop interface.
 func (d *dispatcher) Stop() {
 	d.cancel()
-	d.wg.Wait()
+	d.gPool.ReleaseAndWait()
 }
 
 // DispatchTaskLoop dispatches the global tasks.
@@ -116,38 +136,57 @@ func (d *dispatcher) DispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			cnt := len(d.getRunningGlobalTasks())
+			cnt := d.getRunningGTaskCnt()
+			logutil.BgLogger().Warn("------------------------------- 0",
+				zap.Int64("interval", int64(checkTaskRunningInterval/1000000)),
+				zap.Int64("interval", int64(checkTaskFinishedInterval/1000000)),
+				zap.Int("cnt", cnt), zap.Int("default", DefaultDispatchConcurrency))
+			if cnt >= DefaultDispatchConcurrency {
+				logutil.BgLogger().Warn("------------------------------- 00")
+				break
+			}
 
-			for cnt < DefaultDispatchConcurrency {
-				// TODO: Consider get all unfinished tasks.
-				// If the task is in step2, we need to check the step1 is finished.
-				gTask, err := d.gTaskMgr.GetNewTask()
-				if err != nil {
-					logutil.BgLogger().Warn("get new task failed", zap.Error(err))
-					break
+			// TODO: Consider getting these tasks, in addition to the task being worked on..
+			gTasks, err := d.gTaskMgr.GetTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting)
+			if err != nil {
+				logutil.BgLogger().Warn("get unfinished(pending, running or reverting) tasks failed", zap.Error(err))
+				break
+			}
+
+			// There are currently no global tasks to work on.
+			if len(gTasks) == 0 {
+				logutil.BgLogger().Warn("------------------------------- 01")
+				break
+			}
+			for _, gTask := range gTasks {
+				logutil.BgLogger().Warn("-------------------------------10", zap.Int64("task ID", gTask.ID))
+				// This global task is running, so no need to reprocess it.
+				if d.isRunningGTask(gTask.ID) {
+					continue
 				}
-				// There are currently no global tasks to work on.
-				if gTask == nil {
-					break
-				}
-				if gTask.State == proto.TaskStateReverting {
-					d.setRunningGlobalTasks(gTask)
+				logutil.BgLogger().Warn("-------------------------------11", zap.Int64("task ID", gTask.ID))
+				if gTask.State == proto.TaskStateRunning || gTask.State == proto.TaskStateReverting {
+					d.setRunningGTask(gTask)
 					cnt++
 					continue
 				}
+				if cnt >= DefaultDispatchConcurrency {
+					break
+				}
 
+				logutil.BgLogger().Warn("-------------------------------12", zap.Int64("task ID", gTask.ID))
 				err = d.processNormalFlow(gTask)
-				if err != nil || gTask.State == proto.TaskStateSucceed {
+				if err != nil || gTask.IsFinished() {
 					continue
 				}
-				d.setRunningGlobalTasks(gTask)
+				d.setRunningGTask(gTask)
 				cnt++
 			}
 		}
 	}
 }
 
-func (d *dispatcher) detectTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
+func (d *dispatcher) probeTask(gTask *proto.Task) (isFinished bool, subTaskErr string) {
 	// TODO: Consider putting the following operations into a transaction.
 	// TODO: Consider collect some information about the tasks.
 	if gTask.State != proto.TaskStateReverting {
@@ -183,58 +222,79 @@ func (d *dispatcher) detectTask(gTask *proto.Task) (isFinished bool, subTaskErr 
 	return true, ""
 }
 
-// DetectTaskLoop monitors the status of the subtasks.
+// DetectTaskLoop monitors the status of the subtasks and processes them.
 func (d *dispatcher) DetectTaskLoop() {
-	logutil.BgLogger().Info("detection task loop start")
-	ticker := time.NewTicker(checkTaskFinishedInterval)
-	defer ticker.Stop()
+	logutil.BgLogger().Info("detect task loop start")
 	for {
 		select {
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("detection task loop exits", zap.Error(d.ctx.Err()))
+			logutil.BgLogger().Info("detect task loop exits", zap.Error(d.ctx.Err()))
 			return
-		case <-ticker.C:
-			gTasks := d.getRunningGlobalTasks()
-			// TODO: Consider asynchronous processing.
-			for _, gTask := range gTasks {
-				stepIsFinished, errStr := d.detectTask(gTask)
-				// The global task isn't finished and failed.
-				if !stepIsFinished && errStr == "" {
-					logutil.BgLogger().Debug("detection, this task keeps current state",
-						zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
-					continue
-				}
-
-				d.processFlow(gTask, errStr)
-			}
+		case task := <-d.detectPendingGTaskCh:
+			d.gPool.Run(func() { d.detectTask(task) })
 		}
 	}
 }
 
-func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) {
+func (d *dispatcher) detectTask(gTask *proto.Task) {
+	// TODO: Consider actively obtaining information about task completion.
+	ticker := time.NewTicker(checkTaskFinishedInterval)
+	defer ticker.Stop()
+
+	for {
+		logutil.BgLogger().Warn("----------------------------------- detect", zap.Int64("task ID", gTask.ID), zap.Int64("interval", int64(checkTaskFinishedInterval/1000000)))
+		select {
+		case <-d.ctx.Done():
+			logutil.BgLogger().Info("detect task exits", zap.Int64("task ID", gTask.ID), zap.Error(d.ctx.Err()))
+			return
+		case <-ticker.C:
+			logutil.BgLogger().Warn("----------------------------------- detect 11", zap.Int64("task ID", gTask.ID))
+			stepIsFinished, errStr := d.probeTask(gTask)
+			// The global task isn't finished and failed.
+			if !stepIsFinished && errStr == "" {
+				logutil.BgLogger().Debug("detect task, this task keeps current state",
+					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+				continue
+			}
+
+			if isFinished := d.processFlow(gTask, errStr); isFinished {
+				logutil.BgLogger().Info("detect task, this task is finished",
+					zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+				return
+			}
+		}
+	}
+
+}
+
+func (d *dispatcher) processFlow(gTask *proto.Task, errStr string) bool {
 	var err error
 	if errStr != "" {
 		// Found an error when task is running.
-		logutil.BgLogger().Info("detection, handle an error", zap.Int64("taskID", gTask.ID))
+		logutil.BgLogger().Info("detect, handle an error", zap.Int64("taskID", gTask.ID), zap.String("err msg", errStr))
 		err = d.processErrFlow(gTask, errStr)
 	} else {
 		if gTask.State == proto.TaskStateReverting {
 			// Finish the rollback step.
-			d.updateTaskRevertInfo(gTask)
+			err = d.updateTaskRevertInfo(gTask)
 		} else {
 			// Finish the normal step.
-			logutil.BgLogger().Info("detection, load task and progress", zap.Int64("taskID", gTask.ID))
+			logutil.BgLogger().Info("detect, load task and progress", zap.Int64("taskID", gTask.ID))
 			err = d.processNormalFlow(gTask)
 		}
 	}
 
-	if err == nil && (gTask.State == proto.TaskStateSucceed || gTask.State == proto.TaskStateReverted) {
-		logutil.BgLogger().Info("detection, task is finished", zap.Int64("taskID", gTask.ID))
-		d.delRunningGlobalTasks(gTask.ID)
+	if err == nil && gTask.IsFinished() {
+		logutil.BgLogger().Info("detect, task is finished", zap.Int64("taskID", gTask.ID))
+		d.delRunningGTask(gTask.ID)
+		return true
 	}
+	logutil.BgLogger().Warn("----------------------------------- detect 22", zap.Int64("task ID", gTask.ID), zap.String("state", gTask.State), zap.Error(err))
+
+	return false
 }
 
-func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) {
+func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) error {
 	// TODO: Add error msg to task.
 	gTask.State = proto.TaskStateReverted
 	// Write the global task meta into the storage.
@@ -242,6 +302,7 @@ func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) {
 	if err != nil {
 		logutil.BgLogger().Warn("update global task failed", zap.Error(err))
 	}
+	return err
 }
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
@@ -252,7 +313,6 @@ func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error 
 		return err
 	}
 
-	// TODO: Consider using a new context.
 	instanceIDs, err := d.GetTaskAllInstances(d.ctx, gTask.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("get global task's all instances failed", zap.Error(err))
@@ -288,9 +348,8 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 	// Generate the needed global task meta and subTask meta.
 	handle := GetTaskFlowHandle(gTask.Type)
 	if handle == nil {
-		logutil.BgLogger().Warn("gen gTask flow handle failed", zap.Int64("ID", gTask.ID))
-		d.updateTaskRevertInfo(gTask)
-		return errors.Errorf("%s type handle doesn't register", gTask.Type)
+		logutil.BgLogger().Warn("gen gTask flow handle failed, this type handle doesn't register", zap.Int64("ID", gTask.ID), zap.String("type", gTask.Type))
+		return d.updateTaskRevertInfo(gTask)
 	}
 	metas, err := handle.ProcessNormalFlow(d, gTask)
 	if err != nil {

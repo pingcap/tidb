@@ -24,16 +24,41 @@ import (
 
 // DispatcherForTest exports for testing.
 type DispatcherForTest interface {
-	GetRunningGlobalTasks() map[int64]*proto.Task
+	GetRunningGTaskCnt() int
+	GetRunningGTasks() []*proto.Task
 }
 
-// GetRunningGlobalTasks implements Dispatcher.GetRunningGlobalTasks interface.
-func (d *dispatcher) GetRunningGlobalTasks() map[int64]*proto.Task {
-	return d.getRunningGlobalTasks()
+// GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
+func (d *dispatcher) GetRunningGTaskCnt() int {
+	return d.getRunningGTaskCnt()
+}
+
+// GetRunningGTasks implements Dispatcher.GetRunningGTasks interface.
+func (d *dispatcher) GetRunningGTasks() []*proto.Task {
+	d.runningGTasks.RLock()
+	defer d.runningGTasks.RUnlock()
+
+	taskCnt := len(d.runningGTasks.taskIDs)
+	// get tasks for chan
+	tasks := make([]*proto.Task, 0, taskCnt)
+	for i := 0; i < taskCnt; i++ {
+		t := <-d.detectPendingGTaskCh
+		tasks = append(tasks, t)
+	}
+	// put tasks back to chan
+	for i := 0; i < taskCnt; i++ {
+		d.detectPendingGTaskCh <- tasks[i]
+	}
+	return tasks
 }
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+
+	// Make test more fast.
+	checkTaskRunningInterval = checkTaskRunningInterval / 10
+	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),

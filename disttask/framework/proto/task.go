@@ -62,6 +62,11 @@ type Task struct {
 	Meta            []byte
 }
 
+// IsFinished checks if the task is finished.
+func (t *Task) IsFinished() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted
+}
+
 // Subtask represents the subtask of distribute framework.
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
