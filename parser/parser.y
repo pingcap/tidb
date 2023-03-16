@@ -739,9 +739,9 @@ import (
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
 	priority	          "PRIORITY"
-	high				  "HIGH"
-	medium 				  "MEDIUM"
-	low 				  "LOW"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -6537,10 +6537,10 @@ NotKeywordToken:
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
 |   "PRIORITY"
-|	"HIGH"
-| 	"MEDIUM"
-|	"LOW"
-|	"BURSTABLE"
+|   "HIGH"
+|   "MEDIUM"
+|   "LOW"
+|   "BURSTABLE"
 
 /************************************************************************************
  *
