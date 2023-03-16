@@ -340,8 +340,12 @@ func (e *basicCopRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
+	basicRuntimeStats := BasicRuntimeStats{tiflashScanContext: e.tiflashScanContext.Clone()}
+	basicRuntimeStats.loop.Store(e.loop.Load())
+	basicRuntimeStats.consume.Store(e.consume.Load())
+	basicRuntimeStats.rows.Store(e.rows.Load())
 	return &basicCopRuntimeStats{
-		BasicRuntimeStats: e.BasicRuntimeStats.Clone(),
+		BasicRuntimeStats: basicRuntimeStats,
 		threads:           e.threads,
 		storeType:         e.storeType,
 		totalTasks:        e.totalTasks,
