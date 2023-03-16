@@ -93,4 +93,5 @@ var (
 	ErrLoadDataUnsupportedOption   = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedOption)
 	ErrLoadDataJobNotFound         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobNotFound)
 	ErrLoadDataCantDetachWithLocal = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantDetachWithLocal)
+	ErrLoadDataMultiError          = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataMultiError)
 )

@@ -1054,6 +1054,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s import mode", nil),
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataCantDetachWithLocal:      mysql.Message("The job can not be DETACHED when LOAD DATA LOCAL INFILE", nil),
+	ErrLoadDataMultiError:               mysql.Message("Found multiple error in precheck:\n%s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

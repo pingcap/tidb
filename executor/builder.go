@@ -932,6 +932,13 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		return nil
 	}
 
+	errMsg := []string{
+		plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD").Error(),
+		exeerrors.ErrLoadDataCantDetachWithLocal.Error(),
+	}
+	b.err = exeerrors.ErrLoadDataMultiError.GenWithStackByArgs(strings.Join(errMsg, "\n"))
+	return nil
+
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	worker, err := NewLoadDataWorker(b.ctx, v, tbl, base.getSysSession, base.releaseSysSession)
 	if err != nil {
