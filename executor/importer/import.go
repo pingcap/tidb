@@ -15,6 +15,7 @@
 package importer
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"strings"
@@ -31,11 +32,11 @@ import (
 )
 
 const (
-	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is
-	// mydumper-format DML file
+	// LoadDataFormatDelimitedData delimited data.
+	LoadDataFormatDelimitedData = "delimited data"
+	// LoadDataFormatSQLDump represents the data source file of LOAD DATA is mydumper-format DML file.
 	LoadDataFormatSQLDump = "sql file"
-	// LoadDataFormatParquet represents the data source file of LOAD DATA is
-	// parquet
+	// LoadDataFormatParquet represents the data source file of LOAD DATA is parquet.
 	LoadDataFormatParquet = "parquet"
 
 	// LogicalImportMode represents the import mode is SQL-like.
@@ -56,10 +57,10 @@ const (
 	maxWriteSpeedOption = "max_write_speed"
 	splitFileOption     = "split_file"
 	recordErrorsOption  = "record_errors"
-	detachedOption      = "detached"
 )
 
 var (
+	detachedOption = plannercore.DetachedOption
 
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
@@ -83,6 +84,9 @@ var (
 		addIndexOption:  {},
 		analyzeOption:   {},
 	}
+
+	// LoadDataReadBlockSize is exposed for test.
+	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -94,10 +98,7 @@ type FieldMapping struct {
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	Path       string
-	fieldsInfo *ast.FieldsClause
-	linesInfo  *ast.LinesClause
-	nullInfo   *ast.NullDefinedBy
+	Path string
 
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -117,15 +118,11 @@ type LoadDataController struct {
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	insertColumns []*table.Column
 
-	fieldNullDef     []string
-	quotedNullIsText bool
-	// expose some fields for test
-	FieldsEnclosedBy   string
-	FieldsEscapedBy    string
-	FieldsTerminatedBy string
-	LinesTerminatedBy  string
-	LinesStartingBy    string
-	IgnoreLines        uint64
+	// used for DELIMITED DATA format
+	FieldNullDef         []string
+	NullValueOptEnclosed bool
+	plannercore.LineFieldsInfo
+	IgnoreLines uint64
 
 	// import options
 	importMode        string
@@ -138,95 +135,99 @@ type LoadDataController struct {
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
-	detached          bool
+	Detached          bool
 }
 
 // NewLoadDataController create new controller.
-func NewLoadDataController(plan *plannercore.LoadData, tbl table.Table) *LoadDataController {
-	return &LoadDataController{
+func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, tbl table.Table) (*LoadDataController, error) {
+	var format string
+	if plan.Format != nil {
+		format = strings.ToLower(*plan.Format)
+	} else {
+		// without FORMAT 'xxx' clause, default to DELIMITED DATA
+		format = LoadDataFormatDelimitedData
+	}
+	c := &LoadDataController{
 		Path:               plan.Path,
-		fieldsInfo:         plan.FieldsInfo,
-		linesInfo:          plan.LinesInfo,
-		nullInfo:           plan.NullInfo,
-		IgnoreLines:        plan.IgnoreLines,
-		Format:             strings.ToLower(plan.Format),
+		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
 		SchemaName:         plan.Table.Schema.O,
 		Table:              tbl,
+		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 	}
+	if err := c.initFieldParams(plan); err != nil {
+		return nil, err
+	}
+	if err := c.initOptions(sctx, plan.Options); err != nil {
+		return nil, err
+	}
+
+	columnNames := c.initFieldMappings()
+	if err := c.initLoadColumns(columnNames); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-// Init inner params, should call this before use.
-func (e *LoadDataController) Init(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	if err := e.initFieldParams(); err != nil {
-		return err
-	}
-	if err := e.initOptions(seCtx, options); err != nil {
-		return err
-	}
-
-	columnNames := e.initFieldMappings()
-	return e.initLoadColumns(columnNames)
-}
-
-func (e *LoadDataController) initFieldParams() error {
+func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	if e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
-
-	// CSV-like
-	if e.Format == "" {
-		if e.nullInfo != nil && e.nullInfo.OptEnclosed &&
-			(e.fieldsInfo == nil || e.fieldsInfo.Enclosed == nil) {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
-		}
-		// TODO: support lines terminated is "".
-		if len(e.linesInfo.Terminated) == 0 {
-			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
-		}
-	}
-	if e.Format != "" && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
+	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 	}
 
-	if e.Format != "" {
+	if e.Format != LoadDataFormatDelimitedData {
+		if plan.FieldsInfo != nil || plan.LinesInfo != nil || plan.IgnoreLines != nil {
+			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs(fmt.Sprintf("cannot specify FIELDS ... or LINES ... or IGNORE N LINES for format '%s'", e.Format))
+		}
 		// no need to init those param for sql/parquet
 		return nil
 	}
 
+	if plan.IgnoreLines != nil {
+		e.IgnoreLines = *plan.IgnoreLines
+	}
+
 	var (
-		nullDef          []string
-		quotedNullIsText = true
+		nullDef              []string
+		nullValueOptEnclosed = false
 	)
 
-	if e.nullInfo != nil {
-		nullDef = append(nullDef, e.nullInfo.NullDef)
-		quotedNullIsText = !e.nullInfo.OptEnclosed
-	} else if e.fieldsInfo.Enclosed != nil {
+	// todo: move null defined into plannercore.LineFieldsInfo
+	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
+	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
+		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
+		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
+	} else if len(e.FieldsEnclosedBy) != 0 {
 		nullDef = append(nullDef, "NULL")
 	}
-	if e.fieldsInfo.Escaped != nil {
-		nullDef = append(nullDef, string([]byte{*e.fieldsInfo.Escaped, 'N'}))
+	if len(e.FieldsEscapedBy) != 0 {
+		nullDef = append(nullDef, string([]byte{e.FieldsEscapedBy[0], 'N'}))
 	}
 
-	enclosed := ""
-	if e.fieldsInfo.Enclosed != nil {
-		enclosed = string([]byte{*e.fieldsInfo.Enclosed})
+	e.FieldNullDef = nullDef
+	e.NullValueOptEnclosed = nullValueOptEnclosed
+
+	if nullValueOptEnclosed && len(e.FieldsEnclosedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED")
 	}
-	escaped := ""
-	if e.fieldsInfo.Escaped != nil {
-		escaped = string([]byte{*e.fieldsInfo.Escaped})
+	// moved from planerbuilder.buildLoadData
+	// see https://github.com/pingcap/tidb/issues/33298
+	if len(e.FieldsTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("load data with empty field terminator")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
+	}
+	if len(e.FieldsEnclosedBy) > 0 &&
+		(strings.HasPrefix(e.FieldsEnclosedBy, e.FieldsTerminatedBy) || strings.HasPrefix(e.FieldsTerminatedBy, e.FieldsEnclosedBy)) {
+		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
 	}
 
-	e.fieldNullDef = nullDef
-	e.quotedNullIsText = quotedNullIsText
-	e.FieldsEnclosedBy = enclosed
-	e.FieldsEscapedBy = escaped
-	e.FieldsTerminatedBy = e.fieldsInfo.Terminated
-	e.LinesTerminatedBy = e.linesInfo.Terminated
-	e.LinesStartingBy = e.linesInfo.Starting
 	return nil
 }
 
@@ -246,7 +247,7 @@ func (e *LoadDataController) initDefaultOptions() {
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
 	e.maxRecordedErrors = 100
-	e.detached = false
+	e.Detached = false
 }
 
 func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -374,7 +375,7 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
-		e.detached = true
+		e.Detached = true
 	}
 
 	e.adjustOptions()
@@ -531,13 +532,13 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 		Delimiter:        e.FieldsEnclosedBy,
 		Terminator:       e.LinesTerminatedBy,
 		NotNull:          false,
-		Null:             e.fieldNullDef,
+		Null:             e.FieldNullDef,
 		Header:           false,
 		TrimLastSep:      false,
 		EscapedBy:        e.FieldsEscapedBy,
 		StartingBy:       e.LinesStartingBy,
 		AllowEmptyLine:   true,
-		QuotedNullIsText: e.quotedNullIsText,
+		QuotedNullIsText: !e.NullValueOptEnclosed,
 		UnescapedQuote:   true,
 	}
 }

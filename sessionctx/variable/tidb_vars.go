@@ -831,6 +831,9 @@ const (
 
 	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
 	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
+
+	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -1030,7 +1033,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
-	DefTiDBEnableNAAJ                              = false
+	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -1224,6 +1227,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 
 // Process global variables.
