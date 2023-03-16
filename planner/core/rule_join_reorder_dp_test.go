@@ -138,9 +138,8 @@ func newDataSource(ctx sessionctx.Context, name string, count int) LogicalPlan {
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
-	ctx.GetSessionVars().PlanColumnID++
 	ds.schema.Append(&expression.Column{
-		UniqueID: ctx.GetSessionVars().PlanColumnID,
+		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	ds.stats = &property.StatsInfo{

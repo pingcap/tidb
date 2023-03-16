@@ -535,7 +535,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	}
 
 	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
+	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
