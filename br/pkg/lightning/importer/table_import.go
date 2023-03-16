@@ -1231,8 +1231,11 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	if err == nil {
 		return nil
 	}
-	if !isDupKeyError(err) || len(multiSQLs) == 1 {
+	if !isDupKeyError(err) {
 		return err
+	}
+	if len(multiSQLs) == 1 {
+		return nil
 	}
 	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
 
@@ -1278,10 +1281,13 @@ func (tr *TableImporter) executeDDL(
 		resultCh <- s.Exec(ctx, "add index", ddl)
 	}()
 
+	failpoint.Inject("AddIndexCrash", func() {
+		_ = common.KillMySelf()
+	})
+
 	var ddlErr error
 	for {
 		select {
-		case <-ctx.Done():
 		case ddlErr = <-resultCh:
 			failpoint.Inject("AddIndexFail", func() {
 				ddlErr = errors.New("injected error")
@@ -1289,6 +1295,9 @@ func (tr *TableImporter) executeDDL(
 			if ddlErr == nil {
 				updateProgress(1.0)
 				return nil
+			}
+			if log.IsContextCanceledError(ddlErr) {
+				return ddlErr
 			}
 			logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(ddlErr))
 		case <-time.After(getDDLStatusInterval):
@@ -1310,11 +1319,13 @@ func (tr *TableImporter) executeDDL(
 
 		if m, ok := metric.FromContext(ctx); ok {
 			totalRows := int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
-			progress := float64(status.rowCount) / float64(totalRows*indexCount)
-			if progress > 1 {
-				progress = 1
+			if totalRows > 0 {
+				progress := float64(status.rowCount) / float64(totalRows*indexCount)
+				if progress > 1 {
+					progress = 1
+				}
+				updateProgress(progress)
 			}
-			updateProgress(progress)
 		}
 
 		if ddlErr != nil {

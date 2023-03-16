@@ -79,3 +79,20 @@ fi
 
 grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` DROP PRIMARY KEY" "$LOG_FILE2"
 grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` ADD PRIMARY KEY (\`pk\`)" "$LOG_FILE2"
+
+# 3. Check for recovering from checkpoint
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexCrash=return()"
+run_sql "DROP DATABASE add_index;"
+run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+grep -Fq "task canceled" "$LOG_FILE2"
+
+unset GO_FAILPOINTS
+run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/config2.toml" --log-file "$LOG_FILE2"
+actual_multi_indexes_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Total_kvs" | awk '{print $2}')
+actual_multi_indexes_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.multi_indexes;" | grep "Checksum_crc64_xor" | awk '{print $2}')
+actual_non_pk_auto_inc_kvs=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Total_kvs" | awk '{print $2}')
+actual_non_pk_auto_inc_cksum=$(run_sql "ADMIN CHECKSUM TABLE add_index.non_pk_auto_inc;" | grep "Checksum_crc64_xor" | awk '{print $2}')
+
+set -x
+[ "$multi_indexes_kvs" == "$actual_multi_indexes_kvs" ] && [ "$multi_indexes_cksum" == "$actual_multi_indexes_cksum" ]
+[ "$non_pk_auto_inc_kvs" == "$actual_non_pk_auto_inc_kvs" ] && [ "$non_pk_auto_inc_cksum" == "$actual_non_pk_auto_inc_cksum" ]
