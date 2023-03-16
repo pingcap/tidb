@@ -130,8 +130,7 @@ autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081
 autoscaler-cluster-id = ""
 
 # use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
-# Will remove this after AutoScaler is stable.
-use-autoscaler = true
+use-autoscaler = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
