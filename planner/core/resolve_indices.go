@@ -594,7 +594,6 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 	return
 }
 
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalLimit) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
