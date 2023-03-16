@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -804,7 +804,7 @@ func TestUser(t *testing.T) {
 	// Test 'identified by password'
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
 	err = tk.ExecToErr(createUserSQL)
-	require.Truef(t, terror.ErrorEqual(executor.ErrPasswordFormat, err), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(exeerrors.ErrPasswordFormat, err), "err %v", err)
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
@@ -812,7 +812,7 @@ func TestUser(t *testing.T) {
 
 	// Test drop user meet error
 	err = tk.ExecToErr(dropUserSQL)
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
 	tk.MustExec(createUserSQL)
@@ -821,7 +821,7 @@ func TestUser(t *testing.T) {
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	err = tk.ExecToErr(dropUserSQL)
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), "err %v", err)
 
 	// Close issue #17639
 	dropUserSQL = `DROP USER if exists test3@'%'`
@@ -853,7 +853,7 @@ func TestUser(t *testing.T) {
 
 	createUserSQL = `create user foo@localhost identified with 'foobar';`
 	err = tk.ExecToErr(createUserSQL)
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrPluginIsNotLoaded), "err %v", err)
 
 	tk.MustExec(`create user joan;`)
 	tk.MustExec(`create user sally;`)
@@ -911,7 +911,7 @@ func TestSetPwd(t *testing.T) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost", AuthUsername: "testpwd1", AuthHostname: "localhost"}
 	// Session user doesn't exist.
 	err = tk.ExecToErr(setPwdSQL)
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrPasswordNoMatch), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrPasswordNoMatch), "err %v", err)
 	// normal
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost", AuthUsername: "testpwd", AuthHostname: "localhost"}
 	tk.MustExec(setPwdSQL)

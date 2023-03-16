@@ -831,7 +831,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3209,6 +3209,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			GlobalScope:           show.GlobalScope,
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
+			LoadDataJobID:         show.LoadDataJobID,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -4177,14 +4178,20 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+// DetachedOption is a special option in load data statement that need to be handled separately.
+const DetachedOption = "detached"
+
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
 	// quick fix for https://github.com/pingcap/tidb/issues/33298
 	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
 	}
-	options := []*LoadDataOpt{}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	var err error
+	var (
+		err      error
+		options  = make([]*LoadDataOpt, 0, len(ld.Options))
+		detached = false
+	)
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
 		if opt.Value != nil {
@@ -4192,6 +4199,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 			if err != nil {
 				return nil, err
 			}
+		}
+		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
+			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4236,6 +4246,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, err
+	}
+
+	if detached {
+		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}), types.NameSlice{{ColName: model.NewCIStr("Job_ID")}})
 	}
 	return p, nil
 }
@@ -5206,6 +5222,15 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowSessionStates:
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
+	case ast.ShowLoadDataJobs:
+		names = []string{"Job_ID", "Create_Time", "Start_Time", "End_Time",
+			"Data_Source", "Target_Table", "Import_Mode", "Created_By",
+			"Job_State", "Job_Status", "Source_File_Size", "Loaded_File_Size",
+			"Result_Code", "Result_Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

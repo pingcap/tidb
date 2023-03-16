@@ -487,3 +487,17 @@ func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
 
 	return actualEscapeChar
 }
+
+// EscapeGlobExceptAsterisk escapes '?', '[', ']' for a glob path pattern.
+func EscapeGlobExceptAsterisk(s string) string {
+	var buf strings.Builder
+	buf.Grow(len(s))
+	for _, c := range s {
+		switch c {
+		case '?', '[', ']':
+			buf.WriteByte('\\')
+		}
+		buf.WriteRune(c)
+	}
+	return buf.String()
+}

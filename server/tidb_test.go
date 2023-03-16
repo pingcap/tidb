@@ -86,7 +86,7 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
-	cfg.Status.RecordDBLabel = false
+	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
@@ -2073,7 +2073,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	tagChecker := &resourceTagChecker{
 		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
 		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
 			// Ignore for internal background request.
@@ -2091,6 +2091,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		reqMap[req.Type] = struct{}{}
 		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
 	}
+	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
 	t.Cleanup(func() {
 		stmtstats.UnregisterCollector(mockCollector)

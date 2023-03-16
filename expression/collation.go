@@ -274,7 +274,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			}
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, fieldArgs...)
 		}
-	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
+	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion, ast.CurrentResourceGroup:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2, ast.SM3:

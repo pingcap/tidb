@@ -2,14 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "asyncloaddata",
-    srcs = ["util.go"],
+    srcs = [
+        "progress.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/executor/asyncloaddata",
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
         "//parser/terror",
-        "//session",
+        "//types",
         "//util/chunk",
+        "//util/dbterror/exeerrors",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//util",
@@ -19,12 +23,25 @@ go_library(
 go_test(
     name = "asyncloaddata_test",
     timeout = "short",
-    srcs = ["util_test.go"],
+    srcs = [
+        "detach_test.go",
+        "main_test.go",
+        "show_test.go",
+        "util_test.go",
+    ],
     embed = [":asyncloaddata"],
     flaky = True,
     deps = [
+        "//br/pkg/lightning/config",
+        "//executor",
+        "//kv",
+        "//parser/auth",
         "//testkit",
         "//util/sqlexec",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -488,6 +488,23 @@ func TestInitStatsVer2(t *testing.T) {
 	h.SetLease(0)
 }
 
+func TestInitStatsIssue41938(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
+	tk.MustExec("create table t1 (a timestamp primary key)")
+	tk.MustExec("insert into t1 values ('2023-03-07 14:24:30'), ('2023-03-07 14:24:31'), ('2023-03-07 14:24:32'), ('2023-03-07 14:24:33')")
+	tk.MustExec("analyze table t1 with 0 topn")
+	h := dom.StatsHandle()
+	// `InitStats` is only called when `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+	h.Clear()
+	require.NoError(t, h.InitStats(dom.InfoSchema()))
+	h.SetLease(0)
+}
+
 func TestReloadExtStatsLockRelease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1070,7 +1087,7 @@ partition by range (a) (
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("15 1 17 1", "6 1 7 0", "9 0 10 0"))
 	tk.MustQuery("select distinct_count, null_count, tot_col_size, correlation=0 from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
-		testkit.Rows("15 1 0 1", "6 1 6 1", "9 0 10 1"))
+		testkit.Rows("15 1 0 1", "6 1 7 1", "9 0 10 1"))
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv

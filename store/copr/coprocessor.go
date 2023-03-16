@@ -121,16 +121,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			}
 		}
 	})
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
-		req.StoreBatchSize = 0
-	}
-	// TODO: support keep-order batch
-	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
-		// disable batch copr for follower read
-		req.StoreBatchSize = 0
-	}
-	// disable batch copr when paging is enabled.
-	if req.Paging.Enable {
+	if !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
 	}
 
@@ -842,10 +833,10 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
-	go taskSender.run()
+	go taskSender.run(it.req.ConnID)
 }
 
-func (sender *copIteratorTaskSender) run() {
+func (sender *copIteratorTaskSender) run(connID uint64) {
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
@@ -866,6 +857,9 @@ func (sender *copIteratorTaskSender) run() {
 		exit = sender.sendToTaskCh(t, sendTo)
 		if exit {
 			break
+		}
+		if connID > 0 {
+			failpoint.Inject("pauseCopIterTaskSender", func() {})
 		}
 	}
 	close(sender.taskCh)
@@ -1183,7 +1177,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
+	isInternal := util.IsRequestSourceInternal(&task.requestSource)
+	scope := metrics.LblGeneral
+	if isInternal {
+		scope = metrics.LblInternal
+	}
+	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead), scope).Observe(costTime.Seconds())
 	if copResp != nil {
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
@@ -1954,4 +1953,24 @@ func optRowHint(req *kv.Request) bool {
 		opt = false
 	})
 	return opt
+}
+
+func checkStoreBatchCopr(req *kv.Request) bool {
+	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+		return false
+	}
+	// TODO: support keep-order batch
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
+		// Disable batch copr for follower read
+		return false
+	}
+	// Disable batch copr when paging is enabled.
+	if req.Paging.Enable {
+		return false
+	}
+	// Disable it for internal requests to avoid regression.
+	if req.RequestSource.RequestSourceInternal {
+		return false
+	}
+	return true
 }

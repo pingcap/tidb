@@ -1481,6 +1481,11 @@ error = '''
 This command is not supported in the prepared statement protocol yet
 '''
 
+["executor:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["executor:1317"]
 error = '''
 Query execution was interrupted
@@ -1529,6 +1534,11 @@ SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication p
 ["executor:1819"]
 error = '''
 Your password does not satisfy the current policy requirements
+'''
+
+["executor:1820"]
+error = '''
+You must reset your password using ALTER USER statement before executing this statement
 '''
 
 ["executor:1827"]
@@ -1719,6 +1729,16 @@ Option %s specified more than once
 ["executor:8166"]
 error = '''
 Unsupported option %s for %s import mode
+'''
+
+["executor:8170"]
+error = '''
+Job ID %d doesn't exist
+'''
+
+["executor:8172"]
+error = '''
+The job can not be DETACHED when LOAD DATA LOCAL INFILE
 '''
 
 ["executor:8212"]
@@ -2669,6 +2689,11 @@ The table '%-.192s' is full
 ["table:1192"]
 error = '''
 Can't execute the given command because you have active locked tables or an active transaction
+'''
+
+["table:1292"]
+error = '''
+Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d
 '''
 
 ["table:1364"]

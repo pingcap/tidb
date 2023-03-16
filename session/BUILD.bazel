@@ -73,6 +73,7 @@ go_library(
         "//util/chunk",
         "//util/collate",
         "//util/dbterror",
+        "//util/dbterror/exeerrors",
         "//util/execdetails",
         "//util/intest",
         "//util/kvcache",
@@ -103,6 +104,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 

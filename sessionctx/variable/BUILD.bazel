@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//config",
         "//errno",
+        "//keyspace",
         "//kv",
         "//meta/autoid",
         "//metrics",
@@ -54,6 +55,7 @@ go_library(
         "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
         "//util/tableutil",
+        "//util/tiflashcompute",
         "//util/tikvutil",
         "//util/timeutil",
         "//util/tls",
