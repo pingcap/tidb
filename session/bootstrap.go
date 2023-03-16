@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -564,6 +563,9 @@ const (
 		step INT(11),
 		key(state)
 	);`
+
+	// CreateDefaultResourceGroup is the statement to create the default resource group
+	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
 )
 
 // bootstrap initiates system DB for a store.
@@ -825,11 +827,15 @@ const (
 	version135 = 135
 	// version136 prepare the tables for the distributed task.
 	version136 = 136
+	// version137 introduces some reserved resource groups
+	version137 = 137
+	// version 138 set tidb_enable_null_aware_anti_join to true
+	version138 = 138
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version136
+var currentBootstrapVersion int64 = version138
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -954,6 +960,8 @@ var (
 		upgradeToVer134,
 		upgradeToVer135,
 		upgradeToVer136,
+		upgradeToVer137,
+		upgradeToVer138,
 	}
 )
 
@@ -2379,6 +2387,21 @@ func upgradeToVer136(s Session, ver int64) {
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
 
+func upgradeToVer137(s Session, ver int64) {
+	if ver >= version137 {
+		return
+	}
+	doReentrantDDL(s, CreateDefaultResourceGroup)
+}
+
+// For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
+func upgradeToVer138(s Session, ver int64) {
+	if ver >= version138 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2491,6 +2514,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
+	// Create default resource group
+	mustExecute(s, CreateDefaultResourceGroup)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -2593,13 +2618,9 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
+		case variable.TiDBPessimisticTransactionFairLocking:
+			vVal = variable.On
 		}
-
-		failpoint.Inject("enableAggressiveLockingOnBootstrap", func() {
-			if v.Name == variable.TiDBPessimisticTransactionAggressiveLocking {
-				vVal = variable.On
-			}
-		})
 
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))

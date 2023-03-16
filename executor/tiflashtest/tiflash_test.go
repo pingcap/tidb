@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
@@ -693,7 +693,7 @@ func TestCancelMppTasks(t *testing.T) {
 		defer wg.Done()
 		err := tk.QueryToErr("select count(*) from t as t1 , t where t1.a = t.a")
 		require.Error(t, err)
-		require.Equal(t, int(executor.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
@@ -1317,9 +1317,11 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = true
 	})
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = false
 	})
 	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
 	require.NoError(t, err)

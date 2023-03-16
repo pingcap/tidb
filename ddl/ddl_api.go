@@ -88,6 +88,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// DefaultResourceGroupName is the default resource group name.
+	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -7826,10 +7828,6 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if groupName.L == variable.DefaultResourceGroupName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
-	}
-
 	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
@@ -7860,6 +7858,9 @@ func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) e
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
+	if groupName.L == DefaultResourceGroupName {
+		return resourcegroup.ErrDroppingInternalResourceGroup
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)

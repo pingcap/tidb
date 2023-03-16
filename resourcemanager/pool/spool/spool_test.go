@@ -96,7 +96,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		}()
 	}
 	p.Tune(8)
-	time.Sleep(500 * time.Millisecond)
+	wg.Wait()
 	if n := p.Running(); n != 8 {
 		t.Errorf("expect 8 workers running, but got %d", n)
 	}
@@ -119,7 +119,6 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 		cnt.Add(1)
 	}
 	fnChan := make(chan func(), 10)
-	wg.Wait()
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), p.Running())

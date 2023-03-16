@@ -199,7 +199,7 @@ func TestNonPreparedPlanCacheEnumFilter(t *testing.T) {
 	tk.MustExec(`select * from t where a<2`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	// queries with filters with JSON columns are not supported
+	// queries with filters with enum columns are not supported
 	tk.MustExec(`select * from t where b='1'`)
 	tk.MustExec(`select * from t where b='2'`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -383,13 +383,13 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a+1=1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: query has some unsupported binary operation`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: query has some unsupported binary operation`))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that access multiple tables are not supported`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that access multiple tables are not supported`))
 
 	tk.MustExec(`explain format = 'plan_cache' select * from (select * from t) tx`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prep plan cache: queries that have sub-queries are not supported`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported`))
 
 	// no warning if disable this feature
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
@@ -573,13 +573,13 @@ func TestNonPreparedPlanParameterType(t *testing.T) {
 
 	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select * from t where a=1.1`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1.1' may be converted to INT`))
+	tk.MustExec(`explain format = 'plan_cache' select * from t where a=1.1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1.1' may be converted to INT`))
 
 	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select * from t where a='1'`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: '1' may be converted to INT`))
+	tk.MustExec(`explain format = 'plan_cache' select * from t where a='1'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: '1' may be converted to INT`))
 }
 
 func TestNonPreparedPlanTypeRandomly(t *testing.T) {
@@ -741,7 +741,7 @@ func TestIssue41626(t *testing.T) {
 	tk.MustExec(`prepare st from 'select * from t where a<?'`)
 	tk.MustExec(`set @a=12`)
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows("2000"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: '12' may be converted to INT"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '12' may be converted to INT"))
 }
 
 func TestIssue38269(t *testing.T) {
@@ -923,20 +923,20 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, key(a), key(b))")
 
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: ignore plan cache by hint"))
 
 	tk.MustExec("prepare stmt from 'select * from t order by ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'order by ?' is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has 'order by ?' is un-cacheable"))
 
 	tk.MustExec("prepare stmt from 'select * from t where a=?'")
 	tk.MustExec("set @a='123'")
 	tk.MustExec("execute stmt using @a") // '123' -> 123
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '123' may be converted to INT"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '123' may be converted to INT"))
 
 	tk.MustExec("prepare stmt from 'select * from t where a=? and a=?'")
 	tk.MustExec("set @a=1, @b=1")
 	tk.MustExec("execute stmt using @a, @b") // a=1 and a=1 -> a=1
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: some parameters may be overwritten"))
 }
 
 func TestIssue40224(t *testing.T) {
@@ -947,7 +947,7 @@ func TestIssue40224(t *testing.T) {
 	tk.MustExec("prepare st from 'select a from t where a in (?, ?)'")
 	tk.MustExec("set @a=1.0, @b=2.0")
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.0' may be converted to INT"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1.0' may be converted to INT"))
 	tk.MustExec("execute st using @a, @b")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
@@ -979,10 +979,10 @@ func TestIssue40225(t *testing.T) {
 	tk.MustExec("prepare st from 'select * from t where a<?'")
 	tk.MustExec("set @a='1'")
 	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: '1' may be converted to INT")) // plan-cache limitation
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1' may be converted to INT")) // plan-cache limitation
 	tk.MustExec("create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1")
 	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by binding"))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip prepared plan-cache: ignore plan cache by binding"))
 	// no warning about plan-cache limitations('1' -> INT) since plan-cache is totally disabled.
 
 	tk.MustExec("prepare st from 'select * from t where a>?'")
@@ -1013,7 +1013,7 @@ func TestIssue40679(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
 
 	tk.MustExec("execute st using @a1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1.1' may be converted to INT"))
 }
 
 func TestIssue38335(t *testing.T) {
@@ -1108,7 +1108,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: limit count more than 10000"))
 }
 
 func TestPlanCacheMemoryTable(t *testing.T) {
@@ -1162,9 +1162,9 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		if testCase.cacheAble == "0" {
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			if testCase.isDecorrelated {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has uncorrelated sub-queries is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has uncorrelated sub-queries is un-cacheable"))
 			} else {
-				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: PhysicalApply plan is un-cacheable"))
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
 			}
 		}
 	}
@@ -1172,7 +1172,7 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 0")
 	for _, testCase := range testCases {
 		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has sub-queries is un-cacheable"))
 		var using []string
 		for i, p := range testCase.params {
 			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
@@ -1201,7 +1201,7 @@ func TestIssue41828(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'`)
 	tk.MustExec(`set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip plan-cache: IndexMerge plan with full-scan is un-cacheable`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: IndexMerge plan with full-scan is un-cacheable`))
 	tk.MustExec(`set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
 }
@@ -1295,5 +1295,151 @@ func TestNonPreparedPlanCacheExplain(t *testing.T) {
 	for _, format := range formats {
 		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t limit 1", format))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+}
+
+func TestNonPreparedPlanExplainWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, e enum('1', '2', '3'), s set('1', '2', '3'), j json, bt bit(8), key(b), key(c, d))`)
+	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
+	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
+	tk.MustExec("create table t3(a int, first_name varchar(50), last_name varchar(50), full_name varchar(101) generated always as (concat(first_name,' ',last_name)))")
+	tk.MustExec("create or replace SQL SECURITY INVOKER view v as select a from t")
+	tk.MustExec("analyze table t, t1, t2") // eliminate stats warnings
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
+
+	supported := []string{
+		"select * from t where a<10",
+		"select * from t where a<13 and b<15",
+		"select * from t where b=13",
+		"select * from t where c<8",
+		"select * from t where d>8",
+		"select * from t where c=8 and d>10",
+		"select * from t where a<12 and b<13 and c<12 and d>2",
+		"select * from t where a in (1, 2, 3)",
+		"select * from t where a<13 or b<15",
+		"select * from t where a<13 or b<15 and c=13",
+		"select * from t where a in (1, 2)",
+		"select * from t where a in (1, 2) and b in (1, 2, 3)",
+		"select * from t where a in (1, 2) and b < 15",
+		"select * from t where a between 1 and 10",
+		"select * from t where a between 1 and 10 and b < 15",
+	}
+
+	unsupported := []string{
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
+		"select distinct a from t1 where a > 1 and b < 2",                                  // distinct
+		"select count(*) from t1 where a > 1 and b < 2 group by a",                         // group by
+		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
+		"select * from t1 limit 1",                                                         // limit
+		"select * from t1 order by a",                                                      // order by
+		"select * from t1, t2",                                                             // join
+		"select * from (select * from t1) t",                                               // sub-query
+		"insert into t1 values(1, 1)",                                                      // insert
+		"insert into t1(a, b) select a, b from t1",                                         // insert into select
+		"update t1 set a = 1 where b = 2",                                                  // update
+		"delete from t1 where b = 1",                                                       // delete
+		"select * from t1 for update",                                                      // lock
+		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
+		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
+		"select * from t where a+b=13",                                                     // '+'
+		"select * from t where mod(a, 3)=1",                                                // mod
+		"select * from t where d>now()",                                                    // now
+		"select * from t where j < 1",                                                      // json
+		"select * from t where a > 1 and j < 1",
+		"select * from t where e < '1'", // enum
+		"select * from t where a > 1 and e < '1'",
+		"select * from t where s < '1'", // set
+		"select * from t where a > 1 and s < '1'",
+		"select * from t where bt > 0", // bit
+		"select * from t where a > 1 and bt > 0",
+		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
+		"select * from t3 where full_name = 'a b'",                                // generated column
+		"select * from t3 where a > 1 and full_name = 'a b'",
+		"select * from v",                // view
+		"select * from t where a = null", // null
+		"select * from t where a = 1 or a = 2 or a = 3 or a = 4 or a = 5 or a = 6 or a = 7 or a = 8 or a = 9 or a = 10 or " +
+			"a = 11 or a = 12 or a = 13 or a = 14 or a = 15 or a = 16 or a = 17 or a = 18 or a = 19 or a = 20 or " +
+			"a = 21 or a = 22 or a = 23 or a = 24 or a = 25 or a = 26 or a = 27 or a = 28 or a = 29 or a = 30 or " +
+			"a = 31 or a = 32 or a = 33 or a = 34 or a = 35 or a = 36 or a = 37 or a = 38 or a = 39 or a = 40 or " +
+			"a = 41 or a = 42 or a = 43 or a = 44 or a = 45 or a = 46 or a = 47 or a = 48 or a = 49 or a = 50 or a = 51", // more than 50 constants
+		"select * from t where false", // table dual
+	}
+
+	reasons := []string{
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that access multiple tables are not supported",
+		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: not a select statement",
+		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
+		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
+		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
+		"skip non-prepared plan-cache: query has some unsupported binary operation",
+		"skip non-prepared plan-cache: query has some unsupported binary operation",
+		"skip non-prepared plan-cache: query has some unsupported Node",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: queries that access in-memory tables",
+		"skip non-prepared plan-cache: queries that have generated columns are not supported",
+		"skip non-prepared plan-cache: queries that have generated columns are not supported",
+		"skip non-prepared plan-cache: queries that access views are not supported",
+		"skip non-prepared plan-cache: query has null constants",
+		"skip non-prepared plan-cache: query has more than 50 constants",
+		"skip non-prepared plan-cache: get a TableDual plan",
+	}
+
+	all := append(supported, unsupported...)
+
+	explainFormats := []string{
+		types.ExplainFormatBrief,
+		types.ExplainFormatDOT,
+		types.ExplainFormatHint,
+		types.ExplainFormatROW,
+		types.ExplainFormatVerbose,
+		types.ExplainFormatTraditional,
+		types.ExplainFormatBinary,
+		types.ExplainFormatTiDBJSON,
+		types.ExplainFormatCostTrace,
+	}
+	// all cases no warnings use other format
+	for _, q := range all {
+		tk.MustExec("explain " + q)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustExec("explain " + q)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	for _, format := range explainFormats {
+		for _, q := range all {
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			//tk.MustQuery("show warnings").Check(testkit.Rows())
+			tk.MustQuery("show warnings").CheckNotContain("plan cache")
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+	}
+
+	// unsupported case with warning use 'plan_cache' format
+	for idx, q := range unsupported {
+		tk.MustExec("explain format = 'plan_cache'" + q)
+		warn := tk.MustQuery("show warnings").Rows()[0]
+		require.Equal(t, reasons[idx], warn[2])
 	}
 }
