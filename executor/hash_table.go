@@ -215,7 +215,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 }
 
 // signalCheckpointForJoinMask indicates the times of row probe that a signal detection will be triggered.
-const signalCheckpointForJoinMask int = 1<<16 - 1
+const signalCheckpointForJoinMask int = 1<<18 - 1
 
 // rowSize is the size of Row.
 const rowSize = int64(unsafe.Sizeof(chunk.Row{}))
