@@ -24,6 +24,7 @@ go_test(
     name = "asyncloaddata_test",
     timeout = "short",
     srcs = [
+        "detach_test.go",
         "main_test.go",
         "operate_test.go",
         "show_test.go",

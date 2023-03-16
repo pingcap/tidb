@@ -530,7 +530,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "IndexLookUp")) // check if IndexLookUp is used
-		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
 	// test indexLookUp with order property pushed down.
@@ -544,7 +544,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(a), 1100) from (select * from tregular use index(idx_a) where a > %v order by a limit %v) t", x, y)).Rows()[0][0]
 		queryRangePartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
 		queryHashPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
-		queryListPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
+		queryListPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v;", x, x+1, maxEle, y)
 		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
@@ -570,7 +570,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryPartition := fmt.Sprintf("select * from trange ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "TableReader")) // check if tableReader is used
-		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
 	// test tableReader with order property pushed down.
@@ -589,10 +589,10 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.False(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
 		require.False(t, tk.HasPlan(queryHashPartition, "Limit"))
 		require.False(t, tk.HasPlan(queryListPartition, "Limit"))
-		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
-		tk.MustQuery(queryRangePartition).Sort().Check(regularResult)
-		tk.MustQuery(queryHashPartition).Sort().Check(regularResult)
-		tk.MustQuery(queryListPartition).Sort().Check(regularResult)
+		regularResult := tk.MustQuery(queryRegular).Rows()
+		tk.MustQuery(queryRangePartition).Check(regularResult)
+		tk.MustQuery(queryHashPartition).Check(regularResult)
+		tk.MustQuery(queryListPartition).Check(regularResult)
 
 		// test int pk
 		// To be simplified, we only read column a.
@@ -622,9 +622,9 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
 		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartition, "Limit"))
-		require.True(t, tk.HasPlan(queryRangePartition, "TopN")) // but not fully pushed
-		require.True(t, tk.HasPlan(queryHashPartition, "TopN"))
-		require.True(t, tk.HasPlan(queryListPartition, "TopN"))
+		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // could fully pushed for TableScan executor
+		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
+		require.False(t, tk.HasPlan(queryListPartition, "TopN"))
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -695,7 +695,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryPartition := fmt.Sprintf("select a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "IndexReader")) // check if indexReader is used
-		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
 	// test indexReader with order property pushed down.
@@ -705,27 +705,40 @@ func TestOrderByAndLimit(t *testing.T) {
 		x := rand.Intn(1099)
 		y := rand.Intn(2000) + 1
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
-		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
 		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))
 		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
 		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
-		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
-		tk.MustQuery(queryRangePartition).Sort().Check(regularResult)
-		tk.MustQuery(queryHashPartition).Sort().Check(regularResult)
+		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // fully pushed limit
+		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
+		regularResult := tk.MustQuery(queryRegular).Rows()
+		tk.MustQuery(queryRangePartition).Check(regularResult)
+		tk.MustQuery(queryHashPartition).Check(regularResult)
 	}
 
 	// test indexMerge
 	for i := 0; i < 100; i++ {
-		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x}; // check if IndexMerge is used
-		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x};  // can return the correct value
+		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x}; // check if IndexMerge is used
+		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a, b limit {x};  // can return the correct value
 		y := rand.Intn(2000) + 1
-		queryPartition := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > 2 or b < 5 order by a, b limit %v;", y)
+		queryHashPartition := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > 2 or b < 5 order by a, b limit %v;", y)
 		queryRegular := fmt.Sprintf("select * from tregular where a > 2 or b < 5 order by a, b limit %v;", y)
-		require.True(t, tk.HasPlan(queryPartition, "IndexMerge")) // check if indexMerge is used
-		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+		require.True(t, tk.HasPlan(queryHashPartition, "IndexMerge")) // check if indexMerge is used
+		tk.MustQuery(queryHashPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
+
+	// test sql killed when memory exceed `tidb_mem_quota_query`
+	originMemQuota := tk.MustQuery("show variables like 'tidb_mem_quota_query'").Rows()[0][1].(string)
+	originOOMAction := tk.MustQuery("show variables like 'tidb_mem_oom_action'").Rows()[0][1].(string)
+	tk.MustExec("set session tidb_mem_quota_query=128")
+	tk.MustExec("set global tidb_mem_oom_action=CANCEL")
+	err := tk.QueryToErr("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
+	require.Error(t, err)
+	require.Regexp(t, "Out Of Memory Quota.*", err)
+	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))
+	tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action=%s", originOOMAction))
 }
 
 func TestOrderByOnUnsignedPk(t *testing.T) {

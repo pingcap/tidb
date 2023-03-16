@@ -169,6 +169,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
@@ -611,13 +612,35 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
+// PlanCacheType is the flag of plan cache
+type PlanCacheType int
+
+const (
+	// DefaultNoCache no cache
+	DefaultNoCache PlanCacheType = iota
+	// SessionPrepared session prepared plan cache
+	SessionPrepared
+	// SessionNonPrepared session non-prepared plan cache
+	SessionNonPrepared
+)
+
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
 	sc.UseCache = false
-	sc.AppendWarning(reason)
+	switch sc.CacheType {
+	case DefaultNoCache:
+		sc.AppendWarning(errors.New("unknown cache type"))
+	case SessionPrepared:
+		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+	case SessionNonPrepared:
+		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
+			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
+			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+		}
+	}
 }
 
 // TableEntry presents table in db.
@@ -1166,7 +1189,7 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.Errorf("skip plan-cache: in-list is too long"))
+		sc.SetSkipPlanCache(errors.Errorf("in-list is too long"))
 	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
