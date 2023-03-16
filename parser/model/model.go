@@ -1878,7 +1878,7 @@ func (p *ResourceGroupSettings) String() string {
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
-	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(uint64(p.Priority)))
+	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority))
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
 	}
