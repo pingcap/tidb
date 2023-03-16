@@ -477,20 +477,20 @@ func TestLoadDataRestore(t *testing.T) {
 			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
 		},
 		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size='10mb',detached",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=_UTF8MB4'10mb', detached",
+			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size=999,detached",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=999, detached",
 		},
 		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size='10mb'",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=999",
 		},
 		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size='10mb'",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=_UTF8MB4'10mb'",
+			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=999",
 		},
 		{
-			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size='10mb'",
-			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=_UTF8MB4'10mb'",
+			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size=999",
+			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=999",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {

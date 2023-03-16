@@ -123,9 +123,8 @@ func (s *mockGCSSuite) TestMultiBatchWithIgnoreLines() {
 		Content: genData(11, 20),
 	})
 
-	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 3;")
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-multi-load/multi-batch.*.tsv?endpoint=%s'
-		INTO TABLE multi_load.t2 IGNORE 2 LINES;`, gcsEndpoint)
+		INTO TABLE multi_load.t2 IGNORE 2 LINES WITH batch_size = 3;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM multi_load.t2;").Check(testkit.Rows(
 		"3", "4", "5", "6", "7", "8", "9", "10",
