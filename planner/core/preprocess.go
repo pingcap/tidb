@@ -735,7 +735,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		return
 	}
-	for col, _ := range autoIncrementCols {
+	for col := range autoIncrementCols {
 		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
