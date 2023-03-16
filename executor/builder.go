@@ -1201,12 +1201,11 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		// If the resource group name is not empty or "default", we could collect and display the RU
 		// runtime stats for analyze executor.
 		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
-		if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+		if len(resourceGroupName) > 0 && resourceGroupName != ddl.DefaultResourceGroupName {
 			// Try to register the RU runtime stats for analyze executor.
-			store, ok := b.ctx.GetStore().(interface {
+			if store, ok := b.ctx.GetStore().(interface {
 				CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
-			})
-			if ok {
+			}); ok {
 				// StartTS will be used to identify this SQL, so that the runtime stats could
 				// aggregate the RU stats beneath the KV storage client.
 				startTS, err := b.getSnapshotTS()
