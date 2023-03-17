@@ -1218,7 +1218,7 @@ func (rc *Client) RestoreSSTFiles(
 	// Once the parent context canceled and there is no task running in the errgroup,
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
-	return ectx.Err()
+	return ctx.Err()
 }
 
 // RestoreRaw tries to restore raw keys in the specified range.
