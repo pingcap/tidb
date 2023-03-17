@@ -99,7 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
-		"burstable",
+		"burstable", "calibrate",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1068,6 +1068,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SET SESSION_STATES", false, ""},
 		{"SET SESSION_STATES 1", false, ""},
 		{"SET SESSION_STATES now()", false, ""},
+
+		// for calibrate resource
+		{"calibrate resource", true, "CALIBRATE RESOURCE"},
 	}
 	RunTest(t, table, false)
 }

@@ -900,6 +900,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The available or capacity size of each TiKV instance",
 	},
+	"tikv_cpu_quota": {
+		PromQL:  "tikv_server_cpu_cores_quota{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "The Total CPU quota of each TiKV instance",
+	},
 	"tikv_thread_cpu": {
 		PromQL:  `sum(rate(tikv_thread_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,name)`,
 		Labels:  []string{"instance", "name"},
@@ -2712,6 +2717,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_session_transaction_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type,sql_type)",
 		Labels:  []string{"instance", "type", "sql_type"},
 		Comment: "The total time of transaction execution durations, including retry(second)",
+	},
+	"tidb_server_maxprocs": {
+		PromQL:  "tidb_server_maxprocs{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "The Total CPU quota of each TiDB instance",
 	},
 	"tikv_raftstore_append_log_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_append_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",

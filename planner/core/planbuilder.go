@@ -836,7 +836,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt:
+		*ast.LoadDataActionStmt, *ast.CalibrateResourceStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3126,6 +3126,14 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "QUOTA", mysql.TypeLonglong, longlongSize))
+
+	return schema.col2Schema(), schema.names
+}
+
 func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
@@ -3389,6 +3397,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 		}
+	case *ast.CalibrateResourceStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		p.setSchemaAndNames(buildCalibrateResourceSchema())
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
