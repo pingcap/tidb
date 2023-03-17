@@ -48,7 +48,7 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(1000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(1000)`)
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
-		INTO TABLE test_operate.t;`, gcsEndpoint)
+		INTO TABLE test_operate.t WITH batch_size = 1;`, gcsEndpoint)
 
 	// DROP can happen anytime
 	user := &auth.UserIdentity{
@@ -58,7 +58,6 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	s.tk.Session().GetSessionVars().User = user
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	tk2.Session().GetSessionVars().User = user
-	tk2.MustExec("SET SESSION tidb_dml_batch_size = 1;")
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
