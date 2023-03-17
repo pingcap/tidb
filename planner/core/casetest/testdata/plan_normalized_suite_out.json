@@ -478,6 +478,15 @@
           "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(gt(test.t1.a, ?), lt(test.t1.b, ?))",
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
+      },
+      {
+        "_comment": "The selectivity of `a>3` is 0(< 0.7), so push it down",
+        "SQL": "explain select count(a), max(t) from t1 where a>1",
+        "Plan": [
+          " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
+          " └─TableReader     root         ",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
       }
     ]
   }
