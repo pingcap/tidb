@@ -364,12 +364,14 @@ func (p *PhysicalSort) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -960,12 +962,14 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

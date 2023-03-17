@@ -836,7 +836,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := deriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
@@ -851,7 +851,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				for _, partialScan := range cop.idxMergePartPlans {
 					childProfile := partialScan.statsInfo()
 					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 					pushedDownLimit.SetChildren(partialScan)
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					limitChildren = append(limitChildren, pushedDownLimit)
