@@ -382,6 +382,16 @@ const (
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
+
+	// TiDBMaxBytesBeforeTiFlashExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalJoin = "tidb_max_bytes_before_tiflash_external_join"
+
+	// TiDBMaxBytesBeforeTiFlashExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = "tidb_max_bytes_before_tiflash_external_group_by"
+
+	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -829,6 +839,8 @@ const (
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
 	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
 	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
 
@@ -1039,6 +1051,9 @@ const (
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
+	DefTiFlashMaxBytesBeforeExternalJoin           = -1
+	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
+	DefTiFlashMaxBytesBeforeExternalSort           = -1
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1227,6 +1242,7 @@ const (
 	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                = true
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptEnableLateMaterialization              = false
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 
