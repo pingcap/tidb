@@ -42,6 +42,23 @@ var workloadBaseRUCostMap = map[string]*baseResourceCost{
 	},
 }
 
+// the resource cost rate of a specified workload per 1 tikv cpu
+type baseResourceCost struct {
+	// the average tikv cpu time, this is used to calculate whether tikv cpu
+	// or tidb cpu is the performance bottle neck.
+	tidbCPU float64
+	// the kv CPU time for calculate RU, it's smaller than the actually cpu usage.
+	kvCPU float64
+	// the read bytes rate per 1 tikv cpu.
+	readBytes uint64
+	// the write bytes rate per 1 tikv cpu.
+	writeBytes uint64
+	// the average tikv read request count per 1 tikv cpu.
+	readReqCount uint64
+	// the average tikv write request count per 1 tikv cpu.
+	writeReqCount uint64
+}
+
 func (b *executorBuilder) buildCalibrateResource(schema *expression.Schema) Executor {
 	return &calibrateResourceExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
@@ -96,23 +113,6 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	req.AppendUint64(0, uint64(quota))
 
 	return nil
-}
-
-// the resource cost of a specified workload per 1 tikv cpu
-type baseResourceCost struct {
-	// the average tikv cpu time, this is used to calculate whether tikv cpu
-	// or tidb cpu is the performance bottle neck.
-	tidbCPU float64
-	// the kv CPU time for calculate RU, it's smaller than the actually cpu usage.
-	kvCPU float64
-	// the read bytes rate per 1 tikv cpu.
-	readBytes uint64
-	// the write bytes rate per 1 tikv cpu.
-	writeBytes uint64
-	// the average tikv read request count per 1 tikv cpu.
-	readReqCount uint64
-	// the average tikv write request count per 1 tikv cpu.
-	writeReqCount uint64
 }
 
 type ruConfig struct {
