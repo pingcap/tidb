@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage
+package storage_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -41,10 +42,10 @@ func TestGlobalTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	gm := NewGlobalTaskManager(context.Background(), tk.Session())
+	gm := storage.NewGlobalTaskManager(context.Background(), tk.Session())
 
-	SetGlobalTaskManager(gm)
-	gm, err := GetGlobalTaskManager()
+	storage.SetGlobalTaskManager(gm)
+	gm, err := storage.GetGlobalTaskManager()
 	require.NoError(t, err)
 
 	id, err := gm.AddNewTask("test", 4, []byte("test"))
@@ -88,10 +89,10 @@ func TestSubTaskTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	sm := NewSubTaskManager(context.Background(), tk.Session())
+	sm := storage.NewSubTaskManager(context.Background(), tk.Session())
 
-	SetSubTaskManager(sm)
-	sm, err := GetSubTaskManager()
+	storage.SetSubTaskManager(sm)
+	sm, err := storage.GetSubTaskManager()
 	require.NoError(t, err)
 
 	err = sm.AddNewTask(1, "tidb1", []byte("test"), proto.TaskTypeExample, false)

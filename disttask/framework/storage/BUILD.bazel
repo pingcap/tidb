@@ -22,9 +22,9 @@ go_test(
     name = "storage_test",
     timeout = "short",
     srcs = ["table_test.go"],
-    embed = [":storage"],
     flaky = True,
     deps = [
+        ":storage",
         "//disttask/framework/proto",
         "//testkit",
         "//testkit/testsetup",
