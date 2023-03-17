@@ -81,7 +81,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().PlannerSelectBlockAsName = savedBlockNames
+	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
 	return newExpr, nil
 }
 
