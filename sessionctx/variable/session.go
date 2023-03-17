@@ -702,7 +702,7 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int64
+	PlanColumnID atomic.Int64
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -812,6 +812,24 @@ type SessionVars struct {
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiFlashMaxThreads int64
+
+	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalJoin int64
+
+	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalGroupBy int64
+
+	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -1372,6 +1390,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1382,6 +1403,11 @@ type SessionVars struct {
 	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
 	// If exceeding the threshold, try other stores using replica read.
 	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1785,6 +1811,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1821,6 +1848,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
+	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
+	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
+	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -1943,8 +1973,7 @@ func (s *SessionVars) CleanBuffers() {
 
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
-	s.PlanColumnID++
-	return s.PlanColumnID
+	return s.PlanColumnID.Add(1)
 }
 
 // GetCharsetInfo gets charset and collation for current context.

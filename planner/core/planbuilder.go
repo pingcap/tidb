@@ -831,7 +831,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
+		*ast.LoadDataActionStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -4178,14 +4179,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+// DetachedOption is a special option in load data statement that need to be handled separately.
+const DetachedOption = "detached"
+
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
-	// quick fix for https://github.com/pingcap/tidb/issues/33298
-	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
-	}
-	options := []*LoadDataOpt{}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	var err error
+	var (
+		err      error
+		options  = make([]*LoadDataOpt, 0, len(ld.Options))
+		detached = false
+	)
 	for _, opt := range ld.Options {
 		loadDataOpt := LoadDataOpt{Name: opt.Name}
 		if opt.Value != nil {
@@ -4193,6 +4196,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 			if err != nil {
 				return nil, err
 			}
+		}
+		if strings.ToLower(opt.Name) == DetachedOption && opt.Value == nil {
+			detached = true
 		}
 		options = append(options, &loadDataOpt)
 	}
@@ -4205,7 +4211,6 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		Columns:            ld.Columns,
 		FieldsInfo:         ld.FieldsInfo,
 		LinesInfo:          ld.LinesInfo,
-		NullInfo:           ld.NullInfo,
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
@@ -4238,6 +4243,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	if err != nil {
 		return nil, err
 	}
+
+	if detached {
+		p.setSchemaAndNames(expression.NewSchema(&expression.Column{
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}), types.NameSlice{{ColName: model.NewCIStr("Job_ID")}})
+	}
 	return p, nil
 }
 
@@ -4258,11 +4269,11 @@ func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 
 func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 	p := &IndexAdvise{
-		IsLocal:     node.IsLocal,
-		Path:        node.Path,
-		MaxMinutes:  node.MaxMinutes,
-		MaxIndexNum: node.MaxIndexNum,
-		LinesInfo:   node.LinesInfo,
+		IsLocal:        node.IsLocal,
+		Path:           node.Path,
+		MaxMinutes:     node.MaxMinutes,
+		MaxIndexNum:    node.MaxIndexNum,
+		LineFieldsInfo: NewLineFieldsInfo(nil, node.LinesInfo),
 	}
 	return p
 }
@@ -4961,8 +4972,9 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
-		TargetPlan: targetPlan,
-		IntoOpt:    selectIntoInfo,
+		TargetPlan:     targetPlan,
+		IntoOpt:        selectIntoInfo,
+		LineFieldsInfo: NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
 	}, nil
 }
 
@@ -5056,7 +5068,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		fieldDB := "Database"
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldDB = fmt.Sprintf("%s (%s)", fieldDB, patternName)
 		}
 		names = []string{fieldDB}
@@ -5065,7 +5077,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		fieldTable := fmt.Sprintf("Tables_in_%s", s.DBName)
-		if patternName := extractPatternLikeName(s.Pattern); patternName != "" {
+		if patternName := extractPatternLikeOrIlikeName(s.Pattern); patternName != "" {
 			fieldTable = fmt.Sprintf("%s (%s)", fieldTable, patternName)
 		}
 		names = []string{fieldTable}
@@ -5307,7 +5319,7 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 	return p, nil
 }
 
-func extractPatternLikeName(patternLike *ast.PatternLikeExpr) string {
+func extractPatternLikeOrIlikeName(patternLike *ast.PatternLikeOrIlikeExpr) string {
 	if patternLike == nil {
 		return ""
 	}

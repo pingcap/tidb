@@ -195,7 +195,7 @@
       {
         "Plan": [
           "Sort_9 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_11 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b)",
+          "└─HashJoin_11 8000.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.b)]",
           "  ├─IndexReader_17(Build) 10000.00 root  index:IndexFullScan_16",
           "  │ └─IndexFullScan_16 10000.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
           "  └─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
@@ -217,7 +217,7 @@
       {
         "Plan": [
           "Sort_10 8000.00 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
-          "└─HashJoin_12 8000.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.b), gt(test.t2.c, test.t1.c)",
+          "└─HashJoin_12 8000.00 root  Null-aware anti semi join, equal:[eq(test.t1.a, test.t2.b)], other cond:gt(test.t2.c, test.t1.c)",
           "  ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
           "  │ └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",

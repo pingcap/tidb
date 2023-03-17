@@ -1317,9 +1317,11 @@ func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = true
 	})
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = false
 	})
 	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
