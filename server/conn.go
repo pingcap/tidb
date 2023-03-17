@@ -1920,39 +1920,37 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 
 	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
-		switch p.(type) {
+		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			pp := p.(*plannercore.PointGetPlan)
-			if pp.PartitionInfo != nil {
+			if v.PartitionInfo != nil {
 				return nil
 			}
-			if pp.IndexInfo != nil {
+			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, v.TblInfo.ID)
 				if err1 != nil {
 					return err1
 				}
 				idxKeys = append(idxKeys, idxKey)
 			} else {
-				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(v.TblInfo.ID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			bpp := p.(*plannercore.BatchPointGetPlan)
-			if bpp.PartitionInfos != nil {
+			if v.PartitionInfos != nil {
 				return nil
 			}
-			if bpp.IndexInfo != nil {
+			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				for _, idxVals := range bpp.IndexValues {
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), bpp.TblInfo, bpp.IndexInfo, idxVals, bpp.TblInfo.ID)
+				for _, idxVals := range v.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, v.TblInfo.ID)
 					if err1 != nil {
 						return err1
 					}
 					idxKeys = append(idxKeys, idxKey)
 				}
 			} else {
-				for _, handle := range bpp.Handles {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(bpp.TblInfo.ID, handle))
+				for _, handle := range v.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(v.TblInfo.ID, handle))
 				}
 			}
 		}
