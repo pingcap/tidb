@@ -43,7 +43,7 @@ import (
 
 // TestDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
-// then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
+// then all the records of job A must before or after job B, no cross record between these 2 jobs.
 func TestDDLScheduling(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
