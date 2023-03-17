@@ -108,7 +108,7 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
-	// KeepSortDir indicates whether to remove the sort directory before opening hte engine.
+	// KeepSortDir indicates whether to remove the sort directory before opening the engine.
 	KeepSortDir bool
 }
 

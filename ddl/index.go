@@ -737,6 +737,9 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 	return model.ReorgTypeTxn
 }
 
+// cleanupSortPath is used to clean up the temp data of the previous jobs.
+// Because we don't remove all the files after the support of checkpoint,
+// there maybe some stale files in the sort path if TiDB is killed during the backfill process.
 func cleanupSortPath(currentJobID int64) {
 	sortPath := ingest.ConfigSortPath()
 	entries, err := os.ReadDir(sortPath)
@@ -754,9 +757,10 @@ func cleanupSortPath(currentJobID int64) {
 			continue
 		}
 		// For now, there is only one task using ingest at the same time,
-		// so we can remove all the temp data of the previous task.
+		// so we can remove all the temp data of the previous jobs.
 		if jobID < currentJobID {
-			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data", zap.String("name", entry.Name()))
+			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data",
+				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
 			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
@@ -764,6 +768,13 @@ func cleanupSortPath(currentJobID int64) {
 			}
 		}
 	}
+}
+
+func cleanupLocalIndexData(jobID int64) {
+	sortPath := ingest.ConfigSortPath()
+	f := filepath.Join(sortPath, ingest.EncodeBackendTag(jobID))
+	err := os.RemoveAll(f)
+	logutil.BgLogger().Error("[ddl-ingest] can not remove local index data", zap.Error(err))
 }
 
 // canUseIngest indicates whether it can use ingest way to backfill index.

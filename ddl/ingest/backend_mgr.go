@@ -117,7 +117,7 @@ func (m *backendCtxManager) Unregister(jobID int64) {
 	bc.backend.Close()
 	m.memRoot.Release(StructSizeBackendCtx)
 	m.Delete(jobID)
-	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
+	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
 	logutil.BgLogger().Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
@@ -142,8 +142,8 @@ func (m *backendCtxManager) UpdateMemoryUsage() {
 		bc, exists := m.Load(key)
 		if exists {
 			curSize := bc.backend.TotalMemoryConsume()
-			m.memRoot.ReleaseWithTag(encodeBackendTag(bc.jobID))
-			m.memRoot.ConsumeWithTag(encodeBackendTag(bc.jobID), curSize)
+			m.memRoot.ReleaseWithTag(EncodeBackendTag(bc.jobID))
+			m.memRoot.ConsumeWithTag(EncodeBackendTag(bc.jobID), curSize)
 		}
 	}
 }
@@ -190,7 +190,9 @@ func (glueLit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.D
 func (glueLit) Record(string, uint64) {
 }
 
-func encodeBackendTag(jobID int64) string {
+// EncodeBackendTag encodes the job ID to backend tag.
+// The backend tag is also used as the file name of the local index data files.
+func EncodeBackendTag(jobID int64) string {
 	return fmt.Sprintf("%d", jobID)
 }
 

@@ -75,6 +75,9 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
+	if job.ReorgMeta != nil && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		cleanupLocalIndexData(job.ID)
+	}
 	return ver, errors.Trace(err)
 }
 

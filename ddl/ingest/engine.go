@@ -73,7 +73,7 @@ var MockFail = "MockFail"
 func MockFailure(jobID int64, indexID int64) error {
 	// To workaround with the "lock held by current process" error.
 	local.CloseDBForTest()
-	InitGlobalLightningEnv() // Mock failure.
+	InitGlobalLightningEnv() // Mock TiDB failed and restarted.
 	return errors.Errorf(MockFail)
 }
 
