@@ -1655,3 +1655,20 @@ func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
 	}
 	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
 }
+
+func TestIssue42323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue42323")
+	defer tk.MustExec("drop database issue42323")
+
+	tk.MustExec("use issue42323")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec(`CREATE TABLE t(col1 int(11) NOT NULL DEFAULT '0' ) PARTITION BY RANGE (FLOOR(col1))(
+			PARTITION p2021 VALUES LESS THAN (202200),
+			PARTITION p2022 VALUES LESS THAN (202300),
+			PARTITION p2023 VALUES LESS THAN (202400))`)
+	tk.MustExec("insert into t values(202303)")
+	tk.MustQuery(`select * from t where col1 = 202303`).Check(testkit.Rows("202303"))
+	tk.MustQuery(`select * from t where col1 = floor(202303)`).Check(testkit.Rows("202303"))
+}
