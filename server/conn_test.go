@@ -887,6 +887,43 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
 }
 
+func TestPrefetchBatchPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
+	ctx := context.Background()
+	tk.MustExec("use test")
+	tk.MustExec("create table prefetch (a int primary key, b int)")
+	tk.MustExec("insert prefetch values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("delete from prefetch where a = 1")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
+	query := "delete from prefetch where a in (2,3);" +
+		"delete from prefetch where a in (4,5);"
+	err := cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	snap := txn.GetSnapshot()
+	//nolint:forcetypeassert
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+}
+
 func TestTiFlashFallback(t *testing.T) {
 	store := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {

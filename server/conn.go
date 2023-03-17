@@ -1918,6 +1918,47 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+
+	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+		switch p.(type) {
+		case *plannercore.PointGetPlan:
+			pp := p.(*plannercore.PointGetPlan)
+			if pp.PartitionInfo != nil {
+				return nil
+			}
+			if pp.IndexInfo != nil {
+				resetStmtCtxFn()
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+				if err1 != nil {
+					return err1
+				}
+				idxKeys = append(idxKeys, idxKey)
+			} else {
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
+			}
+		case *plannercore.BatchPointGetPlan:
+			bpp := p.(*plannercore.BatchPointGetPlan)
+			if bpp.PartitionInfos != nil {
+				return nil
+			}
+			if bpp.IndexInfo != nil {
+				resetStmtCtxFn()
+				for _, idxVals := range bpp.IndexValues {
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), bpp.TblInfo, bpp.IndexInfo, idxVals, bpp.TblInfo.ID)
+					if err1 != nil {
+						return err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				}
+			} else {
+				for _, handle := range bpp.Handles {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(bpp.TblInfo.ID, handle))
+				}
+			}
+		}
+		return nil
+	}
+
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		if _, ok := stmt.(*ast.UseStmt); ok {
@@ -1947,20 +1988,11 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+			})
+			if err != nil {
+				return nil, err
 			}
 		case *plannercore.Delete:
 			deleteStmt, ok := stmt.(*ast.DeleteStmt)
@@ -1969,20 +2001,11 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetDeleteStmtCtx(sc, deleteStmt)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
+			err = handlePlan(x.SelectPlan, func() {
+				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
+			})
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
