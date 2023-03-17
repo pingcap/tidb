@@ -17,6 +17,7 @@ go_library(
         "builtin_encryption.go",
         "builtin_encryption_vec.go",
         "builtin_func_param.go",
+        "builtin_grouping.go",
         "builtin_ilike.go",
         "builtin_ilike_vec.go",
         "builtin_info.go",
