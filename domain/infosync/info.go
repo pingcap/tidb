@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -263,8 +264,7 @@ func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	cli = pdCli
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
-			println("failpoint: managerAlreadyCreateSomeGroups", val.(bool))
-			cli.AddResourceGroup(context.TODO(),
+			_, err := cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
 					Name: "default",
 					Mode: rmpb.GroupMode_RUMode,
@@ -274,7 +274,10 @@ func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 						},
 					},
 				})
-			cli.AddResourceGroup(context.TODO(),
+			if err != nil {
+				log.Warn("fail to create default group", zap.Error(err))
+			}
+			_, err = cli.AddResourceGroup(context.TODO(),
 				&rmpb.ResourceGroup{
 					Name: "oltp",
 					Mode: rmpb.GroupMode_RUMode,
@@ -284,6 +287,9 @@ func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 						},
 					},
 				})
+			if err != nil {
+				log.Warn("fail to create default group", zap.Error(err))
+			}
 		}
 	})
 	return

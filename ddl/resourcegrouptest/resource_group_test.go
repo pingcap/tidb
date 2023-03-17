@@ -216,7 +216,6 @@ func TestAlreadyExistsDefaultResourceGroup(t *testing.T) {
 	}()
 	testkit.CreateMockStoreAndDomain(t)
 	groups, _ := infosync.ListResourceGroups(context.TODO())
-	fmt.Println("debug", groups)
 	require.Equal(t, 2, len(groups))
 }
 
