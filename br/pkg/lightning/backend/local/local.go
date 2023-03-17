@@ -1789,7 +1789,10 @@ func CloseDBForTest() {
 		recover() // Ignore the already closed error.
 	}()
 	if lastPebbleDB != nil {
-		_ = lastPebbleDB.Close()
+		err := lastPebbleDB.Close()
+		if err != nil {
+			log.L().Info("close last pebble db failed", zap.Error(err))
+		}
 		lastPebbleDB = nil
 	}
 }
