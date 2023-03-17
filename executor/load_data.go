@@ -398,11 +398,6 @@ func (e *LoadDataWorker) Load(
 	defer e.putSysSessionFn(ctx, s)
 
 	sqlExec := s.(sqlexec.SQLExecutor)
-	// TODO: move it to bootstrap
-	_, err = sqlExec.ExecuteInternal(ctx, asyncloaddata.CreateLoadDataJobs)
-	if err != nil {
-		return 0, err
-	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
 		ctx,

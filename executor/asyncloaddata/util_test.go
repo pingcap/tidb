@@ -56,9 +56,6 @@ func createJob(t *testing.T, conn sqlexec.SQLExecutor, user string) (int64, *Job
 func TestHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
-
 	ctx := context.Background()
 
 	// job is created
@@ -131,8 +128,6 @@ func TestHappyPath(t *testing.T) {
 func TestKeepAlive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -216,8 +211,6 @@ func TestKeepAlive(t *testing.T) {
 func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -290,8 +283,6 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 func TestGetJobStatus(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	// job is created
@@ -339,8 +330,6 @@ func TestGetJobStatus(t *testing.T) {
 func TestCreateLoadDataJobRedact(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(CreateLoadDataJobs)
-	defer tk.MustExec("DROP TABLE IF EXISTS mysql.load_data_jobs")
 	ctx := context.Background()
 
 	_, err := CreateLoadDataJob(ctx, tk.Session(),
