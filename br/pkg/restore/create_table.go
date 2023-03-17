@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewCreateTablesPipe(rc *Client, dom *domain.Domain, tables []*metautil.Table, newTS uint64) pipeline.Worker[struct{}, CreatedTable] {
+func NewCreateTablesPipe(rc *Client, dom *domain.Domain, tables []*metautil.Table, newTS uint64) pipeline.Traceable[struct{}, CreatedTable] {
 	return createTablesPipe{
 		rc:     rc,
 		dom:    rc.GetDomain(),
@@ -27,6 +27,14 @@ type createTablesPipe struct {
 	dom    *domain.Domain
 	tables []*metautil.Table
 	newTS  uint64
+}
+
+func (c createTablesPipe) Name() string {
+	return "create table"
+}
+
+func (c createTablesPipe) Size() int {
+	return len(c.tables)
 }
 
 func (c createTablesPipe) MainLoop(ctx pipeline.Context[CreatedTable], input <-chan struct{}) {

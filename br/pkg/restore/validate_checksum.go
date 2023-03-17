@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func NewValidateChecksum(rc *Client, kvc kv.Client, updateCh glue.Progress, concurrency uint) pipeline.Worker[CreatedTable, struct{}] {
+func NewValidateChecksum(rc *Client, kvc kv.Client, updateCh glue.Progress, concurrency uint) pipeline.Traceable[CreatedTable, struct{}] {
 	return validateChecksum{
 		rc:          rc,
 		kvClient:    kvc,
@@ -28,6 +28,14 @@ type validateChecksum struct {
 	kvClient    kv.Client
 	updateCh    glue.Progress
 	concurrency uint
+}
+
+func (v validateChecksum) Name() string {
+	return "validate checksum"
+}
+
+func (v validateChecksum) Size() int {
+	return 0
 }
 
 func (v validateChecksum) MainLoop(ctx pipeline.Context[struct{}], input <-chan CreatedTable) {

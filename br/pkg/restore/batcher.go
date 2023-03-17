@@ -57,6 +57,14 @@ type Batcher struct {
 	size               int32
 }
 
+func (b *Batcher) Name() string {
+	return "import"
+}
+
+func (b *Batcher) Size() int {
+	return 0
+}
+
 func (b *Batcher) MainLoop(ctx pipeline.Context[CreatedTable], input <-chan TableWithRange) {
 	defer ctx.Finish()
 

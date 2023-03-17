@@ -652,7 +652,7 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	data, err := pipeline.Execute(context.TODO(), NewCreateTablesPipe(rc, dom, tables, newTS)).Collect(context.TODO())
+	data, err := pipeline.Execute(context.TODO(), pipeline.Traced(NewCreateTablesPipe(rc, dom, tables, newTS))).Collect(context.TODO())
 	if err != nil {
 		return nil, nil, err
 	}

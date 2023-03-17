@@ -710,7 +710,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
-	creatingTables := restore.NewCreateTablesPipe(client, mgr.GetDomain(), tables, newTS)
+	creatingTables := pipeline.Traced(restore.NewCreateTablesPipe(client, mgr.GetDomain(), tables, newTS))
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
@@ -801,12 +801,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	batcher := restore.NewBatcher(ctx, sender, manager, errCh)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
-	afterRestoreStream := pipeline.Append[struct{}, restore.TableWithRange, restore.CreatedTable](rangeStream, batcher)
+	afterRestoreStream := pipeline.Append(rangeStream,
+		pipeline.Traced[restore.TableWithRange, restore.CreatedTable](batcher))
 
 	var finish pipeline.Worker[struct{}, struct{}]
 	// Checksum
 	if cfg.Checksum {
-		finish = pipeline.Append(afterRestoreStream, restore.NewValidateChecksum(client, mgr.GetStorage().GetClient(), updateCh, cfg.ChecksumConcurrency))
+		finish = pipeline.Append(afterRestoreStream, pipeline.Traced(
+			restore.NewValidateChecksum(client, mgr.GetStorage().GetClient(), updateCh, cfg.ChecksumConcurrency),
+		))
 	} else {
 		// when user skip checksum, just collect tables, and drop them.
 		finish = pipeline.AppendCtxFunc(afterRestoreStream, func(ctx pipeline.Context[struct{}], input restore.CreatedTable) (cont bool) {

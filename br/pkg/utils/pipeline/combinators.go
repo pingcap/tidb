@@ -14,7 +14,7 @@ type cons[In, Mid, Out any] struct {
 }
 
 func (l cons[In, Mid, Out]) MainLoop(ctx Context[Out], input <-chan In) {
-	midCx, midCh := spawnFrom[Mid](ctx.(workerContext[Out]).globalContext)
+	midCx, midCh := spawnFrom[Mid](rootContext(ctx).(workerContext[Out]).globalContext)
 	go l.car.MainLoop(midCx, input)
 	l.cdr.MainLoop(ctx, midCh)
 }
