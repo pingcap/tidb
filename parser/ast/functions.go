@@ -62,6 +62,7 @@ const (
 	UnaryMinus         = "unaryminus"
 	In                 = "in"
 	Like               = "like"
+	Ilike              = "ilike"
 	Case               = "case"
 	Regexp             = "regexp"
 	RegexpLike         = "regexp_like"
