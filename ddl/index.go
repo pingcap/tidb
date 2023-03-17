@@ -19,6 +19,10 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -717,6 +721,7 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 		if ingest.LitInitialized {
 			useIngest = canUseIngest()
 			if useIngest {
+				cleanupSortPath(job.ID)
 				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 				return model.ReorgTypeLitMerge
 			}
@@ -730,6 +735,35 @@ func pickBackfillType(job *model.Job) model.ReorgType {
 	}
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	return model.ReorgTypeTxn
+}
+
+func cleanupSortPath(currentJobID int64) {
+	sortPath := ingest.ConfigSortPath()
+	entries, err := os.ReadDir(sortPath)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		jobID, err := ingest.DecodeBackendTag(entry.Name())
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+			continue
+		}
+		// For now, there is only one task using ingest at the same time,
+		// so we can remove all the temp data of the previous task.
+		if jobID < currentJobID {
+			logutil.BgLogger().Info("[ddl-ingest] remove stale temp index data", zap.String("name", entry.Name()))
+			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
+			if err != nil {
+				logutil.BgLogger().Warn("[ddl-ingest] cannot cleanup sort path", zap.Error(err))
+				return
+			}
+		}
+	}
 }
 
 // canUseIngest indicates whether it can use ingest way to backfill index.
@@ -846,48 +880,126 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 }
 
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok && bc.Done() {
-		return true, 0, nil
+	tbl table.Table, indexInfo *model.IndexInfo) (
+	done bool, ver int64, err error) {
+	checkpoint, err := loadCheckpoint(w, job)
+	if err != nil {
+		return false, ver, errors.Trace(err)
 	}
-	if !ok && job.SnapshotVer != 0 {
-		// The owner is crashed or changed, we need to restart the backfill.
-		job.SnapshotVer = 0
-		job.RowCount = 0
-		return false, ver, nil
+	if checkpoint == nil {
+		cfg := config.GetGlobalConfig()
+		currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+		checkpoint = model.NewReorgCheckpoint([]byte{}, currentAddr)
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
+	bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 	if err != nil {
 		err = tryFallbackToTxnMerge(job, err)
 		return false, ver, errors.Trace(err)
 	}
-	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
-	if err != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-		err = tryFallbackToTxnMerge(job, err)
-		return false, ver, errors.Trace(err)
-	}
-	if !done {
-		return false, ver, nil
-	}
-	err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+	switch checkpoint.State {
+	case model.CheckpointStateNone:
+		checkpoint.State = model.CheckpointStateWriting
+		err := progressCheckpoint(w, job, checkpoint)
+		if err != nil {
+			return false, ver, errors.Trace(err)
 		}
-		if kv.ErrKeyExists.Equal(err) {
-			logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-		} else {
-			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
+		fallthrough
+	case model.CheckpointStateWriting:
+		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+		if err != nil {
+			failpoint.Inject("MockCheckpointFailWriting", func(_ failpoint.Value) {
+				// Skip unregister to mock TiDB is killed.
+				failpoint.Return(false, ver, err)
+			})
+			ingest.LitBackCtxMgr.Unregister(job.ID)
 			err = tryFallbackToTxnMerge(job, err)
+			return false, ver, errors.Trace(err)
 		}
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-		return false, ver, errors.Trace(err)
+		if !done {
+			return false, ver, nil
+		}
+		_, err := bc.Flush(indexInfo.ID)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		checkpoint.State = model.CheckpointStateEngineClosed
+		err = progressCheckpoint(w, job, checkpoint)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		return false, ver, nil
+	case model.CheckpointStateEngineClosed:
+		err = bc.EngMgr.Resume(bc, job.ID, indexInfo.ID, job.SchemaName, job.TableName)
+		if err != nil {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+			err = tryFallbackToTxnMerge(job, err)
+			return false, ver, errors.Trace(err)
+		}
+		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
+		if err != nil {
+			failpoint.Inject("MockCheckpointFailImport", func(_ failpoint.Value) {
+				// Skip unregister to mock TiDB is killed.
+				failpoint.Return(false, ver, err)
+			})
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+			}
+			if kv.ErrKeyExists.Equal(err) {
+				logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+			} else {
+				logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
+				err = tryFallbackToTxnMerge(job, err)
+			}
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+			return true, ver, errors.Trace(err)
+		}
+		checkpoint.State = model.CheckpointStateImported
+		err := progressCheckpoint(w, job, checkpoint)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		fallthrough
+	case model.CheckpointStateImported:
+		failpoint.Inject("MockCheckpointFailImported", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(false, ver, ingest.MockFailure(job.ID, indexInfo.ID))
+			}
+		})
+		return true, ver, nil
+	default:
+		return false, ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("checkpoint", checkpoint.State)
 	}
-	bc.SetDone()
-	return true, ver, nil
+}
+
+func loadCheckpoint(w *worker, job *model.Job) (checkpoint *model.ReorgCheckpoint, err error) {
+	sess, err := w.sessPool.get()
+	if err != nil {
+		return nil, err
+	}
+	defer w.sessPool.put(sess)
+	rh := newReorgHandler(newSession(sess))
+	reorgMeta, err := rh.GetDDLReorgMeta(job)
+	if err != nil {
+		return nil, err
+	}
+	if reorgMeta == nil {
+		return nil, nil
+	}
+	return reorgMeta.Checkpoint, nil
+}
+
+func progressCheckpoint(w *worker, job *model.Job, checkpoint *model.ReorgCheckpoint) error {
+	if checkpoint == nil {
+		return nil
+	}
+	sess, err := w.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.put(sess)
+	rh := newReorgHandler(newSession(sess))
+	return rh.UpdateDDLReorgMeta(job, &model.ReorgMeta{Checkpoint: checkpoint})
 }
 
 func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -2241,7 +2353,6 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		return err
 	}
 	ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
-	bc.SetDone()
 	return nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -191,4 +192,9 @@ func (glueLit) Record(string, uint64) {
 
 func encodeBackendTag(jobID int64) string {
 	return fmt.Sprintf("%d", jobID)
+}
+
+// DecodeBackendTag decodes the backend tag to job ID.
+func DecodeBackendTag(name string) (int64, error) {
+	return strconv.ParseInt(name, 10, 64)
 }

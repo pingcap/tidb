@@ -833,8 +833,10 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 	}
 
 	sstDir := engineSSTDir(local.localStoreDir, engineUUID)
-	if err := os.RemoveAll(sstDir); err != nil {
-		return errors.Trace(err)
+	if !cfg.KeepSortDir {
+		if err := os.RemoveAll(sstDir); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if !common.IsDirExists(sstDir) {
 		if err := os.Mkdir(sstDir, 0o750); err != nil {
@@ -860,6 +862,9 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 	})
 	engine := e.(*Engine)
 	engine.db = db
+	if RunInTest {
+		lastPebbleDB = db
+	}
 	engine.sstIngester = dbSSTIngester{e: engine}
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
@@ -1774,4 +1779,17 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+var lastPebbleDB *pebble.DB
+
+// CloseDBForTest is only used for test.
+func CloseDBForTest() {
+	defer func() {
+		recover() // Ignore the already closed error.
+	}()
+	if lastPebbleDB != nil {
+		_ = lastPebbleDB.Close()
+		lastPebbleDB = nil
+	}
 }

@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -37,7 +38,6 @@ type BackendContext struct {
 	EngMgr   engineManager
 	sysVars  map[string]string
 	diskRoot DiskRoot
-	done     bool
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -47,6 +47,12 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
+
+	failpoint.Inject("MockCheckpointFailImport", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(MockFailure(bc.jobID, indexID))
+		}
+	})
 
 	err := ei.ImportAndClean()
 	if err != nil {
@@ -76,26 +82,26 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 const importThreshold = 0.85
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *BackendContext) Flush(indexID int64) error {
+func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 	ei, exist := bc.EngMgr.Load(indexID)
 	if !exist {
 		logutil.BgLogger().Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		return false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	err := bc.diskRoot.UpdateUsageAndQuota()
+	err = bc.diskRoot.UpdateUsageAndQuota()
 	if err != nil {
 		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("index ID", indexID))
-		return err
+		return false, err
 	}
 
+	err = ei.Flush()
+	if err != nil {
+		return false, err
+	}
 	if bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
 		// TODO: it should be changed according checkpoint solution.
 		// Flush writer cached data into local disk for engine first.
-		err := ei.Flush()
-		if err != nil {
-			return err
-		}
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
@@ -104,18 +110,9 @@ func (bc *BackendContext) Flush(indexID int64) error {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 				zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-			return err
+			return false, err
 		}
+		return true, nil
 	}
-	return nil
-}
-
-// Done returns true if the lightning backfill is done.
-func (bc *BackendContext) Done() bool {
-	return bc.done
-}
-
-// SetDone sets the done flag.
-func (bc *BackendContext) SetDone() {
-	bc.done = true
+	return false, nil
 }

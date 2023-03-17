@@ -619,7 +619,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	// Check whether the reorg information is cleaned up.
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
-	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, _, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)

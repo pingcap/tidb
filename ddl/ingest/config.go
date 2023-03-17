@@ -90,6 +90,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 			DB:   dbName,
 			Name: tbName,
 		},
+		KeepSortDir: true,
 	}
 }
 

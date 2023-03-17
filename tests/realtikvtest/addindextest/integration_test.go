@@ -477,6 +477,54 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	ddl.SetBackfillTaskChanSizeForTest(1024)
 }
 
+func TestAddIndexCheckpointFail(t *testing.T) {
+	local.RunInTest = true
+	defer func() {
+		local.RunInTest = false
+	}()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+
+	ingest.TotalWriteNumForTest = &atomic.Int64{}
+	ddl.SetBackfillTaskChanSizeForTest(2)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/MockCheckpointFailWriting", `1*return(true)->return(false)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCheckpointFailWriting", `return(true)`))
+	tk.MustExec("alter table t add index idx(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCheckpointFailWriting"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/MockCheckpointFailWriting"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t drop index idx;")
+	require.Equal(t, int64(8), ingest.TotalWriteNumForTest.Load())
+
+	ingest.TotalWriteNumForTest = &atomic.Int64{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/MockCheckpointFailImport", `1*return(true)->return(false)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCheckpointFailImport", `return(true)`))
+	tk.MustExec("alter table t add index idx(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCheckpointFailImport"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/MockCheckpointFailImport"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t drop index idx;")
+	require.Equal(t, int64(8), ingest.TotalWriteNumForTest.Load())
+
+	ingest.TotalWriteNumForTest = &atomic.Int64{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCheckpointFailImported", `1*return(true)->return(false)`))
+	tk.MustExec("alter table t add index idx(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockCheckpointFailImported"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t drop index idx;")
+	require.Equal(t, int64(8), ingest.TotalWriteNumForTest.Load())
+}
+
 type testCallback struct {
 	ddl.Callback
 	OnJobRunBeforeExported func(job *model.Job)

@@ -16,12 +16,16 @@ package ingest
 
 import (
 	"context"
+	"encoding/hex"
 	"strconv"
 	"sync/atomic"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -63,6 +67,16 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 	}
 }
 
+// MockFail is used to mock a failure.
+var MockFail = "MockFail"
+
+func MockFailure(jobID int64, indexID int64) error {
+	// To workaround with the "lock held by current process" error.
+	local.CloseDBForTest()
+	InitGlobalLightningEnv() // Mock failure.
+	return errors.Errorf(MockFail)
+}
+
 // Flush imports all the key-values in engine to the storage.
 func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
@@ -71,6 +85,11 @@ func (ei *engineInfo) Flush() error {
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
+	failpoint.Inject("MockCheckpointFailWriting", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(MockFailure(ei.jobID, ei.indexID))
+		}
+	})
 	return nil
 }
 
@@ -214,8 +233,15 @@ func (ei *engineInfo) closeWriters() error {
 	return firstErr
 }
 
+// TotalWriteNumForTest is used to record the total write rows number for test.
+var TotalWriteNumForTest *atomic.Int64
+
 // WriteRow Write one row into local writer buffer.
 func (wCtx *WriterContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
+	if TotalWriteNumForTest != nil {
+		TotalWriteNumForTest.Add(1)
+		logutil.BgLogger().Info("WriteRow", zap.String("key", hex.EncodeToString(key)))
+	}
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal

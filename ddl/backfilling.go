@@ -1052,9 +1052,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
 		if ingestBeCtx != nil {
-			err := ingestBeCtx.Flush(reorgInfo.currElement.ID)
+			imported, err := ingestBeCtx.Flush(reorgInfo.currElement.ID)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if imported {
+				reorgInfo.checkpoint.DoneKey = startKey
 			}
 		}
 		remains, err := dc.handleRangeTasks(scheduler, t, &totalAddedCount, kvRanges)

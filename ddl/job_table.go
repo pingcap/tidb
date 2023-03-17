@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -526,15 +528,16 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 }
 
 // getDDLReorgHandle gets DDL reorg handle.
-func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key,
+	physicalTableID int64, checkpoint *model.ReorgCheckpoint, err error) {
+	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
 	rows, err := sess.execute(ctx, sql, "get_handle")
 	if err != nil {
-		return nil, nil, nil, 0, err
+		return nil, nil, nil, 0, nil, err
 	}
 	if len(rows) == 0 {
-		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
+		return nil, nil, nil, 0, nil, meta.ErrDDLReorgElementNotExist
 	}
 	id := rows[0].GetInt64(0)
 	tp := rows[0].GetBytes(1)
@@ -545,15 +548,59 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
+	reorgMeta := rows[0].GetBytes(5)
+	if len(reorgMeta) != 0 {
+		m := &model.ReorgMeta{}
+		err := m.Decode(reorgMeta)
+		if err != nil {
+			return nil, nil, nil, 0, nil, err
+		}
+		checkpoint = m.Checkpoint
+	} else {
+		checkpoint = &model.ReorgCheckpoint{}
+	}
 	return
 }
 
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
 // Caller should wrap this in a separate transaction, to avoid conflicts.
-func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
-		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
-	_, err := sess.execute(context.Background(), sql, "update_handle")
+func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key,
+	physicalTableID int64, element *meta.Element, checkpoint *model.ReorgCheckpoint) error {
+	reorgMeta := &model.ReorgMeta{
+		Checkpoint: checkpoint,
+	}
+	reorgMetaBytes, err := reorgMeta.Encode()
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d, reorg_meta = %s where job_id = %d",
+		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, wrapKey2String(reorgMetaBytes), jobID)
+	_, err = sess.execute(context.Background(), sql, "update_handle")
+	return err
+}
+
+func getDDLReorgMeta(sess *session, job *model.Job) (reorgMeta *model.ReorgMeta, err error) {
+	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
+	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
+	rows, err := sess.execute(ctx, sql, "get_reorg_meta")
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	if rows[0].IsNull(0) {
+		return nil, nil
+	}
+	reorgMeta = &model.ReorgMeta{}
+	err = reorgMeta.Decode(rows[0].GetBytes(0))
+	return reorgMeta, err
+}
+
+func updateDDLReorgMeta(sess *session, jobID int64, reorgMeta *model.ReorgMeta) error {
+	reorgMetaBytes, err := reorgMeta.Encode()
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d", wrapKey2String(reorgMetaBytes), jobID)
+	_, err = sess.execute(context.Background(), sql, "update_reorg_meta")
 	return err
 }
 
@@ -570,6 +617,14 @@ func initDDLReorgHandle(s *session, jobID int64, startKey kv.Key, endKey kv.Key,
 		_, err = se.execute(context.Background(), ins, "init_handle")
 		return err
 	})
+}
+
+func newReorgMeta(startKey kv.Key) *model.ReorgMeta {
+	cfg := config.GetGlobalConfig()
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	return &model.ReorgMeta{
+		Checkpoint: model.NewReorgCheckpoint(startKey, addr),
+	}
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.

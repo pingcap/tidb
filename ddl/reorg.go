@@ -17,6 +17,7 @@ package ddl
 import (
 	"encoding/hex"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -396,6 +398,7 @@ type reorgInfo struct {
 	dbInfo          *model.DBInfo
 	elements        []*meta.Element
 	currElement     *meta.Element
+	checkpoint      *model.ReorgCheckpoint
 }
 
 func (r *reorgInfo) String() string {
@@ -601,6 +604,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		end     kv.Key
 		pid     int64
 		info    reorgInfo
+		cp      *model.ReorgCheckpoint
 	)
 
 	if job.SnapshotVer == 0 {
@@ -656,6 +660,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
+		cp = &model.ReorgCheckpoint{}
 	} else {
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
@@ -669,7 +674,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		})
 
 		var err error
-		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
+		element, start, end, pid, cp, err = rh.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -693,6 +698,16 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	info.elements = elements
 	info.mergingTmpIdx = mergingTmpIdx
 	info.dbInfo = dbInfo
+	info.checkpoint = cp
+	if info.first && len(cp.DoneKey) > 0 && info.StartKey.Cmp(cp.DoneKey) > 0 {
+		cfg := config.GetGlobalConfig()
+		currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+		if currentAddr != cp.InstanceAddr {
+			// The DDL owner is changed, we use the last imported key as the start key instead of
+			// the start key in reorg info, because the latter is updated when the range is flushed to the local engine.
+			info.StartKey = cp.DoneKey
+		}
+	}
 
 	return &info, nil
 }
@@ -704,6 +719,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		end     kv.Key
 		pid     int64
 		info    reorgInfo
+		cp      *model.ReorgCheckpoint
 	)
 	if job.SnapshotVer == 0 {
 		info.first = true
@@ -733,9 +749,10 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
+		cp = &model.ReorgCheckpoint{}
 	} else {
 		var err error
-		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
+		element, start, end, pid, cp, err = rh.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -755,7 +772,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	info.currElement = element
 	info.elements = elements
 	info.dbInfo = dbInfo
-
+	info.checkpoint = cp
 	return &info, nil
 }
 
@@ -777,7 +794,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 		return
 	}
 	rh := newReorgHandler(sess)
-	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement, r.checkpoint)
 	err1 := sess.commit()
 	if err == nil {
 		err = err1
@@ -829,6 +846,17 @@ func CleanupDDLReorgHandles(job *model.Job, s *session) {
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
-func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key,
+	physicalTableID int64, checkpoint *model.ReorgCheckpoint, err error) {
 	return getDDLReorgHandle(r.s, job)
+}
+
+// GetDDLReorgMeta gets the reorg meta for a DDL job.
+func (r *reorgHandler) GetDDLReorgMeta(job *model.Job) (*model.ReorgMeta, error) {
+	return getDDLReorgMeta(r.s, job)
+}
+
+// UpdateDDLReorgMeta updates the reorg meta for a DDL job.
+func (r *reorgHandler) UpdateDDLReorgMeta(job *model.Job, reorgMeta *model.ReorgMeta) error {
+	return updateDDLReorgMeta(r.s, job.ID, reorgMeta)
 }

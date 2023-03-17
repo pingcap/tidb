@@ -22,6 +22,7 @@ import (
 )
 
 // DDLReorgMeta is meta info of DDL reorganization.
+// It only exists in the DDL job.
 type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
@@ -133,5 +134,54 @@ func (bm *BackfillMeta) Encode() ([]byte, error) {
 // Decode decodes BackfillMeta from the json buffer.
 func (bm *BackfillMeta) Decode(b []byte) error {
 	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
+}
+
+// ReorgMeta corresponds to the reorg_meta field of mysql.tidb_ddl_reorg table.
+type ReorgMeta struct {
+	Checkpoint *ReorgCheckpoint `json:"checkpoint"`
+}
+
+func (rm *ReorgMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(rm)
+	return b, errors.Trace(err)
+}
+
+func (rm *ReorgMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, rm)
+	return errors.Trace(err)
+}
+
+type ReorgCheckpoint struct {
+	State        ReorgCheckpointState
+	DoneKey      []byte
+	InstanceAddr string
+	Checksum     uint64
+}
+
+type ReorgCheckpointState byte
+
+const (
+	CheckpointStateNone         ReorgCheckpointState = 0
+	CheckpointStateWriting      ReorgCheckpointState = 10
+	CheckpointStateEngineClosed ReorgCheckpointState = 20
+	CheckpointStateImported     ReorgCheckpointState = 30
+)
+
+func NewReorgCheckpoint(startKey []byte, instanceAddr string) *ReorgCheckpoint {
+	return &ReorgCheckpoint{
+		State:        CheckpointStateNone,
+		DoneKey:      startKey,
+		InstanceAddr: instanceAddr,
+	}
+}
+
+func (rc *ReorgCheckpoint) Encode() ([]byte, error) {
+	b, err := json.Marshal(rc)
+	return b, errors.Trace(err)
+}
+
+func (rc *ReorgCheckpoint) Decode(b []byte) error {
+	err := json.Unmarshal(b, rc)
 	return errors.Trace(err)
 }
