@@ -226,7 +226,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1], args[2])
 	case ast.Ifnull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
-	case ast.Like:
+	case ast.Like, ast.Ilike:
 		ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
 		if err != nil {
 			return nil, err

@@ -386,6 +386,7 @@ var tokenMap = map[string]int{
 	"IDENTIFIED":               identified,
 	"IF":                       ifKwd,
 	"IGNORE":                   ignore,
+	"ILIKE":                    ilike,
 	"IMPORT":                   importKwd,
 	"IMPORTS":                  imports,
 	"IN":                       in,
