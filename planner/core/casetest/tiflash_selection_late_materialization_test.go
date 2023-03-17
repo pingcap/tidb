@@ -30,10 +30,10 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (a int, b int, c int)")
-	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("create table t1 (a int, b int, c int, t time)")
+	tk.MustExec("insert into t1 values(1,1,1,'08:00:00'), (2,2,2,'09:00:00'), (3,3,3,'10:00:00')")
 	for i := 0; i < 14; i++ {
-		tk.MustExec("insert into t1(a,b,c) select a,b,c from t1;")
+		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
 	tk.MustExec("analyze table t1;")
 
