@@ -506,6 +506,11 @@ error = '''
 system requirement not met
 '''
 
+["Lightning:Restore:ErrAddIndexFailed"]
+error = '''
+add index on table %s failed
+'''
+
 ["Lightning:Restore:ErrAllocTableRowIDs"]
 error = '''
 allocate table row id error
@@ -519,6 +524,11 @@ cannot find local file for table: %s engineDir: %s
 ["Lightning:Restore:ErrCreateSchema"]
 error = '''
 create schema failed, table: %s, stmt: %s
+'''
+
+["Lightning:Restore:ErrDropIndexFailed"]
+error = '''
+drop index %s on table %s failed
 '''
 
 ["Lightning:Restore:ErrEncodeKV"]

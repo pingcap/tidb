@@ -61,6 +61,7 @@ type Metrics struct {
 	ProcessedEngineCounter               *prometheus.CounterVec
 	ChunkCounter                         *prometheus.CounterVec
 	BytesCounter                         *prometheus.CounterVec
+	RowsCounter                          *prometheus.CounterVec
 	ImportSecondsHistogram               prometheus.Histogram
 	ChunkParserReadBlockSecondsHistogram prometheus.Histogram
 	ApplyWorkerSecondsHistogram          *prometheus.HistogramVec
@@ -133,6 +134,12 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 		//  - running
 		//  - finished
 		//  - failed
+		RowsCounter: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "lightning",
+				Name:      "rows",
+				Help:      "count of total rows",
+			}, []string{"table"}),
 
 		ImportSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -244,6 +251,7 @@ func (m *Metrics) RegisterTo(r promutil.Registry) {
 		m.ProcessedEngineCounter,
 		m.ChunkCounter,
 		m.BytesCounter,
+		m.RowsCounter,
 		m.ImportSecondsHistogram,
 		m.ChunkParserReadBlockSecondsHistogram,
 		m.ApplyWorkerSecondsHistogram,
@@ -269,6 +277,7 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ProcessedEngineCounter)
 	r.Unregister(m.ChunkCounter)
 	r.Unregister(m.BytesCounter)
+	r.Unregister(m.RowsCounter)
 	r.Unregister(m.ImportSecondsHistogram)
 	r.Unregister(m.ChunkParserReadBlockSecondsHistogram)
 	r.Unregister(m.ApplyWorkerSecondsHistogram)

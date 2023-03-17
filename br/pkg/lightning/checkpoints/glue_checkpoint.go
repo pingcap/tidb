@@ -338,6 +338,10 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 		cp.Status = CheckpointStatus(row.GetUint64(0))
 		cp.AllocBase = row.GetInt64(1)
 		cp.TableID = row.GetInt64(2)
+		rawTableInfo := row.GetBytes(3)
+		if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
+			return errors.Trace(err)
+		}
 		return nil
 	})
 

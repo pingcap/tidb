@@ -27,6 +27,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -52,9 +53,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -116,8 +119,9 @@ const (
 )
 
 var (
-	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
-	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
+	minTiKVVersionForDuplicateResolution     = *semver.New("5.2.0")
+	maxTiKVVersionForDuplicateResolution     = version.NextMajorVersion()
+	minTiDBVersionForAutoEnableAddIndexBySql = *semver.New("7.0.0")
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -210,11 +214,13 @@ type Controller struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
-	store             storage.ExternalStorage
-	ownStore          bool
-	metaMgrBuilder    metaMgrBuilder
-	errorMgr          *errormanager.ErrorManager
-	taskMgr           taskMetaMgr
+	addIndexLimit     *worker.Pool
+
+	store          storage.ExternalStorage
+	ownStore       bool
+	metaMgrBuilder metaMgrBuilder
+	errorMgr       *errormanager.ErrorManager
+	taskMgr        taskMetaMgr
 
 	diskQuotaLock  sync.RWMutex
 	diskQuotaState atomic.Int32
@@ -350,6 +356,25 @@ func NewImportControllerWithPauser(
 			}
 		}
 
+		if cfg.TikvImporter.AddIndexBySQL == nil {
+			versionStr, err := version.FetchVersion(ctx, db)
+			if err != nil {
+				return nil, err
+			}
+			if err := version.CheckTiDBVersion(versionStr, minTiDBVersionForAutoEnableAddIndexBySql, version.NextMajorVersion()); err != nil {
+				if berrors.Is(err, berrors.ErrVersionMismatch) {
+					falseVal := false
+					cfg.TikvImporter.AddIndexBySQL = &falseVal
+				} else {
+					return nil, err
+				}
+			} else {
+				trueVal := true
+				cfg.TikvImporter.AddIndexBySQL = &trueVal
+				log.FromContext(ctx).Info("auto enable add-index-by-sql", zap.String("tidb_version", versionStr))
+			}
+		}
+
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
@@ -423,6 +448,9 @@ func NewImportControllerWithPauser(
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
+		// Currently, TiDB add index acceration doesn't support multiple tables simultaneously.
+		// So we use a single worker to ensure at most one table is adding index at the same time.
+		addIndexLimit: worker.NewPool(ctx, 1, "add-index"),
 
 		store:          p.DumpFileStorage,
 		ownStore:       p.OwnExtStorage,
@@ -821,12 +849,32 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
+	if err := rc.loadDesiredTableInfos(ctx); err != nil {
+		return err
+	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates(log.FromContext(ctx))
 
 	// Estimate the number of chunks for progress reporting
 	return rc.estimateChunkCountIntoMetrics(ctx)
+}
+
+func (rc *Controller) loadDesiredTableInfos(ctx context.Context) error {
+	for _, dbInfo := range rc.dbInfos {
+		for _, tableInfo := range dbInfo.Tables {
+			cp, err := rc.checkpointsDB.Get(ctx, common.UniqueTable(dbInfo.Name, tableInfo.Name))
+			if err != nil {
+				return err
+			}
+			// If checkpoint is disabled, cp.TableInfo will be nil.
+			// In this case, we just use current tableInfo as desired tableInfo.
+			if cp.TableInfo != nil {
+				tableInfo.Desired = cp.TableInfo
+			}
+		}
+	}
+	return nil
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -1510,6 +1558,13 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			return errors.Trace(err)
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
+
+		// Drop all secondary indexes before restore.
+		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+			if err := rc.dropAllIndexes(ctx); err != nil {
+				return err
+			}
+		}
 	}
 
 	type task struct {
@@ -1671,6 +1726,73 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		return restoreErr.Get()
 	}
 
+	return nil
+}
+
+func (rc *Controller) dropAllIndexes(ctx context.Context) error {
+	for _, dbInfo := range rc.dbInfos {
+		for _, tblInfo := range dbInfo.Tables {
+			if err := rc.dropTableIndexes(ctx, tblInfo); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (rc *Controller) dropTableIndexes(ctx context.Context, tblInfo *checkpoints.TidbTableInfo) error {
+	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+
+	var remainIndexes []*model.IndexInfo
+	cols := tblInfo.Core.Columns
+loop:
+	for _, idxInfo := range tblInfo.Core.Indices {
+		if idxInfo.State != model.StatePublic {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Primary key is a cluster index.
+		if idxInfo.Primary && tblInfo.Core.HasClusteredIndex() {
+			remainIndexes = append(remainIndexes, idxInfo)
+			continue
+		}
+		// Skip index that contains auto-increment column.
+		// Because auto colum must be defined as a key.
+		for _, idxCol := range idxInfo.Columns {
+			flag := cols[idxCol.Offset].GetFlag()
+			if mysql.HasAutoIncrementFlag(flag) {
+				remainIndexes = append(remainIndexes, idxInfo)
+				continue loop
+			}
+		}
+
+		var sqlStr string
+		if idxInfo.Primary {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+		} else {
+			sqlStr = fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, common.EscapeIdentifier(idxInfo.Name.O))
+		}
+
+		db := rc.tidbGlue.GetSQLExecutor()
+		logger.Info("drop index", zap.String("sql", sqlStr))
+		if err := db.ExecuteWithLog(ctx, sqlStr, "drop index", logger); err != nil {
+			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+				switch merr.Number {
+				case errno.ErrCantDropFieldOrKey, errno.ErrDropIndexNeededInForeignKey:
+					remainIndexes = append(remainIndexes, idxInfo)
+					logger.Info("can't drop index, skip", zap.String("index", idxInfo.Name.O), zap.Error(err))
+					continue loop
+				}
+			}
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
+		}
+	}
+	if len(remainIndexes) < len(tblInfo.Core.Indices) {
+		// Must clone (*model.TableInfo) before modifying it, since it may be referenced in other place.
+		tblInfo.Core = tblInfo.Core.Clone()
+		tblInfo.Core.Indices = remainIndexes
+	}
 	return nil
 }
 
