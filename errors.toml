@@ -1736,6 +1736,11 @@ error = '''
 Job ID %d doesn't exist
 '''
 
+["executor:8172"]
+error = '''
+The job can not be DETACHED when LOAD DATA LOCAL INFILE
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
