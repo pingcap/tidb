@@ -8,7 +8,9 @@ TP queries can get lots of performance benefits from Plan Cache, but the current
 Some other mature Databases have already supported this feature: 1) [Oracle](https://docs.oracle.com/en/database/oracle/oracle-database/19/tgsql/improving-rwp-cursor-sharing.html) and 2) [OceanBase](https://www.oceanbase.com/docs/common-oceanbase-database-cn-10000000001576952).
 
 ## Overview
-Plan Cache can be split into 2 parts logically:
+![non-prepared-plan-cache](./imgs/non-prepared-plan-cache.png)
+
+As the left part of the above diagram show, Plan Cache can be split into 2 parts logically:
 1. The Frontend: this part is used to deal with different protocols (binary or text), and prepare all arguments required by the backend (SQL, AST, Normalized Parameters, etc.)
 2. The Backend: find an available cached Plan from the cache or generate a new Plan for the input arguments
 
