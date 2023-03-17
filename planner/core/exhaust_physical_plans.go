@@ -1304,7 +1304,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we need to revert the logic below for now.
-	// 
+	//
 	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We use it as an upper bound here.
