@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -620,14 +618,6 @@ func initDDLReorgHandle(s *session, jobID int64, startKey kv.Key, endKey kv.Key,
 		_, err = se.execute(context.Background(), ins, "init_handle")
 		return err
 	})
-}
-
-func newReorgMeta(startKey kv.Key) *model.ReorgMeta {
-	cfg := config.GetGlobalConfig()
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-	return &model.ReorgMeta{
-		Checkpoint: model.NewReorgCheckpoint(startKey, addr),
-	}
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
