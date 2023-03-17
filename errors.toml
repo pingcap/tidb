@@ -1698,7 +1698,7 @@ The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's
 
 ["executor:8159"]
 error = '''
-Access to the source file has been denied. Please check the URI, access key and secret access key are correct
+Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
 '''
 
 ["executor:8160"]

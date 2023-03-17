@@ -143,7 +143,7 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return 0, exeerrors.ErrLoadDataCantAccess
+		return 0, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(getMsgFromBRError(err))
 	}
 
 	idx := strings.IndexByte(path, '*')
