@@ -1147,9 +1147,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
 	replicaRead := worker.req.ReplicaRead
-	if replicaRead == kv.ReplicaReadLeader && task.redirect2Replica != nil && len(task.batchTaskList) > 0 {
-		replicaRead = kv.ReplicaReadFollower
-	}
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(replicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:          priorityToPB(worker.req.Priority),
@@ -1182,6 +1179,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		req.ReplicaRead = true
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
+		if replicaRead == kv.ReplicaReadLeader {
+			replicaRead = kv.ReplicaReadFollower
+			req.ReplicaRead = true
+			req.ReplicaReadType = options.GetTiKVReplicaReadType(replicaRead)
+		}
 	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
