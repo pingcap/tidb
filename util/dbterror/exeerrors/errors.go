@@ -92,5 +92,6 @@ var (
 	ErrDuplicateOption             = dbterror.ClassExecutor.NewStd(mysql.ErrDuplicateOption)
 	ErrLoadDataUnsupportedOption   = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedOption)
 	ErrLoadDataJobNotFound         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobNotFound)
+	ErrLoadDataInvalidOperation    = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataCantDetachWithLocal = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataCantDetachWithLocal)
 )

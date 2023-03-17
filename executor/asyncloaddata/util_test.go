@@ -201,13 +201,14 @@ func TestKeepAlive(t *testing.T) {
 	expected.StatusMessage = ""
 	checkEqualIgnoreTimes(t, expected, info)
 
-	// Now the worker calls FailJob
+	// Now the worker calls FailJob, but the status should still be canceled,
+	// that's more friendly.
 
 	err = FailJob(ctx, tk.Session(), id, "failed to keepalive")
 	require.NoError(t, err)
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
-	expected.Status = JobFailed
+	expected.Status = JobCanceled
 	expected.StatusMessage = "failed to keepalive"
 	checkEqualIgnoreTimes(t, expected, info)
 }
@@ -264,11 +265,8 @@ func TestJobIsFailedAndGetAllJobs(t *testing.T) {
 	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
 	require.NoError(t, err)
 	checkEqualIgnoreTimes(t, expected, info)
-	err = UpdateJobExpectedStatus(ctx, tk.Session(), id, JobExpectedCanceled)
-	require.NoError(t, err)
-	info, err = GetJobInfo(ctx, tk.Session(), id, "user")
-	require.NoError(t, err)
-	checkEqualIgnoreTimes(t, expected, info)
+	err = CancelJob(ctx, tk.Session(), id, "user")
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. need status running or paused, but got failed")
 
 	// add job of another user and test GetAllJobInfo
 

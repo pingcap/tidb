@@ -137,6 +137,7 @@ func UpdateJobProgress(
 		`UPDATE mysql.load_data_jobs
 		SET progress = %?, update_time = CURRENT_TIMESTAMP(6)
 		WHERE job_id = %?
+			AND end_time IS NULL
 			AND (update_time >= DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL %? SECOND)
 				OR update_time IS NULL);`,
 		progress, jobID, OfflineThresholdInSec)
@@ -178,6 +179,95 @@ func FailJob(
 	return err
 }
 
+// CancelJob cancels a load data job. Only a running/paused job can be canceled.
+func CancelJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) (err error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err = conn.ExecuteInternal(ctx, "BEGIN PESSIMISTIC;")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := conn.ExecuteInternal(ctx, "ROLLBACK;")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = conn.ExecuteInternal(ctx, "COMMIT;")
+		if err != nil {
+			return
+		}
+	}()
+
+	var (
+		rs   sqlexec.RecordSet
+		rows []chunk.Row
+	)
+	rs, err = conn.ExecuteInternal(ctx,
+		`SELECT expected_status, end_time, error_message FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+
+	if len(rows) < 1 {
+		return exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
+	}
+	status := rows[0].GetEnum(0).String()
+	if status != "running" && status != "paused" {
+		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs(fmt.Sprintf("need status running or paused, but got %s", status))
+	}
+	endTimeIsNull := rows[0].IsNull(1)
+	if !endTimeIsNull {
+		hasError := !rows[0].IsNull(2)
+		if hasError {
+			return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got failed")
+		}
+		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got finished")
+	}
+
+	_, err = conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
+		SET expected_status = 'canceled',
+		    end_time = CURRENT_TIMESTAMP(6),
+		    error_message = 'canceled by user'
+		WHERE job_id = %?;`,
+		jobID)
+	return err
+}
+
+// DropJob drops a load data job.
+func DropJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err := conn.ExecuteInternal(ctx,
+		`DELETE FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err == nil {
+		return err
+	}
+	if conn.GetSessionVars().StmtCtx.AffectedRows() < 1 {
+		return exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
+	}
+	return nil
+}
+
 // JobExpectedStatus is the expected status of a load data job. User can set the
 // expected status of a job and worker will respect it.
 type JobExpectedStatus int
@@ -192,6 +282,7 @@ const (
 )
 
 // UpdateJobExpectedStatus updates the expected status of a load data job.
+// TODO: remove it?
 func UpdateJobExpectedStatus(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -297,6 +388,7 @@ func GetJobStatus(
 // start_time).
 func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 	// ending status has the highest priority
+	expectedStatus := row.GetEnum(0).String()
 	endTimeIsNull := row.IsNull(2)
 	if !endTimeIsNull {
 		resultMsgIsNull := row.IsNull(3)
@@ -304,13 +396,16 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 			resultMessage := row.GetString(3)
 			return JobFinished, resultMessage, nil
 		}
+
 		errorMessage := row.GetString(4)
+		if expectedStatus == "canceled" {
+			return JobCanceled, errorMessage, nil
+		}
 		return JobFailed, errorMessage, nil
 	}
 
 	isAlive := row.GetInt64(1) == 1
 	startTimeIsNull := row.IsNull(5)
-	expectedStatus := row.GetEnum(0).String()
 
 	switch expectedStatus {
 	case "canceled":

@@ -19,6 +19,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestLoadSQLDump() {
@@ -43,4 +44,12 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 		"2 b",
 	))
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+
+	rows := s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs;").Rows()
+	require.Greater(s.T(), len(rows), 0)
+	jobID := rows[len(rows)-1][0].(string)
+	err := s.tk.ExecToErr("CANCEL LOAD DATA JOB " + jobID)
+	require.ErrorContains(s.T(), err, "The current job status cannot perform the operation. need status running or paused, but got finished")
+	s.tk.MustExec("DROP LOAD DATA JOB " + jobID)
+	s.tk.MustQuery("SELECT job_id FROM mysql.load_data_jobs WHERE job_id = " + jobID).Check(testkit.Rows())
 }
