@@ -728,7 +728,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
-	savedBlockNames := *(sctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
 	} else {
@@ -740,7 +740,10 @@ func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, pr
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
-	return b, savedBlockNames
+	if savedBlockNames == nil {
+		return b, nil
+	}
+	return b, *savedBlockNames
 }
 
 // ResetForReuse reset the plan builder, put it into pool for reuse.
