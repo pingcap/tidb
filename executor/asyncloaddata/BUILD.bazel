@@ -34,7 +34,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/config",
-        "//executor",
+        "//executor/importer",
         "//kv",
         "//parser/auth",
         "//testkit",
