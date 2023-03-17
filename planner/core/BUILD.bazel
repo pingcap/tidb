@@ -224,7 +224,6 @@ go_test(
         "//expression/aggregation",
         "//infoschema",
         "//kv",
-        "//meta/autoid",
         "//metrics",
         "//parser",
         "//parser/ast",
