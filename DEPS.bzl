@@ -34,8 +34,8 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sum = "h1:6qXr+R5w+ktL5UkwEbPp+fEvfyoMPche6GkOpGHZcLc=",
-        version = "v0.4.2",
+        sum = "h1:o/n5/K5gXqk8Gozvs2cnL0F2S1/g1vcGCAx2vETjITw=",
+        version = "v0.4.3",
     )
     go_repository(
         name = "com_4d63_gocheckcompilerdirectives",
@@ -480,8 +480,8 @@ def go_deps():
         name = "com_github_chavacava_garif",
         build_file_proto_mode = "disable",
         importpath = "github.com/chavacava/garif",
-        sum = "h1:cy5GCEZLUCshCGCRRUjxHrDUqkB4l5cuUt3ShEckQEo=",
-        version = "v0.0.0-20221024190013-b3ef35877348",
+        sum = "h1:W9o46d2kbNL06lq7UNDPV0zYLzkrde/bjIqO02eoll0=",
+        version = "v0.0.0-20230227094218-b8c73b2037b8",
     )
 
     go_repository(
@@ -1048,8 +1048,8 @@ def go_deps():
         name = "com_github_fatih_color",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fatih/color",
-        sum = "h1:qfhVLaG5s+nCROl1zJsZRxFeYrHLqWroPOQ8BWiNb4w=",
-        version = "v1.14.1",
+        sum = "h1:kOqh6YHBtK8aywxGerMG2Eq3H6Qgoqeo13Bk2Mv/nBs=",
+        version = "v1.15.0",
     )
     go_repository(
         name = "com_github_fatih_structs",
@@ -2868,8 +2868,8 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable",
         importpath = "github.com/mgechev/revive",
-        sum = "h1:UF9AR8pOAuwNmhXj2odp4mxv9Nx2qUIwVz8ZsU+Mbec=",
-        version = "v1.2.5",
+        sum = "h1:OlQkcH40IB2cGuprTPcjB0iIUddgVZgGmDX3IAMR8D4=",
+        version = "v1.3.1",
     )
 
     go_repository(
@@ -3583,8 +3583,8 @@ def go_deps():
         name = "com_github_rivo_uniseg",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rivo/uniseg",
-        sum = "h1:utMvzDsuh3suAEnhH0RdHmoPbU648o6CvXxTx4SBMOw=",
-        version = "v0.4.3",
+        sum = "h1:8TfxU8dW6PdqD27gjM8MVNuicgxIjxpm4K7x4jp8sis=",
+        version = "v0.4.4",
     )
     go_repository(
         name = "com_github_rlmcpherson_s3gof3r",
