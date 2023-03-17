@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
@@ -206,6 +207,16 @@ func TestResourceGroupHint(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control='off'")
 	tk.MustQuery("select /*+ resource_group(rg1) */ DB, RESOURCE_GROUP from information_schema.processlist").Check(testkit.Rows("test "))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8250 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature"))
+}
+
+func TestAlreadyExistsDefaultResourceGroup(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/managerAlreadyCreateSomeGroups", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/managerAlreadyCreateSomeGroups"))
+	}()
+	testkit.CreateMockStoreAndDomain(t)
+	groups, _ := infosync.ListResourceGroups(context.TODO())
+	require.Equal(t, 2, len(groups))
 }
 
 func TestNewResourceGroupFromOptions(t *testing.T) {

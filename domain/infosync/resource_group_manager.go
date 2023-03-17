@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -52,6 +53,9 @@ func (m *mockResourceGroupManager) GetResourceGroup(ctx context.Context, name st
 func (m *mockResourceGroupManager) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
+	if _, ok := m.groups[group.Name]; ok {
+		return "", fmt.Errorf("the group %s already exists", group.Name)
+	}
 	m.groups[group.Name] = group
 	return "Success!", nil
 }
