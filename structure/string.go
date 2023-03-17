@@ -79,3 +79,8 @@ func (t *TxStructure) Clear(key []byte) error {
 	}
 	return errors.Trace(err)
 }
+
+// Expose how to encode a key to fetch the MVCC info
+func (t *TxStructure) EncodeStringDataKey(key []byte) kv.Key {
+	return t.encodeStringDataKey(key)
+}

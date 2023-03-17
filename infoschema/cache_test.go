@@ -151,28 +151,11 @@ func TestGetByTimestamp(t *testing.T) {
 
 	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
 	// schema version 2 doesn't have timestamp set
-	ic.Insert(is2, 3, 0)
+	ic.Insert(is2, 3, 2)
 	require.Equal(t, is3, ic.GetLatest())
 	require.Nil(t, ic.GetBySnapshotTS(0))
-	require.Nil(t, ic.GetBySnapshotTS(2))
-	require.Equal(t, is3, ic.GetBySnapshotTS(3))
-}
-
-func TestGetByTimestampNoSchemaTiemstampSet(t *testing.T) {
-	ic := infoschema.NewCache(16)
-	require.NotNil(t, ic)
-	require.Nil(t, ic.GetLatest())
-
-	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
-	ic.Insert(is1, 1, 0)
-	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
-	ic.Insert(is2, 2, 0)
-	is0 := infoschema.MockInfoSchemaWithSchemaVer(nil, 0)
-	ic.Insert(is0, 0, 0)
-
-	require.Equal(t, is2, ic.GetLatest())
-	require.Nil(t, ic.GetBySnapshotTS(0))
-	require.Nil(t, ic.GetBySnapshotTS(1))
-	// can get schema at timestamp 2 because it is latest
+	require.Equal(t, is1, ic.GetBySnapshotTS(1))
 	require.Equal(t, is2, ic.GetBySnapshotTS(2))
+	require.Equal(t, is3, ic.GetBySnapshotTS(3))
+	require.Equal(t, is3, ic.GetBySnapshotTS(4))
 }

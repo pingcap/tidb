@@ -31,8 +31,6 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
-	// record SnapshotTS of the latest schema Insert, use this in case the schema timestamp is not set
-	maxUpdatedSnapshotTS uint64
 }
 
 type schemaAndTimestamp struct {
@@ -67,29 +65,16 @@ func (h *InfoCache) GetLatest() InfoSchema {
 }
 
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
-	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts), zap.Uint64("max updated ts", h.maxUpdatedSnapshotTS))
-
-	// first check like the old way in case the schema timestamp is not set in tikv
-	// we are sure that the latest schema should work here based on what tidb has known so far
-	if ts >= h.maxUpdatedSnapshotTS {
-		if len(h.cache) > 0 {
-			infoschema_metrics.HitTSCounter.Inc()
-			return h.cache[0].infoschema, nil
-		}
-	}
-
+	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return uint64(h.cache[i].timestamp) <= ts
 	})
 	// if the request timestamp is earlier then the oldest schema, then it is a cache miss
-	if i < len(h.cache) && (i != 0 || uint64(h.cache[i].timestamp) == ts) {
-		// timestamp is zero for old schema update that doesn't set timestamp, so we cannot use the cache here
-		if h.cache[i].timestamp != 0 {
-			return h.cache[i].infoschema, nil
-		}
+	if i < len(h.cache) {
+		return h.cache[i].infoschema, nil
 	}
 
-	logutil.BgLogger().Debug("SCHEMA CACHE no schema", zap.Uint64("timestamp", ts))
+	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
 	return nil, errors.New("no cached schema")
 }
 
@@ -151,6 +136,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // It returns 'true' if it is cached, 'false' otherwise.
 // snapshotTS is the timestap of the schema update, schemaTS is the timestamp of the schema taking effect
 func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
+	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("snapshot ts", snapshotTS), zap.Uint64("schema ts", schemaTS))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -160,11 +146,6 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
-
-	// keep maxUpdatedSnapshotTS for backward compatibility
-	if h.maxUpdatedSnapshotTS < snapshotTS {
-		h.maxUpdatedSnapshotTS = snapshotTS
-	}
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
@@ -191,18 +172,5 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
 		return false
 	}
 
-	// it might be possible that a newer schema version has a older transaction start timestamp,
-	// in this case, we will assign the newer version shcema timestamp to the older version of schema to avoid the out of order
-	// this should be fine and consistent in practice, because it means the two ddl happens concurrently
-	// also, this could handle the transition, where the newer version of schema doesn't have timestamp set but an older one has,
-	// in this case, the older schema timestamp will be reset to 0 as if it doesn't have timestamp set
-	// this is O(n) to cache size, but should be fine in practice
-	for ; i < len(h.cache); i++ {
-		if h.cache[i].timestamp > int64(schemaTS) {
-			h.cache[i].timestamp = int64(schemaTS)
-		}
-	}
-
 	return true
-
 }

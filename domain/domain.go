@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
@@ -199,11 +200,19 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
-	schemaTs, err := m.GetTimestampForSchemaVersion(neededSchemaVersion)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
-		// ignore schema timestamp here if fails
-		schemaTs = 0
+	// fetch the commit timestamp of the schema diff
+	schemaTs := int64(0)
+	tikvStore, ok := do.Store().(helper.Storage)
+	if ok {
+		helper := helper.NewHelper(tikvStore)
+		schemaTs, err = m.GetTimestampForSchemaVersion(helper, neededSchemaVersion)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+			return nil, false, 0, nil, err
+		}
+	} else {
+		logutil.BgLogger().Warn("cannot get store from domain")
+		return nil, false, 0, nil, errors.Errorf("cannot get store from domain")
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {

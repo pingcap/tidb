@@ -394,12 +394,6 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 		var err error
 		m := meta.NewMeta(txn)
 		schemaVersion, err = m.GenSchemaVersion()
-		if err != nil {
-			return err
-		}
-
-		logutil.BgLogger().Info("DDL create schema with timestamp", zap.Int64("version", schemaVersion), zap.Uint64("start", txn.StartTS()))
-		err = m.SetTimestampForSchemaVersion(int64(txn.StartTS()), schemaVersion)
 		return err
 	})
 	return schemaVersion, err
