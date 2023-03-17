@@ -27,12 +27,19 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+const (
+	// the workload name of TPC-C
+	workloadTpcc = "tpcc"
+	// the default workload to caluclate the RU capacity.
+	defaultWorkload = workloadTpcc
+)
+
 // workloadBaseRUCostMap contains the base resource cost rate per 1 kv cpu within 1 second,
 // the data is calculated from benchmark result, these data might not be very accurate,
 // but is enough here because the maximum RU capacity is depend on both the cluster and
 // the workload.
 var workloadBaseRUCostMap = map[string]*baseResourceCost{
-	"tpcc": {
+	workloadTpcc: {
 		tidbCPU:       0.6,
 		kvCPU:         0.15,
 		readBytes:     units.MiB / 2,
@@ -95,7 +102,8 @@ func (e *calibrateResourceExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		return err
 	}
 
-	workload := "tpcc"
+	// we only support TPC-C currently, will support more in the future.
+	workload := defaultWorkload
 	baseCost, ok := workloadBaseRUCostMap[workload]
 	if !ok {
 		return errors.Errorf("unknown workload '%s'", workload)
