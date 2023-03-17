@@ -1179,11 +1179,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		req.ReplicaRead = true
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
-		if replicaRead == kv.ReplicaReadLeader {
-			replicaRead = kv.ReplicaReadFollower
-			req.ReplicaRead = true
-			req.ReplicaReadType = options.GetTiKVReplicaReadType(replicaRead)
-		}
 	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
@@ -1512,17 +1507,21 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		appendRemainTasks(t.task)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
-		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(batchResps) == 0 && len(remainTasks) != 0 {
-		busyThresholdFallback = true
-		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
-		for _, task := range remainTasks {
-			// do not set busy threshold again.
-			task.busyThreshold = 0
-			if err = handler.handle(task); err != nil {
-				return nil, err
+		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
+		if len(batchResps) == 0 {
+			busyThresholdFallback = true
+			handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+			for _, task := range remainTasks {
+				// do not set busy threshold again.
+				task.busyThreshold = 0
+				if err = handler.handle(task); err != nil {
+					return nil, err
+				}
 			}
+			remainTasks = handler.build()
+		} else {
+			return nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
-		remainTasks = handler.build()
 	}
 	return remainTasks, nil
 }
