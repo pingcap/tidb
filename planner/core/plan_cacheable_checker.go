@@ -456,7 +456,7 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
 	}
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_subquery' is off"
+		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

@@ -1234,7 +1234,7 @@ func TestPlanCacheSubQuerySwitchEffective(t *testing.T) {
 	// before prepare
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF")
 	tk.MustExec("prepare stmt from 'select * from t where a in (select a from s)'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has sub-queries is un-cacheable"))
 	checkIfCached("0")
 	tk.MustExec("deallocate prepare stmt")
 
@@ -1244,7 +1244,7 @@ func TestPlanCacheSubQuerySwitchEffective(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = OFF")
 	checkIfCached("0")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the switch 'tidb_enable_plan_cache_for_subquery' is off"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: the switch 'tidb_enable_plan_cache_for_subquery' is off"))
 	tk.MustExec("deallocate prepare stmt")
 
 	// after execute
