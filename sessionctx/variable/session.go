@@ -1076,7 +1076,7 @@ type SessionVars struct {
 
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
-	PlannerSelectBlockAsName []ast.HintTable
+	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64
@@ -2396,7 +2396,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
@@ -2433,7 +2433,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
