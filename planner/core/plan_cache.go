@@ -647,9 +647,19 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
+<<<<<<< HEAD
 		is.Ranges = ranger.FullRange()
 		return
 	}
+=======
+		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
+			is.Ranges = ranger.FullRange()
+			return
+		}
+		return errors.New("unexpected range for PhysicalIndexScan")
+	}
+
+>>>>>>> 71ce68c7233 (planner: fix plan cache rebuild range error (#42220))
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err
