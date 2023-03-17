@@ -154,6 +154,12 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		}
 	}
 
+	replicaCount, err := ci.preInfoGetter.GetReplicationConfig(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tikvSourceSize = tikvSourceSize * replicaCount.MaxReplicas
+
 	if tikvSourceSize <= tikvAvail && tiflashSourceSize <= tiflashAvail {
 		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
 			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tiflashSourceSize)))
