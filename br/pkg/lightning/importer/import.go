@@ -1785,8 +1785,7 @@ loop:
 					continue loop
 				}
 			}
-			// TODO: pretty return error
-			return err
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tableName)
 		}
 	}
 	if len(remainIndexes) < len(tblInfo.Core.Indices) {

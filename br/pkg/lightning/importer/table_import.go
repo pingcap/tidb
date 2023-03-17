@@ -1208,9 +1208,6 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
 	defer func() {
 		task.End(zap.ErrorLevel, retErr)
-		if retErr == nil {
-			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
-		}
 	}()
 
 	tblInfo := tr.tableInfo
@@ -1223,10 +1220,37 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 
+	defer func() {
+		if retErr == nil {
+			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+		} else if !log.IsContextCanceledError(retErr) {
+			// Try to strip the prefix of the error message.
+			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
+			cause := errors.Cause(retErr)
+			if cause == nil {
+				cause = retErr
+			}
+			retErr = common.ErrAddIndexFailed.GenWithStack(
+				"add index failed on table %s: %v, you can add index manually by the following SQL: %s",
+				tableName, cause, singleSQL)
+		}
+	}()
+
+	var totalRows int
+	if m, ok := metric.FromContext(ctx); ok {
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+	}
+
 	// Try to add all indexes in one statement.
-	err := tr.executeDDL(ctx, db, singleSQL, len(multiSQLs), func(p float64) {
-		web.BroadcastTableProgress(tableName, progressStep, p)
-		logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", p*100)))
+	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
+		if totalRows > 0 {
+			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
+			if progress > 1 {
+				progress = 1
+			}
+			web.BroadcastTableProgress(tableName, progressStep, progress)
+			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+		}
 	})
 	if err == nil {
 		return nil
@@ -1241,10 +1265,13 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	baseProgress := float64(0)
 	for _, ddl := range multiSQLs {
-		err := tr.executeDDL(ctx, db, ddl, 1, func(p float64) {
-			progress := baseProgress + p/float64(len(multiSQLs))
-			web.BroadcastTableProgress(tableName, progressStep, baseProgress+p/float64(len(multiSQLs)))
-			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+		err := tr.executeDDL(ctx, db, ddl, func(status *ddlStatus) {
+			if totalRows > 0 {
+				p := float64(status.rowCount) / float64(totalRows)
+				progress := baseProgress + p/float64(len(multiSQLs))
+				web.BroadcastTableProgress(tableName, progressStep, progress)
+				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+			}
 		})
 		if err != nil && !isDupKeyError(err) {
 			return err
@@ -1259,8 +1286,7 @@ func (tr *TableImporter) executeDDL(
 	ctx context.Context,
 	db *sql.DB,
 	ddl string,
-	indexCount int,
-	updateProgress func(float64),
+	updateProgress func(status *ddlStatus),
 ) error {
 	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
@@ -1293,10 +1319,12 @@ func (tr *TableImporter) executeDDL(
 				ddlErr = errors.New("injected error")
 			})
 			if ddlErr == nil {
-				updateProgress(1.0)
 				return nil
 			}
 			if log.IsContextCanceledError(ddlErr) {
+				return ddlErr
+			}
+			if isDeterminedError(ddlErr) {
 				return ddlErr
 			}
 			logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(ddlErr))
@@ -1316,17 +1344,7 @@ func (tr *TableImporter) executeDDL(
 			}
 			continue
 		}
-
-		if m, ok := metric.FromContext(ctx); ok {
-			totalRows := int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
-			if totalRows > 0 {
-				progress := float64(status.rowCount) / float64(totalRows*indexCount)
-				if progress > 1 {
-					progress = 1
-				}
-				updateProgress(progress)
-			}
-		}
+		updateProgress(status)
 
 		if ddlErr != nil {
 			switch state := status.state; state {
@@ -1410,6 +1428,16 @@ func isDupKeyError(err error) bool {
 	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 		switch merr.Number {
 		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
+}
+
+func isDeterminedError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique, errno.ErrDupEntry:
 			return true
 		}
 	}
