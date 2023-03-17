@@ -48,7 +48,7 @@ func getCheckpointChecksumDirByName(taskName string) string {
 func flushPositionForRestore(taskName string) flushPosition {
 	return flushPosition{
 		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
-		CheckpointChecksumDir: fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName),
+		CheckpointChecksumDir: getCheckpointChecksumDirByName(taskName),
 	}
 }
 
@@ -66,7 +66,7 @@ func WalkCheckpointFileForRestore(ctx context.Context, s storage.ExternalStorage
 	return walkCheckpointFile(ctx, s, cipher, getCheckpointDataDirByName(taskName), fn)
 }
 
-func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (map[int64]*ChecksumItem, error) {
+func LoadCheckpointChecksumForRestore(ctx context.Context, s storage.ExternalStorage, taskName string) (map[int64]*ChecksumItem, time.Duration, error) {
 	return loadCheckpointChecksum(ctx, s, getCheckpointChecksumDirByName(taskName))
 }
 

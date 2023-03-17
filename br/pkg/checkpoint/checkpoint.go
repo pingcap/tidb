@@ -68,7 +68,7 @@ type CheckpointMessage[K KeyType] struct {
 
 // A Checkpoint Range File is like this:
 //
-//    ChecksumData
+//   CheckpointData
 // +----------------+           RangeGroupData                          RangeGroup
 // |    DureTime    |     +--------------------------+ encrypted  +--------------------+
 // | RangeGroupData-+---> | RangeGroupsEncriptedData-+----------> |  GroupKey/TableID  |
@@ -101,11 +101,11 @@ type CheckpointData struct {
 // A Checkpoint Checksum File is like this:
 //
 //  ChecksumInfo       ChecksumItems         ChecksumItem
-// +-------------+   +--------------+     +--------------+
-// |   Content---+-> | ChecksumItem-+---> |   TableID    |
-// |  Checksum   |   | ChecksumItem |     |   Crc64xor   |
-// +-------------+   |     ...      |     |   TotalKvs   |
-//                   | ChecksumItem |     |  TotalBytes  |
+// +------------+    +--------------+     +--------------+
+// |   Content--+--> | ChecksumItem-+---> |   TableID    |
+// |  Checksum  |    | ChecksumItem |     |   Crc64xor   |
+// |  DureTime  |    |     ...      |     |   TotalKvs   |
+// +------------+    | ChecksumItem |     |  TotalBytes  |
 //                   +--------------+     +--------------+
 
 type ChecksumItem struct {
@@ -120,8 +120,9 @@ type ChecksumItems struct {
 }
 
 type ChecksumInfo struct {
-	Content  []byte `json:"content"`
-	Checksum []byte `json:"checksum"`
+	Content  []byte        `json:"content"`
+	Checksum []byte        `json:"checksum"`
+	DureTime time.Duration `json:"dure-time"`
 }
 
 type ChecksumRunner struct {
@@ -214,6 +215,7 @@ func (cr *ChecksumRunner) FlushChecksum(
 		checksumInfo := &ChecksumInfo{
 			Content:  content,
 			Checksum: checksum[:],
+			DureTime: summary.NowDureTime(),
 		}
 
 		data, err := json.Marshal(checksumInfo)
@@ -663,7 +665,7 @@ func (r *CheckpointRunner[K]) initialLock(ctx context.Context) error {
 func walkCheckpointFile[K KeyType](ctx context.Context, s storage.ExternalStorage, cipher *backuppb.CipherInfo, subDir string, fn func(groupKey K, rg *rtree.Range)) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: CheckpointDataDirForBackup}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
@@ -732,9 +734,9 @@ func loadCheckpointMeta(ctx context.Context, s storage.ExternalStorage, path str
 }
 
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
-func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subDir string) (map[int64]*ChecksumItem, error) {
+func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subDir string) (map[int64]*ChecksumItem, time.Duration, error) {
+	var pastDureTime time.Duration = 0
 	checkpointChecksum := make(map[int64]*ChecksumItem)
-
 	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
@@ -755,6 +757,10 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subD
 			return nil
 		}
 
+		if info.DureTime > pastDureTime {
+			pastDureTime = info.DureTime
+		}
+
 		items := &ChecksumItems{}
 		err = json.Unmarshal(info.Content, items)
 		if err != nil {
@@ -766,7 +772,7 @@ func loadCheckpointChecksum(ctx context.Context, s storage.ExternalStorage, subD
 		}
 		return nil
 	})
-	return checkpointChecksum, errors.Trace(err)
+	return checkpointChecksum, pastDureTime, errors.Trace(err)
 }
 
 func saveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadata, path string) error {

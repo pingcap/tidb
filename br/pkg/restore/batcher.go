@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
 )
 
@@ -257,6 +258,10 @@ func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) [
 	for _, rg := range drained {
 		if r := tree.Find(&rg); r != nil {
 			progress += 2 // split/scatter + download/ingest
+			for _, f := range rg.Files {
+				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			}
 			log.Info("find range is completed to ingest", logutil.Key("start-key", rg.StartKey), logutil.Files(rg.Files))
 		} else {
 			newRanges = append(newRanges, rg)
@@ -313,21 +318,25 @@ func (b *Batcher) drainRanges() DrainResult {
 				zap.Int("size", thisTableLen),
 				zap.Int("drained", drainSize),
 			)
+			atomic.AddInt32(&b.size, -int32(len(drained)))
 			if exists {
 				drained = b.filterOutRanges(t, drained)
 			}
 			result.Ranges = append(result.Ranges, drained...)
 			result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 			b.cachedTables = b.cachedTables[offset:]
-			atomic.AddInt32(&b.size, -int32(len(drained)))
 			return result
 		}
 
 		result.BlankTablesAfterSend = append(result.BlankTablesAfterSend, thisTable.CreatedTable)
 		// let's 'drain' the ranges of current table. This op must not make the batch full.
-		result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Range)...)
-		result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 		atomic.AddInt32(&b.size, -int32(len(thisTable.Range)))
+		if exists {
+			result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Range)...)
+		} else {
+			result.Ranges = append(result.Ranges, thisTable.Range...)
+		}
+		result.TableEndOffsetInRanges = append(result.TableEndOffsetInRanges, len(result.Ranges))
 		// clear the table length.
 		b.cachedTables[offset].Range = []rtree.Range{}
 		log.Debug("draining table to batch",

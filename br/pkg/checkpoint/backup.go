@@ -65,7 +65,7 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	m.CheckpointChecksum, err = loadCheckpointChecksum(ctx, s, CheckpointChecksumDirForBackup)
+	m.CheckpointChecksum, _, err = loadCheckpointChecksum(ctx, s, CheckpointChecksumDirForBackup)
 	return m, errors.Trace(err)
 }
 

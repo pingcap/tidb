@@ -270,7 +270,7 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 	if err != nil {
 		return tree, id, errors.Trace(err)
 	}
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg *rtree.Range) {
+	t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg *rtree.Range) {
 		t, exists := tree[tableID]
 		if !exists {
 			t = rtree.NewRangeTree()
@@ -281,11 +281,16 @@ func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage,
 	if err != nil {
 		return tree, id, errors.Trace(err)
 	}
-	summary.AdjustStartTimeToEarlierTime(t)
-	checkpointChecksum, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+	checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 	if err != nil {
 		return tree, id, errors.Trace(err)
 	}
+	if t1 > t2 {
+		summary.AdjustStartTimeToEarlierTime(t1)
+	} else {
+		summary.AdjustStartTimeToEarlierTime(t2)
+	}
+
 	rc.checkpointRunner = restoreCheckpoint
 	rc.checkpointChecksum = checkpointChecksum
 	return tree, id, nil
