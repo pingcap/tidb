@@ -30,7 +30,7 @@ import (
 const (
 	// the workload name of TPC-C
 	workloadTpcc = "tpcc"
-	// the default workload to caluclate the RU capacity.
+	// the default workload to calculate the RU capacity.
 	defaultWorkload = workloadTpcc
 )
 
