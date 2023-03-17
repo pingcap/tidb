@@ -1639,11 +1639,6 @@ const (
 	ForeignKeyType = "FOREIGN KEY"
 )
 
-const (
-	// TiFlashWrite is the TiFlash write node in disaggregated mode.
-	TiFlashWrite = "tiflash_write"
-)
-
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1855,11 +1850,6 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// IsTiFlashWriteRelated check if the TiFlash is non-disaggregated or write node in disaggregated mode.
-func IsTiFlashWriteRelated(serverType string) bool {
-	return serverType == kv.TiFlash.Name() || serverType == TiFlashWrite
-}
-
 func isTiFlashStore(store *metapb.Store) bool {
 	for _, label := range store.Labels {
 		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
@@ -1927,7 +1917,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if isTiFlashStore(store) {
 			if isTiFlashWriteNode(store) {
 				// tiflash_write is not a storeType in client-go, so we just judge based on the label here.
-				tp = TiFlashWrite
+				tp = "tiflash_write"
 			} else {
 				tp = kv.TiFlash.Name()
 			}
@@ -1955,8 +1945,8 @@ func FormatStoreServerVersion(version string) string {
 	return version
 }
 
-// GetTiFlashWriteStoreCount returns the count of tiflash server that is non-disaggregated or write node in disaggregated mode.
-func GetTiFlashWriteStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(uint64(10), nil)
@@ -1968,7 +1958,7 @@ func GetTiFlashWriteStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		return cnt, err
 	}
 	for _, store := range stores {
-		if IsTiFlashWriteRelated(store.ServerType) {
+		if store.ServerType == kv.TiFlash.Name() {
 			cnt++
 		}
 	}
