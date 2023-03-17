@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -734,8 +735,7 @@ func TestAlterTableAutoIDCache(t *testing.T) {
 
 	// Note that auto_id_cache=1 use a different implementation, switch between them is not allowed.
 	// TODO: relax this restriction and update the test case.
-	_, err = tk.Exec("alter table t_473 auto_id_cache = 1")
-	require.Error(t, err)
+	tk.MustExecToErr("alter table t_473 auto_id_cache = 1")
 }
 
 func TestMockAutoIDServiceError(t *testing.T) {
@@ -748,4 +748,22 @@ func TestMockAutoIDServiceError(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/autoid_service/mockErr")
 	// Cover a bug that the autoid client retry non-retryable errors forever cause dead loop.
 	tk.MustExecToErr("insert into t_mock_err values (),()") // mock error, instead of dead loop
+}
+
+func TestIssue39528(t *testing.T) {
+	// When AUTO_ID_CACHE is 1, it should not affect row id setting when autoid and rowid are separated.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue39528 (id int unsigned key nonclustered auto_increment) shard_row_id_bits=4 auto_id_cache 1;")
+	tk.MustExec("insert into issue39528 values ()")
+	tk.MustExec("insert into issue39528 values ()")
+
+	ctx := context.Background()
+	var codeRun bool
+	ctx = context.WithValue(ctx, "testIssue39528", &codeRun)
+	_, err := tk.ExecWithContext(ctx, "insert into issue39528 values ()")
+	require.NoError(t, err)
+	// Make sure the code does not visit tikv on allocate path.
+	require.False(t, codeRun)
 }

@@ -10,7 +10,9 @@ go_library(
         "//kv",
         "//parser/terror",
         "//sessionctx",
+        "//sessionctx/variable",
         "//sessiontxn",
+        "//ttl/metrics",
         "//util/chunk",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
@@ -19,13 +21,17 @@ go_library(
 
 go_test(
     name = "session_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "session_test.go",
+        "sysvar_test.go",
     ],
-    embed = [":session"],
     flaky = True,
+    shard_count = 5,
     deps = [
+        ":session",
+        "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",

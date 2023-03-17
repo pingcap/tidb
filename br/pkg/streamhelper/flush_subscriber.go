@@ -211,12 +211,14 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
 	log.Info("[log backup subscription manager] Adding subscription.", zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
-	s.clearError()
+	// We should shutdown the background task firstly.
+	// Once it yields some error during shuting down, the error won't be brought to next run.
 	s.close()
+	s.clearError()
 
 	c, err := dialer.GetLogBackupClient(ctx, s.storeID)
 	if err != nil {
-		return err
+		return errors.Annotate(err, "failed to get log backup client")
 	}
 	cx, cancel := context.WithCancel(ctx)
 	cli, err := c.SubscribeFlushEvent(cx, &logbackup.SubscribeFlushEventRequest{
@@ -224,7 +226,7 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	})
 	if err != nil {
 		cancel()
-		return err
+		return errors.Annotate(err, "failed to subscribe events")
 	}
 	s.cancel = cancel
 	s.background = spawnJoinable(func() { s.listenOver(cli) })
@@ -249,7 +251,7 @@ func (s *subscription) listenOver(cli eventStream) {
 		msg, err := cli.Recv()
 		if err != nil {
 			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
-			if err == io.EOF || err == context.Canceled {
+			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
 				return
 			}
 			s.emitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
@@ -275,7 +277,7 @@ func (s *subscription) listenOver(cli eventStream) {
 				Value: m.Checkpoint,
 			}
 		}
-		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(strconv.Itoa(int(storeID))).Add(float64(len(msg.Events)))
+		metrics.RegionCheckpointSubscriptionEvent.WithLabelValues(strconv.Itoa(int(storeID))).Observe(float64(len(msg.Events)))
 	}
 }
 

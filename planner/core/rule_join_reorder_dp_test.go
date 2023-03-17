@@ -138,9 +138,8 @@ func newDataSource(ctx sessionctx.Context, name string, count int) LogicalPlan {
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
-	ctx.GetSessionVars().PlanColumnID++
 	ds.schema.Append(&expression.Column{
-		UniqueID: ctx.GetSessionVars().PlanColumnID,
+		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	ds.stats = &property.StatsInfo{
@@ -186,9 +185,12 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		require.True(t, isSF)
 		eqEdges = append(eqEdges, sf)
 	}
-	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-		ctx:     ctx,
+	basicJoinGroupInfo := &basicJoinGroupInfo{
 		eqEdges: eqEdges,
+	}
+	baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+		ctx:                ctx,
+		basicJoinGroupInfo: basicJoinGroupInfo,
 	}
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,
@@ -214,7 +216,8 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	joinGroup = append(joinGroup, newDataSource(ctx, "d", 100))
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: ctx,
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}

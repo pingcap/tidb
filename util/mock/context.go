@@ -48,16 +48,17 @@ var (
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
-	txn         wrapTxn    // mock global variable
-	Store       kv.Storage // mock global variable
-	ctx         context.Context
-	sm          util.SessionManager
-	is          sessionctx.InfoschemaMetaVersion
-	values      map[fmt.Stringer]interface{}
-	sessionVars *variable.SessionVars
-	cancel      context.CancelFunc
-	pcache      sessionctx.PlanCache
-	level       kvrpcpb.DiskFullOpt
+	txn           wrapTxn    // mock global variable
+	Store         kv.Storage // mock global variable
+	ctx           context.Context
+	sm            util.SessionManager
+	is            sessionctx.InfoschemaMetaVersion
+	values        map[fmt.Stringer]interface{}
+	sessionVars   *variable.SessionVars
+	cancel        context.CancelFunc
+	pcache        sessionctx.PlanCache
+	level         kvrpcpb.DiskFullOpt
+	inSandBoxMode bool
 }
 
 type wrapTxn struct {
@@ -345,11 +346,10 @@ func (*Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (*Context) StmtCommit() {}
+func (*Context) StmtCommit(context.Context) {}
 
 // StmtRollback implements the sessionctx.Context interface.
-func (*Context) StmtRollback() {
-}
+func (*Context) StmtRollback(context.Context, bool) {}
 
 // StmtGetMutation implements the sessionctx.Context interface.
 func (*Context) StmtGetMutation(_ int64) *binlog.TableMutation {
@@ -436,6 +436,21 @@ func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessio
 // GetExtensions returns the `*extension.SessionExtensions` object
 func (*Context) GetExtensions() *extension.SessionExtensions {
 	return nil
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (c *Context) EnableSandBoxMode() {
+	c.inSandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (c *Context) DisableSandBoxMode() {
+	c.inSandBoxMode = false
+}
+
+// InSandBoxMode indicates that this Session is in sandbox mode
+func (c *Context) InSandBoxMode() bool {
+	return c.inSandBoxMode
 }
 
 // Close implements the sessionctx.Context interface.

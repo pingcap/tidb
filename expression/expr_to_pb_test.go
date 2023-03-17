@@ -528,6 +528,18 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_extract
+	function, err = NewFunction(mock.NewContext(), ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_unquote argument is cast(json as string)
+	subFunc, subErr := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
+	require.NoError(t, subErr)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), subFunc)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// lpad
 	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
@@ -636,6 +648,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// CastStringAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -958,6 +975,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	exprs = exprs[:0]
 
+	// json_unquote's argument is not cast(json as string)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// Substring2Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
 	require.NoError(t, err)
@@ -1088,12 +1110,26 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// regexp_replace: supported
+	function, err = NewFunction(mock.NewContext(), ast.RegexpReplace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn, intColumn, intColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ilike: supported
+	function, err = NewFunction(mock.NewContext(), ast.Ilike, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// greatest
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1105,6 +1141,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// is true
 	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
@@ -1215,6 +1256,21 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDuration), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_CastTimeAsDuration, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+
+	// Unhex
+	function, err = NewFunction(mock.NewContext(), ast.Unhex, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv4
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv6
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)

@@ -11,6 +11,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func installSubscribeSupport(c *fakeCluster) {
@@ -101,6 +103,25 @@ func TestHasFailureStores(t *testing.T) {
 
 	installSubscribeSupport(c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
+	sub.HandleErrors(ctx)
+	req.NoError(sub.PendingErrors())
+}
+
+func TestStoreOffline(t *testing.T) {
+	req := require.New(t)
+	ctx := context.Background()
+	c := createFakeCluster(t, 4, true)
+	c.splitAndScatter("0001", "0002", "0003", "0008", "0009")
+	installSubscribeSupport(c)
+
+	c.onGetClient = func(u uint64) error {
+		return status.Error(codes.DataLoss, "upon an eclipsed night, some of data (not all data) have fled from the dataset")
+	}
+	sub := streamhelper.NewSubscriber(c, c)
+	req.NoError(sub.UpdateStoreTopology(ctx))
+	req.Error(sub.PendingErrors())
+
+	c.onGetClient = nil
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
 }

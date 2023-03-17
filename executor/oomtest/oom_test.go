@@ -19,13 +19,13 @@ package oomtest
 import (
 	"os"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
@@ -184,7 +184,7 @@ var oom *oomCapture
 func registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	oom = &oomCapture{r.Core, "", sync.Mutex{}}
+	oom = &oomCapture{r.Core, "", syncutil.Mutex{}}
 	lg := zap.New(oom)
 	log.ReplaceGlobals(lg, r)
 }
@@ -192,7 +192,7 @@ func registerHook() {
 type oomCapture struct {
 	zapcore.Core
 	tracker string
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 }
 
 func (h *oomCapture) SetTracker(tracker string) {
@@ -220,6 +220,11 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 			panic("end not found")
 		}
 		h.tracker = str[begin+len("8001]") : end]
+		return nil
+	}
+	// They are just common background task and not related to the oom.
+	if entry.Message == "SetTiFlashGroupConfig" ||
+		entry.Message == "record table item load status failed due to not finding item" {
 		return nil
 	}
 

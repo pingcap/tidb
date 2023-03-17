@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -266,7 +267,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job))
+	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
@@ -301,15 +302,23 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			// logical table may contain global index regions, so delete the logical table range.
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			elemID := ea.allocForPhysicalID(tableID)
+			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		elemID := ea.allocForPhysicalID(tableID)
 		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionReorganizePartition:
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		// partInfo is not used, but is set in ReorgPartition.
+		// Better to have an additional argument in job.DecodeArgs since it is ignored,
+		// instead of having one to few, which will remove the data from the job arguments...
+		var partInfo model.PartitionInfo
+		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
 			return errors.Trace(err)
 		}
 		for _, physicalTableID := range physicalTableIDs {
@@ -360,7 +369,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
+
+		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) > 0 {
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+				if val.(bool) {
+					panic("drop global index must not delete partition index range")
+				}
+			})
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

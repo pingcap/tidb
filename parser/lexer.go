@@ -252,13 +252,17 @@ func (s *Scanner) Lex(v *yySymType) int {
 	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
 		return not2
 	}
-	if tok == as && s.getNextToken() == of {
+	if (tok == as || tok == member) && s.getNextToken() == of {
 		_, pos, lit = s.scan()
 		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
-		s.lastKeyword = asof
 		s.lastScanOffset = pos.Offset
 		v.offset = pos.Offset
-		return asof
+		if tok == as {
+			s.lastKeyword = asof
+			return asof
+		}
+		s.lastKeyword = memberof
+		return memberof
 	}
 	if tok == to {
 		tok1, tok2 := s.getNextTwoTokens()
@@ -269,6 +273,19 @@ func (s *Scanner) Lex(v *yySymType) int {
 			s.lastScanOffset = pos.Offset
 			v.offset = pos.Offset
 			return toTimestamp
+		}
+	}
+	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED
+	if tok == optionally {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == enclosed && tok2 == by {
+			_, _, lit = s.scan()
+			_, pos2, lit2 := s.scan()
+			v.ident = fmt.Sprintf("%s %s %s", v.ident, lit, lit2)
+			s.lastKeyword = optionallyEnclosedBy
+			s.lastScanOffset = pos2.Offset
+			v.offset = pos2.Offset
+			return optionallyEnclosedBy
 		}
 	}
 

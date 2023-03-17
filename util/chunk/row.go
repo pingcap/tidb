@@ -202,6 +202,9 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 			d.SetMysqlJSON(r.GetJSON(colIdx))
 		}
 	}
+	if r.IsNull(colIdx) {
+		d.SetNull()
+	}
 	return *d
 }
 

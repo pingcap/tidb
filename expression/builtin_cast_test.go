@@ -719,6 +719,13 @@ func TestCastFuncSig(t *testing.T) {
 			3,
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("你好world")}),
 		},
+		// cast json as string
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			fmt.Sprintf(`"%s`, curTimeString[:2]),
+			3,
+			chunk.MutRowFromDatums([]types.Datum{jsonTime}),
+		},
 	}
 	for i, c := range castToStringCases2 {
 		args := []Expression{c.before}
@@ -741,6 +748,8 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			stringFunc.tp.SetCharset(charset.CharsetUTF8)
 			sig = &builtinCastStringAsStringSig{stringFunc}
+		case 6:
+			sig = &builtinCastJSONAsStringSig{stringFunc}
 		}
 		res, isNull, err := sig.evalString(c.row.ToRow())
 		require.False(t, isNull)
@@ -1608,5 +1617,61 @@ func TestCastBinaryStringAsJSONSig(t *testing.T) {
 		require.False(t, isNull)
 		require.Equal(t, tt.result, res)
 		require.Equal(t, tt.resultStr, res.String())
+	}
+}
+
+func TestCastArrayFunc(t *testing.T) {
+	ctx := createContext(t)
+	tbl := []struct {
+		input            interface{}
+		expected         interface{}
+		tp               *types.FieldType
+		success          bool
+		buildFuncSuccess bool
+	}{
+		{
+			[]interface{}{int64(-1), int64(2), int64(3)},
+			[]interface{}{int64(-1), int64(2), int64(3)},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			true,
+			true,
+		},
+		{
+			[]interface{}{int64(-1), int64(2), int64(3)},
+			nil,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetUTF8MB4).SetCollate(charset.CollationUTF8MB4).SetArray(true).BuildP(),
+			false,
+			true,
+		},
+		{
+			[]interface{}{"1"},
+			nil,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
+			false,
+			true,
+		},
+	}
+	for _, tt := range tbl {
+		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
+		if tt.buildFuncSuccess {
+			require.NoError(t, err, tt.input)
+		} else {
+			require.Error(t, err, tt.input)
+			continue
+		}
+
+		val, isNull, err := f.EvalJSON(ctx, chunk.Row{})
+		if tt.success {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, isNull, tt.input)
+			} else {
+				j1 := types.CreateBinaryJSON(tt.expected)
+				cmp := types.CompareBinaryJSON(j1, val)
+				require.Equal(t, 0, cmp, tt.input)
+			}
+		} else {
+			require.Error(t, err, tt.input)
+		}
 	}
 }

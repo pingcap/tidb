@@ -732,7 +732,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, _, err := planner.Optimize(ctx, sctx, stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

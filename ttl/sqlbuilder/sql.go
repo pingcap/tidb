@@ -32,16 +32,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-const dateTimeFormat = "2006-01-02 15:04:05.999999"
-
 func writeHex(in io.Writer, d types.Datum) error {
 	_, err := fmt.Fprintf(in, "x'%s'", hex.EncodeToString(d.GetBytes()))
 	return err
 }
 
 func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
-	switch d.Kind() {
-	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+	switch ft.GetType() {
+	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
+		return writeHex(restoreCtx.In, d)
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeEnum, mysql.TypeSet:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
@@ -181,9 +181,9 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
 	b.restoreCtx.WritePlain(" < ")
-	b.restoreCtx.WritePlain("'")
-	b.restoreCtx.WritePlain(expire.Format(dateTimeFormat))
-	b.restoreCtx.WritePlain("'")
+	b.restoreCtx.WritePlain("FROM_UNIXTIME(")
+	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
+	b.restoreCtx.WritePlain(")")
 	b.hasWriteExpireCond = true
 	return nil
 }
@@ -311,21 +311,18 @@ type ScanQueryGenerator struct {
 	keyRangeEnd   []types.Datum
 	stack         [][]types.Datum
 	limit         int
+	firstBuild    bool
 	exhausted     bool
 }
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
-	if len(rangeStart) > 0 {
-		if err := tbl.ValidateKey(rangeStart); err != nil {
-			return nil, err
-		}
+	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
+		return nil, err
 	}
 
-	if len(rangeEnd) > 0 {
-		if err := tbl.ValidateKey(rangeEnd); err != nil {
-			return nil, err
-		}
+	if err := tbl.ValidateKeyPrefix(rangeEnd); err != nil {
+		return nil, err
 	}
 
 	return &ScanQueryGenerator{
@@ -333,6 +330,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStar
 		expire:        expire,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
+		firstBuild:    true,
 	}, nil
 }
 
@@ -345,6 +343,10 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 	if nextLimit <= 0 {
 		return "", errors.Errorf("invalid limit '%d'", nextLimit)
 	}
+
+	defer func() {
+		g.firstBuild = false
+	}()
 
 	if g.stack == nil {
 		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
@@ -385,11 +387,11 @@ func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
 		return nil
 	}
 
-	if err := g.tbl.ValidateKey(key); err != nil {
+	if err := g.tbl.ValidateKeyPrefix(key); err != nil {
 		return err
 	}
 
-	g.stack = g.stack[:cap(g.stack)]
+	g.stack = g.stack[:len(key)]
 	for i := 0; i < len(key); i++ {
 		g.stack[i] = key[0 : i+1]
 	}
@@ -416,7 +418,13 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 			var err error
 			if i < len(g.stack)-1 {
 				err = b.WriteCommonCondition(col, "=", val)
+			} else if g.firstBuild {
+				// When `g.firstBuild == true`, that means we are querying rows after range start, because range is defined
+				// as [start, end), we should use ">=" to find the rows including start key.
+				err = b.WriteCommonCondition(col, ">=", val)
 			} else {
+				// Otherwise when `g.firstBuild != true`, that means we are continuing with the previous result, we should use
+				// ">" to exclude the previous row.
 				err = b.WriteCommonCondition(col, ">", val)
 			}
 			if err != nil {
@@ -426,7 +434,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if len(g.keyRangeEnd) > 0 {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<=", g.keyRangeEnd); err != nil {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
 			return "", err
 		}
 	}

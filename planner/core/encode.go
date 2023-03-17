@@ -41,7 +41,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		return ""
 	}
 	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
-		selectPlan := flat.Main.GetSelectPlan()
+		selectPlan, _ := flat.Main.GetSelectPlan()
 		for _, op := range selectPlan {
 			op.Origin.statsInfo().RowCount = float64(val.(int))
 		}
@@ -95,7 +95,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 }
 
 func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
-	for _, op := range flatTree {
+	for i := 0; i < len(flatTree); {
+		op := flatTree[i]
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
@@ -119,14 +120,19 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 			buf,
 		)
 
-		// If NeedReverseDriverSide is true, we stop using the order of the slice and switch to recursively
-		// call encodeFlatPlanTree to keep build side before probe side.
 		if op.NeedReverseDriverSide {
-			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx-offset]
+			// If NeedReverseDriverSide is true, we don't rely on the order of flatTree.
+			// Instead, we manually slice the build and probe side children from flatTree and recursively call
+			// encodeFlatPlanTree to keep build side before probe side.
+			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx+1-offset]
 			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
 			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
 			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
-			break
+			// Skip the children plan tree of the current operator.
+			i = op.ChildrenEndIdx + 1 - offset
+		} else {
+			// Normally, we just go to the next element in the slice.
+			i++
 		}
 	}
 }
@@ -262,7 +268,10 @@ type planDigester struct {
 
 // NormalizeFlatPlan normalizes a FlatPhysicalPlan and generates plan digest.
 func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
-	selectPlan := flat.Main.GetSelectPlan()
+	if flat == nil {
+		return "", parser.NewDigest(nil)
+	}
+	selectPlan, selectPlanOffset := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
 	}
@@ -274,18 +283,11 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	}()
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
-	depthOffset := len(flat.Main) - len(selectPlan)
-loop1:
 	for _, op := range selectPlan {
-		switch op.Origin.(type) {
-		case *FKCheck, *FKCascade:
-			// Generate plan digest doesn't need to contain the foreign key check/cascade plan, so just break the loop.
-			break loop1
-		}
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
 		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
-			int(op.Depth-uint32(depthOffset)),
+			int(op.Depth-uint32(selectPlanOffset)),
 			op.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),

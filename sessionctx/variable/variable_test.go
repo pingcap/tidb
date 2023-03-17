@@ -669,3 +669,21 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, GetSysVar(TiDBGCScanLockMode).SkipSysvarCache())
 	require.False(t, GetSysVar(TiDBEnableAsyncCommit).SkipSysvarCache())
 }
+
+func TestTimeValidationWithTimezone(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	// In timezone UTC
+	vars.TimeZone = time.UTC
+	val, err := sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	// In timezone Asia/Shanghai
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0800", val)
+}

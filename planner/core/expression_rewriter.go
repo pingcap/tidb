@@ -55,7 +55,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -63,13 +63,14 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 }
 
 // rewriteAstExpr rewrites ast expression directly.
-func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -1183,6 +1184,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
+		if v.Tp.IsArray() && !er.b.allowBuildCastArray {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return retNode, false
+		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
@@ -1195,7 +1200,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
 			if v.Tp.GetCharset() == charset.CharsetASCII {
@@ -1210,8 +1219,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
-	case *ast.PatternLikeExpr:
-		er.patternLikeToExpression(v)
+	case *ast.PatternLikeOrIlikeExpr:
+		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
 	case *ast.RowExpr:
@@ -1550,17 +1559,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
-					if c.GetType().EvalType() == types.ETString {
-						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-						er.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
-						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
-					} else {
-						continue
+					if c.GetType().EvalType() == types.ETInt {
+						continue // no need to refine it
 					}
-				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
-					// We should remove the mutable constant for correctness, because its value may be changed.
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
@@ -1718,7 +1720,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
+func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeOrIlikeExpr) {
 	l := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[l-2:]...)
 	if er.err != nil {
@@ -1729,7 +1731,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
@@ -1752,8 +1754,12 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
+		funcName := ast.Like
+		if !v.IsLike {
+			funcName = ast.Ilike
+		}
 		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
-		function = er.notToExpression(v.Not, ast.Like, &v.Type,
+		function = er.notToExpression(v.Not, funcName, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
 
@@ -1881,26 +1887,37 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
-	// when column is not null, ifnull on such column is not necessary.
+	// when column is not null, ifnull on such column can be optimized to a cast.
 	case ast.Ifnull:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		stackLen := len(er.ctxStack)
-		arg1 := er.ctxStack[stackLen-2]
-		col, isColumn := arg1.(*expression.Column)
+		lhs := er.ctxStack[stackLen-2]
+		rhs := er.ctxStack[stackLen-1]
+		col, isColumn := lhs.(*expression.Column)
 		var isEnumSet bool
-		if arg1.GetType().GetType() == mysql.TypeEnum || arg1.GetType().GetType() == mysql.TypeSet {
+		if lhs.GetType().GetType() == mysql.TypeEnum || lhs.GetType().GetType() == mysql.TypeSet {
 			isEnumSet = true
 		}
-		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
-		// this column.
+		// if expr1 is a column with not null flag, then we can optimize it as a cast.
 		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-			name := er.ctxNameStk[stackLen-2]
-			newCol := col.Clone().(*expression.Column)
+			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			retTp.AddFlag((lhs.GetType().GetFlag() & mysql.NotNullFlag) | (rhs.GetType().GetFlag() & mysql.NotNullFlag))
+			if lhs.GetType().GetType() == mysql.TypeNull && rhs.GetType().GetType() == mysql.TypeNull {
+				retTp.SetType(mysql.TypeNull)
+				retTp.SetFlen(0)
+				retTp.SetDecimal(0)
+				types.SetBinChsClnFlag(retTp)
+			}
 			er.ctxStackPop(len(v.Args))
-			er.ctxStackAppend(newCol, name)
+			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
+			er.ctxStackAppend(casted, types.EmptyName)
 			return true
 		}
 
@@ -2115,7 +2132,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var val *expression.Constant
 	switch {
 	case isCurrentTimestamp && (col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp):
-		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal())
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal(), nil)
 		if err != nil {
 			return
 		}

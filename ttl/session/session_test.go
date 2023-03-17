@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package session_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/ttl/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,25 +29,38 @@ func TestSessionRunInTxn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
-	se := NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
 	require.NoError(t, se.RunInTxn(context.TODO(), func() error {
 		tk.MustExec("insert into t values (1, 10)")
 		return nil
-	}))
+	}, session.TxnModeOptimistic))
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10"))
 
-	require.NoError(t, se.RunInTxn(context.TODO(), func() error {
+	err := se.RunInTxn(context.TODO(), func() error {
 		tk.MustExec("insert into t values (2, 20)")
-		return errors.New("err")
-	}))
+		return errors.New("mockErr")
+	}, session.TxnModeOptimistic)
+	require.EqualError(t, err, "mockErr")
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10"))
 
 	require.NoError(t, se.RunInTxn(context.TODO(), func() error {
 		tk.MustExec("insert into t values (3, 30)")
 		return nil
-	}))
+	}, session.TxnModeOptimistic))
 	tk2.MustQuery("select * from t order by id asc").Check(testkit.Rows("1 10", "3 30"))
+}
+
+func TestSessionResetTimeZone(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.time_zone='UTC'")
+	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Shanghai"))
+	require.NoError(t, se.ResetWithGlobalTimeZone(context.TODO()))
+	tk.MustQuery("select @@time_zone").Check(testkit.Rows("UTC"))
 }

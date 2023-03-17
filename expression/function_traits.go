@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-// GeneralPlanCacheableOp stores function which can be cached to general plan cache.
-var GeneralPlanCacheableOp = map[string]struct{}{
+// NonPreparedPlanCacheableOp stores function which can be cached to non-prepared plan cache.
+var NonPreparedPlanCacheableOp = map[string]struct{}{
 	ast.LogicAnd: {},
 	ast.LogicOr:  {},
 	ast.GE:       {},
@@ -28,19 +28,21 @@ var GeneralPlanCacheableOp = map[string]struct{}{
 	ast.EQ:       {},
 	ast.LT:       {},
 	ast.GT:       {},
+	ast.In:       {},
 }
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
 var UnCacheableFunctions = map[string]struct{}{
-	ast.Database:     {},
-	ast.CurrentUser:  {},
-	ast.CurrentRole:  {},
-	ast.User:         {},
-	ast.ConnectionID: {},
-	ast.LastInsertId: {},
-	ast.RowCount:     {},
-	ast.Version:      {},
-	ast.Like:         {},
+	ast.Database:             {},
+	ast.CurrentUser:          {},
+	ast.CurrentRole:          {},
+	ast.CurrentResourceGroup: {},
+	ast.User:                 {},
+	ast.ConnectionID:         {},
+	ast.LastInsertId:         {},
+	ast.RowCount:             {},
+	ast.Version:              {},
+	ast.Like:                 {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.

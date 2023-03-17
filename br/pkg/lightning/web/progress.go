@@ -64,7 +64,7 @@ func (cpm *checkpointsMap) update(diffs map[string]*checkpoints.TableCheckpointD
 		for _, engine := range cp.Engines {
 			for _, chunk := range engine.Chunks {
 				if engine.Status >= checkpoints.CheckpointStatusAllWritten {
-					tw += chunk.Chunk.EndOffset - chunk.Key.Offset
+					tw += chunk.TotalSize()
 				} else {
 					tw += chunk.Chunk.Offset - chunk.Key.Offset
 				}

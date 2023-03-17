@@ -114,34 +114,6 @@ func isPunctuation(c byte) bool {
 	return (c >= 0x21 && c <= 0x2F) || (c >= 0x3A && c <= 0x40) || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E)
 }
 
-func myMax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func myMaxInt8(a, b int8) int8 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func myMin(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func myMinInt8(a, b int8) int8 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 const (
 	maxUint    = uint64(math.MaxUint64)
 	uintCutOff = maxUint/uint64(10) + 1

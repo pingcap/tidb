@@ -20,12 +20,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,11 +99,11 @@ func TestGrantDBScope(t *testing.T) {
 	}
 
 	// Grant in wrong scope.
-	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")))
+	err := tk.ExecToErr(` grant create user on test.* to 'testDB1'@'localhost';`)
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")))
 
-	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
-	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
+	err = tk.ExecToErr("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
 }
 
 func TestWithGrantOption(t *testing.T) {
@@ -168,8 +168,8 @@ func TestGrantTableScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
-	require.EqualError(t, err, "[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
+	tk.MustGetErrMsg("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';",
+		"[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
 func TestGrantColumnScope(t *testing.T) {
@@ -213,8 +213,8 @@ func TestGrantColumnScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
-	require.EqualError(t, err, "[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
+		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
 func TestIssue2456(t *testing.T) {
@@ -236,7 +236,7 @@ func TestNoAutoCreateUser(t *testing.T) {
 	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrCantCreateUserWithGrant))
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
@@ -266,9 +266,9 @@ func TestCreateUserWithTooLongName(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	err := tk.ExecToErr("CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
 	err = tk.ExecToErr("CREATE USER 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X'")
-	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
+	require.Truef(t, terror.ErrorEqual(err, exeerrors.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 }
 
 func TestGrantPrivilegeAtomic(t *testing.T) {
@@ -280,7 +280,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	tk.MustExec(`create table test.testatomic(x int);`)
 
 	_, err := tk.Exec(`grant update, select, insert, delete on *.* to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrCantCreateUserWithGrant))
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"N N N N",
 		"N N N N",
@@ -296,7 +296,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	))
 
 	err = tk.ExecToErr(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrCantCreateUserWithGrant))
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
 	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
@@ -308,7 +308,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	))
 
 	err = tk.ExecToErr(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
-	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrCantCreateUserWithGrant))
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
 	err = tk.ExecToErr(`revoke all on *.* from r1, r2, r4, r3;`)
@@ -394,7 +394,7 @@ func TestMaintainRequire(t *testing.T) {
 
 	// test show create user
 	tk.MustExec(`CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
-	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	// check issuer/subject/cipher value
 	err := tk.ExecToErr(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
@@ -532,9 +532,9 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustExec("create user dyn")
 
 	err := tk.ExecToErr("GRANT BACKUP_ADMIN ON test.* TO dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrIllegalPrivilegeLevel))
 	err = tk.ExecToErr("GRANT BOGUS_GRANT ON *.* TO dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrDynamicPrivilegeNotRegistered))
 
 	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))

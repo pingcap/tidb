@@ -419,6 +419,34 @@ func TestInsertValueForCastDecimalField(t *testing.T) {
 	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
+func TestInsertForMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a json, b int, unique index idx((cast(a as signed array))));`)
+	tk.MustExec(`insert into t1 values ('[1,11]', 1);`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 222]', 2);`, "[kv:1062]Duplicate entry '2' for key 't1.idx'")
+	tk.MustExec(`replace into t1 values ('[1, 10]', 10)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[2, 22] 2`, `[1, 10] 10`))
+	tk.MustExec(`replace into t1 values ('[1, 2]', 1)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 2] 1`))
+	tk.MustExec(`replace into t1 values ('[1, 11]', 1)`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1, 2]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert into t1 values ('[2]', 2) on duplicate key update b = 10;`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 10`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+}
+
 func TestInsertDateTimeWithTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1480,4 +1508,70 @@ func TestIssue32213(t *testing.T) {
 	tk.MustExec("insert into test.t1 values(99.9999)")
 	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
 	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
+
+func TestInsertLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	for _, tt := range []struct {
+		name string
+		ddl  string
+		dml  string
+	}{
+		{
+			"replace-pk",
+			"create table t (c int primary key clustered)",
+			"replace into t values (1)",
+		},
+		{
+			"replace-uk",
+			"create table t (c int unique key)",
+			"replace into t values (1)",
+		},
+		{
+			"insert-ingore-pk",
+			"create table t (c int primary key clustered)",
+			"insert ignore into t values (1)",
+		},
+		{
+			"insert-ingore-uk",
+			"create table t (c int unique key)",
+			"insert ignore into t values (1)",
+		},
+		{
+			"insert-update-pk",
+			"create table t (c int primary key clustered)",
+			"insert into t values (1) on duplicate key update c = values(c)",
+		},
+		{
+			"insert-update-uk",
+			"create table t (c int unique key)",
+			"insert into t values (1) on duplicate key update c = values(c)",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk1.MustExec("drop table if exists t")
+			tk1.MustExec(tt.ddl)
+			tk1.MustExec("insert into t values (1)")
+			tk1.MustExec("begin")
+			tk1.MustExec(tt.dml)
+			done := make(chan struct{})
+			go func() {
+				tk2.MustExec("delete from t")
+				done <- struct{}{}
+			}()
+			select {
+			case <-done:
+				require.Failf(t, "txn2 is not blocked by %q", tt.dml)
+			case <-time.After(100 * time.Millisecond):
+			}
+			tk1.MustExec("commit")
+			<-done
+			tk1.MustQuery("select * from t").Check([][]interface{}{})
+		})
+	}
 }

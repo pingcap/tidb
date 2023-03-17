@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -38,7 +39,7 @@ func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.
-	tmpPath := filepath.Join(l.base, name) + ".tmp"
+	tmpPath := filepath.Join(l.base, name) + ".tmp." + uuid.NewString()
 	if err := os.WriteFile(tmpPath, data, localFilePerm); err != nil {
 		path := filepath.Dir(tmpPath)
 		log.Info("failed to write file, try to mkdir the path", zap.String("path", path))

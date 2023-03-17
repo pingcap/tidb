@@ -41,5 +41,5 @@ explain format = 'brief' select count(1) from access_path_selection;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(Column#18)->Column#4
 └─TableReader	1.00	root		data:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		funcs:count(test.access_path_selection._tidb_rowid)->Column#18
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#18
     └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo

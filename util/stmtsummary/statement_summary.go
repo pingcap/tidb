@@ -27,12 +27,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -244,6 +246,8 @@ type StmtExecInfo struct {
 	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
 	Prepared        bool
+	KeyspaceName    string
+	KeyspaceID      uint32
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -403,8 +407,9 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
-							Users:     ssElement.authUsers,
+							Users:     make(map[string]struct{}),
 						}
+						maps.Copy(stmt.Users, ssElement.authUsers)
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 						if ssElement.prepared {
@@ -498,43 +503,27 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
-func getBindableStmtByPlanDigest(ssbd *stmtSummaryByDigest, planDigest string) *BindableStmt {
-	ssbd.Lock()
-	defer ssbd.Unlock()
-	if ssbd.initialized && ssbd.planDigest == planDigest && ssbd.history.Len() > 0 &&
-		(ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
-		ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-		ssElement.Lock()
-		defer ssElement.Unlock()
-		// Empty auth users means that it is an internal queries.
-		if len(ssElement.authUsers) > 0 {
+// GetBindableStmtFromCluster gets users' select/update/delete SQL.
+func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
+	for _, row := range rows {
+		user := row.GetString(3)
+		stmtType := row.GetString(0)
+		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
+			// Empty auth users means that it is an internal queries.
 			stmt := &BindableStmt{
-				Schema:    ssbd.schemaName,
-				Query:     ssElement.sampleSQL,
-				PlanHint:  ssElement.planHint,
-				Charset:   ssElement.charset,
-				Collation: ssElement.collation,
-				Users:     ssElement.authUsers,
+				Schema:    row.GetString(1), //schemaName
+				Query:     row.GetString(5), //sampleSQL
+				PlanHint:  row.GetString(8), //planHint
+				Charset:   row.GetString(6), //charset
+				Collation: row.GetString(7), //collation
 			}
-			// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+			// If it is SQL command prepare / execute, we should remove the arguments
 			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-			if ssElement.prepared {
-				stmt.Query = ssbd.normalizedSQL
+			if row.GetInt64(4) == 1 {
+				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
+					stmt.Query = stmt.Query[:idx]
+				}
 			}
-			return stmt
-		}
-	}
-	return nil
-}
-
-// GetBindableStmtByPlanDigest gets users' select/update/delete SQL by plan digest.
-func (ssMap *stmtSummaryByDigestMap) GetBindableStmtByPlanDigest(planDigest string) *BindableStmt {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	ssMap.Unlock()
-
-	for _, value := range values {
-		if stmt := getBindableStmtByPlanDigest(value.(*stmtSummaryByDigest), planDigest); stmt != nil {
 			return stmt
 		}
 	}

@@ -351,6 +351,12 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
+// RealPos implements the Parser interface.
+// For parquet it's equal to Pos().
+func (pp *ParquetParser) RealPos() (int64, error) {
+	return pp.curStart + int64(pp.curIndex), nil
+}
+
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {

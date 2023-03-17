@@ -387,6 +387,7 @@ type DuplicateManager struct {
 	tableName   string
 	splitCli    split.SplitClient
 	tikvCli     *tikv.KVStore
+	tikvCodec   tikv.Codec
 	errorMgr    *errormanager.ErrorManager
 	decoder     *kv.TableKVDecoder
 	logger      log.Logger
@@ -401,6 +402,7 @@ func NewDuplicateManager(
 	tableName string,
 	splitCli split.SplitClient,
 	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
 	sessOpts *kv.SessionOptions,
 	concurrency int,
@@ -417,6 +419,7 @@ func NewDuplicateManager(
 		tableName:   tableName,
 		splitCli:    splitCli,
 		tikvCli:     tikvCli,
+		tikvCodec:   tikvCodec,
 		errorMgr:    errMgr,
 		decoder:     decoder,
 		logger:      logger,
@@ -436,6 +439,10 @@ func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream D
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		key, err = m.tikvCodec.DecodeKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -504,6 +511,10 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		key, err = m.tikvCodec.DecodeKey(key)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		m.hasDupe.Store(true)
 
 		h, err := m.decoder.DecodeHandleFromIndex(indexInfo, key, val)
@@ -553,19 +564,22 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		return nil, errors.Trace(err)
 	}
 	tasks := make([]dupTask, 0, keyRanges.TotalRangeNum()*(1+len(m.tbl.Meta().Indices)))
-	putToTaskFunc := func(ranges []tidbkv.KeyRange) {
+	putToTaskFunc := func(ranges []tidbkv.KeyRange, indexInfo *model.IndexInfo) {
 		if len(ranges) == 0 {
 			return
 		}
 		tid := tablecodec.DecodeTableID(ranges[0].StartKey)
 		for _, r := range ranges {
 			tasks = append(tasks, dupTask{
-				KeyRange: r,
-				tableID:  tid,
+				KeyRange:  r,
+				tableID:   tid,
+				indexInfo: indexInfo,
 			})
 		}
 	}
-	keyRanges.ForEachPartition(putToTaskFunc)
+	keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+		putToTaskFunc(ranges, nil)
+	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
@@ -574,7 +588,14 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		keyRanges.ForEachPartition(putToTaskFunc)
+		keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+			putToTaskFunc(ranges, indexInfo)
+		})
+	}
+
+	// Encode all the tasks
+	for i := range tasks {
+		tasks[i].StartKey, tasks[i].EndKey = m.tikvCodec.EncodeRange(tasks[i].StartKey, tasks[i].EndKey)
 	}
 	return tasks, nil
 }
@@ -678,8 +699,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})

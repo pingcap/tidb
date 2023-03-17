@@ -33,19 +33,20 @@ go_library(
         "//sessionctx/variable",
         "//table",
         "//util",
+        "//util/dbterror",
         "//util/generic",
         "//util/logutil",
         "//util/mathutil",
         "//util/size",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "ingest_test",
+    timeout = "short",
     srcs = [
         "env_test.go",
         "mem_root_test.go",

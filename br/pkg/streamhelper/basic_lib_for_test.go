@@ -77,10 +77,11 @@ type fakeStore struct {
 	id      uint64
 	regions map[uint64]*region
 
-	clientMu    sync.Mutex
-	supportsSub bool
-	bootstrapAt uint64
-	fsub        func(logbackup.SubscribeFlushEventResponse)
+	clientMu              sync.Mutex
+	supportsSub           bool
+	bootstrapAt           uint64
+	fsub                  func(logbackup.SubscribeFlushEventResponse)
+	onGetRegionCheckpoint func(*logbackup.GetLastFlushTSOfRegionRequest) error
 }
 
 type fakeCluster struct {
@@ -90,7 +91,8 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
-	onGetClient func(uint64) error
+	onGetClient        func(uint64) error
+	serviceGCSafePoint uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -133,7 +135,7 @@ func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, erro
 			return &item, nil
 		default:
 		}
-		return nil, t.cx.Err()
+		return nil, status.Error(codes.Canceled, t.cx.Err().Error())
 	}
 }
 
@@ -184,6 +186,12 @@ func (f *fakeStore) SetSupportFlushSub(b bool) {
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
+	if f.onGetRegionCheckpoint != nil {
+		err := f.onGetRegionCheckpoint(in)
+		if err != nil {
+			return nil, err
+		}
+	}
 	resp := &logbackup.GetLastFlushTSOfRegionResponse{
 		Checkpoints: []*logbackup.RegionCheckpoint{},
 	}
@@ -233,6 +241,23 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	}
 	log.Debug("Get last flush ts of region", zap.Stringer("in", in), zap.Stringer("out", resp))
 	return resp, nil
+}
+
+// Updates the service GC safe point for the cluster.
+// Returns the latest service GC safe point.
+// If the arguments is `0`, this would remove the service safe point.
+func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if at == 0 {
+		f.serviceGCSafePoint = at
+		return at, nil
+	}
+	if f.serviceGCSafePoint > at {
+		return f.serviceGCSafePoint, nil
+	}
+	f.serviceGCSafePoint = at
+	return at, nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -555,6 +580,7 @@ type testEnv struct {
 	checkpoint uint64
 	testCtx    *testing.T
 	ranges     []kv.KeyRange
+	taskCh     chan<- streamhelper.TaskEvent
 
 	mu sync.Mutex
 }
@@ -573,6 +599,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		Ranges: rngs,
 	}
 	ch <- tsk
+	t.taskCh = ch
 	return nil
 }
 
@@ -600,4 +627,11 @@ func (t *testEnv) getCheckpoint() uint64 {
 	defer t.mu.Unlock()
 
 	return t.checkpoint
+}
+
+func (t *testEnv) unregisterTask() {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventDel,
+		Name: "whole",
+	}
 }

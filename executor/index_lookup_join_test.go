@@ -352,7 +352,7 @@ func TestIssue23722(t *testing.T) {
 	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
-	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("0"))
 
 	// Test lookup content exceeds primary key prefix.
 	tk.MustExec("drop table if exists t;")
@@ -428,17 +428,19 @@ PARTITIONS 1`)
 
 	// Why does the t2.prefiller need be at least 2^32 ? If smaller the bug will not appear!?!
 	tk.MustExec("insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0)")
+	tk.MustExec(`analyze table t1`)
+	tk.MustExec(`analyze table t2`)
 
 	// Why must it be = 1 and not 2?
-	tk.MustQuery("explain select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows("" +
-		"IndexJoin_15 10.00 root  inner join, inner:TableReader_14, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)]\n" +
-		"[├─HashAgg_25(Build) 8.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller]\n" +
-		"[│ └─TableReader_26 8.00 root  data:HashAgg_20]\n" +
-		"[│   └─HashAgg_20 8.00 cop[tikv]  group by:test.t2.prefiller, ]\n" +
-		"[│     └─Selection_24 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
-		"[│       └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
-		"[└─TableReader_14(Probe) 8.00 root partition:all data:TableRangeScan_13]\n" +
-		"[  └─TableRangeScan_13 8.00 cop[tikv] table:t1 range: decided by [eq(test.t1.id, test.t2.prefiller)], keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows(""+
+		`IndexJoin 1.25 root  inner join, inner:TableReader, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)`,
+		`├─HashAgg(Build) 1.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller`,
+		`│ └─TableReader 1.00 root  data:HashAgg`,
+		`│   └─HashAgg 1.00 cop[tikv]  group by:test.t2.prefiller, `,
+		`│     └─Selection 1.00 cop[tikv]  eq(test.t2.postfiller, 1)`,
+		`│       └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false`,
+		`└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan`,
+		`  └─TableRangeScan 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.id, test.t2.prefiller)], keep order:false, stats:pseudo`))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	// without fix it fails with: "runtime error: index out of range [0] with length 0"
 	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())

@@ -31,6 +31,7 @@ var (
 )
 
 // GetRawInfo do what its name tells
+// nolint:unused
 func GetRawInfo(app string) string {
 	info := ""
 	info += fmt.Sprintf("App Name: %s\n", app)
@@ -43,6 +44,7 @@ func GetRawInfo(app string) string {
 }
 
 // PrintInfo prints the app's basic information in log
+// nolint:unused
 func PrintInfo(app string) {
 	log.Info("Welcome to "+app,
 		zap.String("Release Version", Version),

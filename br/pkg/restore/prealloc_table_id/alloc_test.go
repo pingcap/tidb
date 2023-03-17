@@ -27,6 +27,7 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 func TestAllocator(t *testing.T) {
 	type Case struct {
 		tableIDs              []int64
+		partitions            map[int64][]int64
 		hasAllocatedTo        int64
 		successfullyAllocated []int64
 		shouldAllocatedTo     int64
@@ -57,16 +58,41 @@ func TestAllocator(t *testing.T) {
 			successfullyAllocated: []int64{5, 6},
 			shouldAllocatedTo:     7,
 		},
+		{
+			tableIDs:              []int64{1, 2, 5, 6, 7},
+			hasAllocatedTo:        6,
+			successfullyAllocated: []int64{6, 7},
+			shouldAllocatedTo:     13,
+			partitions: map[int64][]int64{
+				7: {8, 9, 10, 11, 12},
+			},
+		},
+		{
+			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
+			hasAllocatedTo:        9,
+			successfullyAllocated: []int64{13},
+			shouldAllocatedTo:     14,
+			partitions: map[int64][]int64{
+				7: {8, 9, 10, 11, 12},
+			},
+		},
 	}
 
 	run := func(t *testing.T, c Case) {
 		tables := make([]*metautil.Table, 0, len(c.tableIDs))
 		for _, id := range c.tableIDs {
-			tables = append(tables, &metautil.Table{
+			table := metautil.Table{
 				Info: &model.TableInfo{
-					ID: id,
+					ID:        id,
+					Partition: &model.PartitionInfo{},
 				},
-			})
+			}
+			if c.partitions != nil {
+				for _, part := range c.partitions[id] {
+					table.Info.Partition.Definitions = append(table.Info.Partition.Definitions, model.PartitionDefinition{ID: part})
+				}
+			}
+			tables = append(tables, &table)
 		}
 
 		ids := prealloctableid.New(tables)
@@ -74,9 +100,9 @@ func TestAllocator(t *testing.T) {
 		require.NoError(t, ids.Alloc(&allocator))
 
 		allocated := make([]int64, 0, len(c.successfullyAllocated))
-		for _, t := range c.tableIDs {
-			if ids.Prealloced(t) {
-				allocated = append(allocated, t)
+		for _, t := range tables {
+			if ids.PreallocedFor(t.Info) {
+				allocated = append(allocated, t.Info.ID)
 			}
 		}
 		require.ElementsMatch(t, allocated, c.successfullyAllocated)

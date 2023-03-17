@@ -89,8 +89,10 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	tk.MustQuery("select * from t;")
 	task := prHandle.DrainTask()
 	require.NotNil(t, task)
-	success := prHandle.HandlePlanReplayerDumpTask(task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
 	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert memory task consumed
 	require.Len(t, prHandle.GetTasks(), 0)
 
@@ -98,4 +100,22 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	err = prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 0)
+
+	// clean the task and register task
+	prHandle.GetTaskStatus().CleanFinishedTaskStatus()
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, "*"))
+	err = prHandle.CollectPlanReplayerTask()
+	require.NoError(t, err)
+	require.Len(t, prHandle.GetTasks(), 1)
+	tk.MustQuery("select * from t;")
+	task = prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker = prHandle.GetWorker()
+	success = worker.HandleTask(task)
+	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
+	// assert capture * task still remained
+	require.Len(t, prHandle.GetTasks(), 1)
 }

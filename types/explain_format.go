@@ -35,6 +35,10 @@ var (
 	ExplainFormatBinary = "binary"
 	// ExplainFormatTiDBJSON warp the default result in JSON format
 	ExplainFormatTiDBJSON = "tidb_json"
+	// ExplainFormatCostTrace prints the cost and cost formula of each operator.
+	ExplainFormatCostTrace = "cost_trace"
+	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
+	ExplainFormatPlanCache = "plan_cache"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -48,5 +52,7 @@ var (
 		ExplainFormatTrueCardCost,
 		ExplainFormatBinary,
 		ExplainFormatTiDBJSON,
+		ExplainFormatCostTrace,
+		ExplainFormatPlanCache,
 	}
 )

@@ -21,20 +21,22 @@ import (
 	"os"
 	"runtime"
 	"strings"
-)
 
-// CPUShares returns the number of CPUs this cgroup can be expected to
-// max out. If there's no limit, NumCPU is returned.
-func (c CPUUsage) CPUShares() float64 {
-	if c.Period <= 0 || c.Quota <= 0 {
-		return float64(c.NumCPU)
-	}
-	return float64(c.Quota) / float64(c.Period)
-}
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+)
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
 func GetCgroupCPU() (CPUUsage, error) {
+	failpoint.Inject("GetCgroupCPUErr", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) {
+			var cpuUsage CPUUsage
+			failpoint.Return(cpuUsage, errors.Errorf("mockAddBatchDDLJobsErr"))
+		}
+	})
 	cpuusage, err := getCgroupCPU("/")
+
 	cpuusage.NumCPU = runtime.NumCPU()
 	return cpuusage, err
 }

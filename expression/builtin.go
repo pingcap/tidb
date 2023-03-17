@@ -746,10 +746,12 @@ var funcs = map[string]functionClass{
 	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
-	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
-	ast.CurrentUser:  &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
-	ast.CurrentRole:  &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
-	ast.Database:     &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
+	ast.ConnectionID:         &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
+	ast.CurrentUser:          &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
+	ast.CurrentRole:          &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
+	ast.Database:             &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
+	ast.CurrentResourceGroup: &currentResourceGroupFunctionClass{baseFunctionClass{ast.CurrentResourceGroup, 0, 0}},
+
 	// This function is a synonym for DATABASE().
 	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema
 	ast.Schema:       &databaseFunctionClass{baseFunctionClass{ast.Schema, 0, 0}},
@@ -830,6 +832,7 @@ var funcs = map[string]functionClass{
 	ast.IsTruthWithNull:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, true},
 	ast.IsFalsity:          &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
 	ast.Like:               &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Ilike:              &ilikeFunctionClass{baseFunctionClass{ast.Ilike, 3, 3}},
 	ast.Regexp:             &regexpLikeFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.RegexpLike:         &regexpLikeFunctionClass{baseFunctionClass{ast.RegexpLike, 2, 3}},
 	ast.RegexpSubstr:       &regexpSubstrFunctionClass{baseFunctionClass{ast.RegexpSubstr, 2, 5}},
@@ -873,7 +876,9 @@ var funcs = map[string]functionClass{
 	ast.JSONMerge:         &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 	ast.JSONObject:        &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
 	ast.JSONArray:         &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
+	ast.JSONMemberOf:      &jsonMemberOfFunctionClass{baseFunctionClass{ast.JSONMemberOf, 2, 2}},
 	ast.JSONContains:      &jsonContainsFunctionClass{baseFunctionClass{ast.JSONContains, 2, 3}},
+	ast.JSONOverlaps:      &jsonOverlapsFunctionClass{baseFunctionClass{ast.JSONOverlaps, 2, 2}},
 	ast.JSONContainsPath:  &jsonContainsPathFunctionClass{baseFunctionClass{ast.JSONContainsPath, 3, -1}},
 	ast.JSONValid:         &jsonValidFunctionClass{baseFunctionClass{ast.JSONValid, 1, 1}},
 	ast.JSONArrayAppend:   &jsonArrayAppendFunctionClass{baseFunctionClass{ast.JSONArrayAppend, 3, -1}},

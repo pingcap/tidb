@@ -80,8 +80,10 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 	return io.ReadAll(compressBf)
 }
 
+// compressReader is a wrapper for compress.Reader
 type compressReader struct {
 	io.Reader
+	io.Seeker
 	io.Closer
 }
 
@@ -97,11 +99,30 @@ func newInterceptReader(fileReader ExternalFileReader, compressType CompressType
 	return &compressReader{
 		Reader: r,
 		Closer: fileReader,
+		Seeker: fileReader,
 	}, nil
 }
 
-func (*compressReader) Seek(_ int64, _ int) (int64, error) {
-	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now")
+func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, n int64) (ExternalFileReader, error) {
+	newFileReader := fileReader
+	if n < 0 {
+		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
+	} else if n > 0 {
+		newFileReader = &compressReader{
+			Reader: io.LimitReader(fileReader, n),
+			Seeker: fileReader,
+			Closer: fileReader,
+		}
+	}
+	return newInterceptReader(newFileReader, compressType)
+}
+
+func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
+	// only support get original reader's current offset
+	if offset == 0 && whence == io.SeekCurrent {
+		return c.Seeker.Seek(offset, whence)
+	}
+	return int64(0), errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support Seek now, offset %d, whence %d", offset, whence)
 }
 
 func (c *compressReader) Close() error {

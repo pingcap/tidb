@@ -34,19 +34,22 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	session_metrics "github.com/pingcap/tidb/session/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 type domainMap struct {
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
 }
 
@@ -81,10 +84,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		onClose := func() {
-			dm.Delete(store)
-		}
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
 
 		var ddlInjector func(ddl.DDL) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -102,8 +102,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if err != nil {
 		return nil, err
 	}
-
 	dm.domains[key] = d
+	d.SetOnClose(func() {
+		dm.Delete(store)
+	})
 
 	return
 }
@@ -220,12 +222,20 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
-		transactionDurationPessimisticAbort.Observe(duration)
+		if isInternal {
+			session_metrics.TransactionDurationPessimisticAbortInternal.Observe(duration)
+		} else {
+			session_metrics.TransactionDurationPessimisticAbortGeneral.Observe(duration)
+		}
 	} else {
-		transactionDurationOptimisticAbort.Observe(duration)
+		if isInternal {
+			session_metrics.TransactionDurationOptimisticAbortInternal.Observe(duration)
+		} else {
+			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
+		}
 	}
 }
 
@@ -240,9 +250,9 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// Handle the stmt commit/rollback.
 		if se.txn.Valid() {
 			if meetsErr != nil {
-				se.StmtRollback()
+				se.StmtRollback(ctx, false)
 			} else {
-				se.StmtCommit()
+				se.StmtCommit(ctx)
 			}
 		}
 	}
@@ -265,16 +275,20 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	isInternal := false
+	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
+		isInternal = true
+	}
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
-			recordAbortTxnDuration(sessVars)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			recordAbortTxnDuration(sessVars, isInternal)
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
-			recordAbortTxnDuration(sessVars)
+			recordAbortTxnDuration(sessVars, isInternal)
 		}
 		return meetsErr
 	}

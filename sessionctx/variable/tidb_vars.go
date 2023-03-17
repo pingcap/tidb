@@ -16,14 +16,18 @@ package variable
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
 
@@ -46,6 +50,9 @@ const (
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
+	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
+
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -59,6 +66,9 @@ const (
 
 	// TiDBOpt3StageDistinctAgg is used to indicate whether to plan and execute the distinct agg in 3 stages
 	TiDBOpt3StageDistinctAgg = "tidb_opt_three_stage_distinct_agg"
+
+	// TiDBOptEnable3StageMultiDistinctAgg is used to indicate whether to plan and execute the multi distinct agg in 3 stages
+	TiDBOptEnable3StageMultiDistinctAgg = "tidb_opt_enable_three_stage_multi_distinct_agg"
 
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
@@ -204,6 +214,9 @@ const (
 
 	// TiDBSlowLogThreshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
+	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
 
 	// TiDBRecordPlanInSlowLog is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
@@ -369,6 +382,16 @@ const (
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
+
+	// TiDBMaxBytesBeforeTiFlashExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalJoin = "tidb_max_bytes_before_tiflash_external_join"
+
+	// TiDBMaxBytesBeforeTiFlashExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = "tidb_max_bytes_before_tiflash_external_group_by"
+
+	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -590,9 +613,6 @@ const (
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
-	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
-	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
@@ -698,6 +718,12 @@ const (
 	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
 	TiDBCostModelVersion = "tidb_cost_model_version"
 
+	// TiDBIndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	// IndexJoin can cause plenty of extra double read tasks, which consume lots of resources and take a long time.
+	// Since the number of double read tasks is hard to estimated accurately, we leave this variable to let us can adjust this
+	// part of cost manually.
+	TiDBIndexJoinDoubleReadPenaltyCostRate = "tidb_index_join_double_read_penalty_cost_rate"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
@@ -748,10 +774,10 @@ const (
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
-	// TiDBEnableGeneralPlanCache indicates whether to enable general plan cache.
-	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
-	// TiDBGeneralPlanCacheSize controls the size of general plan cache.
-	TiDBGeneralPlanCacheSize = "tidb_general_plan_cache_size"
+	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -764,6 +790,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+
+	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
 
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
@@ -779,11 +808,44 @@ const (
 
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
+
+	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
+	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
+
+	// TiDBPessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
+	// is enabled.
+	TiDBPessimisticTransactionFairLocking = "tidb_pessimistic_txn_fair_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
+
+	// TiFlashComputeDispatchPolicy indicates how to dispatch task to tiflash_compute nodes.
+	TiFlashComputeDispatchPolicy = "tiflash_compute_dispatch_policy"
+
+	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
+	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
+
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
+	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
+	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
+
+	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -839,8 +901,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
-	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
+	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -868,6 +930,45 @@ const (
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
+	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
+	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
+	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
+	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
+	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
+	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
+	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
+	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
+	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
+	TiDBTTLJobScheduleWindowEndTime = "tidb_ttl_job_schedule_window_end_time"
+	// TiDBTTLScanWorkerCount indicates the count of the scan workers in each TiDB node
+	TiDBTTLScanWorkerCount = "tidb_ttl_scan_worker_count"
+	// TiDBTTLDeleteWorkerCount indicates the count of the delete workers in each TiDB node
+	TiDBTTLDeleteWorkerCount = "tidb_ttl_delete_worker_count"
+	// PasswordReuseHistory limit a few passwords to reuse.
+	PasswordReuseHistory = "password_history"
+	// PasswordReuseTime limit how long passwords can be reused.
+	PasswordReuseTime = "password_reuse_interval"
+	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
+	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
+	TiDBStmtSummaryFilename = "tidb_stmt_summary_filename"
+	// TiDBStmtSummaryFileMaxDays indicates how many days the files written by stmtsummary will be kept.
+	TiDBStmtSummaryFileMaxDays = "tidb_stmt_summary_file_max_days"
+	// TiDBStmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file written by stmtsummary.
+	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
+	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
+	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
+	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
+	// limitation, if the storage is not TiKV).
+	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
 )
 
 // TiDB intentional limits
@@ -898,6 +999,7 @@ const (
 	DefSkipUTF8Check                               = false
 	DefSkipASCIICheck                              = false
 	DefOptAggPushDown                              = false
+	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
 	DefOptWriteRowID                               = false
@@ -943,12 +1045,15 @@ const (
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
-	DefTiDBEnableNAAJ                              = false
+	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
+	DefTiFlashMaxBytesBeforeExternalJoin           = -1
+	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
+	DefTiFlashMaxBytesBeforeExternalSort           = -1
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -999,9 +1104,8 @@ const (
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
-	DefTiDBEnableTelemetry                         = true
+	DefTiDBEnableTelemetry                         = false
 	DefTiDBEnableParallelApply                     = false
-	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
@@ -1046,6 +1150,7 @@ const (
 	DefTiDBRemoveOrderbyInSubquery                 = false
 	DefTiDBSkewDistinctAgg                         = false
 	DefTiDB3StageDistinctAgg                       = true
+	DefTiDB3StageMultiDistinctAgg                  = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -1065,7 +1170,7 @@ const (
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
+	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1074,7 +1179,7 @@ const (
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
-	DefEnableTiDBGCAwareMemoryTrack                = true
+	DefEnableTiDBGCAwareMemoryTrack                = false
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBEnableMDL                               = true
@@ -1084,8 +1189,8 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableGeneralPlanCache                  = false
-	DefTiDBGeneralPlanCacheSize                    = 100
+	DefTiDBEnableNonPreparedPlanCache              = false
+	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBEnableTiFlashReadForWriteStmt           = false
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1094,7 +1199,8 @@ const (
 	DefTiDBAutoBuildStatsConcurrency             = 1
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = false
+	DefTiDBForeignKeyChecks                      = true
+	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 1
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
@@ -1111,7 +1217,33 @@ const (
 	DefTiDBUseAlloc                                  = false
 	DefTiDBEnablePlanReplayerCapture                 = false
 	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBStoreBatchSize                            = 0
+	DefTiDBTTLJobEnable                              = true
+	DefTiDBTTLScanBatchSize                          = 500
+	DefTiDBTTLScanBatchMaxSize                       = 10240
+	DefTiDBTTLScanBatchMinSize                       = 1
+	DefTiDBTTLDeleteBatchSize                        = 100
+	DefTiDBTTLDeleteBatchMaxSize                     = 10240
+	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
+	DefTiDBTTLRunningTasks                           = -1
+	DefPasswordReuseHistory                          = 0
+	DefPasswordReuseTime                             = 0
+	DefTiDBStoreBatchSize                            = 4
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture           = false
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                     = true
+	DefTiDBPessimisticTransactionFairLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit              = true
+	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                = true
+	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 
 // Process global variables.
@@ -1153,7 +1285,7 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1163,18 +1295,35 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(false)
+	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
-	DefTiDBServerMemoryLimit = serverMemoryLimitDefaultValue()
-	GOGCTunerThreshold       = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
-
+	DefTiDBServerMemoryLimit           = serverMemoryLimitDefaultValue()
+	GOGCTunerThreshold                 = atomic.NewFloat64(DefTiDBGOGCTunerThreshold)
 	PasswordValidationLength           = atomic.NewInt32(8)
 	PasswordValidationMixedCaseCount   = atomic.NewInt32(1)
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
+	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
+	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
+	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
+	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
+	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
+	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount               = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	TTLRunningTasks                    = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	// always set the default value to false because the resource control in kv-client is not inited
+	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
+	EnableResourceControl = atomic.NewBool(false)
 )
 
 var (
@@ -1186,8 +1335,6 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SetPDClientDynamicOption is the func registered by domain
 	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
-	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
-	SwitchConcurrentDDL func(bool) error = nil
 	// SwitchMDL is the func registered by DDL to switch MDL.
 	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
@@ -1198,6 +1345,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {
@@ -1206,4 +1363,22 @@ func serverMemoryLimitDefaultValue() string {
 		return "80%"
 	}
 	return "0"
+}
+
+func mustParseDuration(str string) time.Duration {
+	duration, err := time.ParseDuration(str)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not a duration", str))
+	}
+
+	return duration
+}
+
+func mustParseTime(layout string, str string) time.Time {
+	time, err := time.ParseInLocation(layout, str, time.UTC)
+	if err != nil {
+		panic(fmt.Sprintf("%s is not in %s duration format", str, layout))
+	}
+
+	return time
 }

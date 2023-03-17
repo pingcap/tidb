@@ -18,6 +18,7 @@ go_library(
 
 go_test(
     name = "servermemorylimit_test",
+    timeout = "short",
     srcs = ["servermemorylimit_test.go"],
     embed = [":servermemorylimit"],
     flaky = True,

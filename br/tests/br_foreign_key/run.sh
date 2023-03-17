@@ -17,7 +17,6 @@
 set -eu
 DB="$TEST_NAME"
 
-run_sql "set @@global.tidb_enable_foreign_key=1;"
 run_sql "set @@global.foreign_key_checks=1;"
 run_sql "set @@foreign_key_checks=1;"
 run_sql "create schema $DB;"
@@ -50,6 +49,5 @@ check_contains 'id: 3'
 check_contains 'a: NULL'
 check_contains 'b: 11'
 check_contains 'b: 13'
-check_contains 'b: 14'
 
 run_sql "drop schema $DB"

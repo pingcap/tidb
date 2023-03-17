@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "intest",
+    srcs = [
+        "common.go",
+        "intest.go",  #keep
+    ],
+    importpath = "github.com/pingcap/tidb/util/intest",
+    visibility = ["//visibility:public"],
+)
