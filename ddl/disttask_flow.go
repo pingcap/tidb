@@ -52,6 +52,7 @@ type litBackfillFlowHandle struct {
 	getDDL func() DDL
 }
 
+// NewLitBackfillFlowHandle creates a new litBackfillFlowHandle
 func NewLitBackfillFlowHandle(getDDL func() DDL) dispatcher.TaskFlowHandle {
 	return &litBackfillFlowHandle{
 		getDDL: getDDL,

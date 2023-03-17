@@ -39,7 +39,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, true, e.addIndex)
 	require.Equal(t, config.OpLevelOptional, e.analyze)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, config.ByteSize(100<<20), e.batchSize)
+	require.Equal(t, int64(1000), e.batchSize)
 	require.Equal(t, unlimitedWriteSpeed, e.maxWriteSpeed)
 	require.Equal(t, false, e.splitFile)
 	require.Equal(t, int64(100), e.maxRecordedErrors)
@@ -97,7 +97,6 @@ func TestInitOptions(t *testing.T) {
 
 		{OptionStr: batchSizeOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: batchSizeOption + "='11aa'", Err: exeerrors.ErrInvalidOptionVal},
-		{OptionStr: batchSizeOption + "=false", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: batchSizeOption + "=null", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: maxWriteSpeedOption + "='aa'", Err: exeerrors.ErrInvalidOptionVal},
@@ -150,7 +149,7 @@ func TestInitOptions(t *testing.T) {
 		addIndexOption+"=false, "+
 		analyzeOption+"='required', "+
 		threadOption+"='100000', "+
-		batchSizeOption+"='100mib', "+
+		batchSizeOption+"=2000, "+
 		maxWriteSpeedOption+"='200mib', "+
 		splitFileOption+"=true, "+
 		recordErrorsOption+"=123, "+
@@ -165,7 +164,7 @@ func TestInitOptions(t *testing.T) {
 	require.False(t, e.addIndex, sql)
 	require.Equal(t, config.OpLevelRequired, e.analyze, sql)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt, sql)
-	require.Equal(t, config.ByteSize(100<<20), e.batchSize, sql)
+	require.Equal(t, int64(2000), e.batchSize, sql)
 	require.Equal(t, config.ByteSize(200<<20), e.maxWriteSpeed, sql)
 	require.True(t, e.splitFile, sql)
 	require.Equal(t, int64(123), e.maxRecordedErrors, sql)
@@ -176,12 +175,10 @@ func TestAdjustOptions(t *testing.T) {
 	e := LoadDataController{
 		diskQuota:     1,
 		threadCnt:     100000000,
-		batchSize:     1,
 		maxWriteSpeed: 10,
 	}
 	e.adjustOptions()
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
-	require.Equal(t, minBatchSize, e.batchSize)
 	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
 }

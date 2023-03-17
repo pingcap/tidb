@@ -2877,7 +2877,7 @@ type ShowStmt struct {
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
-	Pattern     *PatternLikeExpr
+	Pattern     *PatternLikeOrIlikeExpr
 	Where       ExprNode
 
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
@@ -3242,7 +3242,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Pattern = node.(*PatternLikeExpr)
+		n.Pattern = node.(*PatternLikeOrIlikeExpr)
 	}
 
 	if n.Where != nil {
