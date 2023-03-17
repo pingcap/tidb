@@ -480,7 +480,7 @@
         ]
       },
       {
-        "_comment": "The selectivity of `a>3` is 0(< 0.7), so push it down",
+        "_comment": "The selectivity of `a>1` is 0.66(< 0.7), so push it down",
         "SQL": "explain select count(a), max(t) from t1 where a>1",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
