@@ -142,16 +142,19 @@ type ReorgMeta struct {
 	Checkpoint *ReorgCheckpoint `json:"checkpoint"`
 }
 
+// Encode encodes ReorgMeta with json format.
 func (rm *ReorgMeta) Encode() ([]byte, error) {
 	b, err := json.Marshal(rm)
 	return b, errors.Trace(err)
 }
 
+// Decode decodes ReorgMeta from the json buffer.
 func (rm *ReorgMeta) Decode(b []byte) error {
 	err := json.Unmarshal(b, rm)
 	return errors.Trace(err)
 }
 
+// ReorgCheckpoint is the checkpoint of the reorganization process.
 type ReorgCheckpoint struct {
 	State        ReorgCheckpointState
 	DoneKey      []byte
@@ -159,15 +162,21 @@ type ReorgCheckpoint struct {
 	Checksum     uint64
 }
 
+// ReorgCheckpointState is the state of the checkpoint of reorganization process.
 type ReorgCheckpointState byte
 
 const (
-	CheckpointStateNone         ReorgCheckpointState = 0
-	CheckpointStateWriting      ReorgCheckpointState = 10
+	// CheckpointStateNone means the checkpoint is not initialized.
+	CheckpointStateNone ReorgCheckpointState = 0
+	// CheckpointStateWriting means the index data is being written to local engine.
+	CheckpointStateWriting ReorgCheckpointState = 10
+	// CheckpointStateEngineClosed means the local engine is closed.
 	CheckpointStateEngineClosed ReorgCheckpointState = 20
-	CheckpointStateImported     ReorgCheckpointState = 30
+	// CheckpointStateImported means the data in local engine is imported to the storage.
+	CheckpointStateImported ReorgCheckpointState = 30
 )
 
+// NewReorgCheckpoint creates a new ReorgCheckpoint.
 func NewReorgCheckpoint(startKey []byte, instanceAddr string) *ReorgCheckpoint {
 	return &ReorgCheckpoint{
 		State:        CheckpointStateNone,
@@ -176,11 +185,13 @@ func NewReorgCheckpoint(startKey []byte, instanceAddr string) *ReorgCheckpoint {
 	}
 }
 
+// Encode encodes ReorgCheckpoint with json format.
 func (rc *ReorgCheckpoint) Encode() ([]byte, error) {
 	b, err := json.Marshal(rc)
 	return b, errors.Trace(err)
 }
 
+// Decode decodes ReorgCheckpoint from the json buffer.
 func (rc *ReorgCheckpoint) Decode(b []byte) error {
 	err := json.Unmarshal(b, rc)
 	return errors.Trace(err)

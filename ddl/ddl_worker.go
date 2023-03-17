@@ -444,7 +444,6 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if len(rows) == 0 {
 		return errors.Errorf("can't find ddl job %d", job.ID)
 	}
-
 	ids := rows[0].GetString(0)
 	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
 	_, err = w.sess.execute(context.Background(), sql, "register-mdl-info")
