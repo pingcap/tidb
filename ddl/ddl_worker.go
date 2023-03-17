@@ -806,6 +806,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+	if !w.isOwner() {
+		// If the owner changes, we should not commit this txn because
+		// it may change the metadata that relied on by the real owner.
+		w.sess.rollback()
+		d.unlockSchemaVersion(job.ID)
+		return 0, dbterror.ErrNotOwner
+	}
 	err = w.sess.commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
