@@ -5741,7 +5741,7 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
 	// Check the tiflash replica count should be less than the total tiflash stores.
-	tiflashStoreCnt, err := infoschema.GetTiFlashWriteStoreCount(ctx)
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

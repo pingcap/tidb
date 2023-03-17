@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -1521,8 +1522,12 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			startTimeStr = startTime.Format(time.RFC3339)
 			upTimeStr = time.Since(startTime).String()
 		}
+		serverType := server.ServerType
+		if server.ServerType == kv.TiFlash.Name() && server.EngineRole == placement.EngineRoleLabelWrite {
+			serverType = infoschema.TiFlashWrite
+		}
 		row := types.MakeDatums(
-			server.ServerType,
+			serverType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
