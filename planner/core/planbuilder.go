@@ -728,11 +728,12 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
-	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+	savedBlockNames := *(sctx.GetSessionVars().PlannerSelectBlockAsName.Load())
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	}
 
 	b.ctx = sctx
