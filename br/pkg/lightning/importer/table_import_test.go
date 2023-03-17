@@ -1443,7 +1443,6 @@ func (s *tableRestoreSuite) TestEstimate() {
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	mockTarget := restoremock.NewMockTargetInfo()
-	mockTarget.MaxReplicasPerRegion = 3
 
 	preInfoGetter := &PreImportInfoGetterImpl{
 		cfg:              s.cfg,
@@ -1461,13 +1460,13 @@ func (s *tableRestoreSuite) TestEstimate() {
 	s.Require().NoError(err)
 
 	// Because this file is small than region split size so we does not sample it.
-	tikvExpected := 2 * int64(compressionRatio*float64(tblSize)*float64(mockTarget.MaxReplicasPerRegion))
+	tikvExpected := 2 * int64(compressionRatio*float64(tblSize))
 	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
 	tiflashExpected := int64(compressionRatio * float64(tblSize) * float64(tiflashReplica1+tiflashReplica2))
 	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
 
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
-	tikvExpected = int64(compressionRatio * float64(config.SplitRegionSize+tblSize) * float64(mockTarget.MaxReplicasPerRegion))
+	tikvExpected = int64(compressionRatio * float64(config.SplitRegionSize+tblSize))
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
 	s.Require().Greater(estimateResult.SizeWithIndex, tikvExpected)
@@ -1478,7 +1477,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	preInfoGetter.cfg.TikvImporter.Backend = config.BackendTiDB
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	tikvExpected = int64((int(config.SplitRegionSize) + tblSize) * mockTarget.MaxReplicasPerRegion)
+	tikvExpected = int64((int(config.SplitRegionSize) + tblSize))
 	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
 	tiflashExpected = int64(config.SplitRegionSize*tiflashReplica1 + tblSize*tiflashReplica2)
 	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
