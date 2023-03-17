@@ -1189,6 +1189,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	// append warnings and get no duplicated error rows
+CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
@@ -1201,9 +1202,15 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					if err != nil {
 						return err
 					}
-					_, err2 := e.removeRow(ctx, txn, handle, r, false)
+					unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
 					if err2 != nil {
 						return err2
+					}
+					if unchanged {
+						// we don't need to add the identical row again, but the
+						// counter should act as if we did.
+						e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+						continue
 					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
@@ -1217,7 +1224,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
-		skip := false
+
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
@@ -1247,8 +1254,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 						// lock duplicated unique key on insert-ignore
 						txnCtx.AddUnchangedRowKey(uk.newKey)
 					}
-					skip = true
-					break
+					continue CheckAndInsert
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
@@ -1256,14 +1262,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
+		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
-		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
-			if err != nil {
-				return err
-			}
+		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		err = addRecord(ctx, rows[i])
+		if err != nil {
+			return err
 		}
 	}
 	if e.stats != nil {
