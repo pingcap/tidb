@@ -391,14 +391,14 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustExec(`explain format = 'plan_cache' select * from (select * from t) tx`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported`))
 
-	// no warning if disable this feature
+	// cache disabled warning if disable this feature
 	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a+1=1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a in (select a from t)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 }
 
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
@@ -1484,4 +1484,36 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		warn := tk.MustQuery("show warnings").Rows()[0]
 		require.Equal(t, reasons[idx], warn[2])
 	}
+}
+
+func TestPlanCacheSwitchCanEffectImmediately(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	// before prepare
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: plan cache is disabled"))
+	// after prepare
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: plan cache is disabled"))
+	// non-prepare
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
+	tk.MustExec("select * from t")
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 0")
+	tk.MustExec("select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("explain format = 'plan_cache' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: plan cache is disabled"))
 }
