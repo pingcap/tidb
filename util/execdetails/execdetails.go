@@ -521,6 +521,8 @@ const (
 	TpFKCheckRuntimeStats
 	// TpFKCascadeRuntimeStats is the tp for FKCascadeRuntimeStats
 	TpFKCascadeRuntimeStats
+	// TpRURuntimeStats is the tp for RURuntimeStats
+	TpRURuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -708,6 +710,8 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 	if reuse != nil {
 		// Reuse map is cheaper than create a new map object.
 		// Go compiler optimize this cleanup code pattern to a clearmap() function.
+		reuse.mu.Lock()
+		defer reuse.mu.Unlock()
 		for k := range reuse.rootStats {
 			delete(reuse.rootStats, k)
 		}

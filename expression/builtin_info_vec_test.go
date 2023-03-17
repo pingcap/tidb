@@ -79,6 +79,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.CurrentRole: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
 	},
+	ast.CurrentResourceGroup: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
 	ast.TiDBIsDDLOwner: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
 	},

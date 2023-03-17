@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -201,6 +202,8 @@ func NonPreparedPlanCacheable(node ast.Node, is infoschema.InfoSchema) bool {
 	return ok
 }
 
+var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
+
 // NonPreparedPlanCacheableWithCtx checks whether the input ast is cacheable for non-prepared plan cache.
 // Only support: select {field} from {single-table} where {cond} and {cond} ...
 // {cond}: {col} {op} {val}
@@ -238,13 +241,17 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		}
 	}
 
-	checker := nonPreparedPlanCacheableChecker{
-		sctx:      sctx,
-		cacheable: true,
-		schema:    is,
-	}
-	node.Accept(&checker)
-	return checker.cacheable, checker.reason
+	// allocate and init the checker
+	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
+	checker.reset(sctx, is)
+
+	node.Accept(checker)
+	cacheable, reason := checker.cacheable, checker.reason
+
+	// put the checker back
+	nonPrepCacheCheckerPool.Put(checker)
+
+	return cacheable, reason
 }
 
 // nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
@@ -258,6 +265,16 @@ type nonPreparedPlanCacheableChecker struct {
 	tableNode *ast.TableName
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
+}
+
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema) {
+	checker.sctx = sctx
+	checker.cacheable = true
+	checker.schema = schema
+	checker.reason = ""
+	checker.tableNode = nil
+	checker.constCnt = 0
+	checker.filterCnt = 0
 }
 
 // Enter implements Visitor interface.
@@ -430,13 +447,13 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	case PhysicalPlan:
 		pp = x
 	default:
-		return false, fmt.Sprintf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String())
+		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
 	}
 	if pp == nil { // simple DML statements
 		return true, ""
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
 	}
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
 		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_subquery' is off"
@@ -450,32 +467,32 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {
-			return false, "skip plan-cache: get a TableDual plan"
+			return false, "get a TableDual plan"
 		}
 	case *PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
-			return false, "skip plan-cache: TiFlash plan is un-cacheable"
+			return false, "TiFlash plan is un-cacheable"
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
-		return false, "skip plan-cache: get a Shuffle plan"
+		return false, "get a Shuffle plan"
 	case *PhysicalMemTable:
-		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
+		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex {
-			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalTableScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalApply:
-		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
+		return false, "PhysicalApply plan is un-cacheable"
 	}
 
 	subPlans = append(subPlans, p.Children()...)

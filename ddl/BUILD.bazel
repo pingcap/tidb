@@ -56,7 +56,6 @@ go_library(
     ],
     deps = [
         "//br/pkg/lightning/common",
-        "//br/pkg/utils",
         "//config",
         "//ddl/ingest",
         "//ddl/label",
@@ -198,7 +197,6 @@ go_test(
         "primary_key_handle_test.go",
         "reorg_partition_test.go",
         "repair_table_test.go",
-        "resource_group_test.go",
         "restart_test.go",
         "rollingback_test.go",
         "schema_test.go",
@@ -258,6 +256,7 @@ go_test(
         "//testkit/testutil",
         "//types",
         "//util",
+        "//util/chunk",
         "//util/codec",
         "//util/collate",
         "//util/dbterror",

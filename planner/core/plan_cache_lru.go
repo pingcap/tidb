@@ -18,7 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
+	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -60,23 +60,25 @@ type LRUPlanCache struct {
 
 	memoryUsageTotal int64
 	sctx             sessionctx.Context
+	isNonPrepared    bool
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context) *LRUPlanCache {
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context, isNonPrepared bool) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	return &LRUPlanCache{
-		capacity: capacity,
-		size:     0,
-		buckets:  make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
-		lruList:  list.New(),
-		quota:    quota,
-		guard:    guard,
-		sctx:     sctx,
+		capacity:      capacity,
+		size:          0,
+		buckets:       make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
+		lruList:       list.New(),
+		quota:         quota,
+		guard:         guard,
+		sctx:          sctx,
+		isNonPrepared: isNonPrepared,
 	}
 }
 
@@ -202,9 +204,9 @@ func (l *LRUPlanCache) Close() {
 		return
 	}
 	if l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(l.memoryUsageTotal))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(l.memoryUsageTotal))
 	}
-	metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(float64(l.size))
+	core_metrics.GetPlanCacheInstanceNumCounter(l.isNonPrepared).Sub(float64(l.size))
 }
 
 // removeOldest removes the oldest element from the cache.
@@ -291,31 +293,31 @@ func checkUint64SliceIfEqual(a, b []uint64) bool {
 
 // updateInstanceMetric update the memory usage and plan num for show in grafana
 func (l *LRUPlanCache) updateInstanceMetric(in, out *planCacheEntry) {
-	updateInstancePlanNum(in, out)
+	updateInstancePlanNum(in, out, l.isNonPrepared)
 	if l == nil || !l.sctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor {
 		return
 	}
 
 	if in != nil && out != nil { // replace plan
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage() - out.MemoryUsage()
 	} else if in != nil { // put plan
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Add(float64(in.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Add(float64(in.MemoryUsage()))
 		l.memoryUsageTotal += in.MemoryUsage()
 	} else { // delete plan
-		metrics.PlanCacheInstanceMemoryUsage.WithLabelValues("instance").Sub(float64(out.MemoryUsage()))
+		core_metrics.GetPlanCacheInstanceMemoryUsage(l.isNonPrepared).Sub(float64(out.MemoryUsage()))
 		l.memoryUsageTotal -= out.MemoryUsage()
 	}
 }
 
 // updateInstancePlanNum update the plan num
-func updateInstancePlanNum(in, out *planCacheEntry) {
+func updateInstancePlanNum(in, out *planCacheEntry, isNonPrepared bool) {
 	if in != nil && out != nil { // replace plan
 		return
 	} else if in != nil { // put plan
-		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Add(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(isNonPrepared).Add(1)
 	} else { // delete plan
-		metrics.PlanCacheInstancePlanNumCounter.WithLabelValues("plan_num").Sub(1)
+		core_metrics.GetPlanCacheInstanceNumCounter(isNonPrepared).Sub(1)
 	}
 }

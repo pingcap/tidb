@@ -685,9 +685,9 @@ func setGlobalVars() {
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
 		// practically deprecate the config, let the new session memory tracker take charge of it.
-		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+		kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 	} else {
-		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+		kv.TxnTotalSizeLimit.Store(cfg.Performance.TxnTotalSizeLimit)
 	}
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
@@ -857,17 +857,21 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
+// The amount of time we wait for the ongoing txt to finished.
+// We should better provider a dynamic way to set this value.
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, _ bool) {
 	dom.StopAutoAnalyze()
-	if graceful {
-		done := make(chan struct{})
-		svr.GracefulDown(context.Background(), done)
-		// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
-		// See https://github.com/pingcap/tidb/issues/40038 for details.
-		svr.KillSysProcesses()
-	} else {
-		svr.TryGracefulDown()
-	}
+
+	drainClientWait := gracefulCloseConnectionsTimeout
+
+	cancelClientWait := time.Second * 1
+	svr.DrainClients(drainClientWait, cancelClientWait)
+
+	// Kill sys processes such as auto analyze. Otherwise, tidb-server cannot exit until auto analyze is finished.
+	// See https://github.com/pingcap/tidb/issues/40038 for details.
+	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
