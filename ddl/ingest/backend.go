@@ -49,8 +49,9 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 	}
 
 	failpoint.Inject("MockCheckpointFailImport", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
-			failpoint.Return(MockFailure(bc.jobID, indexID))
+			failpoint.Return(MockFailure())
 		}
 	})
 

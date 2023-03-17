@@ -973,8 +973,9 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		fallthrough
 	case model.CheckpointStateImported:
 		failpoint.Inject("MockCheckpointFailImported", func(val failpoint.Value) {
+			//nolint:forcetypeassert
 			if val.(bool) {
-				failpoint.Return(false, ver, ingest.MockFailure(job.ID, indexInfo.ID))
+				failpoint.Return(false, ver, ingest.MockFailure())
 			}
 		})
 		return true, ver, nil

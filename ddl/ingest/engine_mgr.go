@@ -89,7 +89,7 @@ func (m *engineManager) Register(bc *BackendContext, jobID, indexID int64, schem
 
 // Resume registers an engine for import if it does not exist.
 func (m *engineManager) Resume(bc *BackendContext, jobID, indexID int64, schemaName, tableName string) error {
-	en, exist := m.Load(indexID)
+	_, exist := m.Load(indexID)
 	if !exist {
 		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
 		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
@@ -99,7 +99,7 @@ func (m *engineManager) Resume(bc *BackendContext, jobID, indexID int64, schemaN
 			return errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
-		en = NewEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
+		en := NewEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
 		m.Store(indexID, en)
 	}
 	return nil

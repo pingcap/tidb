@@ -570,6 +570,9 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 		Checkpoint: checkpoint,
 	}
 	reorgMetaBytes, err := reorgMeta.Encode()
+	if err != nil {
+		return err
+	}
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d, reorg_meta = %s where job_id = %d",
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, wrapKey2String(reorgMetaBytes), jobID)
 	_, err = sess.execute(context.Background(), sql, "update_handle")

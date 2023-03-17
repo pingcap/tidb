@@ -70,7 +70,8 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 // MockFail is used to mock a failure.
 var MockFail = "MockFail"
 
-func MockFailure(jobID int64, indexID int64) error {
+// MockFailure is used to mock a failure.
+func MockFailure() error {
 	// To workaround with the "lock held by current process" error.
 	local.CloseDBForTest()
 	InitGlobalLightningEnv() // Mock TiDB failed and restarted.
@@ -86,8 +87,9 @@ func (ei *engineInfo) Flush() error {
 		return err
 	}
 	failpoint.Inject("MockCheckpointFailWriting", func(val failpoint.Value) {
+		//nolint:forcetypeassert
 		if val.(bool) {
-			failpoint.Return(MockFailure(ei.jobID, ei.indexID))
+			failpoint.Return(MockFailure())
 		}
 	})
 	return nil
