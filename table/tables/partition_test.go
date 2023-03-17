@@ -2390,15 +2390,14 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	// - add base data
 	// - start DDL
 	// - before each (and after?) each state transition:
-	//   - Crash (if rollback is needed, then OK, but the rest need to be tested
-	//   - Fail
-	//   - run queries that could clash with backfill etc. (How to handle expected errors?)
-	//     - on both the 'current' state and 'previous' state!
+	//   - insert, update and delete concurrently, to verify that the states are correctly handled.
+	//   - TODO: Crash (if rollback is needed, then OK, but the rest need to be tested
+	//   - TODO: Fail
+	//   - TODO: run queries that could clash with backfill etc. (How to handle expected errors?)
+	//     - TODO: on both the 'current' state and 'previous' state!
 	//   - run ADMIN CHECK TABLE
 	//
-	// OK Just start and then extend :)
 
-	//tk.MustExec(`create table t (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e)) partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`)
 	tk.MustExec(`create table t (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a)) partition by range columns (a) (partition pNull values less than (""), partition pM values less than ("M"), partition pLast values less than (maxvalue))`)
 	tk.MustExec(`create table t2 (a varchar(255) collate utf8mb4_unicode_ci, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, primary key (a), key (b), key (c,b), key (d,c), key(e))`)
 
@@ -2413,11 +2412,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		"  `f` double DEFAULT NULL,\n" +
 		"  `g` text DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-		//"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		//"  KEY `b` (`b`),\n" +
-		//"  KEY `c` (`c`,`b`),\n" +
-		//"  KEY `d` (`d`,`c`),\n" +
-		//"  KEY `e` (`e`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`a`)\n" +
 		"(PARTITION `pNull` VALUES LESS THAN (''),\n" +
@@ -2490,7 +2484,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 		tk.MustExec(`insert into t values ` + values)
 		tk.MustExec(`insert into t2 values ` + values)
 	}
-	// TODO: Also test without analyze table
 	tk.MustExec(`analyze table t`)
 	tk.MustExec(`analyze table t2`)
 	tk.MustQuery(`select * from t except select * from t2`).Check(testkit.Rows())
@@ -2513,8 +2506,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	//  insert
 	//  update
 	//  delete
-	// TODO: Also make sure we update the PK so it moves between different before and after partitions
-	// TODO: Also check if non-affected indexes in UPDATE is touched?
+	// Note: update the PK so it moves between different before and after partitions
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
 	tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
@@ -2541,22 +2533,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 
 			logutil.BgLogger().Info("State before ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
-			if job.SchemaState == model.StateDeleteReorganization {
-				//tk2.MustQuery(`explain format='brief' select count(distinct a) from t`).Check(testkit.Rows())
-			}
-			//tk2.MustQuery(`(select a,c from t except select a,c from t2) union (select a,0 from t except select a,0 from t2)`).Check(testkit.Rows())
-			/*
-				res := tk2.MustQuery(`select a,c from t`).Sort()
-				for _, row := range res.Rows() {
-					logutil.BgLogger().Info("row t", zap.String("a", row[0].(string)), zap.String("c", row[1].(string)))
-				}
-				res = tk2.MustQuery(`select a,c from t2`).Sort()
-				for _, row := range res.Rows() {
-					logutil.BgLogger().Info("row t2", zap.String("a", row[0].(string)), zap.String("c", row[1].(string)))
-				}
-			*/
 			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
-			//tk2.MustQuery(`select count(distinct a) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
 			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
 			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
@@ -2705,6 +2682,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				}
 
 				// Also do some non-pk column updates!
+				// Note: if PK changes it does RemoveRecord + AddRecord
 				insIdx = reorgRand.Intn(len(insPK))
 				oldPK = insPK[insIdx]
 				value = getValues(oldPK, true)
@@ -2718,7 +2696,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 					return
 				}
 			}
-			// TODO: Also just change some fields, since if PK changes it does RemoveRecord + AddRecord
 			if len(pkMap) != len(pkArray) {
 				panic("Different length!!!")
 			}
@@ -2731,7 +2708,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
 			// Now using current schema version
 
-			// TODO: Add test for update of non-PK columns!!!
 			// Half from old (1/4 in current schema version)
 			values = values[:0]
 			for i := 2; i < pkUpdates; i += 4 {
@@ -2851,7 +2827,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				idx := len(pkArray) - len(insPK) + insIdx
 				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				//logutil.BgLogger().Info("delete0", zap.String("pk", oldPK))
+				logutil.BgLogger().Debug("delete0", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2883,7 +2859,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				idx := len(pkArray) - len(insPK) + insIdx
 				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				//logutil.BgLogger().Info("delete1", zap.String("pk", oldPK))
+				logutil.BgLogger().Debug("delete1", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2914,7 +2890,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				//logutil.BgLogger().Info("delete2", zap.String("pk", oldPK))
+				logutil.BgLogger().Debug("delete2", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2944,7 +2920,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				//logutil.BgLogger().Info("delete3", zap.String("pk", oldPK))
+				logutil.BgLogger().Debug("delete3", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -2986,8 +2962,6 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`admin check table t2`)
-	//tk.MustQuery(`select count(*) from t`).Check(testkit.Rows("10233"))
-	//tk.MustQuery(`select count(*) from t2`).Check(testkit.Rows("10233"))
 	tk.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select * from t except select * from t2 LIMIT 1`).Check(testkit.Rows())
