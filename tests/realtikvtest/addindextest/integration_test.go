@@ -209,7 +209,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
 	done := make(chan error, 1)
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 1)
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
 	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
 	checkNum := 0
 
@@ -224,7 +224,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 		case wg := <-ddl.TestCheckWorkerNumCh:
 			offset = (offset + 1) % 3
 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset])/2+1)
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
 			checkNum++
 			wg.Done()
 		}
