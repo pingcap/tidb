@@ -34,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"golang.org/x/exp/slices"
 )
 
@@ -51,7 +52,7 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
+	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )
 
 // Getter is the interface for the Get method.

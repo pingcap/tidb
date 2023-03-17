@@ -1017,10 +1017,10 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		"xxx row5_col1	- 	row5_col3")
 	require.NoError(t, err)
 
-	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
+	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit.Load()
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit = 10240
-	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
+	kv.TxnTotalSizeLimit.Store(10240)
+	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability
 	cli.runTestsOnNewDB(t, func(config *mysql.Config) {

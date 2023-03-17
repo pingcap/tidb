@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2669,12 +2668,12 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
 	tk.MustExec("update t1 set pid=1 where id>1")
 	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 10240)
+	kv.TxnTotalSizeLimit.Store(10240)
 	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
 	// foreign key cascade behaviour will cause ErrTxnTooLarge.
 	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)

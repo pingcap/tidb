@@ -685,9 +685,9 @@ func setGlobalVars() {
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	if cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit {
 		// practically deprecate the config, let the new session memory tracker take charge of it.
-		kv.TxnTotalSizeLimit = config.SuperLargeTxnSize
+		kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 	} else {
-		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+		kv.TxnTotalSizeLimit.Store(cfg.Performance.TxnTotalSizeLimit)
 	}
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
