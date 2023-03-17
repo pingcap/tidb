@@ -212,13 +212,10 @@ func main() {
 	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
-		clusterID, err := config.GetAutoScalerClusterID()
-		terror.MustNil(err)
-
 		err = tiflashcompute.InitGlobalTopoFetcher(
 			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
-			clusterID,
+			config.GetGlobalConfig().AutoScalerClusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
 		terror.MustNil(err)
 	}
