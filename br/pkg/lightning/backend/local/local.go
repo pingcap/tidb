@@ -1786,7 +1786,10 @@ var lastPebbleDB *pebble.DB
 // CloseDBForTest is only used for test.
 func CloseDBForTest() {
 	defer func() {
-		recover() // Ignore the already closed error.
+		err := recover() // Ignore the already closed error.
+		if err != nil {
+			log.L().Info("close last pebble db failed", zap.Any("recover", err))
+		}
 	}()
 	if lastPebbleDB != nil {
 		err := lastPebbleDB.Close()
