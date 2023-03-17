@@ -833,14 +833,16 @@ func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
 	b.maxSize = maxSize
 }
 
-func (b *backfillScheduler) expectedWorkerSize() int {
+func (b *backfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	if b.tp == typeAddIndexWorker && b.reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
-	} else {
-		workerCnt = mathutil.Min(workerCnt, b.maxSize)
+		readerSize = mathutil.Min(workerCnt/2, b.maxSize)
+		readerSize = mathutil.Max(readerSize, 1)
+		writerSize = mathutil.Min(workerCnt/2+2, b.maxSize)
+		return readerSize, writerSize
 	}
-	return workerCnt
+	workerCnt = mathutil.Min(workerCnt, b.maxSize)
+	return workerCnt, workerCnt
 }
 
 func (b *backfillScheduler) workerSize() int {
@@ -855,9 +857,9 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
 		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 	}
-	workerCnt := b.expectedWorkerSize()
+	readerCnt, writerCnt := b.expectedWorkerSize()
 	// Increase the worker.
-	for i := len(b.workers); i < workerCnt; i++ {
+	for i := len(b.workers); i < writerCnt; i++ {
 		sessCtx, err := b.newSessCtx()
 		if err != nil {
 			return err
@@ -921,13 +923,13 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		go runner.run(reorgInfo.d, worker, job)
 	}
 	// Decrease the worker.
-	if len(b.workers) > workerCnt {
-		workers := b.workers[workerCnt:]
-		b.workers = b.workers[:workerCnt]
+	if len(b.workers) > writerCnt {
+		workers := b.workers[writerCnt:]
+		b.workers = b.workers[:writerCnt]
 		closeBackfillWorkers(workers)
 	}
 	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.adjustSize(len(b.workers))
+		b.copReqSenderPool.adjustSize(readerCnt)
 	}
 	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
 }
