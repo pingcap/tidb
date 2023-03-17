@@ -29,29 +29,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-const (
-	// CreateLoadDataJobs is a table that LOAD DATA uses
-	// TODO: move it to bootstrap.go and create it in bootstrap
-	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
-       job_id bigint(64) NOT NULL AUTO_INCREMENT,
-       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
-       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-       start_time TIMESTAMP(6) NULL DEFAULT NULL,
-       update_time TIMESTAMP(6) NULL DEFAULT NULL,
-       end_time TIMESTAMP(6) NULL DEFAULT NULL,
-       data_source TEXT NOT NULL,
-       table_schema VARCHAR(64) NOT NULL,
-       table_name VARCHAR(64) NOT NULL,
-       import_mode VARCHAR(64) NOT NULL,
-       create_user VARCHAR(32) NOT NULL,
-       progress TEXT DEFAULT NULL,
-       result_message TEXT DEFAULT NULL,
-       error_message TEXT DEFAULT NULL,
-       PRIMARY KEY (job_id),
-       KEY (create_time),
-       KEY (create_user));`
-)
-
 // CreateLoadDataJob creates a load data job by insert a record to system table.
 // The AUTO_INCREMENT value will be returned as jobID.
 func CreateLoadDataJob(
