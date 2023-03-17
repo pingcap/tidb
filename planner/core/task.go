@@ -15,10 +15,6 @@
 package core
 
 import (
-	"fmt"
-	"math"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -43,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
 )
 
 var (
@@ -2704,9 +2701,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return invalidTask
-		}
-		if strings.HasPrefix(p.ctx.GetSessionVars().StmtCtx.OriginalSQL, "EXPLAIN select count(distinct a) from t") {
-			fmt.Println(1)
 		}
 
 		final, middle, partial, proj4Mid, proj4Partial, err := p.adjustXStagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
