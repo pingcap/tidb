@@ -88,6 +88,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// DefaultResourceGroupName is the default resource group name.
+	DefaultResourceGroupName = "default"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
@@ -2150,7 +2152,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		err = checkPartitionByHash(ctx, tbInfo)
 	case model.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)
@@ -2556,6 +2558,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	infos []*model.TableInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) error {
+	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+		injectBatchSize := val.(int)
+		if len(infos) > injectBatchSize {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
@@ -2867,7 +2875,21 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	return checkListPartitionValue(ctx, tbInfo)
 }
 
-func isColTypeAllowedAsPartitioningCol(fieldType types.FieldType) bool {
+func isValidKeyPartitionColType(fieldType types.FieldType) bool {
+	switch fieldType.GetType() {
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+		return false
+	default:
+		return true
+	}
+}
+
+func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
+	// For key partition, the permitted partition field types can be all field types except
+	// BLOB, JSON, Geometry
+	if partType == model.PartitionTypeKey {
+		return isValidKeyPartitionColType(fieldType)
+	}
 	// The permitted data types are shown in the following list:
 	// All integer types
 	// DATE and DATETIME
@@ -2890,7 +2912,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
-		if !isColTypeAllowedAsPartitioningCol(colInfo.FieldType) {
+		if !isColTypeAllowedAsPartitioningCol(tbInfo.Partition.Type, colInfo.FieldType) {
 			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
 		}
 	}
@@ -4106,13 +4128,12 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	// Key type partition cannot be constructed currently, ignoring it for now.
 	case model.PartitionTypeKey:
+		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
-
-	return errors.Trace(err)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -4959,7 +4980,7 @@ func GetModifiableColumnJob(
 			if col.Name.L != newCol.Name.L {
 				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
-			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
+			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
 			pi := pt.Meta().GetPartitionInfo()
@@ -5720,7 +5741,7 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
 	// Check the tiflash replica count should be less than the total tiflash stores.
-	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
+	tiflashStoreCnt, err := infoschema.GetTiFlashWriteStoreCount(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5854,7 +5875,6 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 	// This DDL will update the table charset to default charset.
 	origCharset, origCollate, err = ResolveCharsetCollation(
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
@@ -7808,10 +7828,6 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if groupName.L == variable.DefaultResourceGroupName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
-	}
-
 	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
 		return err
 	}
@@ -7842,6 +7858,9 @@ func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) e
 // DropResourceGroup implements the DDL interface.
 func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
+	if groupName.L == DefaultResourceGroupName {
+		return resourcegroup.ErrDroppingInternalResourceGroup
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)

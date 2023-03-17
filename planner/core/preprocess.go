@@ -1833,6 +1833,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
+			if !skipLock {
+				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
+			}
 			return nil, err
 		}
 		if !skipLock {
@@ -1879,6 +1882,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 				}
 				if found {
+					if !skipLock {
+						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
+					}
 					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}

@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -391,7 +393,15 @@ type KvPair struct {
 	// Val is the value of the KV pair
 	Val []byte
 	// RowID is the row id of the KV pair.
-	RowID int64
+	RowID []byte
+}
+
+// EncodeIntRowIDToBuf encodes an int64 row id to a buffer.
+var EncodeIntRowIDToBuf = codec.EncodeComparableVarint
+
+// EncodeIntRowID encodes an int64 row id.
+func EncodeIntRowID(rowID int64) []byte {
+	return codec.EncodeComparableVarint(nil, rowID)
 }
 
 // TableHasAutoRowID return whether table has auto generated row id
@@ -415,4 +425,23 @@ func StringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// GetAutoRandomColumn return the column with auto_random, return nil if the table doesn't have it.
+// todo: better put in ddl package, but this will cause import cycle since ddl package import lightning
+func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
+	if !tblInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	if tblInfo.PKIsHandle {
+		return tblInfo.GetPkColInfo()
+	} else if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		if pk == nil {
+			return nil
+		}
+		offset := pk.Columns[0].Offset
+		return tblInfo.Columns[offset]
+	}
+	return nil
 }

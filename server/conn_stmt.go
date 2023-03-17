@@ -223,7 +223,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
-		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
 		if txnErr != nil {
 			return txnErr
 		}
@@ -304,6 +304,11 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
 		}
 		stmt.StoreResultSet(rs)
+		// also store the preparedParams in the stmt, so we could restore the params in the following fetch command
+		// the params should have been parsed in `(&cc.ctx).ExecuteStmt(ctx, execStmt)`.
+		stmt.StorePreparedCtx(&PreparedStatementCtx{
+			Params: vars.PreparedParams,
+		})
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
 		}
@@ -318,7 +323,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	retryable, err := cc.writeResultset(ctx, rs, true, cc.ctx.Status(), 0)
+	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -346,6 +351,9 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
+
+	cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params
+
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
@@ -363,7 +371,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
+	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}

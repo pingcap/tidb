@@ -1115,6 +1115,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// ilike: supported
+	function, err = NewFunction(mock.NewContext(), ast.Ilike, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// greatest
 	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
@@ -1255,6 +1260,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// Unhex
 	function, err = NewFunction(mock.NewContext(), ast.Unhex, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv4
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv6
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 

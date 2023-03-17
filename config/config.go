@@ -295,8 +295,7 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
-	// todo: remove this after AutoScaler is stable.
-	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
+	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -657,6 +656,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	RecordDBLabel   bool   `toml:"record-db-label" json:"record-db-label"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -765,6 +765,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -939,6 +942,7 @@ var defaultConf = Config{
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
 		RecordQPSbyDB:         false,
+		RecordDBLabel:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
@@ -979,6 +983,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -1009,7 +1014,7 @@ var defaultConf = Config{
 	},
 	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
@@ -1033,7 +1038,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
-	UseAutoScaler:                        true,
+	UseAutoScaler:                        false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
@@ -1063,26 +1068,6 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
-}
-
-// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
-func GetAutoScalerClusterID() (string, error) {
-	c := GetGlobalConfig()
-	keyspaceName := c.KeyspaceName
-	clusterID := c.AutoScalerClusterID
-
-	if keyspaceName != "" && clusterID != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
-	}
-	if keyspaceName == "" && clusterID == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
-	}
-
-	res := keyspaceName
-	if res == "" {
-		res = clusterID
-	}
-	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.

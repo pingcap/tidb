@@ -17,6 +17,7 @@ package telemetry_test
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -75,13 +76,13 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionAggressiveLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.False(t, txnUsage.AggressiveLocking)
+		require.False(t, txnUsage.FairLocking)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionAggressiveLocking))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionFairLocking))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-		require.True(t, txnUsage.AggressiveLocking)
+		require.True(t, txnUsage.FairLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -360,35 +361,35 @@ func TestResourceGroups(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), usage.ResourceControlUsage.NumResourceGroups)
-	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
 	tk.MustExec("create resource group x ru_per_sec=100")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
-	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("create resource group y ru_per_sec=100")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, uint64(3), usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("alter resource group y ru_per_sec=200")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, uint64(3), usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("drop resource group y")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'OFF'")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
 	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
 }
 
@@ -733,6 +734,10 @@ func TestTTLTelemetry(t *testing.T) {
 			createTime.Format(timeFormat), finishTime.Format(timeFormat), ttlExpire.Format(timeFormat), summaryText,
 			totalRows, totalRows-errorRows, errorRows, status,
 		)
+
+		if status == "running" {
+			tk.MustExec("update mysql.tidb_ttl_job_history set finish_time=FROM_UNIXTIME(1), summary_text=NULL, expired_rows=NULL, deleted_rows=NULL, error_delete_rows=NULL where job_id=?", strconv.Itoa(jobIDIdx))
+		}
 	}
 
 	oneDayAgoDate := curDate.Add(-24 * time.Hour)
@@ -755,6 +760,7 @@ func TestTTLTelemetry(t *testing.T) {
 	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 112600, 110000, "finished")
 	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 2600, 0, "timeout")
 	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "", 100000000, 0, "running")
 	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 2600, 0, "finished")
 	insertTTLHistory("t1", "", times51[0], times51[1], times51[2], "", 100000000, 1, "finished")
 
@@ -888,7 +894,7 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.Equal(t, diff.BatchedFallbackCount, int64(1))
 }
 
-func TestAggressiveLockingUsage(t *testing.T) {
+func TestFairLockingUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -899,24 +905,24 @@ func TestAggressiveLockingUsage(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
-	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 1")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t set v = v + 1 where id = 1")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	// Not counted before transaction committing.
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(1), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	// Counted by transaction instead of by statement.
 	tk.MustExec("begin pessimistic")
@@ -925,8 +931,8 @@ func TestAggressiveLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(2), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 
 	// Effective only when LockedWithConflict occurs.
 	tk3 := testkit.NewTestKit(t, store)
@@ -953,6 +959,6 @@ func TestAggressiveLockingUsage(t *testing.T) {
 	tk.MustExec("commit")
 	usage, err = telemetry.GetFeatureUsage(tk2.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
-	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+	require.Equal(t, int64(4), usage.Txn.FairLockingUsageCounter.TxnFairLockingUsed)
+	require.Equal(t, int64(1), usage.Txn.FairLockingUsageCounter.TxnFairLockingEffective)
 }

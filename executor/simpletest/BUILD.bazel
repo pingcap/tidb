@@ -4,6 +4,7 @@ go_test(
     name = "simpletest_test",
     timeout = "short",
     srcs = [
+        "chunk_reuse_test.go",
         "main_test.go",
         "password_management_test.go",
         "simple_test.go",
@@ -15,7 +16,6 @@ go_test(
         "//config",
         "//domain",
         "//errno",
-        "//executor",
         "//kv",
         "//parser/auth",
         "//parser/model",
@@ -29,6 +29,7 @@ go_test(
         "//statistics/handle",
         "//store/mockstore",
         "//testkit",
+        "//util/dbterror/exeerrors",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

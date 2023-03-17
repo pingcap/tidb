@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -364,7 +363,8 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
-		return (newCol.GetFlen() > 0 && newCol.GetFlen() < oldCol.GetFlen()) || (toUnsigned != originUnsigned)
+		return (newCol.GetFlen() > 0 && (newCol.GetFlen() < oldCol.GetFlen() || newCol.GetDecimal() < oldCol.GetDecimal())) ||
+			(toUnsigned != originUnsigned)
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
 	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetType())
@@ -822,7 +822,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
-	if err != nil || reorgInfo.first {
+	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
@@ -1147,7 +1147,6 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
-			w.getReorgCtx(reorgInfo.Job.ID).setNextKey(reorgInfo.StartKey)
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
@@ -1175,18 +1174,14 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 
 type updateColumnWorker struct {
 	*backfillCtx
-	oldColInfo    *model.ColumnInfo
-	newColInfo    *model.ColumnInfo
-	metricCounter prometheus.Counter
+	oldColInfo *model.ColumnInfo
+	newColInfo *model.ColumnInfo
 
 	// The following attributes are used to reduce memory allocation.
 	rowRecords []*rowRecord
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
-
-	// For SQL Mode and warnings.
-	jobContext *JobContext
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
@@ -1205,13 +1200,11 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
-		oldColInfo:    oldCol,
-		newColInfo:    newCol,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
-		rowDecoder:    rowDecoder,
-		rowMap:        make(map[int64]types.Datum, len(decodeColMap)),
-		jobContext:    jc,
+		backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
+		oldColInfo:  oldCol,
+		newColInfo:  newCol,
+		rowDecoder:  rowDecoder,
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -1264,7 +1257,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
+	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
 		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
@@ -1399,8 +1392,8 @@ func (w *updateColumnWorker) cleanRowMap() {
 	}
 }
 
-// BackfillDataInTxn will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
-func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+// BackfillData will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
+func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1444,7 +1437,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 
 		return nil
 	})
-	logSlowOperations(time.Since(oprStartTime), "BackfillDataInTxn", 3000)
+	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 
 	return
 }

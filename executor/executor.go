@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
@@ -147,7 +149,7 @@ const (
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	memory.BaseOOMAction
-	mutex sync.Mutex // For synchronization.
+	mutex syncutil.Mutex // For synchronization.
 }
 
 func init() {
@@ -312,7 +314,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		return ErrQueryInterrupted
+		return exeerrors.ErrQueryInterrupted
 	}
 
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
@@ -328,7 +330,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	// recheck whether the session/query is killed during the Next()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		err = ErrQueryInterrupted
+		err = exeerrors.ErrQueryInterrupted
 	}
 	return err
 }
@@ -1519,6 +1521,7 @@ func init() {
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := sctx.GetSessionVars()
+			s.StmtCtx.SetSkipPlanCache(errors.New("query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -1609,7 +1612,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -1788,7 +1795,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return ErrSubqueryMoreThan1Row
+		return exeerrors.ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := tryNewCacheChunk(e.children[0])
@@ -1797,7 +1804,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return ErrSubqueryMoreThan1Row
+		return exeerrors.ErrSubqueryMoreThan1Row
 	}
 
 	return nil
@@ -1837,7 +1844,7 @@ type UnionExec struct {
 	wg          sync.WaitGroup
 	initialized bool
 	mu          struct {
-		*sync.Mutex
+		*syncutil.Mutex
 		maxOpenedChildID int
 	}
 
@@ -1864,7 +1871,7 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
-	e.mu.Mutex = &sync.Mutex{}
+	e.mu.Mutex = &syncutil.Mutex{}
 	e.mu.maxOpenedChildID = -1
 	return nil
 }
@@ -2099,9 +2106,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
+		sc.ExplainFormat = explainStmt.Format
 		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
+	} else {
+		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
@@ -2146,12 +2156,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.LoadDataStmt:
-		sc.DupKeyAsWarning = true
-		sc.BadNullAsWarning = true
-		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
-		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
-		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
-		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true

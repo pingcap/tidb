@@ -218,19 +218,21 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 // SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var err error
 	d := domain.GetDomain(gs.se).DDL()
-	if err = d.BatchCreateTableWithInfo(gs.se, schema, info, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
-		if len(info) == 1 {
+
+	if err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
+		if len(infos) == 1 {
 			return err
 		}
-		mid := len(info) / 2
-		err = gs.SplitBatchCreateTable(schema, info[:mid])
+		mid := len(infos) / 2
+		err = gs.SplitBatchCreateTable(schema, infos[:mid], cs...)
 		if err != nil {
 			return err
 		}
-		err = gs.SplitBatchCreateTable(schema, info[mid:])
+		err = gs.SplitBatchCreateTable(schema, infos[mid:], cs...)
 		if err != nil {
 			return err
 		}
@@ -268,7 +270,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		if err := gs.SplitBatchCreateTable(dbName, cloneTables); err != nil {
+		if err := gs.SplitBatchCreateTable(dbName, cloneTables, cs...); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one

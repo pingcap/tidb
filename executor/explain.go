@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -39,11 +41,12 @@ import (
 type ExplainExec struct {
 	baseExecutor
 
-	explain     *core.Explain
-	analyzeExec Executor
-	executed    bool
-	rows        [][]string
-	cursor      int
+	explain        *core.Explain
+	analyzeExec    Executor
+	executed       bool
+	ruRuntimeStats *clientutil.RURuntimeStats
+	rows           [][]string
+	cursor         int
 }
 
 // Open implements the Executor Open interface.
@@ -126,6 +129,12 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			if err != nil || chk.NumRows() == 0 {
 				break
 			}
+		}
+	}
+	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
+	if e.analyzeExec != nil && e.executed {
+		if coll := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
+			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{e.ruRuntimeStats})
 		}
 	}
 	return err
@@ -304,4 +313,47 @@ func getHeapProfile() (fileName string, err error) {
 		return "", err
 	}
 	return fileName, nil
+}
+
+// ruRuntimeStats is a wrapper of clientutil.RURuntimeStats,
+// which implements the RuntimeStats interface.
+type ruRuntimeStats struct {
+	*clientutil.RURuntimeStats
+}
+
+// String implements the RuntimeStats interface.
+func (e *ruRuntimeStats) String() string {
+	if e.RURuntimeStats != nil {
+		return e.RURuntimeStats.String()
+	}
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &ruRuntimeStats{}
+	if e.RURuntimeStats != nil {
+		newRs.RURuntimeStats = e.RURuntimeStats.Clone()
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*ruRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.RURuntimeStats != nil {
+		if e.RURuntimeStats == nil {
+			e.RURuntimeStats = tmp.RURuntimeStats.Clone()
+			return
+		}
+		e.RURuntimeStats.Merge(tmp.RURuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *ruRuntimeStats) Tp() int {
+	return execdetails.TpRURuntimeStats
 }

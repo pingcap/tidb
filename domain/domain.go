@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -86,6 +87,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+var (
+	mdlCheckLookDuration = 50 * time.Millisecond
+)
+
+func init() {
+	if intest.InTest {
+		// In test we can set duration lower to make test faster.
+		mdlCheckLookDuration = 2 * time.Millisecond
+	}
+}
 
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
@@ -131,6 +143,7 @@ type Domain struct {
 	indexUsageSyncLease   time.Duration
 	dumpFileGcChecker     *dumpFileGcChecker
 	planReplayerHandle    *planReplayerHandle
+	extractTaskHandle     *ExtractHandle
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
@@ -150,6 +163,9 @@ type Domain struct {
 		sync.Mutex
 		sctxs map[sessionctx.Context]bool
 	}
+
+	mdlCheckCh      chan struct{}
+	stopAutoAnalyze atomicutil.Bool
 }
 
 type mdlCheckTableInfo struct {
@@ -708,78 +724,81 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 }
 
 func (do *Domain) mdlCheckLoop() {
-	ticker := time.Tick(time.Millisecond * 50)
+	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
 	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
 
 	for {
+		// Wait for channels
 		select {
+		case <-do.mdlCheckCh:
 		case <-ticker:
-			if !variable.EnableMDL.Load() {
-				continue
-			}
-
-			do.mdlCheckTableInfo.mu.Lock()
-			maxVer := do.mdlCheckTableInfo.newestVer
-			if maxVer > saveMaxSchemaVersion {
-				saveMaxSchemaVersion = maxVer
-			} else if !jobNeedToSync {
-				// Schema doesn't change, and no job to check in the last run.
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
-			if jobNeedToCheckCnt == 0 {
-				jobNeedToSync = false
-				do.mdlCheckTableInfo.mu.Unlock()
-				continue
-			}
-
-			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-			jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
-			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-				jobsVerMap[k] = v
-			}
-			for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
-				jobsIdsMap[k] = v
-			}
-			do.mdlCheckTableInfo.mu.Unlock()
-
-			jobNeedToSync = true
-
-			sm := do.InfoSyncer().GetSessionManager()
-			if sm == nil {
-				logutil.BgLogger().Info("session manager is nil")
-			} else {
-				sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
-			}
-
-			if len(jobsVerMap) == jobNeedToCheckCnt {
-				jobNeedToSync = false
-			}
-
-			// Try to gc jobCache.
-			if len(jobCache) > 1000 {
-				jobCache = make(map[int64]int64, 1000)
-			}
-
-			for jobID, ver := range jobsVerMap {
-				if cver, ok := jobCache[jobID]; ok && cver >= ver {
-					// Already update, skip it.
-					continue
-				}
-				logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-				if err != nil {
-					logutil.BgLogger().Warn("update self version failed", zap.Error(err))
-				} else {
-					jobCache[jobID] = ver
-				}
-			}
 		case <-do.exit:
 			return
+		}
+
+		if !variable.EnableMDL.Load() {
+			continue
+		}
+
+		do.mdlCheckTableInfo.mu.Lock()
+		maxVer := do.mdlCheckTableInfo.newestVer
+		if maxVer > saveMaxSchemaVersion {
+			saveMaxSchemaVersion = maxVer
+		} else if !jobNeedToSync {
+			// Schema doesn't change, and no job to check in the last run.
+			do.mdlCheckTableInfo.mu.Unlock()
+			continue
+		}
+
+		jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+		if jobNeedToCheckCnt == 0 {
+			jobNeedToSync = false
+			do.mdlCheckTableInfo.mu.Unlock()
+			continue
+		}
+
+		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+		jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+			jobsVerMap[k] = v
+		}
+		for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
+			jobsIdsMap[k] = v
+		}
+		do.mdlCheckTableInfo.mu.Unlock()
+
+		jobNeedToSync = true
+
+		sm := do.InfoSyncer().GetSessionManager()
+		if sm == nil {
+			logutil.BgLogger().Info("session manager is nil")
+		} else {
+			sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+		}
+
+		if len(jobsVerMap) == jobNeedToCheckCnt {
+			jobNeedToSync = false
+		}
+
+		// Try to gc jobCache.
+		if len(jobCache) > 1000 {
+			jobCache = make(map[int64]int64, 1000)
+		}
+
+		for jobID, ver := range jobsVerMap {
+			if cver, ok := jobCache[jobID]; ok && cver >= ver {
+				// Already update, skip it.
+				continue
+			}
+			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+			if err != nil {
+				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+			} else {
+				jobCache[jobID] = ver
+			}
 		}
 	}
 }
@@ -840,6 +859,10 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			return
 		}
 		do.refreshMDLCheckTableInfo()
+		select {
+		case do.mdlCheckCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -936,6 +959,8 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
+	gctuner.WaitMemoryLimitTunerExitInTest()
+	close(do.mdlCheckCh)
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -952,14 +977,16 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
 			jobsIdsMap: make(map[int64]string),
 		},
+		mdlCheckCh: make(chan struct{}),
 	}
+	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
@@ -1745,6 +1772,11 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
+// SetupExtractHandle setups extract handler
+func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
+	do.extractTaskHandle = NewExtractHandler(sctxs)
+}
+
 var planReplayerHandleLease atomic.Uint64
 
 func init() {
@@ -1806,6 +1838,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 // GetPlanReplayerHandle returns plan replayer handle
 func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 	return do.planReplayerHandle
+}
+
+// GetExtractHandle returns extract handle
+func (do *Domain) GetExtractHandle() *ExtractHandle {
+	return do.extractTaskHandle
 }
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
@@ -2185,7 +2222,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -2563,6 +2600,11 @@ func (do *Domain) StartTTLJobManager() {
 // TTLJobManager returns the ttl job manager on this domain
 func (do *Domain) TTLJobManager() *ttlworker.JobManager {
 	return do.ttlJobManager.Load()
+}
+
+// StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
+func (do *Domain) StopAutoAnalyze() {
+	do.stopAutoAnalyze.Store(true)
 }
 
 func init() {

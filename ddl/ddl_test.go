@@ -44,7 +44,6 @@ type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
 	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
-	SetReorgCtxForBackfill(bfJob *BackfillJob)
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
 }
@@ -67,11 +66,6 @@ func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Elemen
 	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
 }
 
-// SetReorgCtxForBackfill exports for testing.
-func (d *ddl) SetReorgCtxForBackfill(bfJob *BackfillJob) {
-	d.setReorgCtxForBackfill(bfJob)
-}
-
 // GetReorgCtx exports for testing.
 func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 	return d.getReorgCtx(jobID)
@@ -90,6 +84,11 @@ var NewSession = newSession
 
 // GetJobWithoutPartition is only used for test.
 const GetJobWithoutPartition = getJobWithoutPartition
+
+// BackfillJobPrefixKeyString is only used for test.
+func BackfillJobPrefixKeyString(ddlJobID int64, eleKey kv.Key, eleID int64) string {
+	return backfillJobPrefixKeyString(ddlJobID, eleKey, eleID)
+}
 
 // GetDDLCtx returns ddlCtx for test.
 func GetDDLCtx(d DDL) *ddlCtx {

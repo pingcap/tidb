@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	"hash/crc32"
 	"sort"
 	"strconv"
 	"strings"
@@ -240,6 +241,8 @@ func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition
 		return generateRangePartitionExpr(ctx, pi, defs, columns, names)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
+	case model.PartitionTypeKey:
+		return generateKeyPartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeList:
 		return generateListPartitionExpr(ctx, tblInfo, defs, columns, names)
 	}
@@ -254,6 +257,8 @@ type PartitionExpr struct {
 	OrigExpr ast.ExprNode
 	// Expr is the hash partition expression.
 	Expr expression.Expression
+	// Used in the key partition
+	*ForKeyPruning
 	// Used in the range pruning process.
 	*ForRangePruning
 	// Used in the range column pruning process.
@@ -261,6 +266,48 @@ type PartitionExpr struct {
 	// ColOffset is the offsets of partition columns.
 	ColumnOffset []int
 	*ForListPruning
+}
+
+// GetPartColumnsForKeyPartition is used to get partition columns for key partition table
+func (pe *PartitionExpr) GetPartColumnsForKeyPartition(columns []*expression.Column) ([]*expression.Column, []int) {
+	schema := expression.NewSchema(columns...)
+	partCols := make([]*expression.Column, len(pe.ColumnOffset))
+	colLen := make([]int, 0, len(pe.ColumnOffset))
+	for i, offset := range pe.ColumnOffset {
+		partCols[i] = schema.Columns[offset]
+		partCols[i].Index = i
+		colLen = append(colLen, partCols[i].RetType.GetFlen())
+	}
+	return partCols, colLen
+}
+
+// LocateKeyPartitionWithSPC is used to locate the destination partition for key
+// partition table has single partition column(SPC). It's called in FastPlan process.
+func (pe *PartitionExpr) LocateKeyPartitionWithSPC(pi *model.PartitionInfo,
+	r []types.Datum) (int, error) {
+	col := &expression.Column{}
+	*col = *pe.KeyPartCols[0]
+	col.Index = 0
+	return pe.LocateKeyPartition(pi, []*expression.Column{col}, r)
+}
+
+// LocateKeyPartition is the common interface used to locate the destination partition
+func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
+	cols []*expression.Column, r []types.Datum) (int, error) {
+	h := crc32.NewIEEE()
+	for _, col := range cols {
+		val := r[col.Index]
+		if val.Kind() == types.KindNull {
+			h.Write([]byte{0})
+		} else {
+			data, err := val.ToHashKey()
+			if err != nil {
+				return 0, err
+			}
+			h.Write(data)
+		}
+	}
+	return int(h.Sum32() % uint32(pi.Num)), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -323,6 +370,11 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 		return nil, errors.Trace(err)
 	}
 	return expression.RewriteSimpleExprWithNames(ctx, exprNode, schema, names)
+}
+
+// ForKeyPruning is used for key partition pruning.
+type ForKeyPruning struct {
+	KeyPartCols []*expression.Column
 }
 
 // ForListPruning is used for list partition pruning.
@@ -599,6 +651,21 @@ func rangePartitionExprStrings(pi *model.PartitionInfo) []string {
 	return s
 }
 
+func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	ret := &PartitionExpr{
+		ForKeyPruning: &ForKeyPruning{},
+	}
+	_, partColumns, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret.ColumnOffset = offset
+	ret.KeyPartCols = partColumns
+
+	return ret, nil
+}
+
 func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
@@ -743,6 +810,29 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 		Expr:           partExpr,
 	}
 	return ret, nil
+}
+
+// Clone a copy of ForListPruning
+func (lp *ForListPruning) Clone() *ForListPruning {
+	ret := *lp
+	if ret.LocateExpr != nil {
+		ret.LocateExpr = lp.LocateExpr.Clone()
+	}
+	if ret.PruneExpr != nil {
+		ret.PruneExpr = lp.PruneExpr.Clone()
+	}
+	ret.PruneExprCols = make([]*expression.Column, 0, len(lp.PruneExprCols))
+	for i := range lp.PruneExprCols {
+		c := lp.PruneExprCols[i].Clone().(*expression.Column)
+		ret.PruneExprCols = append(ret.PruneExprCols, c)
+	}
+	ret.ColPrunes = make([]*ForListColumnPruning, 0, len(lp.ColPrunes))
+	for i := range lp.ColPrunes {
+		l := *lp.ColPrunes[i]
+		l.ExprCol = l.ExprCol.Clone().(*expression.Column)
+		ret.ColPrunes = append(ret.ColPrunes, &l)
+	}
+	return &ret
 }
 
 func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, defs []model.PartitionDefinition, exprCols []*expression.Column,
@@ -1131,6 +1221,8 @@ func (t *partitionedTable) locatePartitionCommon(ctx sessionctx.Context, pi *mod
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		// TODO: Add support for ADD PARTITION and COALESCE PARTITION for HASH
 		idx, err = t.locateHashPartition(ctx, pi, r)
+	case model.PartitionTypeKey:
+		idx, err = t.locateKeyPartition(pi, r)
 	case model.PartitionTypeList:
 		idx, err = t.locateListPartition(ctx, partitionExpr, r)
 	}
@@ -1301,6 +1393,11 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 		ret = -ret
 	}
 	return int(ret), nil
+}
+
+// TODO: supports linear hashing
+func (t *partitionedTable) locateKeyPartition(pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	return t.partitionExpr.LocateKeyPartition(pi, t.partitionExpr.KeyPartCols, r)
 }
 
 // GetPartition returns a Table, which is actually a partition.

@@ -65,8 +65,6 @@ type reorgCtx struct {
 	// 0: job is not canceled.
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
-	// doneKey is used to record the key that has been processed.
-	doneKey atomic.Value // nullable kv.Key
 
 	// element is used to record the current element in the reorg process, it can be
 	// accessed by reorg-worker and daemon-worker concurrently.
@@ -115,10 +113,6 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
-}
-
-func (rc *reorgCtx) setNextKey(doneKey kv.Key) {
-	rc.doneKey.Store(nullableKey{key: doneKey})
 }
 
 func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
@@ -683,6 +677,9 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
 				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				if job.IsCancelling() {
+					return nil, nil
+				}
 			}
 			return &info, errors.Trace(err)
 		}

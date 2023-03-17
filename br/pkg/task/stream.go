@@ -54,6 +54,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -367,6 +368,21 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
+// checkImportTaskRunning checks whether there is any import task running.
+func (s *streamMgr) checkImportTaskRunning(ctx context.Context) error {
+	list, err := utils.GetImportTasksFrom(ctx, s.mgr.GetDomain().GetEtcdClient())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !list.Empty() {
+		return errors.Errorf("There are some lightning/restore tasks running: %s"+
+			"please stop or wait finishing at first. "+
+			"If the lightning/restore task is forced to terminate by system, "+
+			"please wait for ttl to decrease to 0.", list.MessageToUser())
+	}
+	return nil
+}
+
 // setGCSafePoint sets the server safe point to PD.
 func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
 	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
@@ -545,6 +561,9 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.checkImportTaskRunning(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1036,26 +1055,28 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 // checkTaskExists checks whether there is a log backup task running.
 // If so, return an error.
-func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
+func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
 	if err := checkConfigForStatus(cfg.PD); err != nil {
 		return err
 	}
-	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
-	if err != nil {
-		return err
-	}
+
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
-	defer func() {
-		if err := cli.Close(); err != nil {
-			log.Error("failed to close the etcd client", zap.Error(err))
-		}
-	}()
+	// check log backup task
 	tasks, err := cli.GetAllTasks(ctx)
 	if err != nil {
 		return err
 	}
 	if len(tasks) > 0 {
 		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	}
+
+	// check cdc changefeed
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+	if err != nil {
+		return err
+	}
+	if !nameSet.Empty() {
+		return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
 	}
 	return nil
 }
@@ -1268,6 +1289,11 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
+	ingestRecorder := schemasReplace.GetIngestRecorder()
+	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
+		return errors.Trace(err)
+	}
+
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -1294,6 +1320,10 @@ func restoreStream(
 
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
 	if cfg.tiflashRecorder != nil {

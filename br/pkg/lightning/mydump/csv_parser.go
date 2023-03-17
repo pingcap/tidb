@@ -86,7 +86,10 @@ type CSVParser struct {
 	escFlavor escapeFlavor
 	// if set to true, csv parser will treat the first non-empty line as header line
 	shouldParseHeader bool
-	quotedNullIsText  bool
+	// in LOAD DATA, empty line should be treated as a valid record
+	allowEmptyLine   bool
+	quotedNullIsText bool
+	unescapedQuote   bool
 }
 
 type field struct {
@@ -134,7 +137,7 @@ func NewCSVParser(
 
 	if len(cfg.StartingBy) > 0 {
 		if strings.Contains(cfg.StartingBy, terminator) {
-			return nil, errors.New("starting-by cannot contain (line) terminator")
+			return nil, errors.Errorf("STARTING BY '%s' cannot contain LINES TERMINATED BY '%s'", cfg.StartingBy, terminator)
 		}
 	}
 
@@ -169,7 +172,9 @@ func NewCSVParser(
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
 		newLineByteSet:    makeByteSet(newLineStopSet),
 		shouldParseHeader: shouldParseHeader,
+		allowEmptyLine:    cfg.AllowEmptyLine,
 		quotedNullIsText:  cfg.QuotedNullIsText,
+		unescapedQuote:    cfg.UnescapedQuote,
 	}, nil
 }
 
@@ -205,16 +210,13 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 	if len(parser.escapedBy) > 0 {
 		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
 	}
-	if len(parser.quote) == 0 || !parser.quotedNullIsText {
-		isNull = parser.escFlavor != escapeFlavorMySQLWithNull &&
-			!parser.cfg.NotNull &&
-			slices.Contains(parser.cfg.Null, unescaped)
-	} else if !input.quoted {
-		// quoted string can never be NULL except for \N, which must be escapeFlavorMySQLWithNull
+	if !(len(parser.quote) > 0 && parser.quotedNullIsText && input.quoted) {
+		// this branch represents "quote is not configured" or "quoted null is null" or "this field has no quote"
+		// we check null for them
 		isNull = !parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.Null, unescaped)
+		// avoid \\N becomes NULL
 		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
-			// avoid \\N
 			isNull = false
 		}
 	}
@@ -273,22 +275,32 @@ func (parser *CSVParser) skipBytes(n int) {
 	parser.pos += int64(n)
 }
 
-// tryReadExact peeks the bytes ahead, and if it matches `content` exactly will
-// consume it (advance the cursor) and return `true`.
-func (parser *CSVParser) tryReadExact(content []byte) (bool, error) {
+// tryPeekExact peeks the bytes ahead, and if it matches `content` exactly will
+// return (true, false, nil). If meet EOF it will return (false, true, nil).
+// For other errors it will return (false, false, err).
+func (parser *CSVParser) tryPeekExact(content []byte) (matched bool, eof bool, err error) {
 	if len(content) == 0 {
-		return true, nil
+		return true, false, nil
 	}
 	bs, err := parser.peekBytes(len(content))
 	if err == nil {
 		if bytes.Equal(bs, content) {
-			parser.skipBytes(len(content))
-			return true, nil
+			return true, false, nil
 		}
 	} else if errors.Cause(err) == io.EOF {
-		err = nil
+		return false, true, nil
 	}
-	return false, err
+	return false, false, err
+}
+
+// tryReadExact peeks the bytes ahead, and if it matches `content` exactly will
+// consume it (advance the cursor) and return `true`.
+func (parser *CSVParser) tryReadExact(content []byte) (bool, error) {
+	matched, _, err := parser.tryPeekExact(content)
+	if matched {
+		parser.skipBytes(len(content))
+	}
+	return matched, err
 }
 
 func (parser *CSVParser) tryReadNewLine(b byte) (bool, error) {
@@ -446,7 +458,6 @@ outside:
 			}
 			foundStartingByThisLine = true
 			content = content[idx+len(parser.startingBy):]
-			content = append(content, parser.newLine...)
 			parser.buf = append(content, parser.buf...)
 			parser.pos = oldPos + int64(idx+len(parser.startingBy))
 		}
@@ -485,6 +496,11 @@ outside:
 			fieldIsQuoted = false
 		case csvTokenDelimiter:
 			if prevToken != csvTokenComma && prevToken != csvTokenNewLine {
+				if parser.unescapedQuote {
+					whitespaceLine = false
+					parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
+					continue
+				}
 				parser.logSyntaxError()
 				return nil, errors.AddStack(errUnexpectedQuoteField)
 			}
@@ -497,13 +513,15 @@ outside:
 			foundStartingByThisLine = false
 			// new line = end of record (ignore empty lines)
 			prevToken = firstToken
-			if isEmptyLine {
-				continue
-			}
-			// skip lines only contain whitespaces
-			if err == nil && whitespaceLine && len(bytes.TrimSpace(parser.recordBuffer)) == 0 {
-				parser.recordBuffer = parser.recordBuffer[:0]
-				continue
+			if !parser.allowEmptyLine {
+				if isEmptyLine {
+					continue
+				}
+				// skip lines only contain whitespaces
+				if err == nil && whitespaceLine && len(bytes.TrimSpace(parser.recordBuffer)) == 0 {
+					parser.recordBuffer = parser.recordBuffer[:0]
+					continue
+				}
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			parser.fieldIsQuoted = append(parser.fieldIsQuoted, fieldIsQuoted)
@@ -571,6 +589,21 @@ func (parser *CSVParser) readQuotedField() error {
 			}
 			if doubledDelimiter {
 				// consume the double quotation mark and continue
+				parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
+			} else if parser.unescapedQuote {
+				// allow unescaped quote inside quoted field, so we only finish
+				// reading the field when we see a delimiter + comma/newline.
+				comma, _, err2 := parser.tryPeekExact(parser.comma)
+				if comma || err2 != nil {
+					return err2
+				}
+				newline, eof, err2 := parser.tryPeekExact(parser.newLine)
+				if eof || newline {
+					return nil
+				}
+				if err2 != nil {
+					return err2
+				}
 				parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
 			} else {
 				// the field is completed, exit.

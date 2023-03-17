@@ -11,6 +11,7 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
+        "//br/pkg/lightning/mydump",
         "//config",
         "//executor",
         "//kv",
@@ -20,7 +21,6 @@ go_test(
         "//planner/core",
         "//session",
         "//sessionctx",
-        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//store/mockstore",
@@ -29,6 +29,7 @@ go_test(
         "//testkit",
         "//types",
         "//util",
+        "//util/dbterror/exeerrors",
         "//util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
