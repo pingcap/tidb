@@ -177,6 +177,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
+	s3.Provider = options.Provider
 	s3.Region = options.Region
 	// StorageClass, SSE and ACL are acceptable to be empty
 	s3.StorageClass = options.StorageClass
@@ -358,38 +359,45 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	confCred := ses.Config.Credentials
-	setCredOpt := func(req *request.Request) {
-		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-		// we need reassign credential to be compatible with minio authentication.
-		if confCred != nil {
-			req.Config.Credentials = confCred
-		}
-		// s3manager.GetBucketRegionWithClient use path style addressing default.
-		// we need set S3ForcePathStyle by our config if we set endpoint.
-		if qs.Endpoint != "" {
-			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
-		}
-	}
-	region, err := s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
-	}
 
-	if qs.Region != region {
-		if qs.Region != "" {
-			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
-				qs.Bucket, qs.Region, region))
+	// s3manager.GetBucketRegionWithClient failed to get region from client if the client is ceph or minio
+	// It defaut back to us-west-1 which break the code if a region is already set
+	if qs.Provider != "ceph" && qs.Provider != "minio" {
+
+		confCred := ses.Config.Credentials
+		setCredOpt := func(req *request.Request) {
+			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+			// we need reassign credential to be compatible with minio authentication.
+			if confCred != nil {
+				req.Config.Credentials = confCred
+			}
+			// s3manager.GetBucketRegionWithClient use path style addressing default.
+			// we need set S3ForcePathStyle by our config if we set endpoint.
+			if qs.Endpoint != "" {
+				req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
+			}
+		}
+		region, err := s3manager.GetBucketRegionWithClient(ctx, c, qs.Bucket, setCredOpt)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
 		}
 
-		qs.Region = region
-		backend.Region = region
-		if region != defaultRegion {
-			s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithRegion(region))
-			c = s3.New(ses, s3CliConfigs...)
+		if qs.Region != region {
+			if qs.Region != "" {
+				return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+					qs.Bucket, qs.Region, region))
+			}
+
+			qs.Region = region
+			backend.Region = region
+			if region != defaultRegion {
+				s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithRegion(region))
+				c = s3.New(ses, s3CliConfigs...)
+			}
 		}
+
+		log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
 	}
-	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
 
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
