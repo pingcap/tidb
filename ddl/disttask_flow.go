@@ -29,47 +29,33 @@ import (
 // FlowHandleLitBackfillType is the task type to handle backfill
 const FlowHandleLitBackfillType = "flowHandleLitBackfill"
 
-// LitBackfillTaskMetaBase is the base object for all task meta
-type LitBackfillTaskMetaBase struct {
-	JobID      int64              `json:"job_id"`
-	SchemaID   int64              `json:"schema_id"`
-	TableID    int64              `json:"table_id"`
-	ElementID  int64              `json:"element_id"`
-	ElementKey []byte             `json:"element_key"`
-	IsUnique   bool               `json:"is_unique"`
-	ReorgMeta  model.DDLReorgMeta `json:"reorg_meta"`
-}
-
 // LitBackfillGlobalTaskMeta is the global task meta for lightning backfill
 type LitBackfillGlobalTaskMeta struct {
-	LitBackfillTaskMetaBase
+	Job          model.Job `json:"job"`
+	EleID        int64     `json:"ele_id"`
+	EleTypeKey   []byte    `json:"ele_type_key"`
+	IsMergingIdx bool      `json:"is_merging_idx"`
 }
 
 // LitBackfillSubTaskMeta is the subtask meta for lightning backfill
 type LitBackfillSubTaskMeta struct {
-	LitBackfillTaskMetaBase
-	PhysicalTableID int64
+	PhysicalTableID int64 `json:"physical_table_id"`
+	IsMergingIdx    bool  `json:"is_merging_idx"`
 }
 
 // LitBackfillSubTaskRollbackMeta is the meta for rolling back a lightning fill
 type LitBackfillSubTaskRollbackMeta struct {
-	LitBackfillTaskMetaBase
+	IsMergingIdx bool `json:"is_merging_idx"`
 }
 
 type litBackfillFlowHandle struct {
-	*ddl
+	getDDL func() DDL
 }
 
-// NewLitBackfillFlowHandle creates a lightning backfill flow
-func NewLitBackfillFlowHandle(o DDL) (dispatcher.TaskFlowHandle, error) {
-	d, ok := o.(*ddl)
-	if !ok {
-		return nil, errors.New("The DDL should be a object with type *ddl")
-	}
-
+func NewLitBackfillFlowHandle(getDDL func() DDL) dispatcher.TaskFlowHandle {
 	return &litBackfillFlowHandle{
-		ddl: d,
-	}, nil
+		getDDL: getDDL,
+	}
 }
 
 // ProcessNormalFlow processes the normal flow
@@ -84,9 +70,15 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 		return nil, err
 	}
 
+	d, ok := h.getDDL().(*ddl)
+	if !ok {
+		return nil, errors.New("The getDDL result should be the type of *ddl")
+	}
+
+	job := &globalTaskMeta.Job
 	var tblInfo *model.TableInfo
-	err = kv.RunInNewTxn(h.ctx, h.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		tblInfo, err = meta.NewMeta(txn).GetTable(globalTaskMeta.SchemaID, globalTaskMeta.TableID)
+	err = kv.RunInNewTxn(d.ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
 
@@ -104,8 +96,8 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
 		subTaskMeta := &LitBackfillSubTaskMeta{
-			LitBackfillTaskMetaBase: globalTaskMeta.LitBackfillTaskMetaBase,
-			PhysicalTableID:         physicalID,
+			PhysicalTableID: physicalID,
+			IsMergingIdx:    globalTaskMeta.IsMergingIdx,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -120,7 +112,6 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	return subTaskMetas, nil
 }
 
-// ProcessErrFlow processes the error flow
 func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
 	var globalTaskMeta LitBackfillGlobalTaskMeta
 	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
@@ -128,7 +119,7 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto
 	}
 
 	subTaskMeta := &LitBackfillSubTaskMeta{
-		LitBackfillTaskMetaBase: globalTaskMeta.LitBackfillTaskMetaBase,
+		IsMergingIdx: globalTaskMeta.IsMergingIdx,
 	}
 
 	return json.Marshal(subTaskMeta)

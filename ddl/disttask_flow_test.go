@@ -31,24 +31,24 @@ import (
 
 func TestBackfillFlowHandle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	handler, err := ddl.NewLitBackfillFlowHandle(dom.DDL())
-	require.NoError(t, err)
+	handler := ddl.NewLitBackfillFlowHandle(func() ddl.DDL {
+		return dom.DDL()
+	})
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// test normal table ProcessNormalFlow
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1")
-	baseMeta := gTaskMeta.LitBackfillTaskMetaBase
+	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", true)
 	metas, err := handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, 1, len(metas))
 	var subTask ddl.LitBackfillSubTaskMeta
 	require.NoError(t, json.Unmarshal(metas[0], &subTask))
-	require.Equal(t, baseMeta, subTask.LitBackfillTaskMetaBase)
-	require.Equal(t, baseMeta.TableID, subTask.PhysicalTableID)
+	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
+	require.Equal(t, true, subTask.IsMergingIdx)
 
 	// test normal table ProcessNormalFlow after step1 finished
 	gTask.State = proto.TaskStateRunning
@@ -62,7 +62,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	var rollbackMeta ddl.LitBackfillSubTaskRollbackMeta
 	err = json.Unmarshal(errMeta, &rollbackMeta)
 	require.NoError(t, err)
-	require.Equal(t, baseMeta, rollbackMeta.LitBackfillTaskMetaBase)
+	require.Equal(t, true, rollbackMeta.IsMergingIdx)
 
 	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
@@ -70,11 +70,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1")
+	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1", false)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	baseMeta = gTaskMeta.LitBackfillTaskMetaBase
 	metas, err = handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
@@ -82,8 +81,8 @@ func TestBackfillFlowHandle(t *testing.T) {
 	for i, par := range tblInfo.Partition.Definitions {
 		var subTask ddl.LitBackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
-		require.Equal(t, baseMeta, subTask.LitBackfillTaskMetaBase)
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
+		require.Equal(t, false, subTask.IsMergingIdx)
 	}
 
 	// test partition table ProcessNormalFlow after step1 finished
@@ -98,10 +97,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	rollbackMeta = ddl.LitBackfillSubTaskRollbackMeta{}
 	err = json.Unmarshal(errMeta, &rollbackMeta)
 	require.NoError(t, err)
-	require.Equal(t, baseMeta, rollbackMeta.LitBackfillTaskMetaBase)
+	require.Equal(t, false, rollbackMeta.IsMergingIdx)
 }
 
-func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
+func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, isMerging bool) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
 	require.True(t, ok)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
@@ -111,20 +110,20 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 	require.NoError(t, err)
 
 	taskMeta := &ddl.LitBackfillGlobalTaskMeta{
-		LitBackfillTaskMetaBase: ddl.LitBackfillTaskMetaBase{
-			JobID:      time.Now().UnixMicro(),
-			SchemaID:   db.ID,
-			TableID:    tblInfo.ID,
-			ElementID:  10,
-			ElementKey: meta.IndexElementKey,
-			IsUnique:   true,
-			ReorgMeta: model.DDLReorgMeta{
+		Job: model.Job{
+			ID:       time.Now().UnixNano(),
+			SchemaID: db.ID,
+			TableID:  tblInfo.ID,
+			ReorgMeta: &model.DDLReorgMeta{
 				SQLMode:     defaultSQLMode,
 				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 				ReorgTp:     model.ReorgTypeLitMerge,
 				IsDistReorg: true,
 			},
 		},
+		EleID:        10,
+		EleTypeKey:   meta.IndexElementKey,
+		IsMergingIdx: isMerging,
 	}
 
 	gTaskMetaBytes, err := json.Marshal(taskMeta)
