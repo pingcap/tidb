@@ -142,8 +142,6 @@ func getRUSettings(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (*ru
 	var nameIdx, valueIdx int
 	for i, f := range fields {
 		switch f.ColumnAsName.L {
-		case "instance":
-			//instanceIdx = i
 		case "name":
 			nameIdx = i
 		case "value":
