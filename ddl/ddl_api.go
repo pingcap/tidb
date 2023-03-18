@@ -4047,6 +4047,9 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+	if err == nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Statistics are outdated after reorganizing partitions. Please use 'ANALYZE' statement to update"))
+	}
 	return errors.Trace(err)
 }
 
