@@ -69,8 +69,6 @@ func (d *dispatcher) LenRunningGlobalTasks() int {
 }
 
 func (d *dispatcher) delRunningGlobalTasks(globalTaskID int64) {
-	d.runningGlobalTasks.Lock()
-	defer d.runningGlobalTasks.Unlock()
 	delete(d.runningGlobalTasks.tasks, globalTaskID)
 }
 
@@ -200,7 +198,7 @@ func (d *dispatcher) DetectTaskLoop() {
 			logutil.BgLogger().Info("detection task loop exits", zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			d.runningGlobalTasks.RLock()
+			d.runningGlobalTasks.Lock()
 			gTasks := d.runningGlobalTasks.tasks
 			// TODO: Consider asynchronous processing.
 			for _, gTask := range gTasks {
@@ -213,7 +211,7 @@ func (d *dispatcher) DetectTaskLoop() {
 				}
 				d.processFlow(gTask, errStr)
 			}
-			d.runningGlobalTasks.RUnlock()
+			d.runningGlobalTasks.Unlock()
 		}
 	}
 }
