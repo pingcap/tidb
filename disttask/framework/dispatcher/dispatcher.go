@@ -200,7 +200,8 @@ func (d *dispatcher) DetectTaskLoop() {
 			logutil.BgLogger().Info("detection task loop exits", zap.Error(d.ctx.Err()))
 			return
 		case <-ticker.C:
-			gTasks := d.getRunningGlobalTasks()
+			d.runningGlobalTasks.RLock()
+			gTasks := d.runningGlobalTasks.tasks
 			// TODO: Consider asynchronous processing.
 			for _, gTask := range gTasks {
 				stepIsFinished, errStr := d.detectTask(gTask)
@@ -208,10 +209,12 @@ func (d *dispatcher) DetectTaskLoop() {
 				if !stepIsFinished && errStr == "" {
 					logutil.BgLogger().Debug("detection, this task keeps current state",
 						zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
+					d.runningGlobalTasks.RUnlock()
 					continue
 				}
 
 				d.processFlow(gTask, errStr)
+				d.runningGlobalTasks.RUnlock()
 			}
 		}
 	}
