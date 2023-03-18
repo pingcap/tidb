@@ -209,10 +209,8 @@ func (d *dispatcher) DetectTaskLoop() {
 				if !stepIsFinished && errStr == "" {
 					logutil.BgLogger().Debug("detection, this task keeps current state",
 						zap.Int64("taskID", gTask.ID), zap.String("state", gTask.State))
-					d.runningGlobalTasks.RUnlock()
 					continue
 				}
-
 				d.processFlow(gTask, errStr)
 			}
 			d.runningGlobalTasks.RUnlock()
