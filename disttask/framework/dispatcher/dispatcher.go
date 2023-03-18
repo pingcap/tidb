@@ -214,8 +214,8 @@ func (d *dispatcher) DetectTaskLoop() {
 				}
 
 				d.processFlow(gTask, errStr)
-				d.runningGlobalTasks.RUnlock()
 			}
+			d.runningGlobalTasks.RUnlock()
 		}
 	}
 }
