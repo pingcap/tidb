@@ -23,6 +23,7 @@ go_test(
     timeout = "short",
     srcs = ["table_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         ":storage",
         "//disttask/framework/proto",
