@@ -6481,3 +6481,17 @@ from ssci right join csci on (ssci.customer_sk=csci.customer_sk
                                and ssci.item_sk = csci.item_sk)
 limit 100;`)
 }
+
+func TestIssue42298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t add column b int")
+	res := tk.MustQuery("admin show ddl job queries limit 268430000")
+	require.Greater(t, len(res.Rows()), 0, len(res.Rows()))
+	res = tk.MustQuery("admin show ddl job queries limit 999 offset 268430000")
+	require.Zero(t, len(res.Rows()), len(res.Rows()))
+}
