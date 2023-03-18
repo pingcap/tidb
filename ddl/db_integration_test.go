@@ -4398,3 +4398,15 @@ func TestDisableDDL(t *testing.T) {
 	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
 	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
 }
+
+func TestReorganizePartitionWarning(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/42183
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));")
+	tk.MustExec("alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Statistics are outdated after reorganizing partitions. Please use 'ANALYZE' statement to update"))
+}
