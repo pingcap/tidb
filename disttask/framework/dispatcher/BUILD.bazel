@@ -29,6 +29,7 @@ go_test(
     ],
     embed = [":dispatcher"],
     flaky = True,
+    race = "on",
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",

@@ -25,6 +25,7 @@ import (
 // DispatcherForTest exports for testing.
 type DispatcherForTest interface {
 	GetRunningGlobalTasks() map[int64]*proto.Task
+	LenRunningGlobalTasks() int
 }
 
 // GetRunningGlobalTasks implements Dispatcher.GetRunningGlobalTasks interface.
