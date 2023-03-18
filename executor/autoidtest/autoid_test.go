@@ -767,3 +767,42 @@ func TestIssue39528(t *testing.T) {
 	// Make sure the code does not visit tikv on allocate path.
 	require.False(t, codeRun)
 }
+
+func TestAutoIDConstraint(t *testing.T) {
+	// Remove the constraint that auto id column must be defined as a key
+	// See https://github.com/pingcap/tidb/issues/40580
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	// Cover: create table with/without key constraint
+	template := `create table t%d (id int auto_increment,k int,c char(120)%s) %s`
+	keyDefs := []string{"",
+		",PRIMARY KEY(k, id)",
+		",key idx_1(id)",
+		",PRIMARY KEY(`k`, `id`), key idx_1(id)",
+	}
+	engineDefs := []string{"",
+		"engine = MyISAM",
+		"engine = InnoDB",
+		"auto_id_cache 1",
+		"auto_id_cache 100",
+	}
+	i := 0
+	for _, keyDef := range keyDefs {
+		for _, engineDef := range engineDefs {
+			tk.MustExec(fmt.Sprintf("drop table if exists t%d", i))
+			sql := fmt.Sprintf(template, i, keyDef, engineDef)
+			tk.MustExec(sql)
+			i++
+		}
+	}
+
+	// alter table add auto id column is not supported, but cover it here to prevent regression
+	tk.MustExec("create table tt1 (id int)")
+	tk.MustExecToErr("alter table tt1 add column (c int auto_increment)")
+
+	// Cover case: create table with auto id column as key, and remove it later
+	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
+	tk.MustExec("alter table tt2 drop index c_idx")
+}

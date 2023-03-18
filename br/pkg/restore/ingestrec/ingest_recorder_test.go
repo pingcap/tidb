@@ -373,12 +373,17 @@ func TestRewriteTableID(t *testing.T) {
 	))
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
-	recorder.RewriteTableID(func(tableID int64) (int64, error) {
-		return tableID + 1, nil
+	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
+		return tableID + 1, false, nil
 	})
 	err = recorder.Iterate(func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		require.Equal(t, TableID+1, tableID)
 		return nil
 	})
+	require.NoError(t, err)
+	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
+		return tableID + 1, true, nil
+	})
+	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 }

@@ -946,7 +946,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
-			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit.Load())
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else if !errIsNoisy(err) {
@@ -3977,10 +3977,14 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
-	} else if vars.TxnCtx != nil && vars.InTxn() {
-		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
-			is = tmp
+	} else {
+		vars.TxnCtxMu.Lock()
+		if vars.TxnCtx != nil {
+			if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+				is = tmp
+			}
 		}
+		vars.TxnCtxMu.Unlock()
 	}
 
 	if is == nil {

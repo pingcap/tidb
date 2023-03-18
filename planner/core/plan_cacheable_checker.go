@@ -435,7 +435,7 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
@@ -454,6 +454,9 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

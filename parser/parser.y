@@ -51,10 +51,11 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier  "identifier"
-	asof        "AS OF"
-	toTimestamp "TO TIMESTAMP"
-	memberof    "MEMBER OF"
+	identifier           "identifier"
+	asof                 "AS OF"
+	toTimestamp          "TO TIMESTAMP"
+	memberof             "MEMBER OF"
+	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -184,6 +185,7 @@ import (
 	leading           "LEADING"
 	left              "LEFT"
 	like              "LIKE"
+	ilike             "ILIKE"
 	limit             "LIMIT"
 	lines             "LINES"
 	linear            "LINEAR"
@@ -340,6 +342,7 @@ import (
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
+	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
 	causal                "CAUSAL"
@@ -751,6 +754,10 @@ import (
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
+	priority              "PRIORITY"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -904,6 +911,7 @@ import (
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
+	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1143,6 +1151,7 @@ import (
 	LimitClause                            "LIMIT clause"
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
+	LinesTerminated                        "Lines terminated by"
 	LoadDataSetSpecOpt                     "Optional load data specification"
 	LoadDataOptionListOpt                  "Optional load data option list"
 	LoadDataOptionList                     "Load data option list"
@@ -1153,7 +1162,6 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
-	NullDefinedByClause                    "NULL DEFINED BY clause in LOAD DATA statement"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1161,6 +1169,7 @@ import (
 	OnDuplicateKeyUpdate                   "ON DUPLICATE KEY UPDATE value list"
 	OnCommitOpt                            "ON COMMIT DELETE |PRESERVE ROWS"
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
+	FormatOpt                              "FORMAT 'SQL FILE'..."
 	OfTablesOpt                            "OF table_name [, ...]"
 	OptFull                                "Full or empty"
 	OptTemporary                           "TEMPORARY or empty"
@@ -1250,6 +1259,7 @@ import (
 	ShowProfileTypes                       "Show profile types"
 	SplitOption                            "Split Option"
 	SplitSyntaxOption                      "Split syntax Option"
+	Starting                               "Starting by"
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
@@ -1354,6 +1364,7 @@ import (
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
 	LikeOrNotOp                            "Like predicate"
+	IlikeOrNotOp                           "Ilike predicate"
 	RegexpOrNotOp                          "Regexp predicate"
 	NumericType                            "Numeric types"
 	IntegerType                            "Integer Types types"
@@ -1404,6 +1415,7 @@ import (
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
+	ResourceGroupPriorityOption            "Resource group priority option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1493,14 +1505,12 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeEscapeOpt                   "like escape option"
-	LinesTerminated                 "Lines terminated by"
+	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
 	RoleNameString                  "role name string"
 	ShowDatabaseNameOpt             "Show tables/columns statement database name option"
-	Starting                        "Starting by"
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
@@ -1554,7 +1564,7 @@ import (
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like in
+%left eq ge le neq neqSynonym '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -1665,10 +1675,28 @@ ResourceGroupOptionList:
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
+ResourceGroupPriorityOption:
+	"LOW"
+	{
+		$$ = uint64(1)
+	}
+|	"MEDIUM"
+	{
+		$$ = uint64(8)
+	}
+|	"HIGH"
+	{
+		$$ = uint64(16)
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"PRIORITY" EqOpt ResourceGroupPriorityOption
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
 	{
@@ -5702,6 +5730,16 @@ LikeOrNotOp:
 		$$ = false
 	}
 
+IlikeOrNotOp:
+	"ILIKE"
+	{
+		$$ = true
+	}
+|	NotSym "ILIKE"
+	{
+		$$ = false
+	}
+
 RegexpOrNotOp:
 	RegexpSym
 	{
@@ -5746,7 +5784,7 @@ PredicateExpr:
 			Not:   !$2.(bool),
 		}
 	}
-|	BitExpr LikeOrNotOp SimpleExpr LikeEscapeOpt
+|	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
 		escape := $4
 		if len(escape) > 1 {
@@ -5755,11 +5793,29 @@ PredicateExpr:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
 			Escape:  escape[0],
+			IsLike:  true,
+		}
+	}
+|	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
+	{
+		escape := $4
+		if len(escape) > 1 {
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &ast.PatternLikeOrIlikeExpr{
+			Expr:    $1,
+			Pattern: $3,
+			Not:     !$2.(bool),
+			Escape:  escape[0],
+			IsLike:  false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -5776,7 +5832,7 @@ RegexpSym:
 	"REGEXP"
 |	"RLIKE"
 
-LikeEscapeOpt:
+LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
 		$$ = "\\"
@@ -6427,6 +6483,7 @@ UnReservedKeyword:
 |	"DECLARE"
 |	"HANDLER"
 |	"FOUND"
+|	"CALIBRATE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6567,6 +6624,10 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
 |	"BURSTABLE"
 
 /************************************************************************************
@@ -10666,7 +10727,7 @@ ShowStmt:
 	{
 		stmt := $2.(*ast.ShowStmt)
 		if $3 != nil {
-			if x, ok := $3.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+			if x, ok := $3.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
@@ -11195,9 +11256,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
+			IsLike:  true,
 		}
 	}
 |	"WHERE" Expression
@@ -11410,6 +11472,7 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	CalibrateResourceStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
@@ -13716,15 +13779,19 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
-			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
-			Table:              $9.(*ast.TableName),
+			Format:             $6.(*string),
+			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
+			Table:              $10.(*ast.TableName),
+			FieldsInfo:         $12.(*ast.FieldsClause),
+			LinesInfo:          $13.(*ast.LinesClause),
+			IgnoreLines:        $14.(*uint64),
 			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $14.(uint64),
+			ColumnAssignments:  $16.([]*ast.Assignment),
 			Options:            $17.([]*ast.LoadDataOpt),
 		}
 		if $3 != nil {
@@ -13735,18 +13802,6 @@ LoadDataStmt:
 				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
 			}
 		}
-		if $11 != nil {
-			x.FieldsInfo = $11.(*ast.FieldsClause)
-		}
-		if $12 != nil {
-			x.LinesInfo = $12.(*ast.LinesClause)
-		}
-		if $13 != nil {
-			x.NullInfo = $13.(*ast.NullDefinedBy)
-		}
-		if $16 != nil {
-			x.ColumnAssignments = $16.([]*ast.Assignment)
-		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
 			if v.ColumnName != nil {
@@ -13757,46 +13812,25 @@ LoadDataStmt:
 
 		$$ = x
 	}
-|	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
-	{
-		x := &ast.LoadDataStmt{
-			FileLocRef:         ast.FileLocServerOrRemote,
-			Path:               $5,
-			Format:             $7,
-			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
-			Table:              $11.(*ast.TableName),
-			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
-			Options:            $15.([]*ast.LoadDataOpt),
-		}
-		if $3 != nil {
-			x.FileLocRef = ast.FileLocClient
-			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
-			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
-			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
-				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
-			}
-		}
-		if $14 != nil {
-			x.ColumnAssignments = $14.([]*ast.Assignment)
-		}
-		columns := []*ast.ColumnName{}
-		for _, v := range x.ColumnsAndUserVars {
-			if v.ColumnName != nil {
-				columns = append(columns, v.ColumnName)
-			}
-		}
-		x.Columns = columns
 
-		$$ = x
+FormatOpt:
+	{
+		$$ = (*string)(nil)
+	}
+|	"FORMAT" stringLit
+	{
+		str := $2
+		$$ = &str
 	}
 
 IgnoreLines:
 	{
-		$$ = uint64(0)
+		$$ = (*uint64)(nil)
 	}
 |	"IGNORE" NUM "LINES"
 	{
-		$$ = getUint64FromNUM($2)
+		v := getUint64FromNUM($2)
+		$$ = &v
 	}
 
 CharsetOpt:
@@ -13814,41 +13848,24 @@ LocalOpt:
 
 Fields:
 	{
-		defaultEscaped := byte('\\')
-		$$ = &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    &defaultEscaped,
-		}
+		$$ = (*ast.FieldsClause)(nil)
 	}
 |	FieldsOrColumns FieldItemList
 	{
-		defaultEscaped := byte('\\')
-		fieldsClause := &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    &defaultEscaped,
-		}
+		fieldsClause := &ast.FieldsClause{}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
 			switch item.Type {
 			case ast.Terminated:
-				fieldsClause.Terminated = item.Value
+				fieldsClause.Terminated = &item.Value
 			case ast.Enclosed:
-				var enclosed *byte = nil
-				if len(item.Value) > 0 {
-					b := item.Value[0]
-					enclosed = &b
-				}
-				fieldsClause.Enclosed = enclosed
-				if item.OptEnclosed {
-					fieldsClause.OptEnclosed = true
-				}
+				fieldsClause.Enclosed = &item.Value
+				fieldsClause.OptEnclosed = item.OptEnclosed
 			case ast.Escaped:
-				var escaped *byte = nil
-				if len(item.Value) > 0 {
-					b := item.Value[0]
-					escaped = &b
-				}
-				fieldsClause.Escaped = escaped
+				fieldsClause.Escaped = &item.Value
+			case ast.DefinedNullBy:
+				fieldsClause.DefinedNullBy = &item.Value
+				fieldsClause.NullValueOptEnclosed = item.OptEnclosed
 			}
 		}
 		$$ = fieldsClause
@@ -13879,9 +13896,9 @@ FieldItem:
 			Value: $3,
 		}
 	}
-|	"OPTIONALLY" "ENCLOSED" "BY" FieldTerminator
+|	optionallyEnclosedBy FieldTerminator
 	{
-		str := $4
+		str := $2
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -13916,6 +13933,21 @@ FieldItem:
 			Value: str,
 		}
 	}
+|	"DEFINED" "NULL" "BY" TextString
+	{
+		$$ = &ast.FieldItem{
+			Type:  ast.DefinedNullBy,
+			Value: $4.(*ast.TextString).Value,
+		}
+	}
+|	"DEFINED" "NULL" "BY" TextString "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.FieldItem{
+			Type:        ast.DefinedNullBy,
+			Value:       $4.(*ast.TextString).Value,
+			OptEnclosed: true,
+		}
+	}
 
 FieldTerminator:
 	stringLit
@@ -13930,47 +13962,36 @@ FieldTerminator:
 
 Lines:
 	{
-		$$ = &ast.LinesClause{Terminated: "\n"}
+		$$ = (*ast.LinesClause)(nil)
 	}
 |	"LINES" Starting LinesTerminated
 	{
-		$$ = &ast.LinesClause{Starting: $2, Terminated: $3}
+		$$ = &ast.LinesClause{Starting: $2.(*string), Terminated: $3.(*string)}
 	}
 
 Starting:
 	{
-		$$ = ""
+		$$ = (*string)(nil)
 	}
 |	"STARTING" "BY" FieldTerminator
 	{
-		$$ = $3
+		s := $3
+		$$ = &s
 	}
 
 LinesTerminated:
 	{
-		$$ = "\n"
+		$$ = (*string)(nil)
 	}
 |	"TERMINATED" "BY" FieldTerminator
 	{
-		$$ = $3
-	}
-
-NullDefinedByClause:
-	{
-		$$ = nil
-	}
-|	"NULL" "DEFINED" "BY" TextString
-	{
-		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value}
-	}
-|	"NULL" "DEFINED" "BY" TextString "OPTIONALLY" "ENCLOSED"
-	{
-		$$ = &ast.NullDefinedBy{NullDef: $4.(*ast.TextString).Value, OptEnclosed: true}
+		s := $3
+		$$ = &s
 	}
 
 LoadDataSetSpecOpt:
 	{
-		$$ = nil
+		$$ = ([]*ast.Assignment)(nil)
 	}
 |	"SET" LoadDataSetList
 	{
@@ -15210,5 +15231,17 @@ DropProcedureStmt:
 			IfExists:      $3.(bool),
 			ProcedureName: $4.(*ast.TableName),
 		}
+	}
+
+/********************************************************************
+ *
+ * Calibrate Resource Statement
+ *
+ * CALIBRATE RESOURCE
+ *******************************************************************/
+CalibrateResourceStmt:
+	"CALIBRATE" "RESOURCE"
+	{
+		$$ = &ast.CalibrateResourceStmt{}
 	}
 %%
