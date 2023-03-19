@@ -699,7 +699,7 @@ type SessionVars struct {
 	ConnectionID uint64
 
 	// PlanID is the unique id of logical and physical plan.
-	PlanID int
+	PlanID atomic.Int32
 
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID atomic.Int64
@@ -1603,8 +1603,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
-	s.PlanID++
-	return s.PlanID
+	return int(s.PlanID.Add(1))
 }
 
 const (

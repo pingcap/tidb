@@ -503,9 +503,8 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes PhysicalIndexMergeJoin.
 func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexMergeJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
 	p.self = &p
 	return &p
@@ -513,9 +512,8 @@ func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMerge
 
 // Init initializes PhysicalIndexHashJoin.
 func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexHashJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
 	p.self = &p
 	return &p
