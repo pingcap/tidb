@@ -1179,7 +1179,7 @@ func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *stati
 		orderedIdxCols := make([]int64, len(idxCols))
 		copy(orderedIdxCols, idxCols)
 		slices.Sort(orderedIdxCols)
-		if !slices.Equal(idxCols, colUIDs) {
+		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
 		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
@@ -1303,16 +1303,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 
+	// Note: due to a regression in JOB workload, we need to revert the logic below for now.
+	//
 	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
 	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
 	// We use it as an upper bound here.
 	rowCountUpperBound := -1.0
-	if ds.tableStats != nil {
-		joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
-		if joinKeyNDV > 0 {
-			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
-		}
-	}
+	//if ds.tableStats != nil {
+	//	joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
+	//	if joinKeyNDV > 0 {
+	//		rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
+	//	}
+	//}
 
 	if rowCountUpperBound > 0 {
 		rowCount = math.Min(rowCount, rowCountUpperBound)
@@ -2088,11 +2090,6 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
-// canPushToCop checks if it can be pushed to some stores.
-func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
-	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
-}
-
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -2259,10 +2256,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
-	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
-		return nil
-	}
-	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,

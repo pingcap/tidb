@@ -126,7 +126,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	e.ctx.GetSessionVars().PlanID = 0
-	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().PlanColumnID.Store(0)
 	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
 	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.

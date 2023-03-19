@@ -1186,6 +1186,15 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
+		if ectx.Err() != nil {
+			log.Warn("Restoring encountered error and already stopped, give up remained files.",
+				zap.Int("remained", len(leftFiles)),
+				logutil.ShortError(ectx.Err()))
+			// We will fetch the error from the errgroup then (If there were).
+			// Also note if the parent context has been canceled or something,
+			// breaking here directly is also a reasonable behavior.
+			break
+		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				fileStart := time.Now()
@@ -1206,7 +1215,10 @@ func (rc *Client) RestoreSSTFiles(
 		)
 		return errors.Trace(err)
 	}
-	return nil
+	// Once the parent context canceled and there is no task running in the errgroup,
+	// we may break the for loop without error in the errgroup. (Will this happen?)
+	// At that time, return the error in the context here.
+	return ctx.Err()
 }
 
 // RestoreRaw tries to restore raw keys in the specified range.
@@ -2819,16 +2831,17 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 // RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
 // TODO: need to implement the range filter out feature
 func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
-	err := recorder.RewriteTableID(func(tableID int64) (int64, error) {
+	err := recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
 		rewriteRule, exists := rewriteRules[tableID]
 		if !exists {
-			return 0, errors.Errorf("rewriteRule not found, tableID: %d", tableID)
+			// since the table's files will be skipped restoring, here also skips.
+			return 0, true, nil
 		}
 		newTableID := GetRewriteTableID(tableID, rewriteRule)
 		if newTableID == 0 {
-			return 0, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+			return 0, false, errors.Errorf("newTableID is 0, tableID: %d", tableID)
 		}
-		return newTableID, nil
+		return newTableID, false, nil
 	})
 	return errors.Trace(err)
 	/* TODO: we can use range filter to skip restoring the index kv using accelerated indexing feature

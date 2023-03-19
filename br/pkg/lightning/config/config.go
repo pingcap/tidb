@@ -681,6 +681,7 @@ type TikvImporter struct {
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL       *bool                        `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -1130,6 +1131,24 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
+	if cfg.TikvImporter.IncrementalImport {
+		addIndexBySQL := cfg.TikvImporter.AddIndexBySQL
+		if addIndexBySQL != nil && *addIndexBySQL {
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
+		} else if addIndexBySQL == nil {
+			falseVal := false
+			cfg.TikvImporter.AddIndexBySQL = &falseVal // Disable add-index-by-sql when incremental-import is enabled.
+		}
+	} else {
+		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
+		// TODO: remove this after TiDB v7.0.0 is released, in which add-index-by-sql is enabled by default.
+		if cfg.TikvImporter.AddIndexBySQL == nil && common.IsFailpointBuild {
+			trueVal := true
+			cfg.TikvImporter.AddIndexBySQL = &trueVal
+		}
+	}
+
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
 		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 	}

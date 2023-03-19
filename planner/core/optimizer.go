@@ -149,7 +149,7 @@ type logicalOptRule interface {
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -400,6 +400,7 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
+	tryEnableLateMaterialization(sctx, plan)
 	return plan, nil
 }
 
@@ -539,6 +540,22 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 		}
 	}
 	return nil
+}
+
+// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
+// @brief: push down some filter conditions to the table scan operator
+// @param: sctx: session context
+// @param: plan: the physical plan to be pruned
+// @note: this optimization is only applied when the TiFlash is used.
+// @note: the following conditions should be satisfied:
+//   - Only the filter conditions with high selectivity should be pushed down.
+//   - The filter conditions which contain heavy cost functions should not be pushed down.
+//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
+func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
+	// check if EnableLateMaterialization is set
+	if sctx.GetSessionVars().EnableLateMaterialization {
+		predicatePushDownToTableScan(sctx, plan)
+	}
 }
 
 /*

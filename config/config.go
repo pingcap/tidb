@@ -295,8 +295,7 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
-	// todo: remove this after AutoScaler is stable.
-	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
+	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -1039,7 +1038,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
-	UseAutoScaler:                        true,
+	UseAutoScaler:                        false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
@@ -1069,26 +1068,6 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
-}
-
-// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
-func GetAutoScalerClusterID() (string, error) {
-	c := GetGlobalConfig()
-	keyspaceName := c.KeyspaceName
-	clusterID := c.AutoScalerClusterID
-
-	if keyspaceName != "" && clusterID != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
-	}
-	if keyspaceName == "" && clusterID == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
-	}
-
-	res := keyspaceName
-	if res == "" {
-		res = clusterID
-	}
-	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.
