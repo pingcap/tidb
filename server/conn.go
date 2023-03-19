@@ -1920,23 +1920,27 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 
 	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
 			if v.PartitionInfo != nil {
-				return nil
+				tableID = v.PartitionInfo.ID
+			} else {
+				tableID = v.TblInfo.ID
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, v.TblInfo.ID)
+				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
 				idxKeys = append(idxKeys, idxKey)
 			} else {
-				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(v.TblInfo.ID, v.Handle))
+				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
 			if v.PartitionInfos != nil {
+				// TODO: move getting physical table ID from BatchPointGetExec.initialize to newBatchPointGetPlan
 				return nil
 			}
 			if v.IndexInfo != nil {
