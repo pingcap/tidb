@@ -55,7 +55,7 @@ type builtinGroupingSig struct {
 	baseBuiltinFunc
 
 	version      uint32
-	grouping_ids map[uint64]uint64
+	grouping_ids map[int64]int64
 }
 
 // metadata returns the metadata of grouping functions
@@ -75,8 +75,8 @@ func (b *builtinGroupingSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGroupingSig) getMetaGroupingID() uint64 {
-	var meta_grouping_id uint64
+func (b *builtinGroupingSig) getMetaGroupingID() int64 {
+	var meta_grouping_id int64
 	for key, _ := range b.grouping_ids {
 		meta_grouping_id = key
 	}
@@ -92,22 +92,22 @@ func (b *builtinGroupingSig) checkMetadata() error {
 	return nil
 }
 
-func (b *builtinGroupingSig) groupingImplV1(grouping_id uint64, meta_grouping_id uint64) int64 {
+func (b *builtinGroupingSig) groupingImplV1(grouping_id int64, meta_grouping_id int64) int64 {
 	// TODO
 	return 0
 }
 
-func (b *builtinGroupingSig) groupingImplV2(grouping_id uint64, meta_grouping_id uint64) int64 {
+func (b *builtinGroupingSig) groupingImplV2(grouping_id int64, meta_grouping_id int64) int64 {
 	// TODO
 	return 0
 }
 
-func (b *builtinGroupingSig) groupingImplV3(grouping_id uint64) int64 {
+func (b *builtinGroupingSig) groupingImplV3(grouping_id int64) int64 {
 	// TODO
 	return 0
 }
 
-func (b *builtinGroupingSig) grouping(grouping_id uint64) int64 {
+func (b *builtinGroupingSig) grouping(grouping_id int64) int64 {
 	switch b.version {
 	case 1:
 		return b.groupingImplV1(grouping_id, b.getMetaGroupingID())
@@ -131,28 +131,35 @@ func (b *builtinGroupingSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	return b.grouping(uint64(grouping_id)), false, nil
+	return b.grouping(grouping_id), false, nil
 }
 
-func (b *builtinGroupingSig) groupingVec(param *funcParam) {
-	// TODO
+func (b *builtinGroupingSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
+	result.ResizeInt64(rowNum, false)
+	result.MergeNulls(groupingIds)
+	resContainer := result.Int64s()
+	for i := 0; i < rowNum; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		resContainer[i] = b.grouping(groupingIds.GetInt64(i))
+	}
 }
 
 func (b *builtinGroupingSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
-	params := make([]*funcParam, 0, 1)
-	defer releaseBuffers(&b.baseBuiltinFunc, params)
 
-	param, isConstNull, err := buildIntParam(&b.baseBuiltinFunc, 0, input, false, 0)
+	bufVal, err := b.bufAllocator.get()
 	if err != nil {
-		return ErrRegexp.GenWithStackByArgs(err)
+		return err
 	}
-	if isConstNull {
-		fillNullBytesIntoResult(result, rowNum)
-		return nil
+	defer b.bufAllocator.put(bufVal)
+	if err = b.args[0].VecEvalInt(b.ctx, input, bufVal); err != nil {
+		return err
 	}
 
-	b.groupingVec(param)
+	b.groupingVec(bufVal, rowNum, result)
 
-	return nil // TODO
+	return nil
 }
