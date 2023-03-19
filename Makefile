@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc check-parallel lint tidy bazel_build testSuite errdoc license
 
 fmt:
 	@echo "gofmt (simplify)"
