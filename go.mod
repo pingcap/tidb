@@ -123,7 +123,6 @@ require (
 	golang.org/x/tools v0.7.0
 	google.golang.org/api v0.106.0
 	google.golang.org/grpc v1.52.3
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.2
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
@@ -271,6 +270,7 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230202175211-008b39050e57 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 	stathat.com/c/consistent v1.0.0 // indirect
