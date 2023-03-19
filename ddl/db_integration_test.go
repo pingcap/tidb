@@ -4408,5 +4408,5 @@ func TestReorganizePartitionWarning(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));")
 	tk.MustExec("alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Statistics are outdated after reorganizing partitions. Please use 'ANALYZE' statement to update"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now."))
 }
