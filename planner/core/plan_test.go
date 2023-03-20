@@ -47,7 +47,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 	tk.MustExec("set tidb_partition_prune_mode='static';")
 
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
@@ -480,7 +480,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
 	}
 	query := buf.String()
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
@@ -507,7 +507,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
@@ -531,7 +531,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
-	tk.Session().GetSessionVars().PlanID = 0
+	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)

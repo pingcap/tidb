@@ -61,7 +61,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	planNormalizedSuiteData := GetPlanNormalizedSuiteData()
 	planNormalizedSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)

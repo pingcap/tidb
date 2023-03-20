@@ -57,7 +57,7 @@ type indexJoinContext struct {
 func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	ctx := MockContext()
 
-	ctx.GetSessionVars().PlanID = -1
+	ctx.GetSessionVars().PlanID.Store(-1)
 	joinNode := LogicalJoin{}.Init(ctx, 0)
 	dataSourceNode := DataSource{}.Init(ctx, 0)
 	dsSchema := expression.NewSchema()

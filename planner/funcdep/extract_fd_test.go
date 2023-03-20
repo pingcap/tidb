@@ -217,7 +217,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
@@ -316,7 +316,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
@@ -364,7 +364,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)

@@ -162,7 +162,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
-	ctx.GetSessionVars().PlanID = -1
+	ctx.GetSessionVars().PlanID.Store(-1)
 	joinGroups := make([]LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
 	joinGroups = append(joinGroups, newDataSource(ctx, "orders", 15000000))
@@ -207,7 +207,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
-	ctx.GetSessionVars().PlanID = -1
+	ctx.GetSessionVars().PlanID.Store(-1)
 
 	joinGroup := make([]LogicalPlan, 0, 4)
 	joinGroup = append(joinGroup, newDataSource(ctx, "a", 100))
