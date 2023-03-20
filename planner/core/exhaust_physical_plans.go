@@ -2160,18 +2160,23 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinCostModelVersion > 0 {
 		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
 
-		if err == nil && mppStoreCnt > 0 {
-			// Use broadcast way to exchange data explicitly if there is only ONE mpp store.
-			if mppStoreCnt == 1 {
-				return true
-			}
+		// No need to exchange data if there is only ONE mpp store. But the behavior of optimizer is unexpected if use broadcast way forcibly, such as tpch q4.
+		// TODO: always use broadcast way to exchange data if there is only ONE mpp store.
 
-			if onlyCheckChild1 {
-				return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
-			} else if onlyCheckChild0 {
-				return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+		if err == nil && mppStoreCnt > 0 {
+			if onlyCheckChild1 || onlyCheckChild0 {
+				if mppStoreCnt > 1 {
+					if onlyCheckChild1 {
+						return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+					} else if onlyCheckChild0 {
+						return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+					}
+				}
+				// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+				// Otherwise, the plan of tpch q4 may be unexpected.
+			} else {
+				return isJoinFitMPPBCJ(p, mppStoreCnt)
 			}
-			return isJoinFitMPPBCJ(p, mppStoreCnt)
 		}
 	}
 
