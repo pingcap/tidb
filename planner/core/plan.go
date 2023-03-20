@@ -725,11 +725,10 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
-	ctx.GetSessionVars().PlanID++
-	id := ctx.GetSessionVars().PlanID
+	id := ctx.GetSessionVars().PlanID.Add(1)
 	return basePlan{
 		tp:          tp,
-		id:          id,
+		id:          int(id),
 		ctx:         ctx,
 		blockOffset: offset,
 	}
