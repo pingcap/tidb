@@ -29,7 +29,7 @@ import (
 // FlowHandleLitBackfillType is the task type to handle backfill
 const FlowHandleLitBackfillType = "flowHandleLitBackfill"
 
-// LitBackfillGlobalTaskMeta is the global task meta for lightning backfill
+// LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
 type LitBackfillGlobalTaskMeta struct {
 	Job          model.Job `json:"job"`
 	EleID        int64     `json:"ele_id"`
