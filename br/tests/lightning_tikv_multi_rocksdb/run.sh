@@ -25,6 +25,7 @@ check_cluster_version 4 0 0 'local backend' || exit 0
 
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
 run_lightning --backend local --log-file "$TEST_DIR/lightning-local.log" -L debug
+grep -q "partitioned-raft-kv doesn't support import mode" $TEST_DIR/tikv*.log
 
 # Check that everything is correctly imported
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
