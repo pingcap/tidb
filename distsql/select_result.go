@@ -64,7 +64,7 @@ var (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*serialSelectResults)(nil)
+	_ SelectResult = (*SerialSelectResults)(nil)
 	_ SelectResult = (*sortedSelectResults)(nil)
 )
 
@@ -108,15 +108,16 @@ func (h *chunkRowHeap) Pop() interface{} {
 }
 
 // NewSortedSelectResults is only for partition table
-func NewSortedSelectResults(selectResult []SelectResult, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+// When pids != nil, the pid will be set in the last column of each chunk.Rows.
+func NewSortedSelectResults(selectResult []SelectResult, pids []int64, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
+		pids:         pids,
 	}
 	s.initCompareFuncs()
 	s.buildKeyColumns()
-
 	s.heap = &chunkRowHeap{s}
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
 	return s
@@ -132,6 +133,7 @@ type sortedSelectResults struct {
 	rowPtrs      []chunk.RowPtr
 	heap         *chunkRowHeap
 
+	pids       []int64
 	memTracker *memory.Tracker
 }
 
@@ -186,9 +188,16 @@ func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
 
 func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
 	c.Reset()
+	r := make([]int, c.NumCols()-1)
+	for i := range r {
+		r[i] = i
+	}
 	for i := range ssr.cachedChunks {
 		if ssr.cachedChunks[i] == nil {
 			ssr.cachedChunks[i] = c.CopyConstruct()
+			if len(ssr.pids) != 0 {
+				ssr.cachedChunks[i] = ssr.cachedChunks[i].Prune(r)
+			}
 			ssr.memTracker.Consume(ssr.cachedChunks[i].MemoryUsage())
 		}
 	}
@@ -208,6 +217,9 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 
 		idx := heap.Pop(ssr.heap).(chunk.RowPtr)
 		c.AppendRow(ssr.cachedChunks[idx.ChkIdx].GetRow(int(idx.RowIdx)))
+		if len(ssr.pids) != 0 {
+			c.AppendInt64(c.NumCols()-1, ssr.pids[idx.ChkIdx])
+		}
 
 		if int(idx.RowIdx) >= ssr.cachedChunks[idx.ChkIdx].NumRows()-1 {
 			if err = ssr.updateCachedChunk(ctx, idx.ChkIdx); err != nil {
@@ -233,20 +245,22 @@ func (ssr *sortedSelectResults) Close() (err error) {
 }
 
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
-func NewSerialSelectResults(selectResults []SelectResult) SelectResult {
-	return &serialSelectResults{
+func NewSerialSelectResults(selectResults []SelectResult, pids []int64) SelectResult {
+	return &SerialSelectResults{
 		selectResults: selectResults,
+		pids:          pids,
 		cur:           0,
 	}
 }
 
-// serialSelectResults reads each SelectResult serially
-type serialSelectResults struct {
+// SerialSelectResults reads each SelectResult serially
+type SerialSelectResults struct {
 	selectResults []SelectResult
+	pids          []int64
 	cur           int
 }
 
-func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+func (ssr *SerialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	for ssr.cur < len(ssr.selectResults) {
 		resultSubset, err := ssr.selectResults[ssr.cur].NextRaw(ctx)
 		if err != nil {
@@ -260,7 +274,7 @@ func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	return nil, nil
 }
 
-func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (ssr *SerialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for ssr.cur < len(ssr.selectResults) {
 		if err := ssr.selectResults[ssr.cur].Next(ctx, chk); err != nil {
 			return err
@@ -273,7 +287,14 @@ func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (ssr *serialSelectResults) Close() (err error) {
+func (ssr *SerialSelectResults) GetCurrentPID() (int64, error) {
+	if len(ssr.pids) == 0 {
+		return 0, errors.Errorf("No Partition ID info")
+	}
+	return ssr.pids[ssr.cur], nil
+}
+
+func (ssr *SerialSelectResults) Close() (err error) {
 	for _, r := range ssr.selectResults {
 		if rerr := r.Close(); rerr != nil {
 			err = rerr
