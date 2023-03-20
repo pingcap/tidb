@@ -62,7 +62,7 @@ func (d *dispatcher) setRunningGlobalTasks(gTask *proto.Task) {
 	d.runningGlobalTasks.tasks[gTask.ID] = gTask
 }
 
-func (d *dispatcher) LenRunningGlobalTasks() int {
+func (d *dispatcher) RunningGlobalTasksCnt() int {
 	d.runningGlobalTasks.Lock()
 	defer d.runningGlobalTasks.Unlock()
 	return len(d.runningGlobalTasks.tasks)

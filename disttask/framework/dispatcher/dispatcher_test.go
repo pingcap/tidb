@@ -151,7 +151,7 @@ func TestSimple(t *testing.T) {
 	cnt := 40
 	taskMap := make(map[int64]*proto.Task)
 	for i := 0; i < cnt; i++ {
-		if dsp.(dispatcher.DispatcherForTest).LenRunningGlobalTasks() == 1 {
+		if dsp.(dispatcher.DispatcherForTest).RunningGlobalTasksCnt() == 1 {
 			taskMap = dsp.(dispatcher.DispatcherForTest).GetRunningGlobalTasks()
 		}
 		time.Sleep(time.Millisecond * 50)
