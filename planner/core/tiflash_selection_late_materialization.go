@@ -67,7 +67,7 @@ func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) Ph
 			plan.SetChildren(newChildren...)
 		}
 	case *PhysicalTableReader:
-		predicatePushDownToTableScan(sctx, p.tablePlan)
+		p.tablePlan = predicatePushDownToTableScan(sctx, p.tablePlan)
 	default:
 		if len(plan.Children()) > 0 {
 			newChildren := make([]PhysicalPlan, 0, len(plan.Children()))

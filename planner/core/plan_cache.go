@@ -284,7 +284,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount)); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -662,6 +662,14 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 }
 
 func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
+	if len(is.IdxCols) == 0 {
+		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
+			is.Ranges = ranger.FullRange()
+			return
+		}
+		return errors.New("unexpected range for PhysicalIndexScan")
+	}
+
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens, 0)
 	if err != nil {
 		return err

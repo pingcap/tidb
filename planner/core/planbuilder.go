@@ -728,18 +728,22 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
 func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
-	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(nil)
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		newPlannerSelectBlockAsName := make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
 	}
 
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
-	return b, savedBlockNames
+	if savedBlockNames == nil {
+		return b, nil
+	}
+	return b, *savedBlockNames
 }
 
 // ResetForReuse reset the plan builder, put it into pool for reuse.
@@ -832,7 +836,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt,
-		*ast.LoadDataActionStmt:
+		*ast.LoadDataActionStmt, *ast.CalibrateResourceStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -3122,6 +3126,14 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildCalibrateResourceSchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "QUOTA", mysql.TypeLonglong, longlongSize))
+
+	return schema.col2Schema(), schema.names
+}
+
 func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
@@ -3385,6 +3397,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
 		}
+	case *ast.CalibrateResourceStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		p.setSchemaAndNames(buildCalibrateResourceSchema())
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)

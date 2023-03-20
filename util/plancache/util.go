@@ -26,4 +26,6 @@ type PlanCacheMatchOpts struct {
 	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
 	// only used for cache and pick plan with parameters in limit
 	LimitOffsetAndCount []uint64
+	// HasSubQuery indicate whether this query has sub query
+	HasSubQuery bool
 }
