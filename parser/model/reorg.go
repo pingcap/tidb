@@ -176,15 +176,6 @@ const (
 	CheckpointStateImported ReorgCheckpointState = 30
 )
 
-// NewReorgCheckpoint creates a new ReorgCheckpoint.
-func NewReorgCheckpoint(startKey []byte, instanceAddr string) *ReorgCheckpoint {
-	return &ReorgCheckpoint{
-		State:        CheckpointStateNone,
-		DoneKey:      startKey,
-		InstanceAddr: instanceAddr,
-	}
-}
-
 // Encode encodes ReorgCheckpoint with json format.
 func (rc *ReorgCheckpoint) Encode() ([]byte, error) {
 	b, err := json.Marshal(rc)

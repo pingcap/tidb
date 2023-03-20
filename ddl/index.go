@@ -893,14 +893,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (
 	done bool, ver int64, err error) {
-	checkpoint, err := loadCheckpoint(w, job)
+	checkpoint, err := loadCheckpoint(w.sessPool, job)
 	if err != nil {
 		return false, ver, errors.Trace(err)
-	}
-	if checkpoint == nil {
-		cfg := config.GetGlobalConfig()
-		currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-		checkpoint = model.NewReorgCheckpoint([]byte{}, currentAddr)
 	}
 	bc, err := ingest.LitBackCtxMgr.Register(w.ctx, indexInfo.Unique, job.ID, job.ReorgMeta.SQLMode)
 	if err != nil {
@@ -910,7 +905,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	switch checkpoint.State {
 	case model.CheckpointStateNone:
 		checkpoint.State = model.CheckpointStateWriting
-		err := progressCheckpoint(w, job, checkpoint)
+		err := progressCheckpoint(w.sessPool, job.ID, checkpoint)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
@@ -934,7 +929,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, ver, errors.Trace(err)
 		}
 		checkpoint.State = model.CheckpointStateEngineClosed
-		err = progressCheckpoint(w, job, checkpoint)
+		err = progressCheckpoint(w.sessPool, job.ID, checkpoint)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
@@ -966,7 +961,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return true, ver, errors.Trace(err)
 		}
 		checkpoint.State = model.CheckpointStateImported
-		err := progressCheckpoint(w, job, checkpoint)
+		err := progressCheckpoint(w.sessPool, job.ID, checkpoint)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
@@ -984,34 +979,42 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 }
 
-func loadCheckpoint(w *worker, job *model.Job) (checkpoint *model.ReorgCheckpoint, err error) {
-	sess, err := w.sessPool.get()
+func loadCheckpoint(sessPool *sessionPool, job *model.Job) (checkpoint *model.ReorgCheckpoint, err error) {
+	sess, err := sessPool.get()
 	if err != nil {
 		return nil, err
 	}
-	defer w.sessPool.put(sess)
+	defer sessPool.put(sess)
 	rh := newReorgHandler(newSession(sess))
 	reorgMeta, err := rh.GetDDLReorgMeta(job)
 	if err != nil {
 		return nil, err
 	}
-	if reorgMeta == nil {
-		return nil, nil
+	if reorgMeta == nil || reorgMeta.Checkpoint == nil {
+		return &model.ReorgCheckpoint{}, nil
 	}
 	return reorgMeta.Checkpoint, nil
 }
 
-func progressCheckpoint(w *worker, job *model.Job, checkpoint *model.ReorgCheckpoint) error {
-	if checkpoint == nil {
-		return nil
+func initCheckpoint(rh *reorgHandler, jobID int64, start kv.Key) (*model.ReorgCheckpoint, error) {
+	cfg := config.GetGlobalConfig()
+	currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	cp := &model.ReorgCheckpoint{State: model.CheckpointStateWriting, DoneKey: start, InstanceAddr: currentAddr}
+	err := rh.UpdateDDLReorgMeta(jobID, &model.ReorgMeta{Checkpoint: cp})
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	sess, err := w.sessPool.get()
+	return cp, nil
+}
+
+func progressCheckpoint(sessPool *sessionPool, jobID int64, checkpoint *model.ReorgCheckpoint) error {
+	sess, err := sessPool.get()
 	if err != nil {
 		return err
 	}
-	defer w.sessPool.put(sess)
+	defer sessPool.put(sess)
 	rh := newReorgHandler(newSession(sess))
-	return rh.UpdateDDLReorgMeta(job, &model.ReorgMeta{Checkpoint: checkpoint})
+	return rh.UpdateDDLReorgMeta(jobID, &model.ReorgMeta{Checkpoint: checkpoint})
 }
 
 func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,

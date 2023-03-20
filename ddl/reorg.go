@@ -660,7 +660,10 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
-		cp = &model.ReorgCheckpoint{}
+		cp, err = initCheckpoint(rh, job.ID, start)
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
 	} else {
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
@@ -688,6 +691,24 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			}
 			return &info, errors.Trace(err)
 		}
+		if cp.State > model.CheckpointStateNone && len(cp.DoneKey) > 0 {
+			cfg := config.GetGlobalConfig()
+			currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+			if currentAddr != cp.InstanceAddr {
+				logutil.BgLogger().Info("[ddl] going back to the last imported key",
+					zap.String("checkpoint addr", cp.InstanceAddr),
+					zap.String("current addr", currentAddr),
+					zap.String("checkpoint done key", hex.EncodeToString(cp.DoneKey)))
+				cp.InstanceAddr = currentAddr
+				// The DDL owner is changed, we use the last imported key as the start key instead of
+				// the start key in reorg info, because the latter is updated when the range is flushed to the local engine.
+				start = cp.DoneKey
+			}
+			err = rh.UpdateDDLReorgMeta(job.ID, &model.ReorgMeta{Checkpoint: cp})
+			if err != nil {
+				return &info, errors.Trace(err)
+			}
+		}
 	}
 	info.Job = job
 	info.d = d
@@ -699,16 +720,6 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 	info.mergingTmpIdx = mergingTmpIdx
 	info.dbInfo = dbInfo
 	info.checkpoint = cp
-	if info.first && len(cp.DoneKey) > 0 && info.StartKey.Cmp(cp.DoneKey) > 0 {
-		cfg := config.GetGlobalConfig()
-		currentAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
-		if currentAddr != cp.InstanceAddr {
-			// The DDL owner is changed, we use the last imported key as the start key instead of
-			// the start key in reorg info, because the latter is updated when the range is flushed to the local engine.
-			info.StartKey = cp.DoneKey
-		}
-	}
-
 	return &info, nil
 }
 
@@ -857,6 +868,6 @@ func (r *reorgHandler) GetDDLReorgMeta(job *model.Job) (*model.ReorgMeta, error)
 }
 
 // UpdateDDLReorgMeta updates the reorg meta for a DDL job.
-func (r *reorgHandler) UpdateDDLReorgMeta(job *model.Job, reorgMeta *model.ReorgMeta) error {
-	return updateDDLReorgMeta(r.s, job.ID, reorgMeta)
+func (r *reorgHandler) UpdateDDLReorgMeta(jobID int64, reorgMeta *model.ReorgMeta) error {
+	return updateDDLReorgMeta(r.s, jobID, reorgMeta)
 }

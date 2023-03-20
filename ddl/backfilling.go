@@ -1057,6 +1057,10 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				return errors.Trace(err)
 			}
 			if imported {
+				logutil.BgLogger().Info("[ddl-ingest] progress imported checkpoint",
+					zap.String("table", t.Meta().Name.O),
+					zap.Int64("element ID", reorgInfo.currElement.ID),
+					zap.String("key", hex.EncodeToString(startKey)))
 				reorgInfo.checkpoint.DoneKey = startKey
 			}
 		}
