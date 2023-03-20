@@ -2439,7 +2439,7 @@ func upgradeToVer140(s Session, ver int64) {
 	if ver >= version140 {
 		return
 	}
-	// if it is updated from v6.7, BackgroundSubtaskTableSQL and BackgroundSubtaskHistoryTableSQL has
+	// if it is updated from v6.7, BackgroundSubtaskTableSQL and BackgroundSubtaskHistoryTableSQL has existed.
 	execute(s, ddl.BackgroundSubtaskTableSQL)
 	execute(s, ddl.BackgroundSubtaskHistoryTableSQL)
 }
