@@ -853,13 +853,11 @@ const (
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
 	version139 = 139
-	// version 140
-	version140 = 140
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version140
+var currentBootstrapVersion int64 = 139
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -987,7 +985,6 @@ var (
 		upgradeToVer137,
 		upgradeToVer138,
 		upgradeToVer139,
-		upgradeToVer140,
 	}
 )
 
@@ -2409,6 +2406,35 @@ func upgradeToVer136(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
+	mustExecute(s, `create table if not exists mysql.tidb_background_subtask  (
+				id bigint not null auto_increment primary key,
+				namespace varchar(256),
+				task_key varchar(256),
+				ddl_physical_tid bigint(20),
+				type int,
+				exec_id varchar(256),
+				exec_expired timestamp,
+				state varchar(64) not null,
+				checkpoint longblob not null,
+				start_time bigint,
+				state_update_time bigint,
+				meta longblob,
+				key idx_task_key(task_key))`)
+	mustExecute(s, `create table if not exists mysql.tidb_background_subtask_history  (
+		 	id bigint not null auto_increment primary key,
+			namespace varchar(256),
+			task_key varchar(256),
+			ddl_physical_tid bigint(20),
+			type int,
+			exec_id varchar(256),
+			exec_expired timestamp,
+			state varchar(64) not null,
+			checkpoint longblob not null,
+			start_time bigint,
+			state_update_time bigint,
+			meta longblob,
+			unique key(namespace, task_key))`,
+	)
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
 }
@@ -2433,15 +2459,6 @@ func upgradeToVer139(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateLoadDataJobs)
-}
-
-func upgradeToVer140(s Session, ver int64) {
-	if ver >= version140 {
-		return
-	}
-	// if it is updated from v6.7, BackgroundSubtaskTableSQL and BackgroundSubtaskHistoryTableSQL has existed.
-	execute(s, ddl.BackgroundSubtaskTableSQL)
-	execute(s, ddl.BackgroundSubtaskHistoryTableSQL)
 }
 
 func writeOOMAction(s Session) {
