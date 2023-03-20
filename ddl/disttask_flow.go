@@ -109,7 +109,12 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 
-	gTask.Step = proto.StepOne
+	if globalTaskMeta.IsMergingIdx {
+		gTask.Step = proto.StepTwo
+	} else {
+		gTask.Step = proto.StepOne
+	}
+
 	return subTaskMetas, nil
 }
 
@@ -119,7 +124,7 @@ func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto
 		return nil, err
 	}
 
-	subTaskMeta := &LitBackfillSubTaskMeta{
+	subTaskMeta := &LitBackfillSubTaskRollbackMeta{
 		IsMergingIdx: globalTaskMeta.IsMergingIdx,
 	}
 

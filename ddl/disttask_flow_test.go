@@ -40,7 +40,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// test normal table ProcessNormalFlow
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", true)
+	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", false)
 	metas, err := handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
@@ -48,7 +48,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	var subTask ddl.LitBackfillSubTaskMeta
 	require.NoError(t, json.Unmarshal(metas[0], &subTask))
 	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
-	require.Equal(t, true, subTask.IsMergingIdx)
+	require.Equal(t, false, subTask.IsMergingIdx)
 
 	// test normal table ProcessNormalFlow after step1 finished
 	gTask.State = proto.TaskStateRunning
@@ -62,7 +62,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	var rollbackMeta ddl.LitBackfillSubTaskRollbackMeta
 	err = json.Unmarshal(errMeta, &rollbackMeta)
 	require.NoError(t, err)
-	require.Equal(t, true, rollbackMeta.IsMergingIdx)
+	require.Equal(t, false, rollbackMeta.IsMergingIdx)
 
 	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
@@ -98,6 +98,24 @@ func TestBackfillFlowHandle(t *testing.T) {
 	err = json.Unmarshal(errMeta, &rollbackMeta)
 	require.NoError(t, err)
 	require.Equal(t, false, rollbackMeta.IsMergingIdx)
+
+	// test step2 merging index
+	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "t1", true)
+	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	require.NoError(t, err)
+	require.Equal(t, proto.StepTwo, gTask.Step)
+	require.Equal(t, 1, len(metas))
+	subTask = ddl.LitBackfillSubTaskMeta{}
+	require.NoError(t, json.Unmarshal(metas[0], &subTask))
+	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
+	require.Equal(t, true, subTask.IsMergingIdx)
+
+	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
+	require.NoError(t, err)
+	rollbackMeta = ddl.LitBackfillSubTaskRollbackMeta{}
+	err = json.Unmarshal(errMeta, &rollbackMeta)
+	require.NoError(t, err)
+	require.Equal(t, true, rollbackMeta.IsMergingIdx)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, isMerging bool) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
