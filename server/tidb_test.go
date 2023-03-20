@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -882,6 +883,36 @@ func TestSystemTimeZone(t *testing.T) {
 
 	tz1 := tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'").Rows()
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
+}
+
+func TestInternalSessionTxnStartTS(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=0")
+	require.NoError(t, err)
+
+	count := 10
+	stmts := make([]ast.StmtNode, count)
+	for i := 0; i < count; i++ {
+		stmt, err := session.ParseWithParams4Test(context.Background(), se, "select * from mysql.user limit 1")
+		require.NoError(t, err)
+		stmts[i] = stmt
+	}
+	// Test an issue that sysSessionPool doesn't call session's Close, cause
+	// asyncGetTSWorker goroutine leak.
+	var wg util.WaitGroupWrapper
+	for i := 0; i < count; i++ {
+		s := stmts[i]
+		wg.Run(func() {
+			_, _, err := session.ExecRestrictedStmt4Test(context.Background(), se, s)
+			require.NoError(t, err)
+		})
+	}
+
+	wg.Wait()
 }
 
 func TestClientWithCollation(t *testing.T) {
