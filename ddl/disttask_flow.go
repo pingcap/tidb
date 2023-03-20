@@ -80,15 +80,14 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 		return err
 	})
 
-	var physicalIDs []int64
-	if tblInfo.Partition != nil {
-		defs := tblInfo.Partition.Definitions
-		physicalIDs = make([]int64, len(defs))
-		for i := range defs {
-			physicalIDs[i] = defs[i].ID
-		}
-	} else {
-		physicalIDs = []int64{tblInfo.ID}
+	if tblInfo.Partition == nil {
+		return nil, errors.New("Non-partition table not supported yet")
+	}
+
+	defs := tblInfo.Partition.Definitions
+	physicalIDs := make([]int64, len(defs))
+	for i := range defs {
+		physicalIDs[i] = defs[i].ID
 	}
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))

@@ -38,39 +38,17 @@ func TestBackfillFlowHandle(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// test normal table ProcessNormalFlow
-	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillInjectType)
-	metas, err := handler.ProcessNormalFlow(nil, gTask)
-	require.NoError(t, err)
-	require.Equal(t, proto.StepOne, gTask.Step)
-	require.Equal(t, 1, len(metas))
-	var subTask ddl.LitBackfillSubTaskMeta
-	require.NoError(t, json.Unmarshal(metas[0], &subTask))
-	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
-
-	// test normal table ProcessNormalFlow after step1 finished
-	gTask.State = proto.TaskStateRunning
-	metas, err = handler.ProcessNormalFlow(nil, gTask)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(metas))
-
-	// test normal table ProcessErrFlow
-	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
-	require.NoError(t, err)
-	require.Nil(t, errMeta)
-
 	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillInjectType)
+	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillInjectType)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	metas, err = handler.ProcessNormalFlow(nil, gTask)
+	metas, err := handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -87,26 +65,34 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 
 	// test partition table ProcessErrFlow
-	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
+	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
 	// test step2 merging index
-	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillMergeType)
+	gTask = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillMergeType)
 	metas, err = handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepTwo, gTask.Step)
-	require.Equal(t, 1, len(metas))
-	subTask = ddl.LitBackfillSubTaskMeta{}
-	require.NoError(t, json.Unmarshal(metas[0], &subTask))
-	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
+	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
+	for i, par := range tblInfo.Partition.Definitions {
+		var subTask ddl.LitBackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(metas[i], &subTask))
+		require.Equal(t, par.ID, subTask.PhysicalTableID)
+	}
 
 	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
+
+	// test normal table not supported yet
+	tk.MustExec("create table t1(id int primary key, v int)")
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillInjectType)
+	_, err = handler.ProcessNormalFlow(nil, gTask)
+	require.EqualError(t, err, "Non-partition table not supported yet")
 }
 
-func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
+func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
 	require.True(t, ok)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
@@ -144,5 +130,5 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 		StateUpdateTime: time.Now(),
 	}
 
-	return gTask, taskMeta
+	return gTask
 }
