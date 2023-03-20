@@ -96,13 +96,12 @@ func (bc *BackendContext) Flush(indexID int64) (imported bool, err error) {
 		return false, err
 	}
 
+	// Flush writer cached data into local disk.
 	err = ei.Flush()
 	if err != nil {
 		return false, err
 	}
 	if bc.diskRoot.CurrentUsage() >= uint64(importThreshold*float64(bc.diskRoot.MaxQuota())) {
-		// TODO: it should be changed according checkpoint solution.
-		// Flush writer cached data into local disk for engine first.
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
