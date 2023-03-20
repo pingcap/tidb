@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
-// FlowHandleLitBackfillType is the task type to handle backfill
+// FlowHandleLitBackfillType is the task type to handle backfill.
 const FlowHandleLitBackfillType = "flowHandleLitBackfill"
 
 // LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
@@ -43,7 +43,7 @@ type LitBackfillSubTaskMeta struct {
 	IsMergingIdx    bool  `json:"is_merging_idx"`
 }
 
-// LitBackfillSubTaskRollbackMeta is the meta for rolling back a lightning fill
+// LitBackfillSubTaskRollbackMeta is the meta for rolling back a lightning fill.
 type LitBackfillSubTaskRollbackMeta struct {
 	IsMergingIdx bool `json:"is_merging_idx"`
 }
@@ -52,14 +52,14 @@ type litBackfillFlowHandle struct {
 	getDDL func() DDL
 }
 
-// NewLitBackfillFlowHandle creates a new litBackfillFlowHandle
+// NewLitBackfillFlowHandle creates a new litBackfillFlowHandle.
 func NewLitBackfillFlowHandle(getDDL func() DDL) dispatcher.TaskFlowHandle {
 	return &litBackfillFlowHandle{
 		getDDL: getDDL,
 	}
 }
 
-// ProcessNormalFlow processes the normal flow
+// ProcessNormalFlow processes the normal flow.
 func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State != proto.TaskStatePending {
 		// This flow has only one step, finish task when it is not pending
