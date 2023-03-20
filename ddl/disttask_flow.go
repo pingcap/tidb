@@ -26,26 +26,23 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
-// FlowHandleLitBackfillType is the task type to handle backfill.
-const FlowHandleLitBackfillType = "flowHandleLitBackfill"
+const (
+	// FlowHandleLitBackfillInjectType is the task type to handle backfill for inject step.
+	FlowHandleLitBackfillInjectType = "flowHandleLitBackfillInject"
+	// FlowHandleLitBackfillMergeType is the task type to handle backfill for merge step.
+	FlowHandleLitBackfillMergeType = "flowHandleLitBackfillMerge"
+)
 
 // LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
 type LitBackfillGlobalTaskMeta struct {
-	Job          model.Job `json:"job"`
-	EleID        int64     `json:"ele_id"`
-	EleTypeKey   []byte    `json:"ele_type_key"`
-	IsMergingIdx bool      `json:"is_merging_idx"`
+	Job        model.Job `json:"job"`
+	EleID      int64     `json:"ele_id"`
+	EleTypeKey []byte    `json:"ele_type_key"`
 }
 
 // LitBackfillSubTaskMeta is the subtask meta for lightning backfill.
 type LitBackfillSubTaskMeta struct {
 	PhysicalTableID int64 `json:"physical_table_id"`
-	IsMergingIdx    bool  `json:"is_merging_idx"`
-}
-
-// LitBackfillSubTaskRollbackMeta is the meta for rolling back a lightning fill.
-type LitBackfillSubTaskRollbackMeta struct {
-	IsMergingIdx bool `json:"is_merging_idx"`
 }
 
 type litBackfillFlowHandle struct {
@@ -98,7 +95,6 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 	for _, physicalID := range physicalIDs {
 		subTaskMeta := &LitBackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
-			IsMergingIdx:    globalTaskMeta.IsMergingIdx,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -109,24 +105,17 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 
-	if globalTaskMeta.IsMergingIdx {
-		gTask.Step = proto.StepTwo
-	} else {
+	switch gTask.Type {
+	case FlowHandleLitBackfillInjectType:
 		gTask.Step = proto.StepOne
+	case FlowHandleLitBackfillMergeType:
+		gTask.Step = proto.StepTwo
 	}
 
 	return subTaskMetas, nil
 }
 
-func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, gTask *proto.Task, _ string) (meta []byte, err error) {
-	var globalTaskMeta LitBackfillGlobalTaskMeta
-	if err = json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
-		return nil, err
-	}
-
-	subTaskMeta := &LitBackfillSubTaskRollbackMeta{
-		IsMergingIdx: globalTaskMeta.IsMergingIdx,
-	}
-
-	return json.Marshal(subTaskMeta)
+func (*litBackfillFlowHandle) ProcessErrFlow(_ dispatcher.Dispatch, _ *proto.Task, _ string) (meta []byte, err error) {
+	// We do not need extra meta info when rolling back
+	return nil, nil
 }

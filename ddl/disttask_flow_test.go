@@ -40,7 +40,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// test normal table ProcessNormalFlow
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", false)
+	gTask, gTaskMeta := createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillInjectType)
 	metas, err := handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepOne, gTask.Step)
@@ -48,7 +48,6 @@ func TestBackfillFlowHandle(t *testing.T) {
 	var subTask ddl.LitBackfillSubTaskMeta
 	require.NoError(t, json.Unmarshal(metas[0], &subTask))
 	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
-	require.Equal(t, false, subTask.IsMergingIdx)
 
 	// test normal table ProcessNormalFlow after step1 finished
 	gTask.State = proto.TaskStateRunning
@@ -59,10 +58,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// test normal table ProcessErrFlow
 	errMeta, err := handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
-	var rollbackMeta ddl.LitBackfillSubTaskRollbackMeta
-	err = json.Unmarshal(errMeta, &rollbackMeta)
-	require.NoError(t, err)
-	require.Equal(t, false, rollbackMeta.IsMergingIdx)
+	require.Nil(t, errMeta)
 
 	// test partition table ProcessNormalFlow
 	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
@@ -70,7 +66,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1", false)
+	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillInjectType)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -82,7 +78,6 @@ func TestBackfillFlowHandle(t *testing.T) {
 		var subTask ddl.LitBackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal(metas[i], &subTask))
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
-		require.Equal(t, false, subTask.IsMergingIdx)
 	}
 
 	// test partition table ProcessNormalFlow after step1 finished
@@ -94,13 +89,10 @@ func TestBackfillFlowHandle(t *testing.T) {
 	// test partition table ProcessErrFlow
 	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
-	rollbackMeta = ddl.LitBackfillSubTaskRollbackMeta{}
-	err = json.Unmarshal(errMeta, &rollbackMeta)
-	require.NoError(t, err)
-	require.Equal(t, false, rollbackMeta.IsMergingIdx)
+	require.Nil(t, errMeta)
 
 	// test step2 merging index
-	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "t1", true)
+	gTask, gTaskMeta = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillMergeType)
 	metas, err = handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepTwo, gTask.Step)
@@ -108,17 +100,13 @@ func TestBackfillFlowHandle(t *testing.T) {
 	subTask = ddl.LitBackfillSubTaskMeta{}
 	require.NoError(t, json.Unmarshal(metas[0], &subTask))
 	require.Equal(t, gTaskMeta.Job.TableID, subTask.PhysicalTableID)
-	require.Equal(t, true, subTask.IsMergingIdx)
 
 	errMeta, err = handler.ProcessErrFlow(nil, gTask, "mockErr")
 	require.NoError(t, err)
-	rollbackMeta = ddl.LitBackfillSubTaskRollbackMeta{}
-	err = json.Unmarshal(errMeta, &rollbackMeta)
-	require.NoError(t, err)
-	require.Equal(t, true, rollbackMeta.IsMergingIdx)
+	require.Nil(t, errMeta)
 }
 
-func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, isMerging bool) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
+func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) (*proto.Task, *ddl.LitBackfillGlobalTaskMeta) {
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
 	require.True(t, ok)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
@@ -139,9 +127,8 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 				IsDistReorg: true,
 			},
 		},
-		EleID:        10,
-		EleTypeKey:   meta.IndexElementKey,
-		IsMergingIdx: isMerging,
+		EleID:      10,
+		EleTypeKey: meta.IndexElementKey,
 	}
 
 	gTaskMetaBytes, err := json.Marshal(taskMeta)
@@ -149,7 +136,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 
 	gTask := &proto.Task{
 		ID:              time.Now().UnixMicro(),
-		Type:            ddl.FlowHandleLitBackfillType,
+		Type:            taskType,
 		Step:            proto.StepInit,
 		State:           proto.TaskStatePending,
 		Meta:            gTaskMetaBytes,
