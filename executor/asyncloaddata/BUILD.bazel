@@ -26,14 +26,16 @@ go_test(
     srcs = [
         "detach_test.go",
         "main_test.go",
+        "operate_test.go",
         "show_test.go",
         "util_test.go",
     ],
     embed = [":asyncloaddata"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/lightning/config",
-        "//executor",
+        "//executor/importer",
         "//kv",
         "//parser/auth",
         "//testkit",

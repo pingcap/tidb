@@ -327,6 +327,23 @@ func IsCICollation(collate string) bool {
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci"
 }
 
+// ConvertAndGetBinCollation converts collator to binary collator
+func ConvertAndGetBinCollation(collate string) Collator {
+	switch collate {
+	case "utf8_general_ci":
+		return GetCollator("utf8_bin")
+	case "utf8_unicode_ci":
+		return GetCollator("utf8_bin")
+	case "utf8mb4_general_ci":
+		return GetCollator("utf8mb4_bin")
+	case "utf8mb4_unicode_ci":
+		return GetCollator("utf8mb4_bin")
+	case "gbk_chinese_ci":
+		return GetCollator("gbk_bin")
+	}
+	return GetCollator(collate)
+}
+
 // IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
 // The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
 // and both xx_bin and collationBin are satisfied.

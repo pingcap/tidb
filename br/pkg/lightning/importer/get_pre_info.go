@@ -571,12 +571,6 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 		}
 	}
 
-	replConfig, err := p.targetInfoGetter.GetReplicationConfig(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	sizeWithIndex *= int64(replConfig.MaxReplicas)
-
 	if isLocalBackend(p.cfg) {
 		sizeWithIndex = int64(float64(sizeWithIndex) * compressionRatio)
 		tiflashSize = int64(float64(tiflashSize) * compressionRatio)

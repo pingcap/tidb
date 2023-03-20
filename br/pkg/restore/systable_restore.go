@@ -278,6 +278,18 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
 	}
 
+	// Currently, we don't support restore resource group metadata, so we need to
+	// remove the resource group related metadata in mysql.user.
+	// TODO: this function should be removed when we support backup and restore
+	// resource group.
+	if tableName == sysUserTableName {
+		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
+			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
+		if err := execSQL(sql); err != nil {
+			return err
+		}
+	}
+
 	if db.ExistingTables[tableName] != nil {
 		whereNotClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {

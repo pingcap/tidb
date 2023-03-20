@@ -473,11 +473,6 @@ func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName
 		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
-	err = ddl.CheckDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
-	if err != nil {
-		return err
-	}
-
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L != indexInfo.Name.L {

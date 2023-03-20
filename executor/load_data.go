@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -144,7 +143,7 @@ func (e *LoadDataExec) loadFromRemote(
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return 0, exeerrors.ErrLoadDataCantAccess
+		return 0, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(getMsgFromBRError(err))
 	}
 
 	idx := strings.IndexByte(path, '*')
@@ -290,8 +289,8 @@ func NewLoadDataWorker(
 		}
 	}()
 
-	controller := importer.NewLoadDataController(plan, tbl)
-	if err = controller.Init(userSctx, plan.Options); err != nil {
+	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
+	if err != nil {
 		return nil, err
 	}
 
@@ -327,11 +326,10 @@ func NewLoadDataWorker(
 		GenExprs:       plan.GenCols.Exprs,
 		isLoadData:     true,
 		txnInUse:       syncutil.Mutex{},
-		maxRowsInBatch: uint64(sctx.GetSessionVars().DMLBatchSize),
+		maxRowsInBatch: uint64(controller.GetBatchSize()),
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-
 	if !restrictive {
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
@@ -374,9 +372,6 @@ func (e *LoadDataWorker) initInsertValues() error {
 	return nil
 }
 
-// LoadDataReadBlockSize is exposed for test.
-var LoadDataReadBlockSize = int64(config.ReadBlockSize)
-
 // LoadDataReaderInfo provides information for a data reader of LOAD DATA.
 type LoadDataReaderInfo struct {
 	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
@@ -403,11 +398,6 @@ func (e *LoadDataWorker) Load(
 	defer e.putSysSessionFn(ctx, s)
 
 	sqlExec := s.(sqlexec.SQLExecutor)
-	// TODO: move it to bootstrap
-	_, err = sqlExec.ExecuteInternal(ctx, asyncloaddata.CreateLoadDataJobs)
-	if err != nil {
-		return 0, err
-	}
 
 	jobID, err = asyncloaddata.CreateLoadDataJob(
 		ctx,
@@ -578,7 +568,7 @@ func (e *LoadDataWorker) doLoad(
 					return err2
 				}
 				if !ok {
-					return errors.Errorf("failed to keepalive for LOAD DATA job %d", jobID)
+					return errors.Errorf("failed to update job progress, the job %d is interrupted by user or failed to keepalive", jobID)
 				}
 			}
 		}
@@ -594,14 +584,14 @@ func (e *LoadDataWorker) buildParser(
 	reader io.ReadSeekCloser,
 	remote *loadRemoteInfo,
 ) (parser mydump.Parser, err error) {
-	switch strings.ToLower(e.controller.Format) {
-	case "":
+	switch e.controller.Format {
+	case importer.LoadDataFormatDelimitedData:
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
 			e.controller.GenerateCSVConfig(),
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 			false,
 			// TODO: support charset conversion
@@ -611,7 +601,7 @@ func (e *LoadDataWorker) buildParser(
 			ctx,
 			e.Ctx.GetSessionVars().SQLMode,
 			reader,
-			LoadDataReadBlockSize,
+			importer.LoadDataReadBlockSize,
 			nil,
 		)
 	case importer.LoadDataFormatParquet:
@@ -740,10 +730,13 @@ func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
 		tasks               uint64
 		lastScannedFileSize int64
 		currScannedFileSize int64
+		backgroundCtx       = context.Background()
 	)
 	for {
 		select {
 		case <-ctx.Done():
+			e.Ctx.StmtRollback(backgroundCtx, false)
+			_ = e.Ctx.RefreshTxnCtx(backgroundCtx)
 			return ctx.Err()
 		case task, ok := <-e.commitTaskQueue:
 			if !ok {
@@ -1070,3 +1063,30 @@ func (k loadDataVarKeyType) String() string {
 
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
+
+var (
+	_ Executor = (*LoadDataActionExec)(nil)
+)
+
+// LoadDataActionExec executes LoadDataActionStmt.
+type LoadDataActionExec struct {
+	baseExecutor
+
+	tp    ast.LoadDataActionTp
+	jobID int64
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	sqlExec := e.ctx.(sqlexec.SQLExecutor)
+	user := e.ctx.GetSessionVars().User.String()
+
+	switch e.tp {
+	case ast.LoadDataCancel:
+		return asyncloaddata.CancelJob(ctx, sqlExec, e.jobID, user)
+	case ast.LoadDataDrop:
+		return asyncloaddata.DropJob(ctx, sqlExec, e.jobID, user)
+	default:
+		return errors.Errorf("not implemented LOAD DATA action %v", e.tp)
+	}
+}
