@@ -44,7 +44,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillInjectType)
+	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillType)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -69,11 +69,11 @@ func TestBackfillFlowHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, errMeta)
 
-	// test step2 merging index
-	gTask = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitBackfillMergeType)
+	// test merging index
+	gTask = createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.FlowHandleLitMergeType)
 	metas, err = handler.ProcessNormalFlow(nil, gTask)
 	require.NoError(t, err)
-	require.Equal(t, proto.StepTwo, gTask.Step)
+	require.Equal(t, proto.StepOne, gTask.Step)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
 		var subTask ddl.LitBackfillSubTaskMeta
@@ -87,7 +87,7 @@ func TestBackfillFlowHandle(t *testing.T) {
 
 	// test normal table not supported yet
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillInjectType)
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.FlowHandleLitBackfillType)
 	_, err = handler.ProcessNormalFlow(nil, gTask)
 	require.EqualError(t, err, "Non-partition table not supported yet")
 }

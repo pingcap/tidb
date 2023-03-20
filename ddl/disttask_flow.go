@@ -27,10 +27,10 @@ import (
 )
 
 const (
-	// FlowHandleLitBackfillInjectType is the task type to handle backfill for inject step.
-	FlowHandleLitBackfillInjectType = "flowHandleLitBackfillInject"
-	// FlowHandleLitBackfillMergeType is the task type to handle backfill for merge step.
-	FlowHandleLitBackfillMergeType = "flowHandleLitBackfillMerge"
+	// FlowHandleLitBackfillType is the task type to handle backfill for inject step.
+	FlowHandleLitBackfillType = "FlowHandleLitBackfillType"
+	// FlowHandleLitMergeType is the task type to handle backfill for merge step.
+	FlowHandleLitMergeType = "FlowHandleLitMergeType"
 )
 
 // LitBackfillGlobalTaskMeta is the global task meta for lightning backfill.
@@ -104,13 +104,7 @@ func (h *litBackfillFlowHandle) ProcessNormalFlow(_ dispatcher.Dispatch, gTask *
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 
-	switch gTask.Type {
-	case FlowHandleLitBackfillInjectType:
-		gTask.Step = proto.StepOne
-	case FlowHandleLitBackfillMergeType:
-		gTask.Step = proto.StepTwo
-	}
-
+	gTask.Step = proto.StepOne
 	return subTaskMetas, nil
 }
 
