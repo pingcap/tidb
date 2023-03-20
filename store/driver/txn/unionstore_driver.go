@@ -19,20 +19,45 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 )
+
+type visibilityChecker interface {
+	isVisible(kv.Key) bool
+}
 
 // memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
 	*tikv.MemDB
+	invisibleKeys map[string]struct{}
 }
 
-func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
+func newMemBuffer(m *tikv.MemDB, invisibleKeys map[string]struct{}) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
-	return &memBuffer{MemDB: m}
+	return &memBuffer{MemDB: m, invisibleKeys: invisibleKeys}
+}
+
+func (m *memBuffer) addInvisibleKey(k kv.Key) {
+	m.Lock()
+	m.invisibleKeys[util.String(k)] = struct{}{}
+	m.Unlock()
+}
+
+func (m *memBuffer) delInvisibleKey(k kv.Key) {
+	m.Lock()
+	delete(m.invisibleKeys, util.String(k))
+	m.Unlock()
+}
+
+func (m *memBuffer) isVisible(k kv.Key) bool {
+	// shall be protected by MemBuffer.RLock
+	_, ok := m.invisibleKeys[util.String(k)]
+	return !ok
 }
 
 func (m *memBuffer) Size() int {
@@ -40,20 +65,27 @@ func (m *memBuffer) Size() int {
 }
 
 func (m *memBuffer) Delete(k kv.Key) error {
-	return m.MemDB.Delete(k)
+	err := m.MemDB.Delete(k)
+	m.delInvisibleKey(k)
+	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
 	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
+	m.delInvisibleKey(k)
 	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
+	if !m.isVisible(key) {
+		return nil, kv.ErrNotExist
+	}
 	data, err := m.MemDB.Get(key)
 	return data, derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
+	// do not check `invisibleKeys` here since LockKeys may set flags on keys and those flags are always visible.
 	data, err := m.MemDB.GetFlags(key)
 	return getTiDBKeyFlags(data), derr.ToTiDBErr(err)
 }
@@ -79,12 +111,23 @@ func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyF
 
 func (m *memBuffer) Set(key kv.Key, value []byte) error {
 	err := m.MemDB.Set(key, value)
+	m.delInvisibleKey(key)
 	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
 	err := m.MemDB.SetWithFlags(key, value, getTiKVFlagsOps(ops)...)
+	m.delInvisibleKey(key)
 	return derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) ChangeLockIntoPut(key kv.Key, value []byte) error {
+	// only change LOCK into PUT when the key does not existed, otherwise, we may mark a visible key as invisible.
+	if _, err := m.MemDB.Get(key); tikverr.IsErrNotFound(err) {
+		m.addInvisibleKey(key)
+		return derr.ToTiDBErr(m.MemDB.Set(key, value))
+	}
+	return nil
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
@@ -93,7 +136,7 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 // The Iterator must be Closed after use.
 func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.Iter(k, upperBound)
-	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
+	return newKVIterator(it, m), derr.ToTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -102,29 +145,33 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.IterReverse(k)
-	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
+	return newKVIterator(it, m), derr.ToTiDBErr(err)
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
 	it := m.MemDB.SnapshotIter(k, upperbound)
-	return &tikvIterator{Iterator: it}
+	return newKVIterator(it, m)
 }
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
-	return newKVGetter(m.MemDB.SnapshotGetter())
+	return newKVGetter(m.MemDB.SnapshotGetter(), m)
 }
 
 type tikvGetter struct {
 	tikv.Getter
+	checker visibilityChecker
 }
 
-func newKVGetter(getter tikv.Getter) kv.Getter {
-	return &tikvGetter{Getter: getter}
+func newKVGetter(getter tikv.Getter, checker visibilityChecker) kv.Getter {
+	return &tikvGetter{getter, checker}
 }
 
 func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
+	if !g.checker.isVisible(k) {
+		return nil, kv.ErrNotExist
+	}
 	data, err := g.Getter.Get(k)
 	return data, derr.ToTiDBErr(err)
 }
@@ -132,10 +179,41 @@ func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 // tikvIterator wraps tikv.Iterator as kv.Iterator
 type tikvIterator struct {
 	tikv.Iterator
+	checker visibilityChecker
+	initErr error
+}
+
+func newKVIterator(iterator tikv.Iterator, checker visibilityChecker) kv.Iterator {
+	it := &tikvIterator{iterator, checker, nil}
+	if it.Valid() && !it.checker.isVisible(it.Key()) {
+		// skip first invisible key
+		it.initErr = it.Next()
+	}
+	return it
 }
 
 func (it *tikvIterator) Key() kv.Key {
 	return kv.Key(it.Iterator.Key())
+}
+
+func (it *tikvIterator) Next() error {
+	if it.initErr != nil {
+		err := it.initErr
+		it.initErr = nil
+		return err
+	}
+	for {
+		err := it.Iterator.Next()
+		if err != nil {
+			return err
+		}
+		if !it.Valid() {
+			return nil
+		}
+		if it.checker.isVisible(it.Key()) {
+			return nil
+		}
+	}
 }
 
 func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {

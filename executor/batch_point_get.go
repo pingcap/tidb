@@ -450,15 +450,17 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if !e.txn.Valid() {
 				return kv.ErrInvalidTxn
 			}
-			membuf := e.txn.GetMemBuffer()
-			for _, idxKey := range indexKeys {
-				handleVal := handleVals[string(idxKey)]
-				if len(handleVal) == 0 {
-					continue
-				}
-				err = membuf.Set(idxKey, handleVal)
-				if err != nil {
-					return err
+			membuf, ok := e.txn.GetMemBuffer().(interface{ ChangeLockIntoPut(kv.Key, []byte) error })
+			if ok {
+				for _, idxKey := range indexKeys {
+					handleVal := handleVals[string(idxKey)]
+					if len(handleVal) == 0 {
+						continue
+					}
+					err = membuf.ChangeLockIntoPut(idxKey, handleVal)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
