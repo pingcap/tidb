@@ -19,7 +19,7 @@ set -eux
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $cur/../_utils/run_services
 export TIKV_CONFIG="tests/config/tikv-multi-rocksdb.toml"
-start_services
+restart_services
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 
