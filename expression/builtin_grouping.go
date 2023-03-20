@@ -58,6 +58,10 @@ type builtinGroupingSig struct {
 	grouping_ids map[int64]int64
 }
 
+func (b *builtinGroupingSig) getMetaVersion() uint32 {
+	return b.version
+}
+
 // metadata returns the metadata of grouping functions
 func (b *builtinGroupingSig) metadata() proto.Message {
 	args := &tipb.GroupingFunctionMetadata{
@@ -75,36 +79,48 @@ func (b *builtinGroupingSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinGroupingSig) getMetaGroupingIDs() map[int64]int64 {
+	return b.grouping_ids
+}
+
 func (b *builtinGroupingSig) getMetaGroupingID() int64 {
 	var meta_grouping_id int64
-	for key, _ := range b.grouping_ids {
+	grouping_ids := b.getMetaGroupingIDs()
+	for key := range grouping_ids {
 		meta_grouping_id = key
 	}
 	return meta_grouping_id
 }
 
 func (b *builtinGroupingSig) checkMetadata() error {
-	if b.version < 1 || b.version > 3 {
-		return errors.Errorf("Version of meta data in grouping function is invalid. input version: %d", b.version)
-	} else if (b.version == 1 || b.version == 2) && len(b.grouping_ids) != 0 {
-		return errors.Errorf("Invalid number of grouping_id. version: %d, number of grouping_id: %d", b.version, len(b.grouping_ids))
+	version := b.getMetaVersion()
+	grouping_ids := b.getMetaGroupingIDs()
+	if version < 1 || version > 3 {
+		return errors.Errorf("Version of meta data in grouping function is invalid. input version: %d", version)
+	} else if (version == 1 || version == 2) && len(grouping_ids) != 0 {
+		return errors.Errorf("Invalid number of grouping_id. version: %d, number of grouping_id: %d", version, len(b.grouping_ids))
 	}
 	return nil
 }
 
 func (b *builtinGroupingSig) groupingImplV1(grouping_id int64, meta_grouping_id int64) int64 {
-	// TODO
-	return 0
+	return grouping_id & meta_grouping_id
 }
 
 func (b *builtinGroupingSig) groupingImplV2(grouping_id int64, meta_grouping_id int64) int64 {
-	// TODO
+	if grouping_id > meta_grouping_id {
+		return 1
+	}
 	return 0
 }
 
 func (b *builtinGroupingSig) groupingImplV3(grouping_id int64) int64 {
-	// TODO
-	return 0
+	grouping_ids := b.getMetaGroupingIDs()
+	_, ok := grouping_ids[grouping_id]
+	if ok {
+		return 0
+	}
+	return 1
 }
 
 func (b *builtinGroupingSig) grouping(grouping_id int64) int64 {
