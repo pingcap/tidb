@@ -68,6 +68,8 @@ type TiDBStatement struct {
 	ctx         *TiDBContext
 	rs          ResultSet
 	sql         string
+
+	preparedStatementCtx *PreparedStatementCtx
 }
 
 // ID implements PreparedStatement ID method.
@@ -140,6 +142,16 @@ func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
 // GetResultSet gets ResultSet associated this statement
 func (ts *TiDBStatement) GetResultSet() ResultSet {
 	return ts.rs
+}
+
+// StorePreparedCtx implements PreparedStatement StorePreparedCtx method.
+func (ts *TiDBStatement) StorePreparedCtx(ctx *PreparedStatementCtx) {
+	ts.preparedStatementCtx = ctx
+}
+
+// GetPreparedCtx implements PreparedStatement GetPreparedCtx method.
+func (ts *TiDBStatement) GetPreparedCtx() *PreparedStatementCtx {
+	return ts.preparedStatementCtx
 }
 
 // Reset implements PreparedStatement Reset method.
@@ -522,13 +534,14 @@ func unwrapResultSet(rs ResultSet) ResultSet {
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	ci = &ColumnInfo{
-		Name:    fld.ColumnAsName.O,
-		OrgName: fld.Column.Name.O,
-		Table:   fld.TableAsName.O,
-		Schema:  fld.DBName.O,
-		Flag:    uint16(fld.Column.GetFlag()),
-		Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
-		Type:    fld.Column.GetType(),
+		Name:         fld.ColumnAsName.O,
+		OrgName:      fld.Column.Name.O,
+		Table:        fld.TableAsName.O,
+		Schema:       fld.DBName.O,
+		Flag:         uint16(fld.Column.GetFlag()),
+		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
+		Type:         fld.Column.GetType(),
+		DefaultValue: fld.Column.GetDefaultValue(),
 	}
 
 	if fld.Table != nil {

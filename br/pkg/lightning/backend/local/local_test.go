@@ -28,6 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -37,16 +38,15 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -114,9 +114,20 @@ func TestNextKey(t *testing.T) {
 		require.NoError(t, err)
 		nextHdl, err := tidbkv.NewCommonHandle(nextKeyBytes)
 		require.NoError(t, err)
-		expectNextKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
-		require.Equal(t, expectNextKey, nextKey(key))
+		nextValidKey := []byte(tablecodec.EncodeRowKeyWithHandle(1, nextHdl))
+		// nextKey may return a key that can't be decoded, but it must not be larger than the valid next key.
+		require.True(t, bytes.Compare(nextKey(key), nextValidKey) <= 0, "datums: %v", datums)
 	}
+
+	// a special case that when len(string datum) % 8 == 7, nextKey twice should not panic.
+	keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewStringDatum("1234567"))
+	require.NoError(t, err)
+	h, err := tidbkv.NewCommonHandle(keyBytes)
+	require.NoError(t, err)
+	key = tablecodec.EncodeRowKeyWithHandle(1, h)
+	nextOnce := nextKey(key)
+	// should not panic
+	_ = nextKey(nextOnce)
 
 	// dIAAAAAAAAD/PV9pgAAAAAD/AAABA4AAAAD/AAAAAQOAAAD/AAAAAAEAAAD8
 	// a index key with: table: 61, index: 1, int64: 1, int64: 1
@@ -332,7 +343,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	pool := membuf.NewPool()
 	defer pool.Destroy()
 	kvBuffer := pool.NewBuffer()
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024, kvBuffer)
+	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, keyspace.CodecV1, 1024, kvBuffer)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -426,108 +437,6 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.Reg
 			StartKey: key,
 		},
 	}, nil
-}
-
-func TestIsIngestRetryable(t *testing.T) {
-	local := &local{
-		splitCli: &mockSplitClient{},
-		logger:   log.L(),
-	}
-
-	resp := &sst.IngestResponse{
-		Error: &errorpb.Error{
-			NotLeader: &errorpb.NotLeader{
-				Leader: &metapb.Peer{Id: 2},
-			},
-		},
-	}
-	ctx := context.Background()
-	region := &split.RegionInfo{
-		Leader: &metapb.Peer{Id: 1},
-		Region: &metapb.Region{
-			Id:       1,
-			StartKey: []byte{1},
-			EndKey:   []byte{3},
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
-			},
-		},
-	}
-	metas := []*sst.SSTMeta{
-		{
-			Range: &sst.Range{
-				Start: []byte{1},
-				End:   []byte{2},
-			},
-		},
-		{
-			Range: &sst.Range{
-				Start: []byte{1, 1},
-				End:   []byte{2},
-			},
-		},
-	}
-	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Leader.Id)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{3},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
-		},
-	}
-	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Region.RegionEpoch.Version)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
-			Reason: "test",
-		},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		Message: "raft: proposal dropped",
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVRaftProposalDropped))
-
-	resp.Error = &errorpb.Error{
-		DiskFull: &errorpb.DiskFull{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.Contains(t, err.Error(), "non-retryable error")
-
-	resp.Error = &errorpb.Error{
-		StaleCommand: &errorpb.StaleCommand{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
 }
 
 type testIngester struct{}
@@ -1201,9 +1110,13 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
+	jobCh := make(chan *regionJob, 1)
+	jobCh <- &regionJob{}
+	jobOutCh := make(chan *regionJob, 1)
+	err := bak.startWorker(context.Background(), jobCh, jobOutCh)
 	require.Error(t, err)
 	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+	require.Len(t, jobCh, 0)
 }
 
 func TestGetRegionSplitSizeKeys(t *testing.T) {
@@ -1246,13 +1159,9 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 }
 
 func TestCheckPeersBusy(t *testing.T) {
-	ctx := context.Background()
-	pdCli := &mockPdClient{}
-	pdCtl := &pdutil.PdController{}
-	pdCtl.SetPDClient(pdCli)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
-	splitCli := initTestSplitClient3Replica(keys, nil)
 	apiInvokeRecorder := map[string][]uint64{}
 	serverIsBusyResp := &sst.IngestResponse{
 		Error: &errorpb.Error{
@@ -1261,11 +1170,8 @@ func TestCheckPeersBusy(t *testing.T) {
 
 	createTimeStore12 := 0
 	local := &local{
-		pdCtl:    pdCtl,
-		splitCli: splitCli,
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
-				// region ["", "a") is not used, skip (1, 2, 3)
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
 				{Id: 21}, {Id: 22}, {Id: 23}, // region ["b", "")
 			},
@@ -1275,7 +1181,7 @@ func TestCheckPeersBusy(t *testing.T) {
 				importCli.apiInvokeRecorder = apiInvokeRecorder
 				if store.Id == 12 {
 					createTimeStore12++
-					// the second time to checkWriteStall
+					// the second time is checkWriteStall, we mock a busy response
 					if createTimeStore12 == 2 {
 						importCli.retry = 1
 						importCli.resp = serverIsBusyResp
@@ -1285,22 +1191,22 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:                log.L(),
-		ingestConcurrency:     worker.NewPool(ctx, 1, "ingest"),
 		writeLimiter:          noopStoreWriteLimiter{},
 		bufferPool:            membuf.NewPool(),
 		supportMultiIngest:    true,
 		shouldCheckWriteStall: true,
+		tikvCodec:             keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
-	engineCtx, cancel := context.WithCancel(context.Background())
+	engineCtx, cancel2 := context.WithCancel(context.Background())
 	f := &Engine{
 		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
 		ctx:          engineCtx,
-		cancel:       cancel,
+		cancel:       cancel2,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
 		logger:       log.L(),
@@ -1309,12 +1215,81 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.NoError(t, err)
 	err = f.db.Set([]byte("b"), []byte("b"), nil)
 	require.NoError(t, err)
-	err = local.writeAndIngestByRange(ctx, f, []byte("a"), []byte("c"), 0, 0)
-	require.NoError(t, err)
+
+	jobCh := make(chan *regionJob, 10)
+
+	retryJob := &regionJob{
+		keyRange: Range{start: []byte("a"), end: []byte("b")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 1,
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 11}, {Id: 2, StoreId: 12}, {Id: 3, StoreId: 13},
+				},
+				StartKey: []byte("a"),
+				EndKey:   []byte("b"),
+			},
+			Leader: &metapb.Peer{Id: 1, StoreId: 11},
+		},
+		stage:      regionScanned,
+		engine:     f,
+		retryCount: 20,
+		waitUntil:  time.Now().Add(-time.Second),
+	}
+	jobCh <- retryJob
+
+	jobCh <- &regionJob{
+		keyRange: Range{start: []byte("b"), end: []byte("")},
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: 4,
+				Peers: []*metapb.Peer{
+					{Id: 4, StoreId: 21}, {Id: 5, StoreId: 22}, {Id: 6, StoreId: 23},
+				},
+				StartKey: []byte("b"),
+				EndKey:   []byte(""),
+			},
+			Leader: &metapb.Peer{Id: 4, StoreId: 21},
+		},
+		stage:      regionScanned,
+		engine:     f,
+		retryCount: 20,
+		waitUntil:  time.Now().Add(-time.Second),
+	}
+
+	retryJobs := make([]*regionJob, 0, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	jobOutCh := make(chan *regionJob)
+	go func() {
+		job := <-jobOutCh
+		job.retryCount++
+		retryJobs = append(retryJobs, job)
+		<-jobOutCh
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := local.startWorker(ctx, jobCh, jobOutCh)
+		require.NoError(t, err)
+	}()
+
+	// retryJob will be retried once and worker will sleep 30s before processing the
+	// job again, we simply hope below check is happened when worker is sleeping
+	time.Sleep(5 * time.Second)
+	require.Len(t, retryJobs, 1)
+	require.Same(t, retryJob, retryJobs[0])
+	require.Equal(t, 21, retryJob.retryCount)
+	require.Equal(t, wrote, retryJob.stage)
+
+	cancel()
+	wg.Wait()
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
 	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
 	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
 	// region (11, 12, 13) has key range ["a", "b"), it's not finished.
-	require.Equal(t, []Range{{start: []byte("b"), end: []byte("c")}}, f.finishedRanges.ranges)
+	require.Equal(t, []Range{{start: []byte("b"), end: []byte("")}}, f.finishedRanges.ranges)
 }

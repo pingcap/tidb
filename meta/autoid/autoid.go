@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -285,11 +285,15 @@ func SetStep(s int64) {
 
 // Base implements autoid.Allocator Base interface.
 func (alloc *allocator) Base() int64 {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	return alloc.base
 }
 
 // End implements autoid.Allocator End interface.
 func (alloc *allocator) End() int64 {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	return alloc.end
 }
 
@@ -896,11 +900,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
-				defer span1.Finish()
-				opentracing.ContextWithSpan(ctx, span1)
-			}
+			defer tracing.StartRegion(ctx, "alloc.alloc4Signed").End()
 			if allocatorStats != nil {
 				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 			}
@@ -991,11 +991,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
-				defer span1.Finish()
-				opentracing.ContextWithSpan(ctx, span1)
-			}
+			defer tracing.StartRegion(ctx, "alloc.alloc4Unsigned").End()
 			if allocatorStats != nil {
 				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 			}

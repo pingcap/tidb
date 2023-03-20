@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/sysutil"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/pdapi"
 	pmodel "github.com/prometheus/common/model"
@@ -56,7 +57,7 @@ func TestMetricTableData(t *testing.T) {
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsPromData", matrix)
+	ctx := context.WithValue(context.Background(), executor.MockMetricsPromDataKey{}, matrix)
 	ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 		return fpname == fpName
 	})

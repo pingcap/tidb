@@ -556,6 +556,11 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*split.RegionInfo, err erro
 }
 
 func TestBatchSplitRegionByRangesScanFailed(t *testing.T) {
+	backup := split.ScanRegionAttemptTimes
+	split.ScanRegionAttemptTimes = 3
+	defer func() {
+		split.ScanRegionAttemptTimes = backup
+	}()
 	doTestBatchSplitRegionByRanges(context.Background(), t, &scanRegionEmptyHook{}, "scan region return empty result", defaultHook{})
 }
 

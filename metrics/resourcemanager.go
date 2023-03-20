@@ -18,10 +18,26 @@ import "github.com/prometheus/client_golang/prometheus"
 
 var (
 	// EMACPUUsageGauge means exponential moving average of CPU usage
-	EMACPUUsageGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+	EMACPUUsageGauge prometheus.Gauge
+
+	// PoolConcurrencyCounter means how much concurrency in the pool
+	PoolConcurrencyCounter *prometheus.GaugeVec
+)
+
+// InitResourceManagerMetrics initializes resource manager metrics.
+func InitResourceManagerMetrics() {
+	EMACPUUsageGauge = NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "rm",
 		Name:      "ema_cpu_usage",
 		Help:      "exponential moving average of CPU usage",
 	})
-)
+
+	PoolConcurrencyCounter = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "rm",
+			Name:      "pool_concurrency",
+			Help:      "How many concurrency in the pool",
+		}, []string{LblType})
+}

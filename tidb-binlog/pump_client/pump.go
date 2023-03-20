@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -103,7 +104,7 @@ func (p *PumpStatus) createGrpcClient() error {
 	if p.security != nil {
 		clientConn, err = grpc.Dial(p.Addr, dialerOpt, grpc.WithTransportCredentials(credentials.NewTLS(p.security)))
 	} else {
-		clientConn, err = grpc.Dial(p.Addr, dialerOpt, grpc.WithInsecure())
+		clientConn, err = grpc.Dial(p.Addr, dialerOpt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	if err != nil {
 		atomic.AddInt64(&p.ErrNum, 1)

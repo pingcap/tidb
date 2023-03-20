@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -286,6 +287,14 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("set @@foreign_key_checks=1")
 	tk2.MustExec("use test")
+
+	if !*realtikvtest.WithRealTiKV {
+		// Unistore doesn't write lock records on secondary keys with value unchanged, causing it incorrectly ignores
+		// conflicts between transactions on these kinds of keys. This may make the test fail if fair locking is
+		// enabled. So disable it if it's not running with real tikv.
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+	}
 
 	cases := []struct {
 		prepareSQLs []string
@@ -1113,7 +1122,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("drop table t1")
 	tk.MustExec("create table t1(id int primary key, pid int, index(pid), foreign key(pid) references t1(id) on delete cascade);")
 	tk.MustExec("insert into t1 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13),(15,14);")
-	tk.MustGetDBError("delete from t1 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("delete from t1 where id=0;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	tk.MustExec("delete from t1 where id=15;")
 	tk.MustExec("delete from t1 where id=0;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
@@ -1196,7 +1205,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t0 values (0)")
 	tk.MustExec("insert into t1 values (0, 0, 0)")
 	tk.MustExec("insert into t1 (id, pid) values(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13);")
-	tk.MustGetDBError("delete from t0 where id=0;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("delete from t0 where id=0;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id=14;")
 	tk.MustExec("delete from t0 where id=0;")
@@ -1922,7 +1931,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create table t%v (id int, unique index(id), foreign key (id) references t%v(id) on update cascade)", i, i-1))
 		tk.MustExec(fmt.Sprintf("insert into t%v values (1)", i))
 	}
-	tk.MustGetDBError("update t0 set id=10 where id=1;", executor.ErrForeignKeyCascadeDepthExceeded)
+	tk.MustGetDBError("update t0 set id=10 where id=1;", exeerrors.ErrForeignKeyCascadeDepthExceeded)
 	tk.MustQuery("select id from t0").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from t15").Check(testkit.Rows("1"))
 	tk.MustExec("drop table if exists t16")
@@ -2659,12 +2668,12 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
 	tk.MustExec("update t1 set pid=1 where id>1")
 	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
-	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	originLimit := kv.TxnTotalSizeLimit.Load()
 	defer func() {
-		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 10240)
+	kv.TxnTotalSizeLimit.Store(10240)
 	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
 	// foreign key cascade behaviour will cause ErrTxnTooLarge.
 	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
@@ -2744,4 +2753,114 @@ func TestForeignKeyMetaInKeyColumnUsage(t *testing.T) {
 	tk.MustQuery("select CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME from " +
 		"INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;").
 		Check(testkit.Rows("fk test t2 a test t1 a", "fk test t2 b test t1 b"))
+}
+
+func TestForeignKeyAndGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	// Test foreign key with parent column is virtual generated column.
+	tk.MustExec("create table t1 (a int, b int as (a+1) virtual, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b));", "[schema:3733]Foreign key 'fk' uses virtual column 'b' which is not supported.")
+	// Test foreign key with child column is virtual generated column.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int key);")
+	tk.MustGetErrMsg("create table t2 (a int, c int as (a+1) virtual, constraint fk foreign key(c) references t1(a));", "[schema:3733]Foreign key 'fk' uses virtual column 'c' which is not supported.")
+	// Test foreign key with parent column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b) on delete cascade on update cascade);")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustExec("update t2 set b=a")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustExec("update t1 set a=a+10 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2", "11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11", "2 2", "2 2"))
+	tk.MustExec("delete from t1 where a=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11"))
+	// Test foreign key with parent and child column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on update cascade);", "[ddl:3104]Cannot define foreign key with ON UPDATE CASCADE clause on a generated column.")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on delete set null);", "[ddl:3104]Cannot define foreign key with ON DELETE SET NULL clause on a generated column.")
+	tk.MustExec("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustGetDBError("insert into t2 (a) values (3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("update t1 set a=a+10 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete cascade")
+	tk.MustExec("delete from t1 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("2 2"))
+}
+
+func TestForeignKeyAndExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx1 (b), index idx2 ((b*2)));")
+	tk.MustExec("create table t2 (a int, b int, index((b*2)), constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t1 set b=b+10 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetErrMsg("alter table t1 drop index idx1", "[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
+	tk.MustGetErrMsg("alter table t2 drop index fk", "[ddl:1553]Cannot drop index 'fk': needed in a foreign key constraint")
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec("update t1 set b=b+10 where b=1")
+	tk.MustExec("delete from t1 where b=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
+
+func TestForeignKeyAndMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, a json, b int generated always as (a->'$.id') stored, index idx1(b), index idx2((cast(a ->'$.data' as signed array))))")
+	tk.MustExec("create table t2 (id int, b int, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec(`insert into t1 (id, a) values (1, '{"id": "1", "data": [1,11,111]}')`)
+	tk.MustExec(`insert into t1 (id, a) values (2, '{"id": "2", "data": [2,22,222]}')`)
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError(`delete from t1 where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`)
+	tk.MustExec(`delete from t1 where id=2`)
+	tk.MustQuery("select id,b from t1 order by id").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select id,b from t2 order by id").Check(testkit.Rows("1 10", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
+
+func TestForeignKeyAndSessionVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (t timestamp, index(t));")
+	tk.MustExec("create table t2 (t timestamp, foreign key (t) references t1(t) on delete cascade);")
+	tk.MustExec("set @@time_zone='+8:00';")
+	tk.MustExec("insert into t1 values ('2023-01-28 10:29:16');")
+	tk.MustExec("insert into t2 values ('2023-01-28 10:29:16');")
+	tk.MustExec("set @@time_zone='+6:00';")
+	tk.MustExec("delete from t1;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
 }

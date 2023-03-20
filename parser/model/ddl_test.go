@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,7 +62,7 @@ func TestBackfillMetaCodec(t *testing.T) {
 	}
 	bm := &model.BackfillMeta{
 		EndInclude: true,
-		ErrMsg:     "has a err",
+		Error:      terror.ErrResultUndetermined,
 		JobMeta:    jm,
 	}
 	bmBytes, err := bm.Encode()

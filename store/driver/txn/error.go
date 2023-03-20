@@ -256,7 +256,7 @@ func prettyLockNotFoundKey(rawRetry string) string {
 }
 
 // ErrLockedWithConflict is a special error type that will be thrown when LockedWithConflict happens.
-// When aggressive locking is used or may be used, caller should check if this error is returned, and
+// When fair locking is used or may be used, caller should check if this error is returned, and
 // choose to ignore it or consider it as a normal `WriteConflict` error.
 type ErrLockedWithConflict struct {
 	StartTS              uint64

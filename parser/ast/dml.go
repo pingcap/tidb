@@ -358,8 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
-	HintKeepOrder
-	HintNoKeepOrder
+	HintOrderIndex
+	HintNoOrderIndex
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -390,10 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
-	case HintKeepOrder:
-		indexHintType = "KEEP ORDER"
-	case HintNoKeepOrder:
-		indexHintType = "NO KEEP ORDER"
+	case HintOrderIndex:
+		indexHintType = "ORDER INDEX"
+	case HintNoOrderIndex:
+		indexHintType = "NO ORDER INDEX"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
@@ -1801,20 +1801,35 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+type FileLocRefTp int
+
+const (
+	// FileLocServerOrRemote is used when there's no keywords in SQL, which means the data file should be located on the
+	// tidb-server or on remote storage (S3 for example).
+	FileLocServerOrRemote FileLocRefTp = iota
+	// FileLocClient is used when there's LOCAL keyword in SQL, which means the data file should be located on the MySQL
+	// client.
+	FileLocClient
+)
+
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data, see
+// https://github.com/pingcap/tidb/issues/40499
 type LoadDataStmt struct {
 	dmlNode
 
-	IsLocal           bool
+	FileLocRef        FileLocRefTp
 	Path              string
+	Format            *string
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
-	IgnoreLines       uint64
+	IgnoreLines       *uint64
 	ColumnAssignments []*Assignment
+	Options           []*LoadDataOpt
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 }
@@ -1822,11 +1837,17 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
-	if n.IsLocal {
+	switch n.FileLocRef {
+	case FileLocServerOrRemote:
+	case FileLocClient:
 		ctx.WriteKeyWord("LOCAL ")
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.Format != nil {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(*n.Format)
+	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1836,11 +1857,15 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
 	}
-	n.FieldsInfo.Restore(ctx)
-	n.LinesInfo.Restore(ctx)
-	if n.IgnoreLines != 0 {
+	if n.FieldsInfo != nil {
+		n.FieldsInfo.Restore(ctx)
+	}
+	if n.LinesInfo != nil {
+		n.LinesInfo.Restore(ctx)
+	}
+	if n.IgnoreLines != nil {
 		ctx.WriteKeyWord(" IGNORE ")
-		ctx.WritePlainf("%d", n.IgnoreLines)
+		ctx.WritePlainf("%d", *n.IgnoreLines)
 		ctx.WriteKeyWord(" LINES")
 	}
 	if len(n.ColumnsAndUserVars) != 0 {
@@ -1865,6 +1890,19 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			if err := assign.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore LoadDataStmt.ColumnAssignments")
+			}
+		}
+	}
+
+	if len(n.Options) > 0 {
+		ctx.WriteKeyWord(" WITH")
+		for i, option := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore LoadDataStmt.Options")
 			}
 		}
 	}
@@ -1910,10 +1948,29 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type LoadDataOpt struct {
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *LoadDataOpt) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + "=")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore LoadDataOpt")
+		}
+	}
+	return nil
+}
+
 const (
 	Terminated = iota
 	Enclosed
 	Escaped
+	DefinedNullBy
 )
 
 type FieldItem struct {
@@ -1924,34 +1981,41 @@ type FieldItem struct {
 
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
-	Terminated  string
-	Enclosed    byte
-	Escaped     byte
-	OptEnclosed bool
+	Terminated           *string
+	Enclosed             *string // length always <= 1 if not nil, see parser.y
+	Escaped              *string // length always <= 1 if not nil, see parser.y
+	OptEnclosed          bool
+	DefinedNullBy        *string
+	NullValueOptEnclosed bool
 }
 
 // Restore for FieldsClause
 func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Terminated != "\t" || n.Escaped != '\\' {
-		ctx.WriteKeyWord(" FIELDS")
-		if n.Terminated != "\t" {
-			ctx.WriteKeyWord(" TERMINATED BY ")
-			ctx.WriteString(n.Terminated)
+	if n.Terminated == nil && n.Enclosed == nil && n.Escaped == nil && n.DefinedNullBy == nil {
+		return nil
+	}
+
+	ctx.WriteKeyWord(" FIELDS")
+	if n.Terminated != nil {
+		ctx.WriteKeyWord(" TERMINATED BY ")
+		ctx.WriteString(*n.Terminated)
+	}
+	if n.Enclosed != nil {
+		if n.OptEnclosed {
+			ctx.WriteKeyWord(" OPTIONALLY")
 		}
-		if n.Enclosed != 0 {
-			if n.OptEnclosed {
-				ctx.WriteKeyWord(" OPTIONALLY")
-			}
-			ctx.WriteKeyWord(" ENCLOSED BY ")
-			ctx.WriteString(string(n.Enclosed))
-		}
-		if n.Escaped != '\\' {
-			ctx.WriteKeyWord(" ESCAPED BY ")
-			if n.Escaped == 0 {
-				ctx.WritePlain("''")
-			} else {
-				ctx.WriteString(string(n.Escaped))
-			}
+		ctx.WriteKeyWord(" ENCLOSED BY ")
+		ctx.WriteString(*n.Enclosed)
+	}
+	if n.Escaped != nil {
+		ctx.WriteKeyWord(" ESCAPED BY ")
+		ctx.WriteString(*n.Escaped)
+	}
+	if n.DefinedNullBy != nil {
+		ctx.WriteKeyWord(" DEFINED NULL BY ")
+		ctx.WriteString(*n.DefinedNullBy)
+		if n.NullValueOptEnclosed {
+			ctx.WriteKeyWord(" OPTIONALLY ENCLOSED")
 		}
 	}
 	return nil
@@ -1959,22 +2023,23 @@ func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
 
 // LinesClause represents lines references clause in load data statement.
 type LinesClause struct {
-	Starting   string
-	Terminated string
+	Starting   *string
+	Terminated *string
 }
 
 // Restore for LinesClause
 func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
-	if n.Starting != "" || n.Terminated != "\n" {
-		ctx.WriteKeyWord(" LINES")
-		if n.Starting != "" {
-			ctx.WriteKeyWord(" STARTING BY ")
-			ctx.WriteString(n.Starting)
-		}
-		if n.Terminated != "\n" {
-			ctx.WriteKeyWord(" TERMINATED BY ")
-			ctx.WriteString(n.Terminated)
-		}
+	if n.Starting == nil && n.Terminated == nil {
+		return nil
+	}
+	ctx.WriteKeyWord(" LINES")
+	if n.Starting != nil {
+		ctx.WriteKeyWord(" STARTING BY ")
+		ctx.WriteString(*n.Starting)
+	}
+	if n.Terminated != nil {
+		ctx.WriteKeyWord(" TERMINATED BY ")
+		ctx.WriteString(*n.Terminated)
 	}
 	return nil
 }
@@ -2771,6 +2836,8 @@ const (
 	ShowPlacementForPartition
 	ShowPlacementLabels
 	ShowSessionStates
+	ShowCreateResourceGroup
+	ShowLoadDataJobs
 )
 
 const (
@@ -2791,30 +2858,33 @@ const (
 type ShowStmt struct {
 	dmlNode
 
-	Tp          ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *TableName  // Used for showing columns.
-	Partition   model.CIStr // Used for showing partition.
-	Column      *ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int // Some flag parsed from sql, such as FULL.
-	Full        bool
-	User        *auth.UserIdentity   // Used for show grants/create user.
-	Roles       []*auth.RoleIdentity // Used for show grants .. using
-	IfNotExists bool                 // Used for `show create database if not exists`
-	Extended    bool                 // Used for `show extended columns from ...`
-	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
+	Tp                ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *TableName  // Used for showing columns.
+	Partition         model.CIStr // Used for showing partition.
+	Column            *ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string // used for showing resource group
+	Flag              int    // Some flag parsed from sql, such as FULL.
+	Full              bool
+	User              *auth.UserIdentity   // Used for show grants/create user.
+	Roles             []*auth.RoleIdentity // Used for show grants .. using
+	IfNotExists       bool                 // Used for `show create database if not exists`
+	Extended          bool                 // Used for `show extended columns from ...`
+	Limit             *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	// GlobalScope is used by `show variables` and `show bindings`
 	GlobalScope bool
-	Pattern     *PatternLikeExpr
+	Pattern     *PatternLikeOrIlikeExpr
 	Where       ExprNode
 
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
+
+	LoadDataJobID *int64 // Used for `SHOW LOAD DATA JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -2879,6 +2949,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowCreatePlacementPolicy:
 		ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
 		ctx.WriteName(n.DBName)
+	case ShowCreateResourceGroup:
+		ctx.WriteKeyWord("CREATE RESOURCE GROUP ")
+		ctx.WriteName(n.ResourceGroupName)
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
@@ -3000,9 +3073,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PRIVILEGES")
 	case ShowBuiltins:
 		ctx.WriteKeyWord("BUILTINS")
-	case ShowCreateImport:
-		ctx.WriteKeyWord("CREATE IMPORT ")
-		ctx.WriteName(n.DBName)
 	case ShowPlacementForDatabase:
 		ctx.WriteKeyWord("PLACEMENT FOR DATABASE ")
 		ctx.WriteName(n.DBName)
@@ -3018,6 +3088,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
+	case ShowLoadDataJobs:
+		if n.LoadDataJobID != nil {
+			ctx.WriteKeyWord("LOAD DATA JOB ")
+			ctx.WritePlainf("%d", *n.LoadDataJobID)
+		} else {
+			ctx.WriteKeyWord("LOAD DATA JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
@@ -3164,7 +3242,7 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Pattern = node.(*PatternLikeExpr)
+		n.Pattern = node.(*PatternLikeOrIlikeExpr)
 	}
 
 	if n.Where != nil {

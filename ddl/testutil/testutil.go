@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SessionExecInGoroutine export for testing.
@@ -81,4 +83,14 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 			return true, nil
 		})
 	return allHandles, err
+}
+
+// FindIdxInfo is to get IndexInfo by index name.
+func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	if err != nil {
+		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
+		return nil
+	}
+	return tbl.Meta().FindIndexByName(idxName)
 }

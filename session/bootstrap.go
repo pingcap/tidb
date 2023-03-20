@@ -21,11 +21,9 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	osuser "os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -442,7 +442,19 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+		SELECT job_id,
+			db_name,
+			table_name,
+			query,
+			session_id,
+			txnstart,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM information_schema.ddl_jobs,
+			information_schema.cluster_tidb_trx,
+			information_schema.cluster_processlist
+		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
+			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
+			AND cluster_tidb_trx.session_id = cluster_processlist.id
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -516,6 +528,64 @@ const (
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
+
+	// CreateTTLJobHistory is a table that stores ttl job's history
+	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+		job_id varchar(64) PRIMARY KEY,
+		table_id bigint(64) NOT NULL,
+        parent_table_id bigint(64) NOT NULL,
+    	table_schema varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+    	partition_name varchar(64) DEFAULT NULL,
+		create_time timestamp NOT NULL,
+		finish_time timestamp NOT NULL,
+		ttl_expire timestamp NOT NULL,
+        summary_text text,
+		expired_rows bigint(64) DEFAULT NULL,
+    	deleted_rows bigint(64) DEFAULT NULL,
+    	error_delete_rows bigint(64) DEFAULT NULL,
+    	status varchar(64) NOT NULL,
+    	key(table_schema, table_name, create_time),
+    	key(parent_table_id, create_time),
+    	key(create_time)
+	);`
+
+	// CreateGlobalTask is a table about global task.
+	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time TIMESTAMP,
+		state_update_time TIMESTAMP,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11),
+		key(state)
+	);`
+
+	// CreateDefaultResourceGroup is the statement to create the default resource group
+	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
+
+	// CreateLoadDataJobs is a table that LOAD DATA uses
+	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
+       job_id bigint(64) NOT NULL AUTO_INCREMENT,
+       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
+       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+       start_time TIMESTAMP(6) NULL DEFAULT NULL,
+       update_time TIMESTAMP(6) NULL DEFAULT NULL,
+       end_time TIMESTAMP(6) NULL DEFAULT NULL,
+       data_source TEXT NOT NULL,
+       table_schema VARCHAR(64) NOT NULL,
+       table_name VARCHAR(64) NOT NULL,
+       import_mode VARCHAR(64) NOT NULL,
+       create_user VARCHAR(32) NOT NULL,
+       progress TEXT DEFAULT NULL,
+       result_message TEXT DEFAULT NULL,
+       error_message TEXT DEFAULT NULL,
+       PRIMARY KEY (job_id),
+       KEY (create_time),
+       KEY (create_user));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -753,17 +823,41 @@ const (
 	version107 = 107
 	// version108 adds the table tidb_ttl_table_status
 	version108 = 108
-	// version109 add column source to mysql.stats_meta_history
+	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
-	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	// ...
+	// [version110, version129] is the version range reserved for patches of 6.5.x
+	// ...
+	// version110 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
-	// version111 adds the table tidb_ttl_task
-	version111 = 111
+	// version130 add column source to mysql.stats_meta_history
+	version130 = 130
+	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version131 = 131
+	// version132 modifies the view tidb_mdl_view
+	version132 = 132
+	// version133 sets tidb_server_memory_limit to "80%"
+	version133 = 133
+	// version134 modifies the following global variables default value:
+	// - foreign_key_checks: off -> on
+	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
+	version134 = 134
+	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
+	version135 = 135
+	// version136 prepare the tables for the distributed task.
+	version136 = 136
+	// version137 introduces some reserved resource groups
+	version137 = 137
+	// version 138 set tidb_enable_null_aware_anti_join to true
+	version138 = 138
+	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
+	version139 = 139
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version111
+var currentBootstrapVersion int64 = version139
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -881,7 +975,16 @@ var (
 		upgradeToVer108,
 		upgradeToVer109,
 		upgradeToVer110,
-		upgradeToVer111,
+		upgradeToVer130,
+		upgradeToVer131,
+		upgradeToVer132,
+		upgradeToVer133,
+		upgradeToVer134,
+		upgradeToVer135,
+		upgradeToVer136,
+		upgradeToVer137,
+		upgradeToVer138,
+		upgradeToVer139,
 	}
 )
 
@@ -2218,27 +2321,115 @@ func upgradeToVer108(s Session, ver int64) {
 	doReentrantDDL(s, CreateTTLTableStatus)
 }
 
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
 func upgradeToVer109(s Session, ver int64) {
 	if ver >= version109 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
-}
-
-// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
-func upgradeToVer110(s Session, ver int64) {
-	if ver >= version110 {
 		return
 	}
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
-func upgradeToVer111(s Session, ver int64) {
-	if ver >= version111 {
+// For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
+}
+
+func upgradeToVer130(s Session, ver int64) {
+	if ver >= version130 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
+}
+
+func upgradeToVer131(s Session, ver int64) {
+	if ver >= version131 {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTask)
+	doReentrantDDL(s, CreateTTLJobHistory)
+}
+
+func upgradeToVer132(s Session, ver int64) {
+	if ver >= version132 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer133(s Session, ver int64) {
+	if ver >= version133 {
+		return
+	}
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.DefTiDBServerMemoryLimit, variable.TiDBServerMemoryLimit, "0")
+}
+
+func upgradeToVer134(s Session, ver int64) {
+	if ver >= version134 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.ForeignKeyChecks, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableForeignKey, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableHistoricalStats, variable.On)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnablePlanReplayerCapture, variable.On)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
+}
+
+// For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
+func upgradeToVer135(s Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+}
+
+func upgradeToVer136(s Session, ver int64) {
+	if ver >= version136 {
+		return
+	}
+	mustExecute(s, CreateGlobalTask)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer137(s Session, ver int64) {
+	if ver >= version137 {
+		return
+	}
+	doReentrantDDL(s, CreateDefaultResourceGroup)
+}
+
+// For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
+func upgradeToVer138(s Session, ver int64) {
+	if ver >= version138 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
+}
+
+func upgradeToVer139(s Session, ver int64) {
+	if ver >= version139 {
+		return
+	}
+	mustExecute(s, CreateLoadDataJobs)
 }
 
 func writeOOMAction(s Session) {
@@ -2339,7 +2530,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 	// Create mdl view.
 	mustExecute(s, CreateMDLView)
-	//  Create plan_replayer_status table
+	// Create plan_replayer_status table
 	mustExecute(s, CreatePlanReplayerStatusTable)
 	// Create plan_replayer_task table
 	mustExecute(s, CreatePlanReplayerTaskTable)
@@ -2349,23 +2540,37 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTableStatus)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
+	// Create tidb_ttl_job_history table
+	mustExecute(s, CreateTTLJobHistory)
+	// Create tidb_global_task table
+	mustExecute(s, CreateGlobalTask)
+	// Create default resource group
+	mustExecute(s, CreateDefaultResourceGroup)
+	// Create load_data_jobs
+	mustExecute(s, CreateLoadDataJobs)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
-func doBootstrapSQLFile(s Session) {
+func doBootstrapSQLFile(s Session) error {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
-		return
+		return nil
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
+		if intest.InTest {
+			return err
+		}
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
 	}
 	for _, stmt := range stmts {
@@ -2381,12 +2586,7 @@ func doBootstrapSQLFile(s Session) {
 			}
 		}
 	}
-}
-
-// inTestSuite checks if we are bootstrapping in the context of tests.
-// There are some historical differences in behavior between tests and non-tests.
-func inTestSuite() bool {
-	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+	return nil
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -2433,11 +2633,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default
@@ -2450,7 +2650,10 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
+		case variable.TiDBPessimisticTransactionFairLocking:
+			vVal = variable.On
 		}
+
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
@@ -2497,8 +2700,7 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		debug.PrintStack()
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
+		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
@@ -2517,7 +2719,7 @@ func oldPasswordUpgrade(pass string) (string, error) {
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
 func rebuildAllPartitionValueMapAndSorted(s *session) {
 	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
@@ -2529,12 +2731,9 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 				continue
 			}
 
-			pe, err := t.(partitionExpr).PartitionExpr()
-			if err != nil {
-				panic("partition table gets partition expression failed")
-			}
+			pe := t.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
-				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
+				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
 					break
 				}

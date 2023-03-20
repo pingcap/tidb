@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -86,7 +86,7 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {

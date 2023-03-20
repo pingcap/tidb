@@ -13,6 +13,7 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
+        "interact_with_storage.go",
         "merge_worker.go",
         "row_sampler.go",
         "sample.go",
@@ -81,6 +82,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//config",
         "//domain",

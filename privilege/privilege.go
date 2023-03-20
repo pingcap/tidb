@@ -87,6 +87,9 @@ type Manager interface {
 	// MatchIdentity matches an identity
 	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
+	// MatchUserResourceGroupName matches a user with specified resource group name
+	MatchUserResourceGroupName(resourceGroupName string) (string, bool)
+
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
