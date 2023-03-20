@@ -37,7 +37,7 @@ type LitBackfillGlobalTaskMeta struct {
 	IsMergingIdx bool      `json:"is_merging_idx"`
 }
 
-// LitBackfillSubTaskMeta is the subtask meta for lightning backfill
+// LitBackfillSubTaskMeta is the subtask meta for lightning backfill.
 type LitBackfillSubTaskMeta struct {
 	PhysicalTableID int64 `json:"physical_table_id"`
 	IsMergingIdx    bool  `json:"is_merging_idx"`
