@@ -41,6 +41,7 @@ import (
 type tikvTxn struct {
 	*tikv.KVTxn
 	idxNameCache        map[int64]*model.TableInfo
+	invisibleKeys       map[string]struct{}
 	snapshotInterceptor kv.SnapshotInterceptor
 	// columnMapsCache is a cache used for the mutation checker
 	columnMapsCache interface{}
@@ -54,7 +55,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), make(map[string]struct{}), nil, nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -177,7 +178,7 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.invisibleKeys)
 }
 
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {
