@@ -853,11 +853,13 @@ const (
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
 	version139 = 139
+	// version 140
+	version140 = 140
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version139
+var currentBootstrapVersion int64 = version140
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -985,6 +987,7 @@ var (
 		upgradeToVer137,
 		upgradeToVer138,
 		upgradeToVer139,
+		upgradeToVer140,
 	}
 )
 
@@ -2432,6 +2435,15 @@ func upgradeToVer139(s Session, ver int64) {
 	mustExecute(s, CreateLoadDataJobs)
 }
 
+func upgradeToVer140(s Session, ver int64) {
+	if ver >= version140 {
+		return
+	}
+	// if it is updated from v6.7, BackgroundSubtaskTableSQL and BackgroundSubtaskHistoryTableSQL has
+	execute(s, ddl.BackgroundSubtaskTableSQL)
+	execute(s, ddl.BackgroundSubtaskHistoryTableSQL)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2701,6 +2713,16 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	defer cancel()
 	if err != nil {
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
+	}
+}
+
+func execute(s Session, sql string, args ...interface{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, sql, args...)
+	defer cancel()
+	if err != nil {
+		logutil.BgLogger().Warn("Execute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
