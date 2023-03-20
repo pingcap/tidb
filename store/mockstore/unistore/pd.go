@@ -17,6 +17,7 @@ package unistore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -220,6 +221,9 @@ func (c *pdClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.Res
 func (c *pdClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	c.resourceGroupManager.Lock()
 	defer c.resourceGroupManager.Unlock()
+	if _, ok := c.resourceGroupManager.groups[group.Name]; ok {
+		return "", fmt.Errorf("the group %s already exists", group.Name)
+	}
 	c.resourceGroupManager.groups[group.Name] = group
 	return "Success!", nil
 }

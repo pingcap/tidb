@@ -66,6 +66,7 @@ go_test(
     ],
     embed = [":backup"],
     flaky = True,
+    race = "on",
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",

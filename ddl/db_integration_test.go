@@ -543,9 +543,7 @@ func TestErrnoErrorCode(t *testing.T) {
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	tk.MustGetErrCode(sql, errno.ErrPrimaryCantHaveNull)
-	sql = "create table t2 (id int auto_increment);"
-	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
-	sql = "create table t2 (id int auto_increment, a int key);"
+	sql = "create table t2 (id int auto_increment, c int auto_increment);"
 	tk.MustGetErrCode(sql, errno.ErrWrongAutoKey)
 	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, errno.ErrInvalidDefault)
@@ -2263,12 +2261,12 @@ func TestDropAutoIncrementIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
 	dropIndexSQL := "alter table t1 drop index a"
-	tk.MustGetErrCode(dropIndexSQL, errno.ErrWrongAutoKey)
+	tk.MustExec(dropIndexSQL)
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
-	tk.MustGetErrCode(dropIndexSQL, errno.ErrWrongAutoKey)
+	tk.MustExec(dropIndexSQL)
 }
 
 func TestInsertIntoGeneratedColumnWithDefaultExpr(t *testing.T) {

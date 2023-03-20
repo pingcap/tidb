@@ -414,9 +414,8 @@ func (s *mockGCSSuite) TestInternalStatus() {
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCreateLoadDataJob", `sleep(3000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterStartJob", `sleep(3000)`)
 	s.enableFailpoint("github.com/pingcap/tidb/executor/AfterCommitOneTask", `sleep(3000)`)
-	s.tk.MustExec("SET SESSION tidb_dml_batch_size = 1;")
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-tsv/t*.tsv?endpoint=%s'
-		INTO TABLE load_tsv.t;`, gcsEndpoint)
+		INTO TABLE load_tsv.t WITH batch_size = 1;`, gcsEndpoint)
 	s.tk.MustExec(sql)
 	wg.Wait()
 }

@@ -535,7 +535,6 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
-	rc.setNextKey(startKey)
 	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)

@@ -35,6 +35,7 @@ go_test(
     ],
     embed = [":placement"],
     flaky = True,
+    race = "on",
     deps = [
         "//kv",
         "//meta",

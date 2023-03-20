@@ -73,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"golang.org/x/exp/slices"
 )
 
@@ -837,6 +838,14 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 				}
 			}
 		}
+	case *ast.CalibrateResourceStmt:
+		return b.buildCalibrateResource(v.Schema())
+	case *ast.LoadDataActionStmt:
+		return &LoadDataActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
+		}
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
@@ -1196,6 +1205,22 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	if v.Analyze {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+		}
+		// If the resource group name is not empty, we could collect and display the RU
+		// runtime stats for analyze executor.
+		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
+		// Try to register the RU runtime stats for analyze executor.
+		if store, ok := b.ctx.GetStore().(interface {
+			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+		}); len(resourceGroupName) > 0 && ok {
+			// StartTS will be used to identify this SQL, so that the runtime stats could
+			// aggregate the RU stats beneath the KV storage client.
+			startTS, err := b.getSnapshotTS()
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}

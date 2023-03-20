@@ -699,10 +699,10 @@ type SessionVars struct {
 	ConnectionID uint64
 
 	// PlanID is the unique id of logical and physical plan.
-	PlanID int
+	PlanID atomic.Int32
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int64
+	PlanColumnID atomic.Int64
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -812,6 +812,24 @@ type SessionVars struct {
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiFlashMaxThreads int64
+
+	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalJoin int64
+
+	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalGroupBy int64
+
+	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalSort int64
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -1063,7 +1081,7 @@ type SessionVars struct {
 
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
-	PlannerSelectBlockAsName []ast.HintTable
+	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64
@@ -1377,6 +1395,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
 	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
 	// Only for disaggregated-tiflash mode.
 	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
@@ -1587,8 +1608,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
-	s.PlanID++
-	return s.PlanID
+	return int(s.PlanID.Add(1))
 }
 
 const (
@@ -1795,6 +1815,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1831,6 +1852,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
+	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
+	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
+	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -1953,8 +1977,7 @@ func (s *SessionVars) CleanBuffers() {
 
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
-	s.PlanColumnID++
-	return s.PlanColumnID
+	return s.PlanColumnID.Add(1)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -2377,7 +2400,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
@@ -2414,7 +2437,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
