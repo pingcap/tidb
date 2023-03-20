@@ -617,6 +617,7 @@ func TestMPPMultiDistinct2Stage(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	tk.MustExec("set @@session.tidb_opt_eliminate_local_agg_for_three_stage_distinct_agg=1;")
+	defer tk.MustExec("set @@session.tidb_opt_eliminate_local_agg_for_three_stage_distinct_agg=0;")
 	// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
 	tk.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
 	tk.MustExec("insert into t values(1000, 1000, 1000, 1)")
