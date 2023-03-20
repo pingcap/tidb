@@ -1354,12 +1354,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func handleErrLockedWithConflict(ctx context.Context, se sessionctx.Context, err error, tx kv.Transaction, keys ...kv.Key) error {
 	if errLockedWithConflict, ok := err.(*txn.ErrLockedWithConflict); ok {
-		stmtCtx := se.GetSessionVars().StmtCtx
-		if stmtCtx.KvReadOperationsCount.Load() > 0 {
-			// The statement has performed read operations before. The statement cannot continue safely without a
-			// pessimistic retry.
-			return errLockedWithConflict.ToWriteConflict()
-		}
+		// This looks not necessary anymore since we can check if refreshing ts is successful?
+		//stmtCtx := se.GetSessionVars().StmtCtx
+		//if stmtCtx.KvReadOperationsCount.Load() > 0 {
+		//	// The statement has performed read operations before. The statement cannot continue safely without a
+		//	// pessimistic retry.
+		//	return errLockedWithConflict.ToWriteConflict()
+		//}
+
 		// Invalidate forUpdateTS of the current statement, and ignore the error so that the statement can continue
 		// execution. In case the statement tries to do more read/write operations, it must use an updated forUpdateTS.
 		txnManager := sessiontxn.GetTxnManager(se)

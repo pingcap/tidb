@@ -50,7 +50,7 @@ type PreparedStmtInfo struct {
 type QueryInfo struct {
 	TxnScope    string `json:"txn_scope"`
 	StartTS     uint64 `json:"start_ts"`
-	ForUpdateTS uint64 `json:"for_update_ts"`
+	ForUpdateTS string `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
 }
 

@@ -2319,12 +2319,14 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				if err != nil {
 					sessVars.LastQueryInfo.ErrMsg = err.Error()
 				}
-				forUpdateTS, err := sessVars.TxnCtx.GetForUpdateTSValue()
-				if err != nil {
-					logutil.BgLogger().Warn("failed to fetch the forUpdateTS to record in last_query_info", zap.Uint64("startTS", sessVars.TxnCtx.StartTS), zap.Error(err))
-				} else {
-					sessVars.LastQueryInfo.ForUpdateTS = forUpdateTS
-				}
+				//forUpdateTS, err := sessVars.TxnCtx.GetForUpdateTSValue()
+				//if err != nil {
+				//	logutil.BgLogger().Warn("failed to fetch the forUpdateTS to record in last_query_info", zap.Uint64("startTS", sessVars.TxnCtx.StartTS), zap.Error(err))
+				//} else {
+				//	sessVars.LastQueryInfo.ForUpdateTS = forUpdateTS
+				//}
+				forUpdateTS := sessVars.TxnCtx.GetForUpdateTS()
+				sessVars.LastQueryInfo.ForUpdateTS = forUpdateTS.String()
 			}()
 		}
 	}

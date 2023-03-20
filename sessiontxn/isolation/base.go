@@ -325,7 +325,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.SnapInterceptor, interceptor)
 	}
 
-	p.setSnapReadObserver(txn)
+	// TODO: Perhaps this is unnecessary. Remove it if so.
+	//p.setSnapReadObserver(txn)
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)

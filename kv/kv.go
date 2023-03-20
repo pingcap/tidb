@@ -547,6 +547,7 @@ func (t *RefreshableReadTS) GetInitialValue() uint64 {
 }
 
 func (t *RefreshableReadTS) Get() (uint64, error) {
+	//logutil.BgLogger().Info("RefreshableReadTS.Get called", zap.Stringer("self", t), zap.Stack("stack"))
 	t.Seal()
 	return t.getImpl()
 }
@@ -565,7 +566,7 @@ func (t *RefreshableReadTS) getImpl() (uint64, error) {
 	} else {
 		// Only record wait time when it's really necessary to wait.
 		// TODO: Add metrics here.
-		// TODO: Return the statistics in some way so user can find the wait time in
+		// TODO: Return the statistics in some way so user can find the wait time for diagnosis purpose.
 		ts, err = t.tsFuture.Wait()
 	}
 	t.mu.RUnlock()
@@ -598,19 +599,22 @@ func (t *RefreshableReadTS) getInnerFuture() oracle.Future {
 }
 
 func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle oracle.Oracle, scope string) bool {
+	//self := t.String()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	//logutil.BgLogger().Info("======== refreshing ts", zap.String("self", self))
 
 	if t.sealed.Load() {
 		// The ts is already used. Unable to update now.
 		return false
 	}
 
-	// NOTE: The call to the oracle must be done after locking the mutex. Write-locking the mutex is exclusives to any
+	// NOTE: The call to the oracle must be done after locking the mutex. WLocking the mutex makes it exclusive to any
 	// accesses, so we can guarantee the time of allocating the new timestamp is strictly later than any other `Get`
 	// operations called previously. This is why the function accepts the oracle as the argument instead of allowing
 	// the caller to get an oracle.Future by itself and pass it in.
-	t.tsFuture = tsOracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: scope})
+	t.tsFuture = NewMultiAccessTSFuture(tsOracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: scope}))
 	t.Seal()
 
 	return true
@@ -642,6 +646,26 @@ func (t *RefreshableReadTS) String() string {
 	} else {
 		return fmt.Sprintf("(future, initial value: %v)", t.initialTS)
 	}
+}
+
+type MultiAccessTSFuture struct {
+	once   sync.Once
+	inner  oracle.Future
+	result uint64
+	error  error
+}
+
+func NewMultiAccessTSFuture(inner oracle.Future) *MultiAccessTSFuture {
+	return &MultiAccessTSFuture{
+		inner: inner,
+	}
+}
+
+func (f *MultiAccessTSFuture) Wait() (uint64, error) {
+	f.once.Do(func() {
+		f.result, f.error = f.inner.Wait()
+	})
+	return f.result, f.error
 }
 
 // Request represents a kv request.

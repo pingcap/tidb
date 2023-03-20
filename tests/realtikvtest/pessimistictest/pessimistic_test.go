@@ -3321,6 +3321,30 @@ func TestFairLockingRetry(t *testing.T) {
 	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101 102", "101 201 200"))
 }
 
+func TestFairLockingSimpleWriteConflict(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	//ts := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	tk2.MustExec("begin pessimistic")
+	//ts2 := tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	//logutil.BgLogger().Info("============ start_ts of txns: ", zap.String("txn1", ts), zap.String("txn2", ts2))
+	tk2.MustExec("update t set v = 2 where id = 1")
+	tk2.MustExec("commit")
+
+	//logutil.BgLogger().Info("========= conflicting stmt start")
+	tk.MustExec("update t set v = 3 where id = 1")
+	//logutil.BgLogger().Info("========= conflicting stmt end")
+	tk.MustExec("commit")
+}
+
 func TestIssue40114(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
