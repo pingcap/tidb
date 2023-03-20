@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -336,7 +337,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 
 	// Test Next.
 	var response SelectResult
-	response, _ = Select(context.TODO(), ctx, request, colTypes)
+	response, _ = Select(context.TODO(), ctx, config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), request, colTypes)
 
 	result, _ := response.(*selectResult)
 	resp, _ := result.resp.(*mockResponse)
@@ -411,7 +412,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	// Test Next.
 	var response SelectResult
 	if planIDs == nil {
-		response, err = Select(context.TODO(), sctx, request, colTypes)
+		response, err = Select(context.TODO(), sctx, config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), request, colTypes)
 	} else {
 		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, planIDs, 1)
 	}

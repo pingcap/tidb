@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -134,7 +135,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.result, err = distsql.Select(ctx, e.Ctx(), kvReq, e.RetFieldTypes())
+	e.result, err = distsql.Select(ctx, e.Ctx(), false, kvReq, e.RetFieldTypes())
 	if err != nil {
 		return err
 	}
@@ -289,7 +290,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.columnsTypes())
+	result, err := distsql.Select(ctx, e.Ctx(), config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -817,7 +818,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.getIdxColTypes())
+	result, err := distsql.Select(ctx, e.Ctx(), config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), kvReq, e.getIdxColTypes())
 	if err != nil {
 		return nil, err
 	}

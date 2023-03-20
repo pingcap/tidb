@@ -67,6 +67,7 @@ go_test(
     race = "on",
     shard_count = 24,
     deps = [
+        "//pkg/config",
         "//pkg/domain/resourcegroup",
         "//pkg/kv",
         "//pkg/parser/charset",

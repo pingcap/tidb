@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
@@ -284,7 +285,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.SessionContext, kvReq, c.FieldTypes)
+	return distsql.Select(ctx, c.SessionContext, config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), kvReq, c.FieldTypes)
 }
 
 func fetchTableScanResult(
