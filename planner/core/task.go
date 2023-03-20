@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
