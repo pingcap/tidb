@@ -52,7 +52,7 @@ import (
 type mockGCWorkerClient struct {
 	tikv.Client
 	unsafeDestroyRangeHandler   handler
-	destroyRangeHandler         handler
+	deleteRangeHandler          handler
 	physicalScanLockHandler     handler
 	registerLockObserverHandler handler
 	checkLockObserverHandler    handler
@@ -82,8 +82,8 @@ func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	if req.Type == tikvrpc.CmdRemoveLockObserver && c.removeLockObserverHandler != nil {
 		return c.removeLockObserverHandler(addr, req)
 	}
-	if req.Type == tikvrpc.CmdDeleteRange && c.destroyRangeHandler != nil {
-		return c.destroyRangeHandler(addr, req)
+	if req.Type == tikvrpc.CmdDeleteRange && c.deleteRangeHandler != nil {
+		return c.deleteRangeHandler(addr, req)
 	}
 
 	return c.Client.SendRequest(ctx, addr, req, timeout)
@@ -818,7 +818,7 @@ Loop:
 }
 
 func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/is-raft-kv2", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/util/isRaftKv2", "return(true)"))
 
 	s := createGCWorkerSuite(t)
 	// Put some delete range tasks.
@@ -865,14 +865,14 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.Equal(t, ranges, preparedRanges)
 
 	sendReqCh := make(chan SentReq, 20)
-	s.client.destroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	s.client.deleteRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
 		resp := &tikvrpc.Response{
 			Resp: &kvrpcpb.DeleteRangeResponse{},
 		}
 		return resp, nil
 	}
-	defer func() { s.client.destroyRangeHandler = nil }()
+	defer func() { s.client.deleteRangeHandler = nil }()
 
 	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
 	require.NoError(t, err)
@@ -889,6 +889,12 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
+
+	// In v2, they should not be recorded in done ranges
+	doneRanges, err := util.LoadDoneDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.True(t, len(doneRanges) == 0)
 }
 
 // checkDestroyRangeReqV2 checks whether given sentReq matches given ranges and stores when raft-kv2 is enabled.

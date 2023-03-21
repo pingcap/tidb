@@ -856,10 +856,10 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			err = task.Execute(ctx)
 		} else {
 			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
-			failpoint.Inject("ignoreDeleteRangeFailed", func() {
-				err = nil
-			})
 		}
+		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+			err = nil
+		})
 
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
@@ -870,7 +870,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r)
+		err = util.CompleteDeleteRange(se, r, !raftKv2)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),

@@ -126,20 +126,15 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	raftKv2, err := IsRaftKv2(ctx, sctx)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !raftKv2 {
+	if needToRecordDone {
 		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 		if err != nil {
 			return errors.Trace(err)
@@ -327,7 +322,7 @@ func IsContextDone(ctx context.Context) bool {
 func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// Mock store does not support `show config` now, so we  use failpoint here
 	// to control whether we are in raft-kv2
-	failpoint.Inject("is-raft-kv2", func(v failpoint.Value) (bool, error) {
+	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
 		v2, _ := v.(bool)
 		return v2, nil
 	})
