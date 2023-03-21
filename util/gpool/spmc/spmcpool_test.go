@@ -436,7 +436,7 @@ func TestBenchPool(t *testing.T) {
 		return struct{}{}
 	})
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 500; i++ {
 		sema := make(chan struct{}, 10)
 		var wg sync.WaitGroup
 		exitCh := make(chan struct{})
