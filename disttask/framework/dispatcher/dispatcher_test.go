@@ -137,16 +137,16 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 	dispatcher.RegisterTaskFlowHandle(taskTypeExample, NumberExampleHandle{})
 
 	cnt := 10
-	checkGetRunningGTaskCnt := func(expectedCnt int) {
+	checkGetRunningGTaskCnt := func() {
 		var retCnt int
 		for i := 0; i < cnt; i++ {
 			retCnt = dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt()
-			if retCnt == expectedCnt {
+			if retCnt == taskCnt {
 				break
 			}
 			time.Sleep(time.Millisecond * 30)
 		}
-		require.Equal(t, retCnt, expectedCnt)
+		require.Equal(t, retCnt, taskCnt)
 	}
 
 	// test DispatchTaskLoop
@@ -166,8 +166,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		taskIDs = append(taskIDs, taskID)
 	}
 	// test normal flow
-	logutil.BgLogger().Warn("*********************************** 00")
-	checkGetRunningGTaskCnt(taskCnt)
+	checkGetRunningGTaskCnt()
 	tasks, err := gTaskMgr.GetTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, tasks, taskCnt)
@@ -177,14 +176,12 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 		require.NoError(t, err)
 		require.Equal(t, subtasks, int64(subtaskCnt))
 	}
-	logutil.BgLogger().Warn("*********************************** 01")
 	// test parallelism control
 	taskID, err := gTaskMgr.AddNewTask(taskTypeExample, 0, nil)
 	require.NoError(t, err)
-	checkGetRunningGTaskCnt(taskCnt)
+	checkGetRunningGTaskCnt()
 	// Clean the task.
 	deleteTasks(t, store, taskID)
-	logutil.BgLogger().Warn("*********************************** 11")
 
 	// test DetectTaskLoop
 	checkGetGTaskState := func(expectedState string) {
@@ -192,10 +189,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 			tasks, err = gTaskMgr.GetTasksInStates(expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
-				logutil.BgLogger().Warn("*********************************** xx")
 				break
 			}
-			logutil.BgLogger().Warn("***********************************")
 			time.Sleep(time.Millisecond * 50)
 		}
 	}
@@ -207,49 +202,47 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool) {
 			require.NoError(t, err)
 		}
 		checkGetGTaskState(proto.TaskStateSucceed)
-		logutil.BgLogger().Warn("*********************************** 21")
 		require.Len(t, tasks, taskCnt)
-		logutil.BgLogger().Warn("*********************************** 22")
 		require.Equal(t, 0, dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt())
 		return
 	}
 
 	// Test each task has a subtask failed.
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+	}()
 	// Mock a subtask fails.
 	for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
 		err = subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateFailed)
 		require.NoError(t, err)
 	}
-	logutil.BgLogger().Warn("*********************************** 21")
 	checkGetGTaskState(proto.TaskStateReverting)
-	logutil.BgLogger().Warn("*********************************** 22")
+	require.Len(t, tasks, taskCnt)
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
 		err = subTaskMgr.UpdateSubtaskState(int64(i), proto.TaskStateReverted)
 		require.NoError(t, err)
 	}
-	logutil.BgLogger().Warn("*********************************** 31")
 	checkGetGTaskState(proto.TaskStateReverted)
-	logutil.BgLogger().Warn("*********************************** 32")
 	require.Len(t, tasks, taskCnt)
-	logutil.BgLogger().Warn("*********************************** 33")
 	require.Equal(t, 0, dsp.(dispatcher.DispatcherForTest).GetRunningGTaskCnt())
 }
 
-func TestSimpleNormal(t *testing.T) {
+func TestSimpleNormalFlow(t *testing.T) {
 	checkDispatch(t, 1, true)
 }
 
-func TestSimpleErr(t *testing.T) {
+func TestSimpleErrFlow(t *testing.T) {
 	checkDispatch(t, 1, false)
 }
 
-func TestParallelNormal(t *testing.T) {
+func TestParallelNormalFlow(t *testing.T) {
 	checkDispatch(t, 3, true)
 }
 
-func TestParallelErr(t *testing.T) {
+func TestParallelErrFlow(t *testing.T) {
 	checkDispatch(t, 3, false)
 }
 

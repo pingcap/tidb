@@ -17,7 +17,6 @@ package dispatcher
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
@@ -25,31 +24,11 @@ import (
 // DispatcherForTest exports for testing.
 type DispatcherForTest interface {
 	GetRunningGTaskCnt() int
-	GetRunningGTasks() []*proto.Task
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
 func (d *dispatcher) GetRunningGTaskCnt() int {
 	return d.getRunningGTaskCnt()
-}
-
-// GetRunningGTasks implements Dispatcher.GetRunningGTasks interface.
-func (d *dispatcher) GetRunningGTasks() []*proto.Task {
-	d.runningGTasks.RLock()
-	defer d.runningGTasks.RUnlock()
-
-	taskCnt := len(d.runningGTasks.taskIDs)
-	// get tasks for chan
-	tasks := make([]*proto.Task, 0, taskCnt)
-	for i := 0; i < taskCnt; i++ {
-		t := <-d.detectPendingGTaskCh
-		tasks = append(tasks, t)
-	}
-	// put tasks back to chan
-	for i := 0; i < taskCnt; i++ {
-		d.detectPendingGTaskCh <- tasks[i]
-	}
-	return tasks
 }
 
 func TestMain(m *testing.M) {
