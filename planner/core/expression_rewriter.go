@@ -264,9 +264,10 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
-// 		IF ( isNull(a0 NE b0), Null,
-// 			IF ( a1 NE b1, a1 op b1,
-// 				IF ( isNull(a1 NE b1), Null, a2 op b2))))`
+//
+//	IF ( isNull(a0 NE b0), Null,
+//		IF ( a1 NE b1, a1 op b1,
+//			IF ( isNull(a1 NE b1), Null, a2 op b2))))`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {

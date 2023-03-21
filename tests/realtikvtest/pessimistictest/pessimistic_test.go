@@ -58,6 +58,7 @@ func createAsyncCommitTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 // TODO: figure out a stable way to run Test1PCWithSchemaChange
+//
 //nolint:unused
 func create1PCTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
@@ -2864,7 +2865,7 @@ func TestChangeLockToPut(t *testing.T) {
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 
-	tk.MustExec("drop table if exists tk")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
 	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
 
@@ -2910,6 +2911,40 @@ func TestChangeLockToPut(t *testing.T) {
 	}
 
 	tk.MustExec("admin check table t1")
+}
+
+func TestIssue28011(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tt := range []struct {
+		name      string
+		lockQuery string
+		finalRows [][]interface{}
+	}{
+		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
+		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
+		{"SelectForUpdate", "select a from t where a = 'a' for update", testkit.Rows("a x", "b y", "c z")},
+		{"BatchSelectForUpdate", "select a from t where a in ('a', 'b', 'c') for update", testkit.Rows("a x", "b y", "c z")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a varchar(10) primary key nonclustered, b varchar(10))")
+			tk.MustExec("insert into t values ('a', 'x'), ('b', 'x'), ('c', 'z')")
+			tk.MustExec("begin")
+			tk.MustExec(tt.lockQuery)
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustExec("replace into t values ('b', 'y')")
+			tk.MustQuery("select a from t").Check(testkit.Rows("a", "b", "c"))
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("commit")
+			tk.MustQuery("select a, b from t order by a").Check(tt.finalRows)
+			tk.MustExec("admin check table t")
+		})
+	}
 }
 
 func createTable(part bool, columnNames []string, columnTypes []string) string {
