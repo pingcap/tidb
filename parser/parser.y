@@ -332,6 +332,7 @@ import (
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
+	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
 	causal                "CAUSAL"
@@ -739,6 +740,10 @@ import (
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
 	ruRate                "RU_PER_SEC"
+	priority              "PRIORITY"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -892,6 +897,7 @@ import (
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
+	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -1374,6 +1380,7 @@ import (
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
+	ResourceGroupPriorityOption            "Resource group priority option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1617,10 +1624,28 @@ ResourceGroupOptionList:
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
+ResourceGroupPriorityOption:
+	"LOW"
+	{
+		$$ = uint64(1)
+	}
+|	"MEDIUM"
+	{
+		$$ = uint64(8)
+	}
+|	"HIGH"
+	{
+		$$ = uint64(16)
+	}
+
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"PRIORITY" EqOpt ResourceGroupPriorityOption
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
 	{
@@ -6403,6 +6428,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"CALIBRATE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6543,6 +6569,10 @@ NotKeywordToken:
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
 |	"RU_PER_SEC"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
 |	"BURSTABLE"
 
 /************************************************************************************
@@ -11380,6 +11410,7 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	CalibrateResourceStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
@@ -14630,4 +14661,17 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
+
+/********************************************************************
+ *
+ * Calibrate Resource Statement
+ *
+ * CALIBRATE RESOURCE
+ *******************************************************************/
+CalibrateResourceStmt:
+	"CALIBRATE" "RESOURCE"
+	{
+		$$ = &ast.CalibrateResourceStmt{}
+	}
+
 %%
