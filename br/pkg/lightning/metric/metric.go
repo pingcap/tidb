@@ -135,6 +135,12 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 		//  - running
 		//  - finished
 		//  - failed
+		RowsCounter: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "lightning",
+				Name:      "rows",
+				Help:      "count of total rows",
+			}, []string{"table"}),
 
 		RowsCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{

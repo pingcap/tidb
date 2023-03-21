@@ -8,9 +8,9 @@ This roadmap brings you what's coming in the future, so you can see the new feat
   <thead>
     <tr>
       <th>Category</th>
-      <th>Mid-year LTS release</th>
-      <th>End-of-year LTS release</th>
-      <th>2-3 year projection</th>
+      <th>Mid-calendar-year LTS release</th>
+      <th>End-calendar-year LTS release</th>
+      <th>Future releases</th>
     </tr>
   </thead>
   <tbody valign="top">
@@ -335,7 +335,7 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           <br />
           <li>
             <b>Database encryption</b>
-            <br /><i>Support data-at-rest encryption for database files</i>
+            <br /><i>Encryption at rest with more granularity in table-level and column-level</i>
           </li>
           <br />
           <li>

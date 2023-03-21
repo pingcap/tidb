@@ -9,7 +9,7 @@ DB_NAME="basic"
 TABLE_NAME="t"
 SEQUENCE_NAME="s"
 
-# Test for simple case.
+echo "Test for simple case."
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
@@ -26,7 +26,7 @@ cnt=$(grep -w "Welcome to dumpling.*Release Version.*Git Commit Hash.*Go Version
 echo "version info count is ${cnt}"
 [ "$cnt" = 1 ]
 
-# Test for simple WHERE case.
+echo "Test for simple WHERE case."
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
@@ -40,7 +40,7 @@ expected=$(seq 3 9)
 echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
-# Test for OR WHERE case. Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
+echo "Test for OR WHERE case." # Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
@@ -61,7 +61,7 @@ echo "expected ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000009.sql ${e
 
 seq 1 8 | xargs -I\? file_not_exist ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.00000000\?.sql
 
-# Test for specifying --filetype sql with --sql, should report an error
+echo "Test for specifying --filetype sql with --sql, should report an error."
 set +e
 run_dumpling --sql "select * from \`$DB_NAME\`.\`$TABLE_NAME\`" --filetype sql > ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
@@ -70,8 +70,23 @@ actual=$(grep -w "unsupported config.FileType 'sql' when we specify --sql, pleas
 echo "expected 1 return error when specifying --filetype sql and --sql, actual ${actual}"
 [ "$actual" = 1 ]
 
+echo "Test for incorrect --output-filename-template option causing panic issue."
+set +e
+run_dumpling --sql "select * from \`$DB_NAME\`.\`$TABLE_NAME\`" --filetype csv --output-filename-template "${TABLE_NAME}.${DB_NAME}.{{.index}}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+set -e
+
+actual=$(grep -w "can't evaluate field index in type" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expected at least 1 return error when specifying --output-filename-template with {{.index}}, actual ${actual}"
+[ "$actual" -ge 1 ]
+
+echo "Test for --output-filename-template option."
+run_dumpling --sql "select * from \`$DB_NAME\`.\`$TABLE_NAME\`" --filetype csv --output-filename-template "${TABLE_NAME}.${DB_NAME}.{{.Index}}"
+cnt=$(cat ${DUMPLING_OUTPUT_DIR}/${TABLE_NAME}.${DB_NAME}.000000000.csv|wc -l)
+echo "records count is ${cnt}"
+[ "$cnt" = 101 ]
+
 export DUMPLING_TEST_PORT=4000
-# Test for --sql option.
+echo "Test for --sql option."
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create sequence \`$DB_NAME\`.\`$SEQUENCE_NAME\` increment by 1;"
@@ -88,13 +103,13 @@ actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv  | sed "s/\r/r/
 echo "expected 2r, actual ${actual}"
 [ "$actual" = "2r" ]
 
-# Test for dump with sequence
+echo "Test for dump with sequence."
 run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
 actual=$(grep -w "dump failed" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 echo "expected 0, actual ${actual}"
 [ "$actual" = 0 ]
 
-# Test for tidb_mem_quota_query configuration
+echo "Test for tidb_mem_quota_query configuration."
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
 run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
 actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
@@ -103,7 +118,7 @@ echo "expected 1, actual ${actual}"
 
 export GO_FAILPOINTS=""
 
-# Test for wrong sql causing panic problem: https://github.com/pingcap/dumpling/pull/234#issuecomment-759996695
+echo "Test for wrong sql causing panic problem." # link issue: https://github.com/pingcap/dumpling/pull/234#issuecomment-759996695
 set +e
 run_dumpling --sql "test" > ${DUMPLING_OUTPUT_DIR}/dumpling.log 2> ${DUMPLING_OUTPUT_DIR}/dumpling.err
 set -e
@@ -118,7 +133,7 @@ actual=$(grep -w "You have an error in your SQL syntax" ${DUMPLING_OUTPUT_DIR}/d
 echo "expect contain error in SQL syntax, actual ${actual}"
 [ "$actual" -ge 1 ]
 
-# Test for consistency lock with empty database.
+echo "Test for consistency lock with empty database."
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
@@ -129,7 +144,7 @@ cnt=$(grep -w "$DB_NAME" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}-schema-create.sql|wc 
 echo "records count is ${cnt}"
 [ "$cnt" = 1 ]
 
-# Test for recording network usage
+echo "Test for recording network usage."
 run_sql "drop database if exists test_db;"
 run_sql "create database test_db;"
 run_sql "create table test_db.test_table (a int primary key);"

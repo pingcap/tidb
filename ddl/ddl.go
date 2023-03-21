@@ -372,8 +372,6 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
-
-	waiting *atomicutil.Bool
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -537,13 +535,16 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
 	rc.setRowCount(rowCount)
-	rc.setNextKey(startKey)
 	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	rc.references.Add(1)
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
+}
+
+func genBackfillJobReorgCtxID(jobID int64) int64 {
+	return -jobID
 }
 
 func (dc *ddlCtx) removeReorgCtx(jobID int64) {
@@ -674,7 +675,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.runningJobs.ids = make(map[int64]struct{})
-	ddlCtx.waiting = atomicutil.NewBool(false)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,

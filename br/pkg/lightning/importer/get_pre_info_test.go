@@ -747,7 +747,7 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	sizeResult, err := ig.EstimateSourceDataSize(ctx)
 	require.NoError(t, err)
 	t.Logf("estimate size: %v, file size: %v, has unsorted table: %v\n", sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex, sizeResult.HasUnsortedBigTables)
-	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex)
+	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, int64(float64(sizeResult.SizeWithoutIndex)*compressionRatio))
 	require.Equal(t, int64(len(testData)), sizeResult.SizeWithoutIndex)
 	require.False(t, sizeResult.HasUnsortedBigTables)
 }

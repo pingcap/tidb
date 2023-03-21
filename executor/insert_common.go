@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,9 +41,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
@@ -97,7 +98,7 @@ type InsertValues struct {
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
-	txnInUse   sync.Mutex
+	txnInUse   syncutil.Mutex
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
@@ -313,7 +314,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		if err1 != nil {
 			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
-		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
@@ -535,13 +536,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	return nil
 }
@@ -1188,6 +1189,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	// append warnings and get no duplicated error rows
+CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
@@ -1200,19 +1202,29 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 					if err != nil {
 						return err
 					}
-					_, err2 := e.removeRow(ctx, txn, handle, r, false)
+					unchanged, err2 := e.removeRow(ctx, txn, handle, r, false)
 					if err2 != nil {
 						return err2
 					}
+					if unchanged {
+						// we don't need to add the identical row again, but the
+						// counter should act as if we did.
+						e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+						continue
+					}
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+					}
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
-		skip := false
+
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
@@ -1238,8 +1250,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-					skip = true
-					break
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedRowKey(uk.newKey)
+					}
+					continue CheckAndInsert
 				}
 			} else if !kv.IsErrNotFound(err) {
 				return err
@@ -1247,14 +1262,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
+		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
-		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
-			if err != nil {
-				return err
-			}
+		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		err = addRecord(ctx, rows[i])
+		if err != nil {
+			return err
 		}
 	}
 	if e.stats != nil {
@@ -1292,6 +1305,10 @@ func (e *InsertValues) removeRow(
 	if identical {
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
+		if err != nil {
+			return false, err
 		}
 		return true, nil
 	}
