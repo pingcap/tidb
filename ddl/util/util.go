@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"github.com/pingcap/failpoint"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
