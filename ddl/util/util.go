@@ -58,7 +58,7 @@ const (
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL          = 90
-	getRaftKvVersionSQL = "show config"
+	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
 	raftKv2             = "raft-kv2"
 )
 
