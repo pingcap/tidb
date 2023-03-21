@@ -210,7 +210,6 @@ func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	if err = rows.Err(); err != nil {
 		return errors.Annotatef(err, "sql: %s", td.query)
 	}
-	td.SQLRowIter = nil
 	td.rows = rows
 	if td.needColTypes {
 		ns, err := rows.Columns()
@@ -227,14 +226,12 @@ func (td *tableData) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 			td.colTypes = append(td.colTypes, c.DatabaseTypeName())
 		}
 	}
+	td.SQLRowIter = newRowIter(rows, td.colLen)
 
 	return nil
 }
 
 func (td *tableData) Rows() SQLRowIter {
-	if td.SQLRowIter == nil {
-		td.SQLRowIter = newRowIter(td.rows, td.colLen)
-	}
 	return td.SQLRowIter
 }
 
@@ -354,13 +351,11 @@ func newMultiQueriesChunk(queries []string, colLength int) *multiQueriesChunk {
 func (td *multiQueriesChunk) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	td.tctx = tctx
 	td.conn = conn
+	td.SQLRowIter = newMultiQueryChunkIter(td.tctx, td.conn, td.queries, td.colLen)
 	return nil
 }
 
 func (td *multiQueriesChunk) Rows() SQLRowIter {
-	if td.SQLRowIter == nil {
-		td.SQLRowIter = newMultiQueryChunkIter(td.tctx, td.conn, td.queries, td.colLen)
-	}
 	return td.SQLRowIter
 }
 
