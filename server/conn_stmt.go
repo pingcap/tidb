@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql"
@@ -297,6 +298,29 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
+		// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
+		// the rows directly to avoid running executor and accessing shared params/variables in the session
+		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
+		// but the rows are still needed in the following FETCH command.
+		chk := rs.NewChunk(nil)
+		var rows []chunk.Row
+		for {
+			if err = rs.Next(ctx, chk); err != nil {
+				return false, err
+			}
+			rowCount := chk.NumRows()
+			if rowCount == 0 {
+				break
+			}
+			// filling fetchedRows with chunk
+			for i := 0; i < rowCount; i++ {
+				row := chk.GetRow(i)
+				rows = append(rows, row)
+			}
+			chk = chunk.Renew(chk, vars.MaxChunkSize)
+		}
+		rs.StoreFetchedRows(rows)
+
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
@@ -304,6 +328,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
+
+		// as the `Next` of `ResultSet` will never be called, all rows have been cached inside it. We could close this
+		// `ResultSet`.
+		err = rs.Close()
+		if err != nil {
+			return false, err
+		}
+
 		// explicitly flush columnInfo to client.
 		err = cc.writeEOF(ctx, cc.ctx.Status())
 		if err != nil {
@@ -698,6 +730,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	if stmt != nil {
 		return stmt.Close()
 	}
+
 	return
 }
 
