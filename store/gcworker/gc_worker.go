@@ -837,6 +837,10 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 
+	raftKv2, err := util.IsRaftKv2(ctx, se)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
 	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
 
@@ -846,11 +850,17 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
+		if raftKv2 {
+			// In raftstore-v2, we use delete range instead to avoid deletion omission
+			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
+			err = task.Execute(ctx)
+		} else {
+			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+			failpoint.Inject("ignoreDeleteRangeFailed", func() {
+				err = nil
+			})
+		}
 
-		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
-		failpoint.Inject("ignoreDeleteRangeFailed", func() {
-			err = nil
-		})
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),

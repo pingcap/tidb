@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"github.com/pingcap/failpoint"
 	"strings"
 	"time"
 
@@ -56,7 +57,9 @@ const (
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// SessionTTL is the etcd session's TTL in seconds.
-	SessionTTL = 90
+	SessionTTL          = 90
+	getRaftKvVersionSql = "show config"
+	raftKv2             = "raft-kv2"
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -125,14 +128,22 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
+
+	raftKv2, err := IsRaftKv2(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if !raftKv2 {
+		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = RemoveFromGCDeleteRange(sctx, dr.JobID, dr.ElementID)
@@ -310,4 +321,38 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
+}
+
+func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
+	// Mock store does not support `show config` now, so we  use failpoint here
+	// to control whether we are in raft-kv2
+	failpoint.Inject("is-raft-kv2", func(v failpoint.Value) (bool, error) {
+		v2, _ := v.(bool)
+		return v2, nil
+	})
+
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSql)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	req := rs.NewChunk(nil)
+	it := chunk.NewIterator4Chunk(req)
+	err = rs.Next(context.TODO(), req)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	row := it.Begin()
+
+	if row.IsEmpty() {
+		return false, nil
+	}
+
+	raftVersion, err := hex.DecodeString(row.GetString(3))
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return string(raftVersion[:]) == raftKv2, nil
 }
