@@ -17,7 +17,6 @@ package metric
 import (
 	"context"
 	"math"
-	"strings"
 
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -135,12 +134,6 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 		//  - running
 		//  - finished
 		//  - failed
-		RowsCounter: factory.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: "lightning",
-				Name:      "rows",
-				Help:      "count of total rows",
-			}, []string{"table"}),
 
 		RowsCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{
@@ -330,25 +323,17 @@ func ReadCounter(counter prometheus.Counter) float64 {
 	return metric.Counter.GetValue()
 }
 
-// MetricHasLabel
-func MetricHasLabel(metric prometheus.Metric, labels ...string) bool {
-	desc := metric.Desc().String()
-	const startWith = "variableLabels: "
-	n := strings.Index(desc, startWith)
-	if n < 0 {
-		return false
-	}
-	desc = desc[n+len(startWith):]
-	for _, label := range labels {
-		if !strings.Contains(desc, label) {
-			return false
+func metricHasLabel(labelPairs []*dto.LabelPair, labels prometheus.Labels) bool {
+	for _, label := range labelPairs {
+		if v, ok := labels[label.GetName()]; ok && v == label.GetValue() {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // ReadAllCounters reports the summary value of the counters with given labels.
-func ReadAllCounters(metricsVec *prometheus.MetricVec, labels ...string) float64 {
+func ReadAllCounters(metricsVec *prometheus.MetricVec, labels prometheus.Labels) float64 {
 	metricsChan := make(chan prometheus.Metric, 8)
 	go func() {
 		metricsVec.Collect(metricsChan)
@@ -357,12 +342,12 @@ func ReadAllCounters(metricsVec *prometheus.MetricVec, labels ...string) float64
 
 	var sum float64
 	for counter := range metricsChan {
-		if !MetricHasLabel(counter, labels...) {
-			continue
-		}
 		var metric dto.Metric
 		if err := counter.Write(&metric); err != nil {
 			return math.NaN()
+		}
+		if !metricHasLabel(metric.GetLabel(), labels) {
+			continue
 		}
 		sum += metric.Counter.GetValue()
 	}

@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/prometheus/client_golang/prometheus"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -1242,8 +1243,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					nanoseconds := float64(time.Since(start).Nanoseconds())
 					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore))
 					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored))
-					totalRowsToRestore := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, metric.StateTotalRestore)
-					restoredRows := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, metric.StateRestored)
+					totalRowsToRestore := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, prometheus.Labels{"state": metric.StateTotalRestore})
+					restoredRows := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, prometheus.Labels{"state": metric.StateRestored})
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))

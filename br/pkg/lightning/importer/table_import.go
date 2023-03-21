@@ -1242,7 +1242,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	var totalRows int
 	if m, ok := metric.FromContext(ctx); ok {
-		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(metric.StateRestored, tableName)))
 	}
 
 	// Try to add all indexes in one statement.
