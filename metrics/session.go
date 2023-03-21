@@ -223,7 +223,7 @@ func InitSessionMetrics() {
 	FairLockingUsageCount = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
+			Subsystem: "session",
 			Name:      "transaction_fair_locking_usage",
 			Help:      "The counter of statements and transactions in which fair locking is used or takes effect",
 		}, []string{LblType})
