@@ -500,7 +500,7 @@ func TestCursorWithParams(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id_1 int, id_2 int)")
-	tk.MustExec("insert into t values (1, 1), (1, 2)")
+	tk.MustExec("insert into t values (2, 1), (1, 2)")
 
 	stmt1, _, _, err := c.Context().Prepare("select * from t where id_1 = ? and id_2 = ?")
 	require.NoError(t, err)
@@ -515,23 +515,35 @@ func TestCursorWithParams(t *testing.T) {
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
 
-	// `execute stmt2 using 1` with cursor
+	// `execute stmt2 using 2` with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt2.ID())),
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 		0x0, 0x1, 0x3, 0x0,
-		0x1, 0x0, 0x0, 0x0,
+		0x2, 0x0, 0x0, 0x0,
 	)))
+
+	checkStmtParams := func() {
+		// and the params for statements are correct
+		require.Equal(t, c.ctx.stmts[stmt1.ID()].preparedStatementCtx.Params[0].GetInt64(), int64(1))
+		require.Equal(t, c.ctx.stmts[stmt1.ID()].preparedStatementCtx.Params[1].GetInt64(), int64(2))
+		require.Equal(t, c.ctx.stmts[stmt2.ID()].preparedStatementCtx.Params[0].GetInt64(), int64(2))
+	}
 
 	// fetch stmt2 with fetch size 256
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt2.ID())),
 		0x0, 0x1, 0x0, 0x0,
 	)))
+	require.Equal(t, c.ctx.GetSessionVars().PreparedParams[0].GetInt64(), int64(2))
+	checkStmtParams()
 
 	// fetch stmt1 with fetch size 256, as it has more params, if we didn't restore the parameters, it will panic.
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt1.ID())),
 		0x0, 0x1, 0x0, 0x0,
 	)))
+	require.Equal(t, c.ctx.GetSessionVars().PreparedParams[0].GetInt64(), int64(1))
+	require.Equal(t, c.ctx.GetSessionVars().PreparedParams[1].GetInt64(), int64(2))
+	checkStmtParams()
 }

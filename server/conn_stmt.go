@@ -307,7 +307,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		// also store the preparedParams in the stmt, so we could restore the params in the following fetch command
 		// the params should have been parsed in `(&cc.ctx).ExecuteStmt(ctx, execStmt)`.
 		stmt.StorePreparedCtx(&PreparedStatementCtx{
-			Params: vars.PreparedParams,
+			Params: vars.PreparedParams.Clone(),
 		})
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
@@ -352,7 +352,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 
-	cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params
+	cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params.Clone()
 
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
@@ -709,10 +709,14 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
-	if stmt != nil {
-		return stmt.Close()
+	if stmt == nil {
+		return
 	}
-	return
+
+	if stmt.GetPreparedCtx() != nil {
+		cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params.Clone()
+	}
+	return stmt.Close()
 }
 
 func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
@@ -743,6 +747,9 @@ func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
+
+	// restore the params, in case the `ResultSet.Close` is called in `Reset`.
+	cc.ctx.GetSessionVars().PreparedParams = stmt.GetPreparedCtx().Params.Clone()
 	stmt.Reset()
 	stmt.StoreResultSet(nil)
 	return cc.writeOK(ctx)

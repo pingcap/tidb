@@ -1664,6 +1664,16 @@ func (pps PreparedParams) String() string {
 	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
+// Clone deep copies the params
+func (pps PreparedParams) Clone() PreparedParams {
+	newParams := make(PreparedParams, 0, len(pps))
+	for _, p := range pps {
+		newParams = append(newParams, *p.Clone())
+	}
+
+	return newParams
+}
+
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64

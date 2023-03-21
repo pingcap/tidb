@@ -165,6 +165,9 @@ func (ts *TiDBStatement) Reset() {
 		terror.Call(ts.rs.Close)
 		ts.rs = nil
 	}
+
+	// Remove the existing params. This is actually not necessary, but we still reset the params to make it clearer.
+	ts.preparedStatementCtx = nil
 }
 
 // Close implements PreparedStatement Close method.
