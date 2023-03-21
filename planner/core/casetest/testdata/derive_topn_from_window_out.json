@@ -188,7 +188,7 @@
           "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#4 over(order by test.t.b rows between current row and current row)",
           "        └─Sort 10000.00 mpp[tiflash]  test.t.b",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
