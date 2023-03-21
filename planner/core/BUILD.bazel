@@ -127,6 +127,7 @@ go_library(
         "//util/disjointset",
         "//util/domainutil",
         "//util/execdetails",
+        "//util/filter",
         "//util/hack",
         "//util/hint",
         "//util/kvcache",
