@@ -76,6 +76,7 @@ const (
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagDeriveTopNFromWindow
+	flagPredicateSimplification
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -99,6 +100,7 @@ var optRuleList = []logicalOptRule{
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
 	&deriveTopNFromWindow{},
+	&predicateSimplification{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
