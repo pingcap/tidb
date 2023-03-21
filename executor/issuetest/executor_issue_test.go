@@ -1401,3 +1401,17 @@ func TestIssueRaceWhenBuildingExecutorConcurrently(t *testing.T) {
 	}
 	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t t1 right join t t2 on t1.a = t2.b and t1.c = t2.c")
 }
+
+func TestIssue42298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t add column b int")
+	res := tk.MustQuery("admin show ddl job queries limit 268430000")
+	require.Greater(t, len(res.Rows()), 0, len(res.Rows()))
+	res = tk.MustQuery("admin show ddl job queries limit 999 offset 268430000")
+	require.Zero(t, len(res.Rows()), len(res.Rows()))
+}
