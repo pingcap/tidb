@@ -130,6 +130,65 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type CreateCatalogStmt struct {
+	ddlNode
+
+	IfNotExists bool
+	Name        model.CIStr
+	Properties  []*CatalogProperty
+}
+
+// Restore implements Node interface.
+func (n *CreateCatalogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE CATALOG ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.Name.O)
+	ctx.WriteKeyWord("PROPERTIES ")
+	ctx.WritePlain(" (")
+	for i, prop := range n.Properties {
+		ctx.WritePlain(" ")
+		err := prop.Restore(ctx)
+		if err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreateDatabaseStmt DatabaseOption: [%v]", i)
+		}
+	}
+	ctx.WritePlain(") ")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateCatalogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateCatalogStmt)
+	return v.Leave(n)
+}
+
+type CatalogProperty struct {
+	Name  string
+	Value string
+}
+
+// Restore implements Node interface.
+func (n *CatalogProperty) Restore(ctx *format.RestoreCtx) error {
+	ctx.WritePlain(n.Name)
+	ctx.WritePlain(" = ")
+	ctx.WritePlain(n.Value)
+	//	switch n.Tp {
+	//	case DatabaseOptionCharset:
+	//		ctx.WriteKeyWord("CHARACTER SET")
+	//		ctx.WritePlain(" = ")
+	//		ctx.WritePlain(n.Value)
+	//default:
+	//		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
+	//	}
+	return nil
+}
+
 // CreateDatabaseStmt is a statement to create a database.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-database.html
 type CreateDatabaseStmt struct {

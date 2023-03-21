@@ -91,6 +91,7 @@ import (
 	call              "CALL"
 	cascade           "CASCADE"
 	caseKwd           "CASE"
+	catalog           "CATALOG"
 	change            "CHANGE"
 	character         "CHARACTER"
 	charType          "CHAR"
@@ -108,6 +109,7 @@ import (
 	currentUser       "CURRENT_USER"
 	currentRole       "CURRENT_ROLE"
 	database          "DATABASE"
+	catalog           "catalog"
 	databases         "DATABASES"
 	dayHour           "DAY_HOUR"
 	dayMicrosecond    "DAY_MICROSECOND"
@@ -217,6 +219,7 @@ import (
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
+	properties        "PROPERTIES"
 	rangeKwd          "RANGE"
 	rank              "RANK"
 	read              "READ"
@@ -896,6 +899,7 @@ import (
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
+	CreateCatalogStmt          "Create Catalog Statement"
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
@@ -1039,6 +1043,8 @@ import (
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
+	CatalogProperty                        "CREATE Catalog property"
+	CatalogPropertiesList                  "CREATE Catalog properties list"
 	DistinctOpt                            "Explicit distinct option"
 	DefaultFalseDistinctOpt                "Distinct option which defaults to false"
 	DefaultTrueDistinctOpt                 "Distinct option which defaults to true"
@@ -1434,6 +1440,9 @@ import (
 	CollationName                   "Collation name"
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
+	CatalogName                     "Catalog Name"
+	CatalogPropertyName             "Catalog Property Name"
+	CatalogPropertyValue            "Catalog Property Value"
 	PolicyName                      "Placement Policy Name"
 	ResourceGroupName               "Resource Group Name"
 	ExplainFormatType               "explain format type"
@@ -3909,6 +3918,41 @@ AlterDatabaseStmt:
 		}
 	}
 
+CreateCatalogStmt:
+	"CREATE" "CATALOG" IfNotExists CatalogName "PROPERTIES" '(' CatalogPropertiesList ')'
+	{
+		$$ = &ast.CreateCatalogStmt{
+			IfNotExists: $3.(bool),
+			Name:        model.NewCIStr($4),
+			Properties:  $7.([]*ast.CatalogProperty),
+		}
+	}
+
+CatalogName:
+	Identifier
+
+CatalogPropertiesList:
+	CatalogProperty
+	{
+		$$ = []*ast.CatalogProperty{$1.(*ast.CatalogProperty)}
+	}
+|	CatalogPropertiesList ',' CatalogProperty
+	{
+		$$ = append($1.([]*ast.CatalogProperty), $3.(*ast.CatalogProperty))
+	}
+
+CatalogProperty:
+	CatalogPropertyName "=" CatalogPropertyValue
+	{
+		$$ = &ast.CatalogProperty{Name: $1, Value: $3}
+	}
+
+CatalogPropertyName:
+	stringLit
+
+CatalogPropertyValue:
+	stringLit
+
 /*******************************************************************
  *
  *  Create Database Statement
@@ -5383,7 +5427,7 @@ PauseLoadDataStmt:
 	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataPause,
+			Tp:    ast.LoadDataPause,
 			JobID: $5.(int64),
 		}
 	}
@@ -5392,7 +5436,7 @@ ResumeLoadDataStmt:
 	"RESUME" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataResume,
+			Tp:    ast.LoadDataResume,
 			JobID: $5.(int64),
 		}
 	}
@@ -5401,7 +5445,7 @@ CancelLoadDataStmt:
 	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataCancel,
+			Tp:    ast.LoadDataCancel,
 			JobID: $5.(int64),
 		}
 	}
@@ -5410,7 +5454,7 @@ DropLoadDataStmt:
 	"DROP" "LOAD" "DATA" "JOB" Int64Num
 	{
 		$$ = &ast.LoadDataActionStmt{
-			Tp: ast.LoadDataDrop,
+			Tp:    ast.LoadDataDrop,
 			JobID: $5.(int64),
 		}
 	}
@@ -10779,7 +10823,7 @@ ShowStmt:
 	{
 		v := $5.(int64)
 		$$ = &ast.ShowStmt{
-			Tp: ast.ShowLoadDataJobs,
+			Tp:            ast.ShowLoadDataJobs,
 			LoadDataJobID: &v,
 		}
 	}
@@ -11350,6 +11394,7 @@ Statement:
 |	ExplainStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
+|	CreateCatalogStmt
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
