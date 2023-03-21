@@ -1511,8 +1511,8 @@ var defaultSysVars = []*SysVar{
 		s.BroadcastJoinThresholdSize = TidbOptInt64(val, DefBroadcastJoinThresholdSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJoinCostModelVersion, Value: strconv.Itoa(DefBroadcastJoinCostModelVersion), Type: TypeInt, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
-		s.BroadcastJoinCostModelVersion = TidbOptInt64(val, DefBroadcastJoinCostModelVersion)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPreferBCJByExchangeDataSize, Type: TypeBool, Value: BoolToOnOff(DefPreferBCJByExchangeDataSize), SetSession: func(s *SessionVars, val string) error {
+		s.PreferBCJByExchangeDataSize = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBuildStatsConcurrency, Value: strconv.Itoa(DefBuildStatsConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},

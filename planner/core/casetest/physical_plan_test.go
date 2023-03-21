@@ -772,7 +772,7 @@ func TestMPPHintsScope(t *testing.T) {
 
 func TestMPPBCJModel(t *testing.T) {
 	/*
-		if there are 3 mpp stores, planner won't choose broadcast join enven if `tidb_broadcast_join_cost_model_version` GE 1
+		if there are 3 mpp stores, planner won't choose broadcast join enven if `tidb_prefer_broadcast_join_by_exchange_data_size` is ON
 		broadcast exchange size:
 			Build: 2 * sizeof(Data)
 			Probe: 0
@@ -825,7 +825,7 @@ func TestMPPBCJModel(t *testing.T) {
 
 func TestMPPBCJModelOneTiFlash(t *testing.T) {
 	/*
-		if there are 1 mpp stores, planner should choose broadcast join if `tidb_broadcast_join_cost_model_version` GE 1
+		if there are 1 mpp stores, planner should choose broadcast join if `tidb_prefer_broadcast_join_by_exchange_data_size` is ON
 		broadcast exchange size:
 			Build: 0 * sizeof(Data)
 			Probe: 0
@@ -849,15 +849,11 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 		require.Nil(t, err)
 	}
 	{
-		tk.MustExec("set @@session.tidb_broadcast_join_cost_model_version=-1")
-		tk.MustQuery("show warnings").Check(testkit.Rows(
-			"Warning 1292 Truncated incorrect tidb_broadcast_join_cost_model_version value: '-1'"))
-		tk.MustExec("set @@session.tidb_broadcast_join_cost_model_version=2")
-		tk.MustQuery("show warnings").Check(testkit.Rows(
-			"Warning 1292 Truncated incorrect tidb_broadcast_join_cost_model_version value: '2'"))
+		tk.MustExecToErr("set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=-1")
+		tk.MustExecToErr("set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=2")
 	}
 	{
-		// no BCJ if `tidb_broadcast_join_cost_model_version` EQ 0
+		// no BCJ if `tidb_prefer_broadcast_join_by_exchange_data_size` is OFF
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=0")
 	}

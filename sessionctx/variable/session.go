@@ -842,10 +842,10 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
-	// BroadcastJoinCostModelVersion indicates the version of cost model used for mpp broadcast join
-	// 0: default
-	// 1: compare data exchange size of join and choose the smallest one
-	BroadcastJoinCostModelVersion int64
+	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	// false: choose mpp broadcast join by `BroadcastJoinThresholdSize` and `BroadcastJoinThresholdCount`
+	// true: compare data exchange size of join and choose the smallest one
+	PreferBCJByExchangeDataSize bool
 
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64

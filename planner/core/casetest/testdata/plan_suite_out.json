@@ -1415,7 +1415,7 @@
         "Warn": null
       },
       {
-        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=0",
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
         "Plan": null,
         "Warn": null
       },
@@ -1435,7 +1435,7 @@
         "Warn": null
       },
       {
-        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=1",
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
         "Plan": null,
         "Warn": null
       },
@@ -1467,7 +1467,7 @@
         "Warn": null
       },
       {
-        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=0",
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
         "Plan": null,
         "Warn": null
       },
@@ -1489,7 +1489,7 @@
         "Warn": null
       },
       {
-        "SQL": "set @@session.tidb_broadcast_join_cost_model_version=1",
+        "SQL": "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
         "Plan": null,
         "Warn": null
       },

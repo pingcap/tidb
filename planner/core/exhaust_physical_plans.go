@@ -2149,7 +2149,7 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 }
 
 // If we can use mpp broadcast join, that's our first choice.
-func (p *LogicalJoin) shouldUseMPPBCJ() bool {
+func (p *LogicalJoin) preferMppBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -2157,7 +2157,7 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	onlyCheckChild1 := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
 	onlyCheckChild0 := p.JoinType == RightOuterJoin
 
-	if p.ctx.GetSessionVars().BroadcastJoinCostModelVersion > 0 {
+	if p.ctx.GetSessionVars().PreferBCJByExchangeDataSize {
 		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
 
 		// No need to exchange data if there is only ONE mpp store. But the behavior of optimizer is unexpected if use broadcast way forcibly, such as tpch q4.
@@ -2229,7 +2229,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 				return bcastJoins, true, nil
 			}
 		}
-		if p.shouldUseMPPBCJ() {
+		if p.preferMppBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			joins = append(joins, mppJoins...)
 		} else {
