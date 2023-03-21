@@ -145,16 +145,18 @@ func (n *CreateCatalogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
 	ctx.WriteName(n.Name.O)
-	ctx.WriteKeyWord("PROPERTIES ")
+	ctx.WriteKeyWord(" PROPERTIES ")
 	ctx.WritePlain(" (")
 	for i, prop := range n.Properties {
-		ctx.WritePlain(" ")
 		err := prop.Restore(ctx)
 		if err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateDatabaseStmt DatabaseOption: [%v]", i)
 		}
+		if i != len(n.Properties)-1 {
+			ctx.WritePlain(",")
+		}
 	}
-	ctx.WritePlain(") ")
+	ctx.WritePlain(")")
 	return nil
 }
 
@@ -175,9 +177,9 @@ type CatalogProperty struct {
 
 // Restore implements Node interface.
 func (n *CatalogProperty) Restore(ctx *format.RestoreCtx) error {
-	ctx.WritePlain(n.Name)
+	ctx.WriteString(n.Name)
 	ctx.WritePlain(" = ")
-	ctx.WritePlain(n.Value)
+	ctx.WriteString(n.Value)
 	//	switch n.Tp {
 	//	case DatabaseOptionCharset:
 	//		ctx.WriteKeyWord("CHARACTER SET")

@@ -108,7 +108,6 @@ import (
 	currentUser       "CURRENT_USER"
 	currentRole       "CURRENT_ROLE"
 	database          "DATABASE"
-	catalog           "catalog"
 	databases         "DATABASES"
 	dayHour           "DAY_HOUR"
 	dayMicrosecond    "DAY_MICROSECOND"
