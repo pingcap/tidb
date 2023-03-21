@@ -65,7 +65,6 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		tk2.MustContainErrMsg(sql, "failed to keepalive")
 	}()
 
-	// TODO: remove this sleep after moving mysql.load_data_jobs to bootstrap
 	time.Sleep(3 * time.Second)
 	rows := s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Greater(s.T(), len(rows), 0)
@@ -76,14 +75,14 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 	// test CANCEL
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-operate/t.tsv?endpoint=%s'
-		REPLACE INTO TABLE test_operate.t;`, gcsEndpoint)
+		REPLACE INTO TABLE test_operate.t WITH batch_size = 1;`, gcsEndpoint)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		tk2.MustContainErrMsg(sql, "failed to keepalive")
 	}()
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(time.Second)
 	rows = s.tk.MustQuery("SHOW LOAD DATA JOBS;").Rows()
 	require.Greater(s.T(), len(rows), 0)
 	jobID = rows[len(rows)-1][0].(string)
