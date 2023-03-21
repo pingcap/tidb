@@ -2488,7 +2488,7 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 		if err != nil {
 			logutil.BgLogger().Fatal("ParseOneStmt error", zap.Error(err), zap.Stack("stack"))
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoWithContext(s, stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			logutil.BgLogger().Fatal("BuildTableInfoFromAST error", zap.Error(err), zap.Stack("stack"))
 		}
@@ -2517,7 +2517,7 @@ func batchCreateTable(s Session, d ddl.DDL, tableInfos []*model.TableInfo) {
 		if len(tableInfos) == 1 {
 			logutil.BgLogger().Fatal("too large TableInfo", zap.Any("tableInfo", tableInfos[0]), zap.Stack("stack"))
 		}
-		mid := len(tableInfos)/2 + 1
+		mid := len(tableInfos) / 2
 		batchCreateTable(s, d, tableInfos[:mid])
 		batchCreateTable(s, d, tableInfos[mid:])
 	} else {

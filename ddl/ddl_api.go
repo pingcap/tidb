@@ -2221,6 +2221,11 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "", nil)
 }
 
+// BuildTableInfoWithContext builds model.TableInfo from a SQL statement using given context.
+func BuildTableInfoWithContext(ctx sessionctx.Context, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	return buildTableInfoWithCheck(ctx, s, mysql.DefaultCharset, "", nil)
+}
+
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
 func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
