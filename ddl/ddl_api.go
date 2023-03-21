@@ -3982,10 +3982,16 @@ func getReplacedPartitionIDs(names []model.CIStr, pi *model.PartitionInfo) (int,
 			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
 		}
 	}
-	if pi.Type == model.PartitionTypeRange {
+	switch pi.Type {
+	case model.PartitionTypeRange:
 		if len(idMap) != (lastPartIdx - firstPartIdx + 1) {
 			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"REORGANIZE PARTITION of RANGE; not adjacent partitions"))
+		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if len(idMap) != len(pi.Definitions) {
+			return 0, 0, nil, errors.Trace(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"REORGANIZE PARTITION of HASH/RANGE; must reorganize all partitions"))
 		}
 	}
 
@@ -4006,6 +4012,11 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 	switch pi.Type {
 	case model.PartitionTypeRange, model.PartitionTypeList:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if spec.Tp != ast.AlterTableCoalescePartitions &&
+			spec.Tp != ast.AlterTableAddPartitions {
+			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
 	default:
 		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 	}
@@ -4105,7 +4116,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, tblInfo *model.TableInfo, p
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
-func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -4117,18 +4128,20 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil {
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
 	switch meta.Partition.Type {
-	// We don't support coalesce partitions hash type partition now.
-	case model.PartitionTypeHash:
-		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
-
-	// Key type partition cannot be constructed currently, ignoring it for now.
-	case model.PartitionTypeKey:
-		return errors.Trace(dbterror.ErrUnsupportedCoalescePartition)
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		newSpec := *spec
+		newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
+		for i := 0; i < len(pi.Definitions); i++ {
+			newSpec.PartitionNames[i] = pi.Definitions[i].Name
+		}
+		// TODO: Check if possible to coalesce with named partitions?
+		return d.ReorganizePartitions(sctx, ident, &newSpec)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
@@ -7074,6 +7087,23 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 			if len(spec.PartDefinitions) == 0 {
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 			}
+		}
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		switch spec.Tp {
+		case ast.AlterTableCoalescePartitions:
+			if len(spec.PartDefinitions) > 0 {
+				if int(spec.Num) != len(spec.PartDefinitions) ||
+					len(spec.PartDefinitions) >= len(meta.Partition.Definitions) {
+					return nil, ast.ErrCoalescePartitionNoPartition.GenWithStackByArgs(meta.Partition.Type)
+				}
+			}
+			if int(spec.Num) >= len(meta.Partition.Definitions) {
+				return nil, ast.ErrCoalescePartitionNoPartition.GenWithStackByArgs(meta.Partition.Type)
+			}
+			resetNum := meta.Partition.Num
+			defer func() { meta.Partition.Num = resetNum }()
+			meta.Partition.Num = uint64(len(meta.Partition.Definitions)) - spec.Num
+
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.

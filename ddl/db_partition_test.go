@@ -3404,6 +3404,51 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk1.MustExec("commit")
 }
 
+func TestCoalescePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// coalesce partition
+	tk.MustExec(`create schema coalescePart`)
+	tk.MustExec(`use coalescePart`)
+	tk.MustExec(`create table t (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12`)
+	tk.MustExec(`insert into t values (1, "Joe", "Doe", '2023-03-21'), (2, "Jane", "Doe", '2022-03-21')`)
+	tk.MustExec("alter table t coalesce partition 4")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `signed` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (MONTH(`signed`)) PARTITIONS 8"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by key(signed,fname)
+	partitions 12`)
+	tk.MustExec(`insert into t values (1, "Joe", "Doe", '2023-03-21'), (2, "Jane", "Doe", '2022-03-21')`)
+	tk.MustExec("alter table t coalesce partition 4")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `signed` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
+}
+
 func TestConstAndTimezoneDepent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
