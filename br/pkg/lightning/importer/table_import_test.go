@@ -1433,7 +1433,8 @@ func (s *tableRestoreSuite) TestEstimate() {
 			Timestamp:      0,
 			AutoRandomSeed: 0,
 		},
-	}, nil, log.L())).AnyTimes()
+		Logger: log.L(),
+	}, nil)).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 
 	dbMetas := []*mydump.MDDatabaseMeta{

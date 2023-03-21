@@ -9,7 +9,6 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	log "github.com/pingcap/tidb/br/pkg/lightning/log"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	types "github.com/pingcap/tidb/types"
 )
@@ -50,18 +49,18 @@ func (mr *MockEncoderMockRecorder) Close() *gomock.Call {
 }
 
 // Encode mocks base method.
-func (m *MockEncoder) Encode(arg0 log.Logger, arg1 []types.Datum, arg2 int64, arg3 []int, arg4 int64) (encode.Row, error) {
+func (m *MockEncoder) Encode(arg0 []types.Datum, arg1 int64, arg2 []int, arg3 int64) (encode.Row, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Encode", arg0, arg1, arg2, arg3, arg4)
+	ret := m.ctrl.Call(m, "Encode", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(encode.Row)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Encode indicates an expected call of Encode.
-func (mr *MockEncoderMockRecorder) Encode(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
+func (mr *MockEncoderMockRecorder) Encode(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), arg0, arg1, arg2, arg3, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), arg0, arg1, arg2, arg3)
 }
 
 // MockRows is a mock of Rows interface.

@@ -614,6 +614,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
+	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -621,7 +622,8 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 			SysVars:        sysVars,
 			AutoRandomSeed: 0,
 		},
-		Table: tbl,
+		Table:  tbl,
+		Logger: logger,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -653,7 +655,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	}
 	//nolint: errcheck
 	defer parser.Close()
-	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
+	logger.Begin(zap.InfoLevel, "sample file")
 	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -718,7 +720,7 @@ outloop:
 		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
 			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)

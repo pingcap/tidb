@@ -26,8 +26,9 @@ import (
 
 type EncodingConfig struct {
 	SessionOptions
-	Path  string // path of data file
-	Table table.Table
+	Path   string // path of data file
+	Table  table.Table
+	Logger log.Logger
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.
@@ -36,6 +37,16 @@ type EncodingBuilder interface {
 	NewEncoder(ctx context.Context, config *EncodingConfig) (Encoder, error)
 	// MakeEmptyRows creates an empty collection of encoded rows.
 	MakeEmptyRows() Rows
+}
+
+// Encoder encodes a row of SQL values into some opaque type which can be
+// consumed by OpenEngine.WriteEncoded.
+type Encoder interface {
+	// Close the encoder.
+	Close()
+
+	// Encode encodes a row of SQL values into a backend-friendly format.
+	Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (Row, error)
 }
 
 // SessionOptions is the initial configuration of the session.
@@ -59,16 +70,6 @@ type Rows interface {
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows
-}
-
-// Encoder encodes a row of SQL values into some opaque type which can be
-// consumed by OpenEngine.WriteEncoded.
-type Encoder interface {
-	// Close the encoder.
-	Close()
-
-	// Encode encodes a row of SQL values into a backend-friendly format.
-	Encode(logger log.Logger, row []types.Datum, rowID int64, columnPermutation []int, offset int64) (Row, error)
 }
 
 // Row represents a single encoded row.

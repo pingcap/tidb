@@ -145,6 +145,11 @@ func (cr *chunkProcessor) process(
 	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) error {
+	logger := t.logger.With(
+		zap.Int32("engineNumber", engineID),
+		zap.Int("fileIndex", cr.index),
+		zap.Stringer("path", &cr.chunk.Key),
+	)
 	// Create the encoder.
 	kvEncoder, err := rc.backend.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
@@ -154,8 +159,9 @@ func (cr *chunkProcessor) process(
 			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 		},
-		Path:  cr.chunk.Key.Path,
-		Table: t.encTable,
+		Path:   cr.chunk.Key.Path,
+		Table:  t.encTable,
+		Logger: logger,
 	})
 	if err != nil {
 		return err
@@ -174,13 +180,9 @@ func (cr *chunkProcessor) process(
 		}
 	}()
 
-	logTask := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "restore file")
+	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logger, kvEncoder, deliverCompleteCh, rc)
 	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
@@ -315,7 +317,7 @@ func (cr *chunkProcessor) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false

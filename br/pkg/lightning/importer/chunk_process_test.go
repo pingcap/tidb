@@ -268,7 +268,8 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567895,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
@@ -330,7 +331,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567895,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
@@ -360,7 +362,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567896,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 
 	go cancel()
@@ -381,7 +384,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567897,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 
 	// close the chunk so reading it will result in the "file already closed" error.
@@ -404,7 +408,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567898,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 
 	dir := s.T().TempDir()
@@ -464,7 +469,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored() {
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567898,
 		},
-	}, nil, log.L())
+		Logger: log.L(),
+	}, nil)
 	require.NoError(s.T(), err)
 
 	go func() {
@@ -514,7 +520,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 				SQLMode:   s.cfg.TiDB.SQLMode,
 				Timestamp: 1234567895,
 			},
-			Table: s.tr.encTable,
+			Table:  s.tr.encTable,
+			Logger: s.tr.logger,
 		})
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
@@ -616,7 +623,8 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 				SQLMode:   s.cfg.TiDB.SQLMode,
 				Timestamp: 1234567895,
 			},
-			Table: s.tr.encTable,
+			Table:  s.tr.encTable,
+			Logger: s.tr.logger,
 		})
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
@@ -639,7 +647,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 type mockEncoder struct{}
 
-func (mockEncoder) Encode(logger log.Logger, row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
+func (mockEncoder) Encode(row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	return &kv.KvPairs{}, nil
 }
 

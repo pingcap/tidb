@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -165,7 +164,7 @@ type noopEncoder struct{}
 func (e noopEncoder) Close() {}
 
 // Encode encodes a row of SQL values into a backend-friendly format.
-func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, int64) (encode.Row, error) {
+func (e noopEncoder) Encode([]types.Datum, int64, []int, int64) (encode.Row, error) {
 	return noopRow{}, nil
 }
 

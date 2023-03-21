@@ -100,9 +100,13 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	// skip column a,c due to ignore-columns
 	perms[0] = -1
 	perms[2] = -1
-	encoder, err := s.backend.NewEncoder(context.Background(), &encode.EncodingConfig{SessionOptions: encode.SessionOptions{SQLMode: 0, Timestamp: 1234567890}, Table: s.tbl})
+	encoder, err := s.backend.NewEncoder(context.Background(), &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{SQLMode: 0, Timestamp: 1234567890},
+		Table:          s.tbl,
+		Logger:         logger,
+	})
 	require.NoError(t, err)
-	row, err := encoder.Encode(logger, []types.Datum{
+	row, err := encoder.Encode([]types.Datum{
 		types.NewUintDatum(18446744073709551615),
 		types.NewIntDatum(-9223372036854775808),
 		types.NewUintDatum(0),
@@ -150,9 +154,9 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl})
+	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
-	row, err := encoder.Encode(logger, []types.Datum{
+	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
@@ -166,9 +170,9 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test encode rows with _tidb_rowid
-	encoder, err = ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl})
+	encoder, err = ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
-	rowWithID, err := encoder.Encode(logger, []types.Datum{
+	rowWithID, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
 		types.NewIntDatum(1), // _tidb_rowid field
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1}, 0)
@@ -196,9 +200,9 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl})
+	encoder, err := ignoreBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
 	require.NoError(t, err)
-	row, err := encoder.Encode(logger, []types.Datum{
+	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
@@ -233,25 +237,33 @@ func testStrictMode(t *testing.T) {
 	ctx := context.Background()
 
 	bk := tidb.NewTiDBBackend(ctx, s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig(), log.L()))
-	encoder, err := bk.NewEncoder(ctx, &encode.EncodingConfig{SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables}, Table: tbl})
+	logger := log.L()
+	encoder, err := bk.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables},
+		Table:          tbl,
+		Logger:         log.L(),
+	})
 	require.NoError(t, err)
 
-	logger := log.L()
-	_, err = encoder.Encode(logger, []types.Datum{
+	_, err = encoder.Encode([]types.Datum{
 		types.NewStringDatum("test"),
 	}, 1, []int{0, -1, -1}, 0)
 	require.NoError(t, err)
 
-	_, err = encoder.Encode(logger, []types.Datum{
+	_, err = encoder.Encode([]types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
 	}, 1, []int{0, -1, -1}, 0)
 	require.Error(t, err)
 	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
-	encoder, err = bk.NewEncoder(ctx, &encode.EncodingConfig{SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables}, Table: tbl})
+	encoder, err = bk.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables},
+		Table:          tbl,
+		Logger:         logger,
+	})
 	require.NoError(t, err)
-	_, err = encoder.Encode(logger, []types.Datum{
+	_, err = encoder.Encode([]types.Datum{
 		types.NewStringDatum(""),
 		types.NewStringDatum("非 ASCII 字符串"),
 	}, 1, []int{0, 1, -1}, 0)
@@ -564,35 +576,35 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 
 	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{Table: tbl})
 	require.NoError(t, err)
-	row, err := encoder.Encode(logger, []types.Datum{
+	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	row, err = encoder.Encode(logger, []types.Datum{
+	row, err = encoder.Encode([]types.Datum{
 		types.NewIntDatum(2),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	row, err = encoder.Encode(logger, []types.Datum{
+	row, err = encoder.Encode([]types.Datum{
 		types.NewIntDatum(3),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	row, err = encoder.Encode(logger, []types.Datum{
+	row, err = encoder.Encode([]types.Datum{
 		types.NewIntDatum(4),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	row, err = encoder.Encode(logger, []types.Datum{
+	row, err = encoder.Encode([]types.Datum{
 		types.NewIntDatum(5),
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NoError(t, err)
@@ -603,7 +615,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 	for i := 0; i < 15; i++ {
 		rawRow = append(rawRow, types.NewIntDatum(0))
 	}
-	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
+	row, err = encoder.Encode(rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NotNil(t, err)
 	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
