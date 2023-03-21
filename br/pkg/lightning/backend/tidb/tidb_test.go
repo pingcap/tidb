@@ -572,9 +572,8 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
 	indexRows := b.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
-	logger := log.L()
 
-	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{Table: tbl})
+	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{Table: tbl, Logger: log.L()})
 	require.NoError(t, err)
 	row, err := encoder.Encode([]types.Datum{
 		types.NewIntDatum(1),
