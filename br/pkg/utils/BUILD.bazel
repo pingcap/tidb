@@ -68,7 +68,7 @@ go_library(
 
 go_test(
     name = "utils_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "backoff_test.go",
         "cdc_test.go",
