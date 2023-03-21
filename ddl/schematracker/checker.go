@@ -472,8 +472,8 @@ func (d Checker) CreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr,
 
 // BatchCreateTableWithInfo implements the DDL interface.
 func (d Checker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	//TODO implement me
-	panic("implement me")
+	// currently this is only used in bootstrap, we don't need to check it.
+	return d.realDDL.BatchCreateTableWithInfo(ctx, schema, info, cs...)
 }
 
 // CreatePlacementPolicyWithInfo implements the DDL interface.
