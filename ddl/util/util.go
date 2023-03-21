@@ -58,7 +58,7 @@ const (
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL          = 90
-	getRaftKvVersionSql = "show config"
+	getRaftKvVersionSQL = "show config"
 	raftKv2             = "raft-kv2"
 )
 
@@ -323,6 +323,7 @@ func IsContextDone(ctx context.Context) bool {
 	return false
 }
 
+// IsRaftKv2 checks whether the raft-kv2 is enabled
 func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// Mock store does not support `show config` now, so we  use failpoint here
 	// to control whether we are in raft-kv2
@@ -331,7 +332,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 		return v2, nil
 	})
 
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSql)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
