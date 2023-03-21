@@ -61,8 +61,11 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
-	rs          ResultSet
-	sql         string
+	// this result set should have been closed before stored here. Only the `fetchedRows` are used here. This field is
+	// not moved out to reuse the logic inside functions `writeResultSet...`
+	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
+	rs  ResultSet
+	sql string
 }
 
 // ID implements PreparedStatement ID method.
@@ -142,12 +145,6 @@ func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
-
-	// closing previous ResultSet if it exists
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-		ts.rs = nil
-	}
 }
 
 // Close implements PreparedStatement Close method.
@@ -176,11 +173,6 @@ func (ts *TiDBStatement) Close() error {
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
-
-	// close ResultSet associated with this statement
-	if ts.rs != nil {
-		terror.Call(ts.rs.Close)
-	}
 	return nil
 }
 
