@@ -589,25 +589,31 @@ const (
        KEY (create_time),
        KEY (create_user));`
 	// please make sure newly added CREATE TABLE consts are also added to below
-	// allCreateTables
+	// allCreateTablesPart2
 )
 
-var allCreateTables = []string{
-	CreateUserTable, CreateGlobalPrivTable, CreateDBPrivTable,
-	CreateTablePrivTable, CreateColumnPrivTable, CreateGlobalVariablesTable,
-	CreateTiDBTable, CreateHelpTopic, CreateStatsMetaTable,
-	CreateStatsColsTable, CreateStatsBucketsTable, CreateGCDeleteRangeTable,
-	CreateGCDeleteRangeDoneTable, CreateStatsFeedbackTable, CreateBindInfoTable,
-	CreateRoleEdgesTable, CreateDefaultRolesTable, CreateStatsTopNTable,
-	CreateStatsFMSketchTable, CreateExprPushdownBlacklist, CreateOptRuleBlacklist,
-	CreateStatsExtended, CreateSchemaIndexUsageTable, CreateGlobalGrantsTable,
-	CreateCapturePlanBaselinesBlacklist, CreateColumnStatsUsageTable,
-	CreateTableCacheMetaTable, CreateAnalyzeOptionsTable, CreateStatsHistory,
-	CreateStatsMetaHistory, CreateAnalyzeJobs, CreateAdvisoryLocks,
-	CreatePlanReplayerStatusTable, CreatePlanReplayerTaskTable,
-	CreateStatsTableLocked, CreatePasswordHistory, CreateTTLTableStatus,
-	CreateTTLTask, CreateTTLJobHistory, CreateGlobalTask, CreateLoadDataJobs,
-}
+var (
+	allCreateTablesPart1 = []string{
+		CreateUserTable, CreatePasswordHistory, CreateGlobalPrivTable,
+		CreateDBPrivTable, CreateTablePrivTable, CreateColumnPrivTable,
+		CreateGlobalVariablesTable, CreateTiDBTable, CreateHelpTopic,
+		CreateStatsMetaTable, CreateStatsColsTable, CreateStatsBucketsTable,
+		CreateGCDeleteRangeTable, CreateGCDeleteRangeDoneTable, CreateStatsFeedbackTable,
+		CreateRoleEdgesTable, CreateDefaultRolesTable, CreateBindInfoTable,
+		CreateStatsTopNTable, CreateExprPushdownBlacklist, CreateOptRuleBlacklist,
+		CreateStatsExtended, CreateSchemaIndexUsageTable, CreateStatsFMSketchTable,
+		CreateGlobalGrantsTable, CreateCapturePlanBaselinesBlacklist,
+		CreateColumnStatsUsageTable, CreateTableCacheMetaTable, CreateAnalyzeOptionsTable,
+		CreateStatsHistory, CreateStatsMetaHistory, CreateAnalyzeJobs,
+		CreateAdvisoryLocks,
+	}
+	// we should create MDL view between allCreateTablesPart1 and allCreateTablesPart2
+	allCreateTablesPart2 = []string{
+		CreatePlanReplayerStatusTable, CreatePlanReplayerTaskTable,
+		CreateStatsTableLocked, CreateTTLTableStatus, CreateTTLTask,
+		CreateTTLJobHistory, CreateGlobalTask, CreateLoadDataJobs,
+	}
+)
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
@@ -2482,8 +2488,8 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 	// Create system db.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	p := parser.New()
-	tableInfos := make([]*model.TableInfo, 0, len(allCreateTables))
-	for _, createTable := range allCreateTables {
+	tableInfosPart1 := make([]*model.TableInfo, 0, len(allCreateTablesPart1))
+	for _, createTable := range allCreateTablesPart1 {
 		stmt, err := p.ParseOneStmt(createTable, "", "")
 		if err != nil {
 			logutil.BgLogger().Fatal("ParseOneStmt error", zap.Error(err), zap.Stack("stack"))
@@ -2492,14 +2498,28 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 		if err != nil {
 			logutil.BgLogger().Fatal("BuildTableInfoFromAST error", zap.Error(err), zap.Stack("stack"))
 		}
-		tableInfos = append(tableInfos, tblInfo)
+		tableInfosPart1 = append(tableInfosPart1, tblInfo)
 	}
-	batchCreateTable(s, dom.DDL(), tableInfos)
+	batchCreateTable(s, dom.DDL(), tableInfosPart1)
+	mustExecute(s, CreateMDLView)
+	tableInfosPart2 := make([]*model.TableInfo, 0, len(allCreateTablesPart2))
+	for _, createTable := range allCreateTablesPart2 {
+		stmt, err := p.ParseOneStmt(createTable, "", "")
+		if err != nil {
+			logutil.BgLogger().Fatal("ParseOneStmt error", zap.Error(err), zap.Stack("stack"))
+		}
+		tblInfo, err := ddl.BuildTableInfoWithContext(s, stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			logutil.BgLogger().Fatal("BuildTableInfoFromAST error", zap.Error(err), zap.Stack("stack"))
+		}
+		tableInfosPart2 = append(tableInfosPart2, tblInfo)
+	}
+	batchCreateTable(s, dom.DDL(), tableInfosPart2)
+
 	err := dom.Reload()
 	if err != nil {
 		logutil.BgLogger().Fatal("Reload error", zap.Error(err), zap.Stack("stack"))
 	}
-	mustExecute(s, CreateMDLView)
 
 	// init bind_info table.
 	insertBuiltinBindInfoRow(s)
@@ -2510,7 +2530,13 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 func batchCreateTable(s Session, d ddl.DDL, tableInfos []*model.TableInfo) {
 	s.SetValue(sessionctx.QueryString, "skip")
 
-	err := d.BatchCreateTableWithInfo(s, model.NewCIStr(mysql.SystemDB), tableInfos, ddl.OnExistIgnore)
+	err := d.BatchCreateTableWithInfo(
+		s,
+		model.NewCIStr(mysql.SystemDB),
+		tableInfos,
+		ddl.OnExistIgnore,
+		ddl.SkipTableID(1),
+	)
 	if err == nil {
 		return
 	}

@@ -112,6 +112,7 @@ type AllocTableIDIf func(*model.TableInfo) bool
 type CreateTableWithInfoConfig struct {
 	OnExist            OnExist
 	ShouldAllocTableID AllocTableIDIf
+	SkipTableID        int
 }
 
 // CreateTableWithInfoConfigurier is the "diff" which can be applied to the
@@ -142,6 +143,14 @@ func (o OnExist) Apply(c *CreateTableWithInfoConfig) {
 // Apply implements Configurier.
 func (a AllocTableIDIf) Apply(c *CreateTableWithInfoConfig) {
 	c.ShouldAllocTableID = a
+}
+
+// SkipTableID is used to let BatchCreateTableWithInfo mimic the behaviour of CreateTable.
+type SkipTableID int
+
+// Apply implements Configurier.
+func (a SkipTableID) Apply(c *CreateTableWithInfoConfig) {
+	c.SkipTableID = int(a)
 }
 
 const (

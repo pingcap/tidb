@@ -2603,6 +2603,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 	}
 
+	totalID *= 1 + c.SkipTableID
 	genIDs, err := d.genGlobalIDs(totalID)
 	if err != nil {
 		return errors.Trace(err)
@@ -2617,6 +2618,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 					parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
 				}
 			}
+			genIDs = genIDs[c.SkipTableID:]
 		}
 
 		job, err := d.createTableWithInfoJob(ctx, dbName, info, c.OnExist, true)
