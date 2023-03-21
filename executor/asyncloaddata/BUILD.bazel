@@ -22,7 +22,7 @@ go_library(
 
 go_test(
     name = "asyncloaddata_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "detach_test.go",
         "main_test.go",
