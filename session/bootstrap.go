@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -2502,6 +2503,8 @@ func doDDLWorks(s Session, d ddl.DDL) {
 }
 
 func batchCreateTable(s Session, d ddl.DDL, tableInfos []*model.TableInfo) {
+	s.SetValue(sessionctx.QueryString, "skip")
+
 	err := d.BatchCreateTableWithInfo(s, model.NewCIStr(mysql.SystemDB), tableInfos, ddl.OnExistIgnore)
 	if err == nil {
 		return
