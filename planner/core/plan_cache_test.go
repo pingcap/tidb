@@ -1613,11 +1613,18 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 
 	s := parser.New()
-	stmtNode, err := s.ParseOneStmt("select * from t where a='x' and c='x' and b=1", "", "")
-	require.NoError(t, err)
-	preprocessorReturn := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
-	require.NoError(t, err)
-	_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
-	require.NoError(t, err) // not panic
+	for _, sql := range []string{
+		"select 1 from t where a='x'",
+		"select * from t where c='x'",
+		"select * from t where a='x' and c='x'",
+		"select * from t where a='x' and c='x' and b=1",
+	} {
+		stmtNode, err := s.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		require.NoError(t, err)
+		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		require.NoError(t, err) // not panic
+	}
 }
