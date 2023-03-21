@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/filter"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
