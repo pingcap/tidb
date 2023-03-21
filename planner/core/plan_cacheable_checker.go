@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/filter"
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
@@ -322,6 +323,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.TableName:
 		checker.tableNode = node
+		if filter.IsSystemSchema(node.Schema.O) {
+			checker.cacheable = false
+			checker.reason = "access tables in system schema"
+			return in, !checker.cacheable
+		}
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
