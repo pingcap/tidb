@@ -312,7 +312,8 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		elemID := ea.allocForPhysicalID(tableID)
 		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionReorganizePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+		model.ActionReorganizePartition, model.ActionRemovePartitioning:
 		var physicalTableIDs []int64
 		// partInfo is not used, but is set in ReorgPartition.
 		// Better to have an additional argument in job.DecodeArgs since it is ignored,

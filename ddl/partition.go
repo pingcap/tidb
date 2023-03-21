@@ -1740,7 +1740,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition {
+	if job.Type == model.ActionAddTablePartition ||
+		job.Type == model.ActionReorganizePartition ||
+		job.Type == model.ActionRemovePartitioning {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
@@ -2247,6 +2249,76 @@ func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []mode
 	return tblInfo, partNames, partInfo, droppingDefs, addingDefs, nil
 }
 
+func (w *worker) onRemovePartitioning(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	// Handle the rolling back job
+	if job.IsRollingback() {
+		ver, err := w.onDropTablePartition(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+	tblInfo, _, partInfo, _, _, err := checkReorgPartition(t, job)
+	if job.SchemaState == model.StateNone && len(partInfo.Definitions) != 1 {
+		return ver, errors.New("REMOVE PARTITIONING, but collapsing all partitions to non-single partition!?!")
+	}
+	switch job.SchemaState {
+	case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly,
+		model.StateWriteReorganization:
+		return w.onReorganizePartition(d, t, job)
+
+	case model.StateDeleteReorganization:
+		// In this state it is double writing just as in Reorganize Partition
+		// But we will transform the single resulting partition
+		// into a non-partitioned table
+		// Same as onReorganizePartition, but yet another state after
+		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
+		newIDs := getPartitionIDsFromDefinitions(partInfo.Definitions)
+		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
+		definitionsToDrop := tblInfo.Partition.DroppingDefinitions
+		tblInfo.Partition = nil
+		t.DropTableOrView(job.SchemaID, tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Del()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		tblInfo.ID = newIDs[0]
+		// TODO: Handle bundles?
+		err = t.CreateTableOrView(job.SchemaID, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartWriteReorgSchemaVersionUpdateFail")
+			}
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateNone
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		// How to handle this?
+		// Seems to only trigger asynchronous update of statistics.
+		// Should it actually be synchronous?
+		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
+		// A background job will be created to delete old partition data.
+		job.Args = []interface{}{physicalTableIDs}
+
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
+	}
+
+	return ver, errors.Trace(err)
+}
+
 func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
@@ -2514,7 +2586,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// How to handle this?
 		// Seems to only trigger asynchronous update of statistics.
 		// Should it actually be synchronous?
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionReorganizePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
+		asyncNotifyEvent(d, &util.Event{Tp: job.Type, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: definitionsToDrop}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 

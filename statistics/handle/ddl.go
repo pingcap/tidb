@@ -78,6 +78,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
+		// TODO: For model.ActionRemovePartitioning move global stats to table stats?
 	}
 	return nil
 }

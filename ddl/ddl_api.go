@@ -3286,6 +3286,7 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		} else {
 			validSpecs = append(validSpecs, spec)
 		}
+		// TODO: Only allow REMOVE PARTITIONING as a single ALTER TABLE statement?
 	}
 
 	// Verify whether the algorithm is supported.
@@ -3365,7 +3366,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableOptimizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
-			err = errors.Trace(dbterror.ErrUnsupportedRemovePartition)
+			err = d.RemovePartitioning(sctx, ident, spec)
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
@@ -4036,6 +4037,88 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.PartitionNames, partInfo},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+	}
+
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+// RemovePartitioning removes partitioning from a table.
+func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	// TODO: Add support for HASH and KEY partitioning when ADD/COALESCE
+	// is supported
+	switch pi.Type {
+	case model.PartitionTypeRange, model.PartitionTypeList:
+	default:
+		return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+	}
+	newSpec := spec
+	// shortcut if only one partition
+	if len(pi.Definitions) != 1 {
+		newSpec = &ast.AlterTableSpec{}
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			cols := int(1)
+			if len(pi.Columns) > 1 {
+				cols = len(pi.Columns)
+			}
+			defs := make([]*ast.PartitionDefinition, 1)
+			defs[0] = &ast.PartitionDefinition{}
+			defs[0].Name = model.NewCIStr("CollapsedPartitions")
+			exprs := make([]ast.ExprNode, cols)
+			for i := 0; i < cols; i++ {
+				exprs[i] = &ast.MaxValueExpr{}
+			}
+			clause := &ast.PartitionDefinitionClauseLessThan{Exprs: exprs}
+			defs[0].Clause = clause
+			newSpec.PartDefinitions = defs
+		default:
+			return errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		}
+	}
+	partNames := make([]model.CIStr, len(pi.Definitions))
+	for i := range pi.Definitions {
+		partNames[i] = pi.Definitions[i].Name
+	}
+	partInfo, err := BuildAddedPartitionInfo(ctx, meta, newSpec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = d.assignPartitionIDs(partInfo.Definitions); err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: check where the default placement comes from (i.e. table level)
+	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionRemovePartitioning,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partNames, partInfo},
 		ReorgMeta: &model.DDLReorgMeta{
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),

@@ -522,7 +522,7 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
-			model.ActionReorganizePartition:
+			model.ActionReorganizePartition, model.ActionRemovePartitioning:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -1098,6 +1098,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onMultiSchemaChange(w, d, t, job)
 	case model.ActionReorganizePartition:
 		ver, err = w.onReorganizePartition(d, t, job)
+	case model.ActionRemovePartitioning:
+		ver, err = w.onRemovePartitioning(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
@@ -1371,7 +1373,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
 			}
 		}
-	case model.ActionReorganizePartition:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning:
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {
 			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
