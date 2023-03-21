@@ -4263,14 +4263,20 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
+	genIDs, err := d.genGlobalIDs(len(pids))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionTruncateTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{pids, genIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)

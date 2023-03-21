@@ -141,8 +141,12 @@ var allTestCase = []testCancelJob{
 	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", true, model.StateNone, true, false, []string{"create database db_coll default charset utf8 collate utf8_bin"}},
 	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", false, model.StatePublic, false, true, nil},
 	// Truncate partition.
-	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
+	{"alter table t_partition truncate partition p3", true, model.StatePublic, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
+	{"alter table t_partition truncate partition p3", false, model.StateDeleteOnly, false, true, nil},
+	{"alter table t_partition truncate partition p3", false, model.StateDeleteReorganization, true, true, nil},
+	{"alter table t_partition truncate partition p3", false, model.StateNone, true, true, nil},
+
 	// Add columns.
 	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateNone, model.StateNone}, true, false, nil},
 	{"alter table t add column c41 bigint, add column c42 bigint", true, testutil.SubStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},

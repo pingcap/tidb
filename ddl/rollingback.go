@@ -417,11 +417,11 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(w, d, t, job)
-	case model.ActionDropForeignKey:
+	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifyTableCharsetAndCollate,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,

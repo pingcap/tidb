@@ -1487,6 +1487,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
+		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+	}
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
 	if err != nil {
@@ -1608,6 +1611,9 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		if _, ok := partitionSelection[from]; !ok {
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
+	}
+	if t.Meta().Partition.HasTruncatingPartitionID(to) {
+		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 
 	// The old and new data locate in different partitions.
