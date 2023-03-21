@@ -5040,7 +5040,8 @@ func GetModifiableColumnJob(
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx
 			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
-			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
+			sv.TruncateAsWarning = false
+			sv.IgnoreTruncate.Store(false)
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
 			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
 			if err != nil {

@@ -158,7 +158,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreTruncate                bool
+	IgnoreTruncate                atomic.Bool
 	IgnoreZeroInDate              bool
 	NoZeroDate                    bool
 	DupKeyAsWarning               bool
@@ -922,7 +922,7 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 		return err
 	}
 
-	if sc.IgnoreTruncate {
+	if sc.IgnoreTruncate.Load() {
 		return nil
 	}
 	if sc.TruncateAsWarning {
@@ -1065,7 +1065,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.IgnoreTruncate {
+	if sc.IgnoreTruncate.Load() {
 		flags |= model.FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= model.FlagTruncateAsWarning
@@ -1165,7 +1165,7 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 
 // SetFlagsFromPBFlag set the flag of StatementContext from a `tipb.SelectRequest.Flags`.
 func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
-	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
