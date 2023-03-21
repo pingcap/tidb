@@ -286,7 +286,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
 			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
 		if err := execSQL(sql); err != nil {
-			return err
+			// FIXME: find a better way to check the error or we should check the version here instead.
+			if !strings.Contains(err.Error(), "Unknown column 'User_attributes' in 'field list'") {
+				return err
+			}
+			log.Warn("remove resource group meta failed, please ensure target cluster is newer than v6.6.0", logutil.ShortError(err))
 		}
 	}
 
