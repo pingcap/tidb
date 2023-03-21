@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	common2 "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -913,7 +914,7 @@ func (tr *TableImporter) postProcess(
 		// 4.5. do duplicate detection.
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &common2.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
@@ -940,7 +941,7 @@ func (tr *TableImporter) postProcess(
 		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			opts := &kv.SessionOptions{
+			opts := &common2.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}

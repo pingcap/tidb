@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -60,7 +60,7 @@ func newChunkProcessor(
 ) (*chunkProcessor, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -146,12 +146,16 @@ func (cr *chunkProcessor) process(
 	rc *Controller,
 ) error {
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
-		SQLMode:   rc.cfg.TiDB.SQLMode,
-		Timestamp: cr.chunk.Timestamp,
-		SysVars:   rc.sysVars,
-		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
-		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+	kvEncoder, err := rc.backend.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   rc.cfg.TiDB.SQLMode,
+			Timestamp: cr.chunk.Timestamp,
+			SysVars:   rc.sysVars,
+			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+		},
+		Path:  cr.chunk.Key.Path,
+		Table: t.encTable,
 	})
 	if err != nil {
 		return err
@@ -204,7 +208,7 @@ func (cr *chunkProcessor) encodeLoop(
 	kvsCh chan<- []deliveredKVs,
 	t *TableImporter,
 	logger log.Logger,
-	kvEncoder kv.Encoder,
+	kvEncoder encode.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
@@ -311,7 +315,7 @@ func (cr *chunkProcessor) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false

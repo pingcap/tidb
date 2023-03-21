@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/spkg/bom"
@@ -640,4 +641,21 @@ func ReadUntil(parser Parser, pos int64) error {
 		}
 	}
 	return nil
+}
+
+func OpenReader(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (
+	reader storage.ReadSeekCloser, err error) {
+	switch {
+	case fileMeta.Type == SourceTypeParquet:
+		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+	case fileMeta.Compression != CompressionNone:
+		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
+		if err2 != nil {
+			return nil, err2
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
+	default:
+		reader, err = store.Open(ctx, fileMeta.Path)
+	}
+	return
 }

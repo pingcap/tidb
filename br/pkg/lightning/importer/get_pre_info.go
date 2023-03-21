@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -270,7 +271,7 @@ type PreImportInfoGetterImpl struct {
 	getPreInfoCfg    *ropts.GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
-	encBuilder       backend.EncodingBuilder
+	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 
 	dbMetas          []*mydump.MDDatabaseMeta
@@ -289,7 +290,7 @@ func NewPreImportInfoGetter(
 	srcStorage storage.ExternalStorage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
-	encBuilder backend.EncodingBuilder,
+	encBuilder encode.EncodingBuilder,
 	opts ...ropts.GetPreInfoOption,
 ) (*PreImportInfoGetterImpl, error) {
 	if ioWorkers == nil {
@@ -455,7 +456,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, dataFileMeta, p.srcStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -604,7 +605,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := openReader(ctx, sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, sampleFile, p.srcStorage)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -613,11 +614,14 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	kvEncoder, err := p.encBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
-		SQLMode:        p.cfg.TiDB.SQLMode,
-		Timestamp:      0,
-		SysVars:        sysVars,
-		AutoRandomSeed: 0,
+	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode:        p.cfg.TiDB.SQLMode,
+			Timestamp:      0,
+			SysVars:        sysVars,
+			AutoRandomSeed: 0,
+		},
+		Table: tbl,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -714,7 +718,7 @@ outloop:
 		lastRow.Row = append(lastRow.Row, extendVals...)
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
 			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)

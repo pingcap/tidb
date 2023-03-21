@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -261,9 +262,12 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567895,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
@@ -320,9 +324,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
 	}()
 
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567895,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
@@ -347,9 +354,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567896,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567896,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 
@@ -365,9 +375,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError() {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567897,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567897,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 
@@ -385,9 +398,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 4)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567898,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567898,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 
@@ -442,9 +458,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored() {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:   s.cfg.TiDB.SQLMode,
-		Timestamp: 1234567898,
+	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: s.tr.encTable,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567898,
+		},
 	}, nil, log.L())
 	require.NoError(s.T(), err)
 
@@ -490,10 +509,12 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := tidb.NewTiDBBackend(ctx, nil, config.ReplaceOnDup, errorMgr).NewEncoder(
 		ctx,
-		s.tr.encTable,
-		&kv.SessionOptions{
-			SQLMode:   s.cfg.TiDB.SQLMode,
-			Timestamp: 1234567895,
+		&encode.EncodingConfig{
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   s.cfg.TiDB.SQLMode,
+				Timestamp: 1234567895,
+			},
+			Table: s.tr.encTable,
 		})
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
@@ -590,10 +611,12 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 		errormanager.New(nil, config.NewConfig(), log.L()),
 	).NewEncoder(
 		ctx,
-		s.tr.encTable,
-		&kv.SessionOptions{
-			SQLMode:   s.cfg.TiDB.SQLMode,
-			Timestamp: 1234567895,
+		&encode.EncodingConfig{
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   s.cfg.TiDB.SQLMode,
+				Timestamp: 1234567895,
+			},
+			Table: s.tr.encTable,
 		})
 	require.NoError(s.T(), err)
 	defer kvEncoder.Close()
@@ -616,7 +639,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 type mockEncoder struct{}
 
-func (mockEncoder) Encode(_ log.Logger, _ []types.Datum, rowID int64, _ []int, _ string, _ int64) (kv.Row, error) {
+func (mockEncoder) Encode(logger log.Logger, row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	return &kv.KvPairs{}, nil
 }
 
@@ -636,7 +659,7 @@ func (s *chunkRestoreSuite) TestRestore() {
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).Times(1)
 	mockWriter := mock.NewMockEngineWriter(controller)
 	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), gomock.Any()).Return(mockWriter, nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(mockEncoder{}, nil).Times(1)
 	mockWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 	mockWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 

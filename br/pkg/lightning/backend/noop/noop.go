@@ -20,7 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -37,13 +37,13 @@ type noopBackend struct{}
 
 type noopRows struct{}
 
-func (r noopRows) SplitIntoChunks(int) []kv.Rows {
-	return []kv.Rows{r}
+func (r noopRows) SplitIntoChunks(int) []encode.Rows {
+	return []encode.Rows{r}
 }
 
 // Clear returns a new collection with empty content. It may share the
 // capacity with the current instance. The typical usage is `x = x.Clear()`.
-func (r noopRows) Clear() kv.Rows {
+func (r noopRows) Clear() encode.Rows {
 	return r
 }
 
@@ -51,7 +51,7 @@ func (r noopRows) Clear() kv.Rows {
 func (b noopBackend) Close() {}
 
 // MakeEmptyRows creates an empty collection of encoded rows.
-func (b noopBackend) MakeEmptyRows() kv.Rows {
+func (b noopBackend) MakeEmptyRows() encode.Rows {
 	return noopRows{}
 }
 
@@ -67,7 +67,7 @@ func (b noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b noopBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+func (b noopBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return noopEncoder{}, nil
 }
 
@@ -143,11 +143,11 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return Writer{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
@@ -165,7 +165,7 @@ type noopEncoder struct{}
 func (e noopEncoder) Close() {}
 
 // Encode encodes a row of SQL values into a backend-friendly format.
-func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, string, int64) (kv.Row, error) {
+func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, int64) (encode.Row, error) {
 	return noopRow{}, nil
 }
 
@@ -175,13 +175,13 @@ func (r noopRow) Size() uint64 {
 	return 0
 }
 
-func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows, *verification.KVChecksum) {
+func (r noopRow) ClassifyAndAppend(*encode.Rows, *verification.KVChecksum, *encode.Rows, *verification.KVChecksum) {
 }
 
 // Writer define a local writer that do nothing.
 type Writer struct{}
 
-func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
+func (w Writer) AppendRows(context.Context, string, []string, encode.Rows) error {
 	return nil
 }
 

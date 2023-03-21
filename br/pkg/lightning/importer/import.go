@@ -34,7 +34,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	common2 "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -375,7 +375,8 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
+		encodingBuilder := local.NewEncodingBuilder(ctx)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -2210,7 +2211,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs     kv.Row // if kvs is nil, this indicated we've got the last message.
+	kvs     common2.Row // if kvs is nil, this indicated we've got the last message.
 	columns []string
 	offset  int64
 	rowID   int64
@@ -2298,21 +2299,4 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
 	return filteredColumns, extendValueDatums
-}
-
-func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
-	reader storage.ReadSeekCloser, err error) {
-	switch {
-	case fileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
-	case fileMeta.Compression != mydump.CompressionNone:
-		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
-		if err2 != nil {
-			return nil, err2
-		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
-	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
-	}
-	return
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
@@ -359,7 +360,7 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 
 type errorLocalWriter struct{}
 
-func (w errorLocalWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+func (w errorLocalWriter) AppendRows(context.Context, string, []string, encode.Rows) error {
 	return errors.New("mock write rows failed")
 }
 
@@ -406,8 +407,8 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
 		AnyTimes()
 	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
@@ -1425,10 +1426,13 @@ func (s *tableRestoreSuite) TestEstimate() {
 	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
-		SQLMode:        s.cfg.TiDB.SQLMode,
-		Timestamp:      0,
-		AutoRandomSeed: 0,
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:        s.cfg.TiDB.SQLMode,
+			Timestamp:      0,
+			AutoRandomSeed: 0,
+		},
 	}, nil, log.L())).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 

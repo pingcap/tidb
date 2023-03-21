@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -88,30 +89,37 @@ type tidbEncoder struct {
 	// directly check the total column count, so we fall back to only check that
 	// the there are enough columns.
 	columnCnt int
+	// data file path
+	path string
 }
 
 type encodingBuilder struct{}
 
 // NewEncodingBuilder creates an EncodingBuilder with TiDB backend implementation.
-func NewEncodingBuilder() backend.EncodingBuilder {
+func NewEncodingBuilder() encode.EncodingBuilder {
 	return new(encodingBuilder)
 }
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	se := kv.NewSession(options, log.FromContext(ctx))
-	if options.SQLMode.HasStrictMode() {
+func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	se := kv.NewSession(&config.SessionOptions, log.FromContext(ctx))
+	if config.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
 		se.GetSessionVars().SkipASCIICheck = false
 	}
 
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
+	return &tidbEncoder{
+		mode: config.SQLMode,
+		tbl:  config.Table,
+		se:   se,
+		path: config.Path,
+	}, nil
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+func (b *encodingBuilder) MakeEmptyRows() encode.Rows {
 	return tidbRows(nil)
 }
 
@@ -244,7 +252,7 @@ type tidbBackend struct {
 	db               *sql.DB
 	onDuplicate      string
 	errorMgr         *errormanager.ErrorManager
-	encBuilder       backend.EncodingBuilder
+	encBuilder       encode.EncodingBuilder
 	targetInfoGetter backend.TargetInfoGetter
 }
 
@@ -276,7 +284,7 @@ func (row tidbRow) String() string {
 	return row.insertStmt
 }
 
-func (row tidbRow) ClassifyAndAppend(data *kv.Rows, checksum *verification.KVChecksum, _ *kv.Rows, _ *verification.KVChecksum) {
+func (row tidbRow) ClassifyAndAppend(data *encode.Rows, checksum *verification.KVChecksum, _ *encode.Rows, _ *verification.KVChecksum) {
 	rows := (*data).(tidbRows)
 	// Cannot do `rows := data.(*tidbRows); *rows = append(*rows, row)`.
 	//nolint:gocritic
@@ -285,12 +293,12 @@ func (row tidbRow) ClassifyAndAppend(data *kv.Rows, checksum *verification.KVChe
 	checksum.Add(&cs)
 }
 
-func (rows tidbRows) SplitIntoChunks(splitSizeInt int) []kv.Rows {
+func (rows tidbRows) SplitIntoChunks(splitSizeInt int) []encode.Rows {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	res := make([]kv.Rows, 0, 1)
+	res := make([]encode.Rows, 0, 1)
 	i := 0
 	cumSize := uint64(0)
 	splitSize := uint64(splitSizeInt)
@@ -307,7 +315,7 @@ func (rows tidbRows) SplitIntoChunks(splitSizeInt int) []kv.Rows {
 	return append(res, rows[i:])
 }
 
-func (rows tidbRows) Clear() kv.Rows {
+func (rows tidbRows) Clear() encode.Rows {
 	return rows[:0]
 }
 
@@ -441,7 +449,7 @@ func getColumnByIndex(cols []*table.Column, index int) *table.Column {
 	return cols[index]
 }
 
-func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int, path string, offset int64) (kv.Row, error) {
+func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, rowID int64, columnPermutation []int, offset int64) (encode.Row, error) {
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
@@ -506,7 +514,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	encoded.WriteByte(')')
 	return tidbRow{
 		insertStmt: encoded.String(),
-		path:       path,
+		path:       enc.path,
 		offset:     offset,
 	}, nil
 }
@@ -517,7 +525,7 @@ func EncodeRowForRecord(ctx context.Context, encTable table.Table, sqlMode mysql
 		tbl:  encTable,
 		mode: sqlMode,
 	}
-	resRow, err := enc.Encode(log.FromContext(ctx), row, 0, columnPermutation, "", 0)
+	resRow, err := enc.Encode(log.FromContext(ctx), row, 0, columnPermutation, 0)
 	if err != nil {
 		// if encode can't succeed, fallback to record the raw input strings
 		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
@@ -532,7 +540,7 @@ func (be *tidbBackend) Close() {
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *tidbBackend) MakeEmptyRows() kv.Rows {
+func (be *tidbBackend) MakeEmptyRows() encode.Rows {
 	return be.encBuilder.MakeEmptyRows()
 }
 
@@ -555,8 +563,8 @@ func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCt
 	return be.targetInfoGetter.CheckRequirements(ctx, nil)
 }
 
-func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.encBuilder.NewEncoder(ctx, tbl, options)
+func (be *tidbBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return be.encBuilder.NewEncoder(ctx, config)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
@@ -571,11 +579,11 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
@@ -587,7 +595,7 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) er
 	return nil
 }
 
-func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
+func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	var err error
 rowLoop:
 	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
@@ -629,7 +637,7 @@ type stmtTask struct {
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
 //
 //	insert into t1 values (111), (222), (333), (444);
-func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
+func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r encode.Rows) error {
 	rows := r.(tidbRows)
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
 	if insertStmt == nil {
@@ -663,7 +671,7 @@ func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, column
 //	insert into t1 values (444);
 //
 // See more details in br#1366: https://github.com/pingcap/br/issues/1366
-func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r encode.Rows) error {
 	rows := r.(tidbRows)
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
 	if insertStmt == nil {
@@ -777,7 +785,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
+func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
