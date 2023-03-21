@@ -19,60 +19,20 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
-
-type mockParameterizer struct {
-	action string
-}
-
-func (mp *mockParameterizer) Parameterize(originSQL string) (paramSQL string, params []expression.Expression, ok bool, err error) {
-	switch mp.action {
-	case "error":
-		return "", nil, false, errors.New("error")
-	case "not_support":
-		return "", nil, false, nil
-	}
-	// only support SQL like 'select * from t where col {op} {int} and ...'
-	prefix := "select * from t where "
-	if !strings.HasPrefix(originSQL, prefix) {
-		return "", nil, false, nil
-	}
-	buf := make([]byte, 0, 32)
-	buf = append(buf, prefix...)
-	for i, condStr := range strings.Split(originSQL[len(prefix):], "and") {
-		if i > 0 {
-			buf = append(buf, " and "...)
-		}
-		tmp := strings.Split(strings.TrimSpace(condStr), " ")
-		if len(tmp) != 3 { // col {op} {val}
-			return "", nil, false, nil
-		}
-		buf = append(buf, tmp[0]...)
-		buf = append(buf, tmp[1]...)
-		buf = append(buf, '?')
-
-		intParam, err := strconv.Atoi(tmp[2])
-		if err != nil {
-			return "", nil, false, nil
-		}
-		params = append(params, &expression.Constant{Value: types.NewDatum(intParam), RetType: types.NewFieldType(mysql.TypeLong)})
-	}
-	return string(buf), params, true, nil
-}
 
 func TestInitLRUWithSystemVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1641,4 +1601,30 @@ func TestIssue42150(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestNonPreparedPlanCachePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
+	ctx := tk.Session().(sessionctx.Context)
+
+	s := parser.New()
+	for _, sql := range []string{
+		"select 1 from t where a='x'",
+		"select * from t where c='x'",
+		"select * from t where a='x' and c='x'",
+		"select * from t where a='x' and c='x' and b=1",
+	} {
+		stmtNode, err := s.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		require.NoError(t, err)
+		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		require.NoError(t, err) // not panic
+	}
 }
