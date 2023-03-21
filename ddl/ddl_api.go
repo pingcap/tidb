@@ -3866,6 +3866,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+	if pi.Type == model.PartitionTypeHash || pi.Type == model.PartitionTypeKey {
+		// Add partition for hash/key is actually a reorganize partition
+		// operation and not a metadata only change!
+		return d.hashPartitionManagement(ctx, ident, spec, pi)
+	}
 
 	partInfo, err := BuildAddedPartitionInfo(ctx, meta, spec)
 	if err != nil {
@@ -4127,26 +4132,30 @@ func (d *ddl) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	meta := t.Meta()
-	pi := meta.GetPartitionInfo()
+	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	switch meta.Partition.Type {
+	switch pi.Type {
 	case model.PartitionTypeHash, model.PartitionTypeKey:
-		newSpec := *spec
-		newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
-		for i := 0; i < len(pi.Definitions); i++ {
-			newSpec.PartitionNames[i] = pi.Definitions[i].Name
-		}
-		// TODO: Check if possible to coalesce with named partitions?
-		return d.ReorganizePartitions(sctx, ident, &newSpec)
+		return d.hashPartitionManagement(sctx, ident, spec, pi)
 
 	// Coalesce partition can only be used on hash/key partitions.
 	default:
 		return errors.Trace(dbterror.ErrCoalesceOnlyOnHashPartition)
 	}
+}
+
+func (d *ddl) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
+	newSpec := *spec
+	newSpec.PartitionNames = make([]model.CIStr, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		newSpec.PartitionNames[i] = pi.Definitions[i].Name
+	}
+
+	// TODO: Check if possible to coalesce with named partitions?
+	return d.ReorganizePartitions(sctx, ident, &newSpec)
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -7091,19 +7100,20 @@ func BuildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 	case model.PartitionTypeHash, model.PartitionTypeKey:
 		switch spec.Tp {
 		case ast.AlterTableCoalescePartitions:
-			if len(spec.PartDefinitions) > 0 {
-				if int(spec.Num) != len(spec.PartDefinitions) ||
-					len(spec.PartDefinitions) >= len(meta.Partition.Definitions) {
-					return nil, ast.ErrCoalescePartitionNoPartition.GenWithStackByArgs(meta.Partition.Type)
-				}
-			}
 			if int(spec.Num) >= len(meta.Partition.Definitions) {
 				return nil, ast.ErrCoalescePartitionNoPartition.GenWithStackByArgs(meta.Partition.Type)
 			}
 			resetNum := meta.Partition.Num
 			defer func() { meta.Partition.Num = resetNum }()
 			meta.Partition.Num = uint64(len(meta.Partition.Definitions)) - spec.Num
-
+		case ast.AlterTableAddPartitions:
+			resetNum := meta.Partition.Num
+			defer func() { meta.Partition.Num = resetNum }()
+			if len(spec.PartDefinitions) > 0 {
+				meta.Partition.Num = uint64(len(meta.Partition.Definitions)) + uint64(len(spec.PartDefinitions))
+			} else {
+				meta.Partition.Num = uint64(len(meta.Partition.Definitions)) + spec.Num
+			}
 		}
 	default:
 		// we don't support ADD PARTITION for all other partition types yet.

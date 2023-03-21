@@ -3449,6 +3449,140 @@ func TestCoalescePartition(t *testing.T) {
 		"PARTITION BY KEY (`signed`,`fname`) PARTITIONS 8"))
 }
 
+func TestAddHashPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// add partition
+	tk.MustExec("create database addHash")
+	tk.MustExec("use addHash")
+	tk.MustExec(`create table t (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date,
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id)
+	partitions 4`)
+	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
+	tk.MustExec("alter table t add partition partitions 8")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`) PARTITIONS 12"))
+	tk.MustExec("alter table t add partition (partition p13)")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `p13`)"))
+	// TODO: Check if MySQL removes all names when coalesce partitions too?
+	tk.MustExec("alter table t coalesce partition 2")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`store_id`) PARTITIONS 11"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date,
+		job_code int,
+		store_id int
+	)
+	partition by key (hired)
+	partitions 4`)
+	tk.MustExec(`insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1)`)
+	tk.MustExec("alter table t add partition partitions 8")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`) PARTITIONS 12"))
+	tk.MustExec("alter table t add partition (partition p13)")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3`,\n" +
+		" PARTITION `p4`,\n" +
+		" PARTITION `p5`,\n" +
+		" PARTITION `p6`,\n" +
+		" PARTITION `p7`,\n" +
+		" PARTITION `p8`,\n" +
+		" PARTITION `p9`,\n" +
+		" PARTITION `p10`,\n" +
+		" PARTITION `p11`,\n" +
+		" PARTITION `p13`)"))
+	// TODO: Check if MySQL removes all names when coalesce partitions too?
+	tk.MustExec("alter table t coalesce partition 2")
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `fname` varchar(30) DEFAULT NULL,\n" +
+		"  `lname` varchar(30) DEFAULT NULL,\n" +
+		"  `hired` date NOT NULL DEFAULT '1970-01-01',\n" +
+		"  `separated` date DEFAULT NULL,\n" +
+		"  `job_code` int(11) DEFAULT NULL,\n" +
+		"  `store_id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY KEY (`hired`) PARTITIONS 11"))
+}
+
 func TestConstAndTimezoneDepent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

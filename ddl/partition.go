@@ -1120,16 +1120,23 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 	}
 
 	definitions := make([]model.PartitionDefinition, tbInfo.Partition.Num)
-	for i := 0; i < len(definitions); i++ {
-		if len(defs) == 0 {
+	if len(defs) == 0 {
+		for i := 0; i < len(definitions); i++ {
 			definitions[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
-		} else {
-			def := defs[i]
-			definitions[i].Name = def.Name
-			definitions[i].Comment, _ = def.Comment()
-			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
-				return nil, err
-			}
+		}
+		return definitions, nil
+	}
+	// ADD PARTITION for hash/key may use partition definitions,
+	// So start by re-using the existing ones
+	copy(definitions, tbInfo.Partition.Definitions)
+	offset := len(tbInfo.Partition.Definitions)
+
+	for i := 0; i < len(defs); i++ {
+		def := defs[i]
+		definitions[i+offset].Name = def.Name
+		definitions[i+offset].Comment, _ = def.Comment()
+		if err := setPartitionPlacementFromOptions(&definitions[i+offset], def.Options); err != nil {
+			return nil, err
 		}
 	}
 	return definitions, nil
