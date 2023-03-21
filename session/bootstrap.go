@@ -634,7 +634,7 @@ func bootstrap(s Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
-			doDDLWorks(s, dom.DDL())
+			doDDLWorks(s, dom)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
@@ -2476,7 +2476,7 @@ func getBootstrapVersion(s Session) (int64, error) {
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
-func doDDLWorks(s Session, d ddl.DDL) {
+func doDDLWorks(s Session, dom *domain.Domain) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
@@ -2494,7 +2494,11 @@ func doDDLWorks(s Session, d ddl.DDL) {
 		}
 		tableInfos = append(tableInfos, tblInfo)
 	}
-	batchCreateTable(s, d, tableInfos)
+	batchCreateTable(s, dom.DDL(), tableInfos)
+	err := dom.Reload()
+	if err != nil {
+		logutil.BgLogger().Fatal("Reload error", zap.Error(err), zap.Stack("stack"))
+	}
 
 	// init bind_info table.
 	insertBuiltinBindInfoRow(s)
