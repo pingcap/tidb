@@ -421,6 +421,7 @@ func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
 func (f *AWSTopoFetcher) fetchTopo() error {
 	para := url.Values{}
 	para.Add("tidbclusterid", f.clusterID)
+	para.Add("cn_version", "s3")
 	u := url.URL{
 		Scheme:   "http",
 		Host:     f.addr,
