@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "default.go",
         "non_default.go",  #keep
-        ],
+    ],
     importpath = "github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask",
     visibility = ["//visibility:public"],
 )
