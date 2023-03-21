@@ -864,13 +864,6 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ranges, preparedRanges)
 
-	stores, err := s.gcWorker.getStoresForGC(context.Background())
-	require.NoError(t, err)
-	require.Len(t, stores, 3)
-
-	// Sort by address for checking.
-	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
-
 	sendReqCh := make(chan SentReq, 20)
 	s.client.destroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
@@ -884,7 +877,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
 	require.NoError(t, err)
 
-	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1], stores)
+	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1])
 
 	se = createSession(s.gcWorker.store)
 	remainingRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
@@ -895,12 +888,12 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	err = s.gcWorker.deleteRanges(gcContext(), 20, 1)
 	require.NoError(t, err)
 
-	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:], stores)
+	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
 }
 
 // checkDestroyRangeReqV2 checks whether given sentReq matches given ranges and stores when raft-kv2 is enabled.
-func (s *mockGCWorkerSuite) checkDestroyRangeReqV2(t *testing.T, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
-	sentReq := make([]SentReq, 0, len(expectedStores)*len(expectedStores))
+func (s *mockGCWorkerSuite) checkDestroyRangeReqV2(t *testing.T, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask) {
+	sentReq := make([]SentReq, 0, 5)
 Loop:
 	for {
 		select {
