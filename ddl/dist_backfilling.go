@@ -155,7 +155,7 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		}
 
 		var bf backfiller
-		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, schemaName, tbl, d.jobContext(jobID), "add_idx_rate", true))
+		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl, true))
 		if err != nil {
 			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
 				err = nil
@@ -199,7 +199,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	// TODO: Different worker using different newBackfillerFunc.
-	workerCtx, err := newAddIndexWorkerContext(d, dbInfo.Name, tbl, workerCnt, bJob)
+	workerCtx, err := newAddIndexWorkerContext(d, dbInfo.Name, tbl, workerCnt, bJob, jobCtx)
 	if err != nil || workerCtx == nil {
 		logutil.BgLogger().Info("[ddl] new adding index worker context failed", zap.Reflect("workerCtx", workerCtx), zap.Error(err))
 		return nil, errors.Trace(err)
