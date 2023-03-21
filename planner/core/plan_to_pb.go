@@ -15,6 +15,9 @@
 package core
 
 import (
+	"fmt"
+	"github.com/akolb1/gometastore/hmsclient"
+	"github.com/colinmarc/hdfs/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -26,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"log"
+	"net/url"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -209,6 +214,53 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorID}, nil
 }
 
+func getHDFSUriFromHudi() string {
+	// Connect to the Hive Metastore and retrieve the Parquet file URI
+	hiveClient, err := hmsclient.Open("127.0.0.1", 9083)
+	if err != nil {
+		log.Fatal("open hiveClient fail", err)
+	}
+	defer hiveClient.Close()
+	dbName := "default"
+	tableName := "stock_ticks_mor_ro"
+	table, err := hiveClient.GetTable(dbName, tableName)
+	if err != nil {
+		log.Fatal("gettable fail", err)
+	}
+	// Get a list of all partition locations for the table
+	partitionNames, err := hiveClient.GetPartitionNames(dbName, tableName, 100)
+	if err != nil {
+		log.Fatal("get all partition names fail", err)
+	}
+	partitionValues, err := hiveClient.GetPartitionsByNames(dbName, tableName, partitionNames)
+	if err != nil {
+		log.Fatal("get all partitionValues fail", err)
+	}
+	location := table.Sd.Location
+	for _, value := range partitionValues {
+		location = value.Sd.Location
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		log.Fatal(err)
+	}
+	hdfsClient, err := hdfs.New(u.Host)
+	fmt.Println("u.Host", u.Host)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer hdfsClient.Close()
+	files, err := hdfsClient.ReadDir(u.Path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, file := range files {
+		fmt.Println(file.Name())
+	}
+	fmt.Println(location + "/" + u.Path + "/" + files[1].Name())
+	return location + "/" + u.Path + "/" + files[1].Name()
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -226,7 +278,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	executorID := ""
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
-
+		if p.Table.Name.L == "stock_ticks_mor_ro" {
+			hdfsURI := getHDFSUriFromHudi()
+			tsExec.HdfsUri = append(tsExec.HdfsUri, []byte(hdfsURI))
+		}
 		telemetry.CurrentTiflashTableScanCount.Inc()
 		if *(tsExec.IsFastScan) {
 			telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()

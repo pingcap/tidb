@@ -303,22 +303,6 @@ func (e *TableReaderExecutor) readFromHudi(req *chunk.Chunk) error {
 		return errors.Errorf("hudi 列数对不上")
 	}
 
-	//for i := 0; i < int(arrowTable.NumRows()); i++ {
-	//	t := retTypes(e)
-	//	for j := 0; j < len(t); j++ {
-	//		s := arrowTable.Column(j).Data().Chunk(0)
-	//		arrowType := arrowTable.Column(j).DataType()
-	//		switch arrowType {
-	//		case arrow.INT64:
-	//			req.AppendInt64(j, s.(*array.Int64).Value(i))
-	//		case arrow.STRING:
-	//			req.AppendString(j, s.(*array.String).Value(i))
-	//		case arrow.FLOAT64:
-	//			req.AppendFloat64(j, s.(*array.Float64).Value(i))
-	//		}
-	//	}
-	//}
-
 	t := retTypes(e)
 	for j := 0; j < len(t); j++ {
 		data := arrowTable.Column(j).Data().Chunk(0).Data()
@@ -359,14 +343,14 @@ func (e *TableReaderExecutor) readFromHudi(req *chunk.Chunk) error {
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if e.cnt >= 1 {
-		return nil
-	}
-
-	if e.Table().Meta().Name.L == "stock_ticks_mor_ro" {
-		e.cnt++
-		return e.readFromHudi(req)
-	}
+	//if e.cnt >= 1 {
+	//	return nil
+	//}
+	//
+	//if e.Table().Meta().Name.L == "stock_ticks_mor_ro" {
+	//	e.cnt++
+	//	return e.readFromHudi(req)
+	//}
 	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
