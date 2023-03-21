@@ -42,6 +42,32 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+// SetParameterValuesIntoSCtx sets these parameters into session context.
+func SetParameterValuesIntoSCtx(sctx sessionctx.Context, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	vars.PreparedParams = vars.PreparedParams[:0]
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		if markers != nil {
+			param := markers[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+		vars.PreparedParams = append(vars.PreparedParams, val)
+	}
+	return nil
+}
+
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
@@ -53,23 +79,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	vars.PreparedParams = vars.PreparedParams[:0]
-	for i, usingParam := range params {
-		val, err := usingParam.Eval(chunk.Row{})
-		if err != nil {
-			return err
-		}
-		param := stmtAst.Params[i].(*driver.ParamMarkerExpr)
-		if isGetVarBinaryLiteral(sctx, usingParam) {
-			binVal, convErr := val.ToBytes()
-			if convErr != nil {
-				return convErr
-			}
-			val.SetBinaryLiteral(binVal)
-		}
-		param.Datum = val
-		param.InExecute = true
-		vars.PreparedParams = append(vars.PreparedParams, val)
+	if err := SetParameterValuesIntoSCtx(sctx, stmtAst.Params, params); err != nil {
+		return errors.Trace(err)
 	}
 
 	// step 3: check schema version
