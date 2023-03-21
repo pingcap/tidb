@@ -1325,11 +1325,11 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	require.Equal(t, variable.DefTiDBEnableDistTask, disttask.TiDBEnableDistTask)
 
 	tk.MustGetDBError("set @@global.tidb_enable_dist_task = invalid_val", variable.ErrWrongValueForVar)
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.DistTask.Load())
+	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
 	tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
-	require.Equal(t, true, variable.DistTask.Load())
+	require.Equal(t, true, variable.EnableDistTask.Load())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", disttask.TiDBEnableDistTask))
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.DistTask.Load())
+	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
 }
 
 // Test issue #9205, fix the precision problem for time type default values
