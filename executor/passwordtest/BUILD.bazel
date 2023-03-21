@@ -1,29 +1,25 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "issuetest_test",
+    name = "passwordtest_test",
     timeout = "short",
     srcs = [
-        "executor_issue_test.go",
         "main_test.go",
+        "password_management_test.go",
     ],
     flaky = True,
-    shard_count = 50,
+    shard_count = 16,
     deps = [
-        "//autoid_service",
-        "//config",
+        "//domain",
+        "//errno",
         "//kv",
-        "//meta/autoid",
         "//parser/auth",
-        "//parser/charset",
         "//parser/mysql",
+        "//privilege/privileges",
         "//sessionctx/variable",
-        "//statistics",
         "//testkit",
-        "//util",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//util/sqlexec",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )
