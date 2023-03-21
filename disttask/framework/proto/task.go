@@ -47,6 +47,7 @@ const (
 const (
 	StepInit int64 = -1
 	StepOne  int64 = 1
+	StepTwo  int64 = 2
 )
 
 // Task represents the task of distribute framework.
