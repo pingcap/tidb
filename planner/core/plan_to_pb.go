@@ -257,8 +257,8 @@ func getHDFSUriFromHudi() string {
 	for _, file := range files {
 		fmt.Println(file.Name())
 	}
-	fmt.Println(location + "/" + u.Path + "/" + files[1].Name())
-	return location + "/" + u.Path + "/" + files[1].Name()
+	fmt.Println(location + "/" + files[1].Name())
+	return location + "/" + files[1].Name()
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
