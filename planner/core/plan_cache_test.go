@@ -361,6 +361,18 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
 
+func TestNonPreparedPlanCacheSysSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec(`explain format='plan_cache' select address from PERFORMANCE_SCHEMA.tikv_profile_cpu`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: access tables in system schema`))
+
+	tk.MustExec(`use PERFORMANCE_SCHEMA`)
+	tk.MustExec(`explain format='plan_cache' select address from tikv_profile_cpu`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: access tables in system schema`))
+}
+
 func TestNonPreparedPlanCacheSQLMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
