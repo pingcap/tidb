@@ -5663,9 +5663,10 @@ func TestAdmin(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test2")
 	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	// we cn only see last 10 queries
 	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
 	result.Check(testkit.Rows())
-	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result = tk.MustQuery(`admin show ddl job queries 1, 2`)
 	result.Check(testkit.Rows())
 	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
