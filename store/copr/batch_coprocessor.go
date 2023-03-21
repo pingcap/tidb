@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stathat/consistent"
@@ -681,6 +682,9 @@ func buildBatchCopTasksConsistentHash(
 		if len(storesStr) == 0 {
 			retErr := errors.New("Cannot find proper topo from AutoScaler")
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo", zap.Int("retryNum", retryNum))
+			if intest.InTest && retryNum > 3 {
+				panic("buildBatchCopTasksConsistentHash retry because FetchAndGetTopo return empty topo")
+			}
 			err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), retErr)
 			if err != nil {
 				return nil, retErr
