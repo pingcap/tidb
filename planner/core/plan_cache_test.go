@@ -1543,7 +1543,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: queries that access in-memory tables",
+		"skip non-prepared plan-cache: access tables in system schema",
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that have generated columns are not supported",
 		"skip non-prepared plan-cache: queries that access views are not supported",
