@@ -2414,7 +2414,13 @@ func upgradeToVer137(s Session, ver int64) {
 	if ver >= version137 {
 		return
 	}
-	doReentrantDDL(s, CreateDefaultResourceGroup)
+	dom := domain.GetDomain(s)
+	// Default resource group creation ddl statement can be issued when either of following conditions is satisfied:
+	// 1. Current TiDB is DDL owner
+	// 2. Upgrade from version 6.6
+	if dom.DDL().OwnerManager().IsOwner() || getStoreBootstrapVersion(dom.Store()) >= version134 {
+		doReentrantDDL(s, CreateDefaultResourceGroup)
+	}
 }
 
 // For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
