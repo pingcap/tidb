@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -57,9 +56,7 @@ const (
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// SessionTTL is the etcd session's TTL in seconds.
-	SessionTTL          = 90
-	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
-	raftKv2             = "raft-kv2"
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -316,39 +313,4 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
-}
-
-// IsRaftKv2 checks whether the raft-kv2 is enabled
-func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
-	// Mock store does not support `show config` now, so we  use failpoint here
-	// to control whether we are in raft-kv2
-	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
-		v2, _ := v.(bool)
-		return v2, nil
-	})
-
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	req := rs.NewChunk(nil)
-	it := chunk.NewIterator4Chunk(req)
-	err = rs.Next(context.TODO(), req)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	row := it.Begin()
-
-	if row.IsEmpty() {
-		return false, nil
-	}
-
-	raftVersion, err := hex.DecodeString(row.GetString(3))
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return string(raftVersion[:]) == raftKv2, nil
 }

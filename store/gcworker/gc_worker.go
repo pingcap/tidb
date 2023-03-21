@@ -21,6 +21,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"math"
 	"os"
 	"strconv"
@@ -825,6 +828,47 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	return nil
 }
 
+const (
+	getRaftKvVersionSQL = "show config where type = 'tikv' && name = 'storage.engine'"
+	raftKv2             = "raft-kv2"
+)
+
+// IsRaftKv2 checks whether the raft-kv2 is enabled
+func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
+	// Mock store does not support `show config` now, so we  use failpoint here
+	// to control whether we are in raft-kv2
+	failpoint.Inject("isRaftKv2", func(v failpoint.Value) (bool, error) {
+		v2, _ := v.(bool)
+		return v2, nil
+	})
+
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	req := rs.NewChunk(nil)
+	it := chunk.NewIterator4Chunk(req)
+	err = rs.Next(context.TODO(), req)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	row := it.Begin()
+
+	if row.IsEmpty() {
+		return false, nil
+	}
+
+	// All nodes should have the same type of engine
+	raftVersion, err := hex.DecodeString(row.GetString(3))
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return string(raftVersion[:]) == raftKv2, nil
+}
+
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 // `concurrency` specifies the concurrency to send NotifyDeleteRange.
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -837,7 +881,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 
-	raftKv2, err := util.IsRaftKv2(ctx, se)
+	v2, err := isRaftKv2(ctx, se)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -850,7 +894,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
-		if raftKv2 {
+		if v2 {
 			// In raftstore-v2, we use delete range instead to avoid deletion omission
 			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
 			err = task.Execute(ctx)
@@ -870,7 +914,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r, !raftKv2)
+		err = util.CompleteDeleteRange(se, r, !v2)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
