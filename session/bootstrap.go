@@ -2499,6 +2499,7 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 	if err != nil {
 		logutil.BgLogger().Fatal("Reload error", zap.Error(err), zap.Stack("stack"))
 	}
+	mustExecute(s, CreateMDLView)
 
 	// init bind_info table.
 	insertBuiltinBindInfoRow(s)
