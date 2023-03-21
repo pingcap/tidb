@@ -829,6 +829,8 @@ var tokenMap = map[string]int{
 	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
 	"PASSWORD_LOCK_TIME":       passwordLockTime,
 	"REUSE":                    reuse,
+	"CATALOG":                  catalog,
+	"PROPERTIES":               properties,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
