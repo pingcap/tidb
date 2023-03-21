@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -586,7 +587,26 @@ const (
        PRIMARY KEY (job_id),
        KEY (create_time),
        KEY (create_user));`
+	// please make sure newly added CREATE TABLE consts are also added to below
+	// allCreateTables
 )
+
+var allCreateTables = []string{
+	CreateUserTable, CreateGlobalPrivTable, CreateDBPrivTable,
+	CreateTablePrivTable, CreateColumnPrivTable, CreateGlobalVariablesTable,
+	CreateTiDBTable, CreateHelpTopic, CreateStatsMetaTable,
+	CreateStatsColsTable, CreateStatsBucketsTable, CreateGCDeleteRangeTable,
+	CreateGCDeleteRangeDoneTable, CreateStatsFeedbackTable, CreateBindInfoTable,
+	CreateRoleEdgesTable, CreateDefaultRolesTable, CreateStatsTopNTable,
+	CreateStatsFMSketchTable, CreateExprPushdownBlacklist, CreateOptRuleBlacklist,
+	CreateStatsExtended, CreateSchemaIndexUsageTable, CreateGlobalGrantsTable,
+	CreateCapturePlanBaselinesBlacklist, CreateColumnStatsUsageTable,
+	CreateTableCacheMetaTable, CreateAnalyzeOptionsTable, CreateStatsHistory,
+	CreateStatsMetaHistory, CreateAnalyzeJobs, CreateAdvisoryLocks,
+	CreatePlanReplayerStatusTable, CreatePlanReplayerTaskTable,
+	CreateStatsTableLocked, CreatePasswordHistory, CreateTTLTableStatus,
+	CreateTTLTask, CreateTTLJobHistory, CreateGlobalTask, CreateLoadDataJobs,
+}
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
@@ -613,7 +633,7 @@ func bootstrap(s Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
-			doDDLWorks(s)
+			doDDLWorks(s, dom.DDL())
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
@@ -1747,11 +1767,6 @@ func upgradeToVer57(s Session, ver int64) {
 	insertBuiltinBindInfoRow(s)
 }
 
-func initBindInfoTable(s Session) {
-	mustExecute(s, CreateBindInfoTable)
-	insertBuiltinBindInfoRow(s)
-}
-
 func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
@@ -2460,94 +2475,47 @@ func getBootstrapVersion(s Session) (int64, error) {
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
-func doDDLWorks(s Session) {
+func doDDLWorks(s Session, d ddl.DDL) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
-	// Create user table.
-	mustExecute(s, CreateUserTable)
-	// Create password history.
-	mustExecute(s, CreatePasswordHistory)
-	// Create privilege tables.
-	mustExecute(s, CreateGlobalPrivTable)
-	mustExecute(s, CreateDBPrivTable)
-	mustExecute(s, CreateTablePrivTable)
-	mustExecute(s, CreateColumnPrivTable)
-	// Create global system variable table.
-	mustExecute(s, CreateGlobalVariablesTable)
-	// Create TiDB table.
-	mustExecute(s, CreateTiDBTable)
-	// Create help table.
-	mustExecute(s, CreateHelpTopic)
-	// Create stats_meta table.
-	mustExecute(s, CreateStatsMetaTable)
-	// Create stats_columns table.
-	mustExecute(s, CreateStatsColsTable)
-	// Create stats_buckets table.
-	mustExecute(s, CreateStatsBucketsTable)
-	// Create gc_delete_range table.
-	mustExecute(s, CreateGCDeleteRangeTable)
-	// Create gc_delete_range_done table.
-	mustExecute(s, CreateGCDeleteRangeDoneTable)
-	// Create stats_feedback table.
-	mustExecute(s, CreateStatsFeedbackTable)
-	// Create role_edges table.
-	mustExecute(s, CreateRoleEdgesTable)
-	// Create default_roles table.
-	mustExecute(s, CreateDefaultRolesTable)
-	// Create bind_info table.
-	initBindInfoTable(s)
-	// Create stats_topn_store table.
-	mustExecute(s, CreateStatsTopNTable)
-	// Create expr_pushdown_blacklist table.
-	mustExecute(s, CreateExprPushdownBlacklist)
-	// Create opt_rule_blacklist table.
-	mustExecute(s, CreateOptRuleBlacklist)
-	// Create stats_extended table.
-	mustExecute(s, CreateStatsExtended)
-	// Create schema_index_usage.
-	mustExecute(s, CreateSchemaIndexUsageTable)
-	// Create stats_fm_sketch table.
-	mustExecute(s, CreateStatsFMSketchTable)
-	// Create global_grants
-	mustExecute(s, CreateGlobalGrantsTable)
-	// Create capture_plan_baselines_blacklist
-	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
-	// Create column_stats_usage table
-	mustExecute(s, CreateColumnStatsUsageTable)
-	// Create table_cache_meta table.
-	mustExecute(s, CreateTableCacheMetaTable)
-	// Create analyze_options table.
-	mustExecute(s, CreateAnalyzeOptionsTable)
-	// Create stats_history table.
-	mustExecute(s, CreateStatsHistory)
-	// Create stats_meta_history table.
-	mustExecute(s, CreateStatsMetaHistory)
-	// Create analyze_jobs table.
-	mustExecute(s, CreateAnalyzeJobs)
-	// Create advisory_locks table.
-	mustExecute(s, CreateAdvisoryLocks)
-	// Create mdl view.
-	mustExecute(s, CreateMDLView)
-	// Create plan_replayer_status table
-	mustExecute(s, CreatePlanReplayerStatusTable)
-	// Create plan_replayer_task table
-	mustExecute(s, CreatePlanReplayerTaskTable)
-	// Create stats_meta_table_locked table
-	mustExecute(s, CreateStatsTableLocked)
-	// Create tidb_ttl_table_status table
-	mustExecute(s, CreateTTLTableStatus)
-	// Create tidb_ttl_task table
-	mustExecute(s, CreateTTLTask)
-	// Create tidb_ttl_job_history table
-	mustExecute(s, CreateTTLJobHistory)
-	// Create tidb_global_task table
-	mustExecute(s, CreateGlobalTask)
+	p := parser.New()
+	tableInfos := make([]*model.TableInfo, 0, len(allCreateTables))
+	for _, createTable := range allCreateTables {
+		stmt, err := p.ParseOneStmt(createTable, "", "")
+		if err != nil {
+			logutil.BgLogger().Fatal("ParseOneStmt error", zap.Error(err), zap.Stack("stack"))
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			logutil.BgLogger().Fatal("BuildTableInfoFromAST error", zap.Error(err), zap.Stack("stack"))
+		}
+		tableInfos = append(tableInfos, tblInfo)
+	}
+	batchCreateTable(s, d, tableInfos)
+
+	// init bind_info table.
+	insertBuiltinBindInfoRow(s)
 	// Create default resource group
 	mustExecute(s, CreateDefaultResourceGroup)
-	// Create load_data_jobs
-	mustExecute(s, CreateLoadDataJobs)
+}
+
+func batchCreateTable(s Session, d ddl.DDL, tableInfos []*model.TableInfo) {
+	err := d.BatchCreateTableWithInfo(s, model.NewCIStr(mysql.SystemDB), tableInfos, ddl.OnExistIgnore)
+	if err == nil {
+		return
+	}
+	if kv.ErrEntryTooLarge.Equal(err) {
+		if len(tableInfos) == 1 {
+			logutil.BgLogger().Fatal("too large TableInfo", zap.Any("tableInfo", tableInfos[0]), zap.Stack("stack"))
+		}
+		mid := len(tableInfos)/2 + 1
+		batchCreateTable(s, d, tableInfos[:mid])
+		batchCreateTable(s, d, tableInfos[mid:])
+	} else {
+		logutil.BgLogger().Fatal("batchCreateTable meet error", zap.Error(err), zap.Stack("stack"))
+	}
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

@@ -164,7 +164,7 @@ func TestBootstrapWithError(t *testing.T) {
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-		doDDLWorks(se)
+		doDDLWorks(se, dom.DDL())
 	}
 
 	dom, err := domap.Get(store)
