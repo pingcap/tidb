@@ -1192,8 +1192,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					nanoseconds := float64(time.Since(start).Nanoseconds())
 					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore))
 					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored))
-					totalRowsToRestore := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateTotalRestore))
-					restoredRows := metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored))
+					totalRowsToRestore := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, metric.StateTotalRestore)
+					restoredRows := metric.ReadAllCounters(metrics.RowsCounter.MetricVec, metric.StateRestored)
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
@@ -1594,7 +1594,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	}
 
 	var allTasks []task
-	var totalDataSizeToRestore, totalRowsToRestore int64
+	var totalDataSizeToRestore int64
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo := rc.dbInfos[dbMeta.Name]
 		for _, tableMeta := range dbMeta.Tables {
@@ -1626,7 +1626,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 						if err != nil {
 							return errors.Trace(err)
 						}
-						totalRowsToRestore += numberRows
+						if m, ok := metric.FromContext(ctx); ok {
+							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
+						}
 						fi.FileMeta.Rows = numberRows
 						tableMeta.DataFiles[i] = fi
 					}
@@ -1638,7 +1640,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 						//  we set up the reader, so we directly use filesize here
 						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 							totalDataSizeToRestore += chunk.FileMeta.FileSize
-							totalRowsToRestore += chunk.UnfinishedSize()
+							if m, ok := metric.FromContext(ctx); ok {
+								m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(chunk.UnfinishedSize()))
+							}
 						} else {
 							totalDataSizeToRestore += chunk.UnfinishedSize()
 						}
@@ -1650,9 +1654,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 
 	if m, ok := metric.FromContext(ctx); ok {
 		m.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(totalDataSizeToRestore))
-		if totalRowsToRestore > 0 {
-			m.RowsCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(totalRowsToRestore))
-		}
 	}
 
 	for i := range allTasks {

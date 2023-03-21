@@ -526,10 +526,10 @@ func (cr *chunkProcessor) deliverLoop(
 					if currRealOffset > startRealOffset {
 						m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(currRealOffset - startRealOffset))
 					}
-					m.RowsCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(delta))
 				} else {
 					m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
-					m.RowsCounter.WithLabelValues(metric.StateRestored).Add(float64(dataChecksum.SumKVS()))
+					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(dataChecksum.SumKVS()))
 				}
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)

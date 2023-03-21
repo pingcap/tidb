@@ -17,6 +17,7 @@ package metric
 import (
 	"context"
 	"math"
+	"strings"
 
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -140,7 +141,7 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 				Namespace: "lightning",
 				Name:      "rows",
 				Help:      "count of total rows",
-			}, []string{"state"}),
+			}, []string{"state", "table"}),
 
 		ImportSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -321,6 +322,45 @@ func ReadCounter(counter prometheus.Counter) float64 {
 		return math.NaN()
 	}
 	return metric.Counter.GetValue()
+}
+
+// MetricHasLabel
+func MetricHasLabel(metric prometheus.Metric, labels ...string) bool {
+	desc := metric.Desc().String()
+	const startWith = "variableLabels: "
+	n := strings.Index(desc, startWith)
+	if n < 0 {
+		return false
+	}
+	desc = desc[n+len(startWith):]
+	for _, label := range labels {
+		if !strings.Contains(desc, label) {
+			return false
+		}
+	}
+	return true
+}
+
+// ReadAllCounters reports the summary value of the counters with given labels.
+func ReadAllCounters(metricsVec *prometheus.MetricVec, labels ...string) float64 {
+	metricsChan := make(chan prometheus.Metric, 8)
+	go func() {
+		metricsVec.Collect(metricsChan)
+		close(metricsChan)
+	}()
+
+	var sum float64
+	for counter := range metricsChan {
+		if !MetricHasLabel(counter, labels...) {
+			continue
+		}
+		var metric dto.Metric
+		if err := counter.Write(&metric); err != nil {
+			return math.NaN()
+		}
+		sum += metric.Counter.GetValue()
+	}
+	return sum
 }
 
 // ReadHistogramSum reports the sum of all observed values in the histogram.
