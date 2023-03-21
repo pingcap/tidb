@@ -26,7 +26,7 @@ import (
 )
 
 type visibilityChecker interface {
-	isVisible(kv.Key) bool
+	invisible(kv.Key) bool
 }
 
 // memBuffer wraps tikv.MemDB as kv.MemBuffer.
@@ -54,10 +54,10 @@ func (m *memBuffer) delInvisibleKey(k kv.Key) {
 	m.Unlock()
 }
 
-func (m *memBuffer) isVisible(k kv.Key) bool {
+func (m *memBuffer) invisible(k kv.Key) bool {
 	// shall be protected by MemBuffer.RLock
 	_, ok := m.invisibleKeys[util.String(k)]
-	return !ok
+	return ok
 }
 
 func (m *memBuffer) Size() int {
@@ -77,7 +77,7 @@ func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
-	if !m.isVisible(key) {
+	if m.invisible(key) {
 		return nil, kv.ErrNotExist
 	}
 	data, err := m.MemDB.Get(key)
@@ -169,7 +169,7 @@ func newKVGetter(getter tikv.Getter, checker visibilityChecker) kv.Getter {
 }
 
 func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
-	if !g.checker.isVisible(k) {
+	if g.checker.invisible(k) {
 		return nil, kv.ErrNotExist
 	}
 	data, err := g.Getter.Get(k)
@@ -185,7 +185,7 @@ type tikvIterator struct {
 
 func newKVIterator(iterator tikv.Iterator, checker visibilityChecker) kv.Iterator {
 	it := &tikvIterator{iterator, checker, nil}
-	if it.Valid() && !it.checker.isVisible(it.Key()) {
+	if it.Valid() && it.checker.invisible(it.Key()) {
 		// skip first invisible key
 		it.initErr = it.Next()
 	}
@@ -210,7 +210,7 @@ func (it *tikvIterator) Next() error {
 		if !it.Valid() {
 			return nil
 		}
-		if it.checker.isVisible(it.Key()) {
+		if !it.checker.invisible(it.Key()) {
 			return nil
 		}
 	}
