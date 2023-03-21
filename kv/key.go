@@ -40,10 +40,10 @@ func (k Key) Next() Key {
 //
 // Assume there are keys like:
 //
-//   rowkey1
-//   rowkey1_column1
-//   rowkey1_column2
-//   rowKey2
+//	rowkey1
+//	rowkey1_column1
+//	rowkey1_column2
+//	rowKey2
 //
 // If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
