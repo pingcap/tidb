@@ -67,6 +67,11 @@ go_test(
     ],
     embed = [":backup"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    race = "on",
+    shard_count = 9,
+>>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396))
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",

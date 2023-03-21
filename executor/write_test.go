@@ -1960,6 +1960,7 @@ func TestIssue18681(t *testing.T) {
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
+<<<<<<< HEAD:executor/write_test.go
 func TestIssue33298(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1977,6 +1978,8 @@ func TestIssue33298(t *testing.T) {
 	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
 }
 
+=======
+>>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396)):executor/writetest/write_test.go
 func TestIssue34358(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1996,6 +1999,7 @@ func TestIssue34358(t *testing.T) {
 	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
 }
 
+<<<<<<< HEAD:executor/write_test.go
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
@@ -2341,6 +2345,8 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+=======
+>>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396)):executor/writetest/write_test.go
 func TestNullDefault(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -63,7 +63,7 @@ go_library(
 
 go_test(
     name = "utils_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "backoff_test.go",
         "db_test.go",
@@ -80,7 +80,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 20,
+=======
+    shard_count = 36,
+>>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

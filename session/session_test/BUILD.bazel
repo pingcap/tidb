@@ -35,8 +35,12 @@ go_test(
         "//testkit/testsetup",
         "//types",
         "//util",
+<<<<<<< HEAD:session/session_test/BUILD.bazel
         "//util/memory",
         "//util/sqlexec",
+=======
+        "//util/mock",
+>>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396)):executor/writetest/BUILD.bazel
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

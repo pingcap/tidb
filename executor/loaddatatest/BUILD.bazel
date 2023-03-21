@@ -1,29 +1,27 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "autoidtest_test",
+    name = "loaddatatest_test",
+    timeout = "short",
     srcs = [
-        "autoid_test.go",
+        "load_data_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 10,
->>>>>>> 3c942f7e101 (bazel: set short timeout as 120s (#42396))
+    shard_count = 11,
     deps = [
+        "//br/pkg/lightning/mydump",
         "//config",
-        "//ddl/testutil",
+        "//executor",
         "//meta/autoid",
-        "//parser/mysql",
-        "//session",
-        "//sessionctx/variable",
+        "//sessionctx",
+        "//sessiontxn",
         "//testkit",
-        "//testkit/testutil",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//util/dbterror/exeerrors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )
