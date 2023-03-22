@@ -34,8 +34,8 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sum = "h1:6qXr+R5w+ktL5UkwEbPp+fEvfyoMPche6GkOpGHZcLc=",
-        version = "v0.4.2",
+        sum = "h1:o/n5/K5gXqk8Gozvs2cnL0F2S1/g1vcGCAx2vETjITw=",
+        version = "v0.4.3",
     )
     go_repository(
         name = "com_4d63_gocheckcompilerdirectives",
@@ -480,8 +480,8 @@ def go_deps():
         name = "com_github_chavacava_garif",
         build_file_proto_mode = "disable",
         importpath = "github.com/chavacava/garif",
-        sum = "h1:cy5GCEZLUCshCGCRRUjxHrDUqkB4l5cuUt3ShEckQEo=",
-        version = "v0.0.0-20221024190013-b3ef35877348",
+        sum = "h1:W9o46d2kbNL06lq7UNDPV0zYLzkrde/bjIqO02eoll0=",
+        version = "v0.0.0-20230227094218-b8c73b2037b8",
     )
 
     go_repository(
@@ -1048,8 +1048,8 @@ def go_deps():
         name = "com_github_fatih_color",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fatih/color",
-        sum = "h1:qfhVLaG5s+nCROl1zJsZRxFeYrHLqWroPOQ8BWiNb4w=",
-        version = "v1.14.1",
+        sum = "h1:kOqh6YHBtK8aywxGerMG2Eq3H6Qgoqeo13Bk2Mv/nBs=",
+        version = "v1.15.0",
     )
     go_repository(
         name = "com_github_fatih_structs",
@@ -2868,8 +2868,8 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable",
         importpath = "github.com/mgechev/revive",
-        sum = "h1:UF9AR8pOAuwNmhXj2odp4mxv9Nx2qUIwVz8ZsU+Mbec=",
-        version = "v1.2.5",
+        sum = "h1:OlQkcH40IB2cGuprTPcjB0iIUddgVZgGmDX3IAMR8D4=",
+        version = "v1.3.1",
     )
 
     go_repository(
@@ -3373,8 +3373,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:z6WwBPP0Txmal5zf+H7vf/lSmKZtSS8BTNwiLjEjdnA=",
-        version = "v0.0.0-20230312142449-01623096c924",
+        sum = "h1:P4MWntrAwXARSLRVgnJ8W2zqIhHWvOSSLK4DjNyiN4A=",
+        version = "v0.0.0-20230317010544-b47a4830141f",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3584,8 +3584,8 @@ def go_deps():
         name = "com_github_rivo_uniseg",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rivo/uniseg",
-        sum = "h1:utMvzDsuh3suAEnhH0RdHmoPbU648o6CvXxTx4SBMOw=",
-        version = "v0.4.3",
+        sum = "h1:8TfxU8dW6PdqD27gjM8MVNuicgxIjxpm4K7x4jp8sis=",
+        version = "v0.4.4",
     )
     go_repository(
         name = "com_github_rlmcpherson_s3gof3r",
@@ -4102,8 +4102,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:KFKjXBwDCfmPyNjMgNE2YAS+ZtwryVSYSlCSNhzpbig=",
-        version = "v2.0.7-0.20230316080603-d19741b3ed77",
+        sum = "h1:m5Y7tBW5Rq8L1ANxibitBa/DInDy3hA2Qvk1Ys9u1NU=",
+        version = "v2.0.7-0.20230317032622-884a634378d4",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4117,8 +4117,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:CYU+awkq5ykKyWV2e2Z+qtRveWMttV4N3r0lyk/z4/M=",
-        version = "v0.0.0-20230316082839-7a0ce101c243",
+        sum = "h1:p60OYOpR5e89wYof1gYN2xaVn8809S6E0idQMFKo/SY=",
+        version = "v0.0.0-20230321033841-af5b01913628",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

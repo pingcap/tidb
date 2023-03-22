@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -322,6 +323,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.TableName:
 		checker.tableNode = node
+		if filter.IsSystemSchema(node.Schema.O) {
+			checker.cacheable = false
+			checker.reason = "access tables in system schema"
+			return in, !checker.cacheable
+		}
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
@@ -435,7 +441,7 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
@@ -454,6 +460,9 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }

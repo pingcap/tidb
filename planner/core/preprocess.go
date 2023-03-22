@@ -730,24 +730,12 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	if len(autoIncrementCols) < 1 {
 		return
 	}
+	// Only have one auto_increment col.
 	if len(autoIncrementCols) > 1 {
 		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		return
 	}
-	// Only have one auto_increment col.
-	for col, isKey := range autoIncrementCols {
-		if !isKey {
-			isKey = isConstraintKeyTp(stmt.Constraints, col)
-		}
-		autoIncrementMustBeKey := true
-		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-				autoIncrementMustBeKey = false
-			}
-		}
-		if autoIncrementMustBeKey && !isKey {
-			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-		}
+	for col := range autoIncrementCols {
 		switch col.Tp.GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:

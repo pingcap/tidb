@@ -93,10 +93,16 @@ const (
 )
 
 type tableInfo struct {
-	TotalWritten int64      `json:"w"`
-	TotalSize    int64      `json:"z"`
-	Status       taskStatus `json:"s"`
-	Message      string     `json:"m,omitempty"`
+	TotalWritten int64           `json:"w"`
+	TotalSize    int64           `json:"z"`
+	Status       taskStatus      `json:"s"`
+	Message      string          `json:"m,omitempty"`
+	Progresses   []tableProgress `json:"progresses,omitempty"`
+}
+
+type tableProgress struct {
+	Step     string  `json:"step"`
+	Progress float64 `json:"progress"`
 }
 
 type taskProgress struct {
@@ -175,6 +181,26 @@ func BroadcastTableCheckpoint(tableName string, cp *checkpoints.TableCheckpoint)
 
 	// create a deep copy to avoid false sharing
 	currentProgress.checkpoints.insert(tableName, cp.DeepCopy())
+}
+
+func BroadcastTableProgress(tableName string, step string, progress float64) {
+	if !progressEnabled.Load() {
+		return
+	}
+	currentProgress.mu.Lock()
+	progresses := currentProgress.Tables[tableName].Progresses
+	var present bool
+	for i, p := range progresses {
+		if p.Step == step {
+			progresses[i].Progress = progress
+			present = true
+		}
+	}
+	if !present {
+		progresses = append(progresses, tableProgress{Step: step, Progress: progress})
+	}
+	currentProgress.Tables[tableName].Progresses = progresses
+	currentProgress.mu.Unlock()
 }
 
 func BroadcastCheckpointDiff(diffs map[string]*checkpoints.TableCheckpointDiff) {
