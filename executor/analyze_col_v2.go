@@ -784,6 +784,9 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)
 		})
+		logutil.BgLogger().Info("slow analyze start")
+		time.Sleep(30 * time.Second)
+		logutil.BgLogger().Info("slow analyze end")
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
