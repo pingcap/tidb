@@ -573,48 +573,68 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) encode.Row
 	indexRows := b.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{Table: tbl, Logger: log.L()})
-	require.NoError(t, err)
-	row, err := encoder.Encode([]types.Datum{
-		types.NewIntDatum(1),
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
-	require.NoError(t, err)
-
-	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
-
-	row, err = encoder.Encode([]types.Datum{
-		types.NewIntDatum(2),
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
-	require.NoError(t, err)
-
-	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
-
-	row, err = encoder.Encode([]types.Datum{
-		types.NewIntDatum(3),
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
-	require.NoError(t, err)
-
-	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
-
-	row, err = encoder.Encode([]types.Datum{
-		types.NewIntDatum(4),
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
-	require.NoError(t, err)
-
-	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
-
-	row, err = encoder.Encode([]types.Datum{
-		types.NewIntDatum(5),
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
-	require.NoError(t, err)
-
-	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+	rowCases := []struct {
+		row        []types.Datum
+		rowID      int64
+		colMapping []int
+		path       string
+		offset     int64
+	}{
+		{
+			row:        []types.Datum{types.NewIntDatum(1)},
+			rowID:      1,
+			colMapping: []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			path:       "7.csv",
+			offset:     0,
+		},
+		{
+			row:        []types.Datum{types.NewIntDatum(2)},
+			rowID:      1,
+			colMapping: []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			path:       "8.csv",
+		},
+		{
+			row:        []types.Datum{types.NewIntDatum(3)},
+			rowID:      1,
+			colMapping: []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			path:       "9.csv",
+		},
+		{
+			row:        []types.Datum{types.NewIntDatum(4)},
+			rowID:      1,
+			colMapping: []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			path:       "10.csv",
+		},
+		{
+			row:        []types.Datum{types.NewIntDatum(5)},
+			rowID:      1,
+			colMapping: []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			path:       "11.csv",
+		},
+	}
+	for _, rc := range rowCases {
+		encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{
+			Path:   rc.path,
+			Table:  tbl,
+			Logger: log.L(),
+		})
+		require.NoError(t, err)
+		row, err := encoder.Encode(rc.row, rc.rowID, rc.colMapping, rc.offset)
+		require.NoError(t, err)
+		row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+	}
 
 	rawRow := make([]types.Datum, 0)
 	for i := 0; i < 15; i++ {
 		rawRow = append(rawRow, types.NewIntDatum(0))
 	}
-	row, err = encoder.Encode(rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
+	encoder, err := b.NewEncoder(context.Background(), &encode.EncodingConfig{
+		Path:   "12.csv",
+		Table:  tbl,
+		Logger: log.L(),
+	})
+	require.NoError(t, err)
+	_, err = encoder.Encode(rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
 	require.NotNil(t, err)
 	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
