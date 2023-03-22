@@ -12,7 +12,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
@@ -252,17 +251,19 @@ func newDrainResult() DrainResult {
 	}
 }
 
+// fileterOutRanges filter out the range from `drained-range` that is overlapped with ranges in the `range-tree`
 func (b *Batcher) filterOutRanges(tree rtree.RangeTree, drained []rtree.Range) []rtree.Range {
 	newRanges := make([]rtree.Range, 0, len(drained))
 	progress := int64(0)
 	for _, rg := range drained {
 		if r := tree.Find(&rg); r != nil {
+			// The range is overlapped with ranges in the tree,
+			// so skip it and update the summary information.
 			progress += 2 // split/scatter + download/ingest
 			for _, f := range rg.Files {
 				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
 			}
-			log.Info("find range is completed to ingest", logutil.Key("start-key", rg.StartKey), logutil.Files(rg.Files))
 		} else {
 			newRanges = append(newRanges, rg)
 		}
@@ -318,6 +319,8 @@ func (b *Batcher) drainRanges() DrainResult {
 				zap.Int("size", thisTableLen),
 				zap.Int("drained", drainSize),
 			)
+			// Firstly calculated the batcher size, and then
+			// filter out ranges by checkpoint.
 			atomic.AddInt32(&b.size, -int32(len(drained)))
 			if exists {
 				drained = b.filterOutRanges(t, drained)
@@ -329,8 +332,9 @@ func (b *Batcher) drainRanges() DrainResult {
 		}
 
 		result.BlankTablesAfterSend = append(result.BlankTablesAfterSend, thisTable.CreatedTable)
-		// let's 'drain' the ranges of current table. This op must not make the batch full.
+		// Firstly calculated the batcher size, and then filter out ranges by checkpoint.
 		atomic.AddInt32(&b.size, -int32(len(thisTable.Range)))
+		// let's 'drain' the ranges of current table. This op must not make the batch full.
 		if exists {
 			result.Ranges = append(result.Ranges, b.filterOutRanges(t, thisTable.Range)...)
 		} else {

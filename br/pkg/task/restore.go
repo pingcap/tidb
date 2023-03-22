@@ -193,6 +193,8 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
+	UseCheckpoint bool `json:"use-checkpoint" toml:"use-checkpoint"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -212,6 +214,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 	flags.String(FlagKeyspaceName, "", "correspond to tidb config keyspace-name")
+
+	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
+	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -309,6 +314,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.KeyspaceName, err = flags.GetString(FlagKeyspaceName)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagKeyspaceName)
+	}
+	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -608,7 +617,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	tree, id, err := client.InitCheckpoint(ctx, s, &restoreTS)
+	tree, id, err := client.InitCheckpoint(ctx, s, &restoreTS, cfg.UseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}

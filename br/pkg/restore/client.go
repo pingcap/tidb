@@ -242,58 +242,78 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, ts *uint64) (map[int64]rtree.RangeTree, string, error) {
-	taskName := fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
-	tree := make(map[int64]rtree.RangeTree)
-	id := utils.MakeSafePointID()
-	var meta *checkpoint.CheckpointMetadata
-	ok, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
+// InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
+// restored for the first time, it will intialize the checkpoint metadata. Otherwrise,
+// it will load checkpoint metadata and checkpoint ranges/checksum from the external
+// storage.
+func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, restoreTS *uint64, useCheckpoint bool) (map[int64]rtree.RangeTree, string, error) {
+	var (
+		taskName = fmt.Sprintf("%d", rc.GetPDClient().GetClusterID(ctx))
+		// id is the gc-safepoint id, the same restore task's id should be the same.
+		id = utils.MakeSafePointID()
+		// checkpoint ranges
+		tree = make(map[int64]rtree.RangeTree)
+
+		meta *checkpoint.CheckpointMetadata
+	)
+
+	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
+	if !useCheckpoint {
+		return tree, id, nil
+	}
+
+	// if the checkpoint metadata exists in the external storage, the restore is not
+	// for the first time.
+	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
 	if err != nil {
 		return tree, id, errors.Trace(err)
 	}
 
-	if ok {
+	if exists {
+		// load the checkpoint since this is not the first time to restore
 		meta, err = checkpoint.LoadCheckpointMetaForRestore(ctx, s, taskName)
-		id = meta.GCServiceId
-		*ts = meta.BackupTS
-	} else {
-		err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, &checkpoint.CheckpointMetadata{
-			GCServiceId: id,
-			BackupTS:    *ts,
-		}, taskName)
-	}
-	if err != nil {
-		return tree, id, errors.Trace(err)
-	}
-
-	restoreCheckpoint, err := checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
-	if err != nil {
-		return tree, id, errors.Trace(err)
-	}
-	t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg *rtree.Range) {
-		t, exists := tree[tableID]
-		if !exists {
-			t = rtree.NewRangeTree()
-			tree[tableID] = t
+		if err != nil {
+			return tree, id, errors.Trace(err)
 		}
-		t.InsertRange(*rg)
-	})
-	if err != nil {
-		return tree, id, errors.Trace(err)
-	}
-	checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
-	if err != nil {
-		return tree, id, errors.Trace(err)
-	}
-	if t1 > t2 {
-		summary.AdjustStartTimeToEarlierTime(t1)
+		id = meta.GCServiceId
+		*restoreTS = meta.BackupTS
+
+		// t1 is the latest time the checkpoint ranges persisted to the external storage.
+		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rg *rtree.Range) {
+			t, exists := tree[tableID]
+			if !exists {
+				t = rtree.NewRangeTree()
+				tree[tableID] = t
+			}
+			t.InsertRange(*rg)
+		})
+		if err != nil {
+			return tree, id, errors.Trace(err)
+		}
+		// t2 is the latest time the checkpoint checksum persisted to the external storage.
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+		if err != nil {
+			return tree, id, errors.Trace(err)
+		}
+		rc.checkpointChecksum = checkpointChecksum
+		// use the later time to adjust the summary elapsed time.
+		if t1 > t2 {
+			summary.AdjustStartTimeToEarlierTime(t1)
+		} else {
+			summary.AdjustStartTimeToEarlierTime(t2)
+		}
 	} else {
-		summary.AdjustStartTimeToEarlierTime(t2)
+		// initialize the checkpoint metadata since it is the first time to restore.
+		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, &checkpoint.CheckpointMetadata{
+			GCServiceId: id,
+			BackupTS:    *restoreTS,
+		}, taskName); err != nil {
+			return tree, id, errors.Trace(err)
+		}
 	}
 
-	rc.checkpointRunner = restoreCheckpoint
-	rc.checkpointChecksum = checkpointChecksum
-	return tree, id, nil
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
+	return tree, id, errors.Trace(err)
 }
 
 func (rc *Client) GetCheckpointRunner() *checkpoint.CheckpointRestoreRunner {
@@ -1530,7 +1550,7 @@ func (rc *Client) execChecksum(
 			TotalKvs:   checksumResp.TotalKvs,
 			TotalBytes: checksumResp.TotalBytes,
 		}
-		err = rc.checkpointRunner.FlushChecksum(ctx, tbl.Table.ID, item.Crc64xor, item.TotalKvs, item.TotalBytes, time.Since(beginT).Seconds())
+		err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
 		if err != nil {
 			return errors.Trace(err)
 		}

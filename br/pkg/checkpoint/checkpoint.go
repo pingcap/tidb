@@ -153,23 +153,14 @@ func (cr *ChecksumRunner) RecordError(err error) {
 	cr.Unlock()
 }
 
-// FlushChecksum save the checksum in the memory temporarily
+// FlushChecksumItem save the checksum in the memory temporarily
 // and flush to the external storage if checksum take much time
-func (cr *ChecksumRunner) FlushChecksum(
+func (cr *ChecksumRunner) FlushChecksumItem(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	tableID int64,
-	crc64xor uint64,
-	totalKvs uint64,
-	totalBytes uint64,
+	checksumItem *ChecksumItem,
 	timeCost float64,
 ) error {
-	checksumItem := &ChecksumItem{
-		TableID:    tableID,
-		Crc64xor:   crc64xor,
-		TotalKvs:   totalKvs,
-		TotalBytes: totalBytes,
-	}
 	var toBeFlushedChecksumItems *ChecksumItems = nil
 	cr.Lock()
 	if cr.err != nil {
@@ -224,7 +215,7 @@ func (cr *ChecksumRunner) FlushChecksum(
 			return
 		}
 
-		fname := fmt.Sprintf("%s/t%d_and__", cr.checkpointChecksumDir, tableID)
+		fname := fmt.Sprintf("%s/t%d_and__", cr.checkpointChecksumDir, checksumItem.TableID)
 		err = s.WriteFile(ctx, fname, data)
 		if err != nil {
 			cr.RecordError(err)
@@ -290,7 +281,17 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 }
 
 func (r *CheckpointRunner[K]) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64, totalKvs uint64, totalBytes uint64, timeCost float64) error {
-	return r.checksumRunner.FlushChecksum(ctx, r.storage, tableID, crc64xor, totalKvs, totalBytes, timeCost)
+	checksumItem := &ChecksumItem{
+		TableID:    tableID,
+		Crc64xor:   crc64xor,
+		TotalKvs:   totalKvs,
+		TotalBytes: totalBytes,
+	}
+	return r.checksumRunner.FlushChecksumItem(ctx, r.storage, checksumItem, timeCost)
+}
+
+func (r *CheckpointRunner[K]) FlushChecksumItem(ctx context.Context, checksumItem *ChecksumItem, timeCost float64) error {
+	return r.checksumRunner.FlushChecksumItem(ctx, r.storage, checksumItem, timeCost)
 }
 
 func (r *CheckpointRunner[K]) append(
@@ -712,17 +713,16 @@ func walkCheckpointFile[K KeyType](ctx context.Context, s storage.ExternalStorag
 }
 
 type CheckpointMetadata struct {
-	GCServiceId  string          `json:"gc-service-id"`
-	ConfigHash   []byte          `json:"config-hash"`
-	BackupTS     uint64          `json:"backup-ts"`
-	Ranges       []rtree.Range   `json:"ranges"`
-	RewriteRules map[int64]int64 `json:"rewrite-rules"`
+	GCServiceId string        `json:"gc-service-id"`
+	ConfigHash  []byte        `json:"config-hash"`
+	BackupTS    uint64        `json:"backup-ts"`
+	Ranges      []rtree.Range `json:"ranges"`
 
 	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
 	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
 }
 
-// read checkpoint meta data from external storage and unmarshal back
+// load checkpoint meta data from external storage and unmarshal back
 func loadCheckpointMeta(ctx context.Context, s storage.ExternalStorage, path string) (*CheckpointMetadata, error) {
 	data, err := s.ReadFile(ctx, path)
 	if err != nil {
