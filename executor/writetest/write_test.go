@@ -1991,11 +1991,11 @@ func TestIssue18681(t *testing.T) {
 	ld.ResetBatch()
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate
+	originIgnoreTruncate := sc.IgnoreTruncate.Load()
 	defer func() {
-		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.IgnoreTruncate.Store(originIgnoreTruncate)
 	}()
-	sc.IgnoreTruncate = false
+	sc.IgnoreTruncate.Store(false)
 	tests := []testCase{
 		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
