@@ -285,7 +285,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
 	// casting it to *tidbResultSet.
-	if result, ok := unwrapResultSet(rs).(*tidbResultSet); ok {
+	if result, ok := rs.(*tidbResultSet); ok {
 		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 			result.preparedStmt = planCacheStmt
 		}
@@ -297,12 +297,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
-		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
-		// will be set to sleep after fetch returned.
-		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
-			unhold := pi.HoldTS(pi.CurTxnStartTS)
-			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
-		}
 		stmt.StoreResultSet(rs)
 		// also store the preparedParams in the stmt, so we could restore the params in the following fetch command
 		// the params should have been parsed in `(&cc.ctx).ExecuteStmt(ctx, execStmt)`.
