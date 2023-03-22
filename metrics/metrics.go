@@ -249,6 +249,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
 	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
 	prometheus.MustRegister(PoolConcurrencyCounter)
