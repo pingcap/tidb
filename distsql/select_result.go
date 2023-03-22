@@ -64,7 +64,7 @@ var (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*SerialSelectResults)(nil)
+	_ SelectResult = (*serialSelectResults)(nil)
 	_ SelectResult = (*sortedSelectResults)(nil)
 )
 
@@ -246,21 +246,21 @@ func (ssr *sortedSelectResults) Close() (err error) {
 
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
 func NewSerialSelectResults(selectResults []SelectResult, pids []int64) SelectResult {
-	return &SerialSelectResults{
+	return &serialSelectResults{
 		selectResults: selectResults,
 		pids:          pids,
 		cur:           0,
 	}
 }
 
-// SerialSelectResults reads each SelectResult serially
-type SerialSelectResults struct {
+// serialSelectResults reads each SelectResult serially
+type serialSelectResults struct {
 	selectResults []SelectResult
 	pids          []int64
 	cur           int
 }
 
-func (ssr *SerialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	for ssr.cur < len(ssr.selectResults) {
 		resultSubset, err := ssr.selectResults[ssr.cur].NextRaw(ctx)
 		if err != nil {
@@ -274,7 +274,7 @@ func (ssr *SerialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 	return nil, nil
 }
 
-func (ssr *SerialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for ssr.cur < len(ssr.selectResults) {
 		if err := ssr.selectResults[ssr.cur].Next(ctx, chk); err != nil {
 			return err
@@ -287,14 +287,7 @@ func (ssr *SerialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (ssr *SerialSelectResults) GetCurrentPID() (int64, error) {
-	if len(ssr.pids) == 0 {
-		return 0, errors.Errorf("No Partition ID info")
-	}
-	return ssr.pids[ssr.cur], nil
-}
-
-func (ssr *SerialSelectResults) Close() (err error) {
+func (ssr *serialSelectResults) Close() (err error) {
 	for _, r := range ssr.selectResults {
 		if rerr := r.Close(); rerr != nil {
 			err = rerr

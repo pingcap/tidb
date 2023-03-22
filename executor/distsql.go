@@ -696,26 +696,24 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.batchSize = worker.maxBatchSize
 			}
 			if e.partitionTableMode {
-				worker.partitionTable = e.prunedPartitions[partTblIdx]
-				pids = append(pids, worker.partitionTable.GetPhysicalID())
+				pids = append(pids, e.prunedPartitions[partTblIdx].GetPhysicalID())
 			}
 		}
-		var ssr distsql.SelectResult
+		r := results
 		if len(results) > 1 && len(e.byItems) != 0 {
-			ssr = distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
-		} else if len(results) > 1 {
-			ssr = distsql.NewSerialSelectResults(results, pids)
-		} else {
-			ssr = results[0]
+			ssr := distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
+			r = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
-		fetchErr := worker.fetchHandles(ctx1, ssr)
+		fetchErr := worker.fetchHandles(ctx1, r)
 		if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 			e.feedback.Invalidate()
 		}
 		cancel()
-		if err := ssr.Close(); err != nil {
-			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+		for _, ssr := range results {
+			if err := ssr.Close(); err != nil {
+				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+			}
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
@@ -924,8 +922,6 @@ type indexWorker struct {
 	PushedLimit *plannercore.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
-	// partitionTable indicates if this worker is accessing a particular partition table.
-	partitionTable table.PhysicalTable
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -939,7 +935,7 @@ func (w *indexWorker) syncErr(err error) {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -961,7 +957,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(idxID)
 		}
 	}
+	i := int(0)
+	result := results[i]
 	for {
+		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+			break
+		}
 		startTime := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
 		finishFetch := time.Now()
@@ -970,10 +971,18 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			return err
 		}
 		if len(handles) == 0 {
-			return nil
+			if i == len(results)-1 {
+				return nil
+			}
+			i++
+			result = results[i]
+			continue
 		}
 		task := w.buildTableTask(handles, retChunk)
 		finishBuild := time.Now()
+		if w.idxLookup.partitionTableMode {
+			task.partitionTable = w.idxLookup.prunedPartitions[i]
+		}
 		select {
 		case <-ctx.Done():
 			return nil
@@ -988,6 +997,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
 		}
 	}
+	return nil
 }
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
@@ -1048,11 +1058,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
 					continue
 				}
-			} else if ssr, ok := idxResult.(*distsql.SerialSelectResults); ok {
-				pid, err := ssr.GetCurrentPID()
-				if err == nil {
-					h = kv.PartitionHandle{Handle: h, PartitionID: pid}
-				}
 			}
 			handles = append(handles, h)
 		}
@@ -1099,7 +1104,6 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 		indexOrder:           indexOrder,
 		duplicatedIndexOrder: duplicatedIndexOrder,
 		idxRows:              retChk,
-		partitionTable:       w.partitionTable,
 	}
 
 	task.doneCh = make(chan error, 1)
