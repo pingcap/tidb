@@ -83,7 +83,7 @@ func TestGetCgroupCPU(t *testing.T) {
 		}()
 	}
 	cpu, err := GetCgroupCPU()
-	if err == errNoCPUControllerDetected {
+	if err ==  {
 		// for more information, please refer https://github.com/pingcap/tidb/pull/41347
 		if checkKernelVersionNewerThan(t, 4, 7) {
 			require.NoError(t, err, "linux version > v4.7 and err still happens")

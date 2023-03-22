@@ -61,19 +61,12 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 	} else {
 		switch ver[0] {
 		case 1:
-			cgroupRootV1 := filepath.Join(root, mount[0])
-			cgroupRootV2 := filepath.Join(root, mount[1], path)
-			res.Period, res.Quota, err = detectCPUQuotaInV2(cgroupRootV2)
-			if err != nil {
-				res.Period, res.Quota, err = detectCPUQuotaInV1(cgroupRootV1)
-			}
+			cgroupRoot := filepath.Join(root, mount[0])
+			res.Period, res.Quota, err = detectCPUQuotaInV1(cgroupRoot)
 			if err != nil {
 				return res, err
 			}
-			res.Stime, res.Utime, err = detectCPUUsageInV2(cgroupRootV2)
-			if err != nil {
-				res.Stime, res.Utime, err = detectCPUUsageInV1(cgroupRootV1)
-			}
+			res.Stime, res.Utime, err = detectCPUUsageInV1(cgroupRoot)
 			if err != nil {
 				return res, err
 			}
