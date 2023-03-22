@@ -29,6 +29,8 @@ var (
 	TTLPhaseTime *prometheus.CounterVec
 
 	TTLInsertRowsCount prometheus.Counter
+
+	TTLWatermarkDelay *prometheus.GaugeVec
 )
 
 // InitTTLMetrics initializes ttl metrics.
@@ -81,4 +83,12 @@ func InitTTLMetrics() {
 			Name:      "ttl_insert_rows",
 			Help:      "The count of TTL rows inserted",
 		})
+
+	TTLWatermarkDelay = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_watermark_delay",
+			Help:      "Bucketed delay time in seconds for TTL tables.",
+		}, []string{LblType, LblName})
 }
