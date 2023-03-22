@@ -240,14 +240,7 @@ func MakeTableRegions(
 		rowIDBase = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
 	}
 
-	batchSize := float64(cfg.Mydumper.BatchSize)
-	if cfg.Mydumper.BatchSize <= 0 {
-		if meta.IsRowOrdered {
-			batchSize = float64(config.DefaultBatchSize)
-		} else {
-			batchSize = math.Max(float64(config.DefaultBatchSize), float64(meta.TotalSize))
-		}
-	}
+	batchSize := CalculateBatchSize(float64(cfg.Mydumper.BatchSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
 	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
@@ -256,6 +249,19 @@ func MakeTableRegions(
 		zap.Duration("cost", time.Since(start)))
 	AllocateEngineIDs(filesRegions, dataFileSizes, batchSize, cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
+}
+
+// CalculateBatchSize calculates batch size according to row order and file size.
+func CalculateBatchSize(mydumperBatchSize float64, isRowOrdered bool, totalSize float64) float64 {
+	batchSize := mydumperBatchSize
+	if batchSize <= 0 {
+		if isRowOrdered {
+			batchSize = float64(config.DefaultBatchSize)
+		} else {
+			batchSize = math.Max(float64(config.DefaultBatchSize), totalSize)
+		}
+	}
+	return batchSize
 }
 
 // MakeSourceFileRegion create a new source file region.
@@ -339,13 +345,14 @@ func makeParquetFileRegion(
 	meta *MDTableMeta,
 	dataFile FileInfo,
 ) (*TableRegion, error) {
-	r, err := store.Open(ctx, dataFile.FileMeta.Path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	numberRows, err := ReadParquetFileRowCount(ctx, store, r, dataFile.FileMeta.Path)
-	if err != nil {
-		return nil, errors.Trace(err)
+	numberRows := dataFile.FileMeta.Rows
+	var err error
+	// for safety
+	if numberRows <= 0 {
+		numberRows, err = ReadParquetFileRowCountByFile(ctx, store, dataFile.FileMeta)
+		if err != nil {
+			return nil, err
+		}
 	}
 	region := &TableRegion{
 		DB:       meta.DB,
@@ -354,6 +361,7 @@ func makeParquetFileRegion(
 		Chunk: Chunk{
 			Offset:       0,
 			EndOffset:    numberRows,
+			RealOffset:   0,
 			PrevRowIDMax: 0,
 			RowIDMax:     numberRows,
 		},

@@ -29,10 +29,10 @@ const (
 	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
 
-	BytesStateTotalRestore   = "total_restore" // total source data bytes needs to restore
-	BytesStateRestored       = "restored"      // source data bytes restored during restore engine
-	BytesStateRestoreWritten = "written"       // bytes written during restore engine
-	BytesStateImported       = "imported"      // bytes imported during import engine
+	StateTotalRestore   = "total_restore" // total source data bytes needs to restore
+	StateRestored       = "restored"      // source data bytes restored during restore engine
+	StateRestoreWritten = "written"       // bytes written during restore engine
+	StateImported       = "imported"      // bytes imported during import engine
 
 	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
 	ProgressPhaseRestore = "restore" // restore engine progress
@@ -134,12 +134,13 @@ func NewMetrics(factory promutil.Factory) *Metrics {
 		//  - running
 		//  - finished
 		//  - failed
+
 		RowsCounter: factory.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lightning",
 				Name:      "rows",
 				Help:      "count of total rows",
-			}, []string{"table"}),
+			}, []string{"state", "table"}),
 
 		ImportSecondsHistogram: factory.NewHistogram(
 			prometheus.HistogramOpts{
@@ -320,6 +321,37 @@ func ReadCounter(counter prometheus.Counter) float64 {
 		return math.NaN()
 	}
 	return metric.Counter.GetValue()
+}
+
+func metricHasLabel(labelPairs []*dto.LabelPair, labels prometheus.Labels) bool {
+	for _, label := range labelPairs {
+		if v, ok := labels[label.GetName()]; ok && v == label.GetValue() {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadAllCounters reports the summary value of the counters with given labels.
+func ReadAllCounters(metricsVec *prometheus.MetricVec, labels prometheus.Labels) float64 {
+	metricsChan := make(chan prometheus.Metric, 8)
+	go func() {
+		metricsVec.Collect(metricsChan)
+		close(metricsChan)
+	}()
+
+	var sum float64
+	for counter := range metricsChan {
+		var metric dto.Metric
+		if err := counter.Write(&metric); err != nil {
+			return math.NaN()
+		}
+		if !metricHasLabel(metric.GetLabel(), labels) {
+			continue
+		}
+		sum += metric.Counter.GetValue()
+	}
+	return sum
 }
 
 // ReadHistogramSum reports the sum of all observed values in the histogram.

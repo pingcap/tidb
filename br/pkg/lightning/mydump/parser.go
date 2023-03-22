@@ -132,9 +132,15 @@ const (
 
 // Parser provides some methods to parse a source data file.
 type Parser interface {
+	// Pos returns means the position that parser have already handled. It's mainly used for checkpoint.
+	// For normal files it's the file offset we handled.
+	// For parquet files it's the row count we handled.
+	// For compressed files it's the uncompressed file offset we handled.
+	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	RealPos() (int64, error)
+	// ScannedPos always returns the current file reader pointer's location
+	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -184,8 +190,8 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
-// RealPos gets the read position of current reader.
-func (parser *blockParser) RealPos() (int64, error) {
+// ScannedPos gets the read position of current reader.
+func (parser *blockParser) ScannedPos() (int64, error) {
 	return parser.reader.Seek(0, io.SeekCurrent)
 }
 
