@@ -237,7 +237,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			return errors.Trace(err)
 		}
 		if finish {
-			if err := util.CompleteDeleteRange(sctx, r, false); err != nil {
+			if err := util.CompleteDeleteRange(sctx, r, true); err != nil {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
