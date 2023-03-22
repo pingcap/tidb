@@ -17,6 +17,7 @@ package sqlexec
 import (
 	"encoding/json"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -92,9 +93,123 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 	return escapeBytesBackslash(buf, hack.Slice(v))
 }
 
+var (
+	reflectTpInt      = reflect.TypeOf(int(0))
+	reflectTpInt8     = reflect.TypeOf(int8(0))
+	reflectTpInt16    = reflect.TypeOf(int16(0))
+	reflectTpInt32    = reflect.TypeOf(int32(0))
+	reflectTpInt64    = reflect.TypeOf(int64(0))
+	reflectTpUint     = reflect.TypeOf(uint(0))
+	reflectTpUint8    = reflect.TypeOf(uint8(0))
+	reflectTpUint16   = reflect.TypeOf(uint16(0))
+	reflectTpUint32   = reflect.TypeOf(uint32(0))
+	reflectTpUint64   = reflect.TypeOf(uint64(0))
+	reflectTpFloat32  = reflect.TypeOf(float32(0))
+	reflectTpFloat64  = reflect.TypeOf(float64(0))
+	reflectTpBool     = reflect.TypeOf(false)
+	reflectTpTime     = reflect.TypeOf(time.Time{})
+	reflectTpJson     = reflect.TypeOf(json.RawMessage{})
+	reflectTpBytes    = reflect.TypeOf([]byte{})
+	reflectTpString   = reflect.TypeOf("")
+	reflectTpStrings  = reflect.TypeOf([]string{})
+	reflectTpFloat32s = reflect.TypeOf([]float32{})
+	reflectTpFloat64s = reflect.TypeOf([]float64{})
+
+	reflectUnderlyingTypes = []reflect.Type{
+		reflectTpInt, reflectTpInt8, reflectTpInt16, reflectTpInt32, reflectTpInt64,
+		reflectTpUint, reflectTpUint8, reflectTpUint16, reflectTpUint32, reflectTpUint64,
+		reflectTpFloat32, reflectTpFloat64, reflectTpBool, reflectTpTime, reflectTpJson,
+		reflectTpBytes, reflectTpString, reflectTpStrings, reflectTpFloat32s, reflectTpFloat64s,
+	}
+)
+
 // escapeSQL is the internal impl of EscapeSQL and FormatSQL.
 func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 	buf := make([]byte, 0, len(sql))
+	handleDynTpArg := func(arg interface{}) bool {
+		switch v := arg.(type) {
+		case int:
+			buf = strconv.AppendInt(buf, int64(v), 10)
+		case int8:
+			buf = strconv.AppendInt(buf, int64(v), 10)
+		case int16:
+			buf = strconv.AppendInt(buf, int64(v), 10)
+		case int32:
+			buf = strconv.AppendInt(buf, int64(v), 10)
+		case int64:
+			buf = strconv.AppendInt(buf, v, 10)
+		case uint:
+			buf = strconv.AppendUint(buf, uint64(v), 10)
+		case uint8:
+			buf = strconv.AppendUint(buf, uint64(v), 10)
+		case uint16:
+			buf = strconv.AppendUint(buf, uint64(v), 10)
+		case uint32:
+			buf = strconv.AppendUint(buf, uint64(v), 10)
+		case uint64:
+			buf = strconv.AppendUint(buf, v, 10)
+		case float32:
+			buf = strconv.AppendFloat(buf, float64(v), 'g', -1, 32)
+		case float64:
+			buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
+		case bool:
+			if v {
+				buf = append(buf, '1')
+			} else {
+				buf = append(buf, '0')
+			}
+		case time.Time:
+			if v.IsZero() {
+				buf = append(buf, "'0000-00-00'"...)
+			} else {
+				buf = append(buf, '\'')
+				buf = v.AppendFormat(buf, "2006-01-02 15:04:05.999999")
+				buf = append(buf, '\'')
+			}
+		case json.RawMessage:
+			buf = append(buf, '\'')
+			buf = escapeBytesBackslash(buf, v)
+			buf = append(buf, '\'')
+		case []byte:
+			if v == nil {
+				buf = append(buf, "NULL"...)
+			} else {
+				buf = append(buf, "_binary'"...)
+				buf = escapeBytesBackslash(buf, v)
+				buf = append(buf, '\'')
+			}
+		case string:
+			buf = append(buf, '\'')
+			buf = escapeStringBackslash(buf, v)
+			buf = append(buf, '\'')
+		case []string:
+			for i, k := range v {
+				if i > 0 {
+					buf = append(buf, ',')
+				}
+				buf = append(buf, '\'')
+				buf = escapeStringBackslash(buf, k)
+				buf = append(buf, '\'')
+			}
+		case []float32:
+			for i, k := range v {
+				if i > 0 {
+					buf = append(buf, ',')
+				}
+				buf = strconv.AppendFloat(buf, float64(k), 'g', -1, 32)
+			}
+		case []float64:
+			for i, k := range v {
+				if i > 0 {
+					buf = append(buf, ',')
+				}
+				buf = strconv.AppendFloat(buf, k, 'g', -1, 64)
+			}
+		default:
+			return false
+		}
+		return true
+	}
 	argPos := 0
 	for i := 0; i < len(sql); i++ {
 		q := strings.IndexByte(sql[i:], '%')
@@ -135,86 +250,20 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 			if arg == nil {
 				buf = append(buf, "NULL"...)
 			} else {
-				switch v := arg.(type) {
-				case int:
-					buf = strconv.AppendInt(buf, int64(v), 10)
-				case int8:
-					buf = strconv.AppendInt(buf, int64(v), 10)
-				case int16:
-					buf = strconv.AppendInt(buf, int64(v), 10)
-				case int32:
-					buf = strconv.AppendInt(buf, int64(v), 10)
-				case int64:
-					buf = strconv.AppendInt(buf, v, 10)
-				case uint:
-					buf = strconv.AppendUint(buf, uint64(v), 10)
-				case uint8:
-					buf = strconv.AppendUint(buf, uint64(v), 10)
-				case uint16:
-					buf = strconv.AppendUint(buf, uint64(v), 10)
-				case uint32:
-					buf = strconv.AppendUint(buf, uint64(v), 10)
-				case uint64:
-					buf = strconv.AppendUint(buf, v, 10)
-				case float32:
-					buf = strconv.AppendFloat(buf, float64(v), 'g', -1, 32)
-				case float64:
-					buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
-				case bool:
-					if v {
-						buf = append(buf, '1')
-					} else {
-						buf = append(buf, '0')
-					}
-				case time.Time:
-					if v.IsZero() {
-						buf = append(buf, "'0000-00-00'"...)
-					} else {
-						buf = append(buf, '\'')
-						buf = v.AppendFormat(buf, "2006-01-02 15:04:05.999999")
-						buf = append(buf, '\'')
-					}
-				case json.RawMessage:
-					buf = append(buf, '\'')
-					buf = escapeBytesBackslash(buf, v)
-					buf = append(buf, '\'')
-				case []byte:
-					if v == nil {
-						buf = append(buf, "NULL"...)
-					} else {
-						buf = append(buf, "_binary'"...)
-						buf = escapeBytesBackslash(buf, v)
-						buf = append(buf, '\'')
-					}
-				case string:
-					buf = append(buf, '\'')
-					buf = escapeStringBackslash(buf, v)
-					buf = append(buf, '\'')
-				case []string:
-					for i, k := range v {
-						if i > 0 {
-							buf = append(buf, ',')
+				if !handleDynTpArg(arg) {
+					reflectTp := reflect.TypeOf(arg)
+					reflectVal := reflect.ValueOf(arg)
+					tryAgain := false
+					for _, tp := range reflectUnderlyingTypes {
+						if reflectTp.ConvertibleTo(tp) {
+							arg = reflectVal.Convert(tp).Interface()
+							tryAgain = true
+							break
 						}
-						buf = append(buf, '\'')
-						buf = escapeStringBackslash(buf, k)
-						buf = append(buf, '\'')
 					}
-				case []float32:
-					for i, k := range v {
-						if i > 0 {
-							buf = append(buf, ',')
-						}
-						buf = strconv.AppendFloat(buf, float64(k), 'g', -1, 32)
+					if !tryAgain || !handleDynTpArg(arg) {
+						return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 					}
-				case []float64:
-					for i, k := range v {
-						if i > 0 {
-							buf = append(buf, ',')
-						}
-						buf = strconv.AppendFloat(buf, k, 'g', -1, 64)
-					}
-				default:
-					return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 				}
 			}
 			i++ // skip specifier
