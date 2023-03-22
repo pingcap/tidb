@@ -243,7 +243,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
-// restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
+// restored for the first time, it will intialize the checkpoint metadata. Otherwrise,
 // it will load checkpoint metadata and checkpoint ranges/checksum from the external
 // storage.
 func (rc *Client) InitCheckpoint(ctx context.Context, s storage.ExternalStorage, restoreTS *uint64, useCheckpoint bool) (map[int64]rtree.RangeTree, string, error) {
@@ -1568,9 +1568,11 @@ func (rc *Client) execChecksum(
 			TotalKvs:   checksumResp.TotalKvs,
 			TotalBytes: checksumResp.TotalBytes,
 		}
-		err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
-		if err != nil {
-			return errors.Trace(err)
+		if rc.checkpointRunner != nil {
+			err = rc.checkpointRunner.FlushChecksumItem(ctx, item, time.Since(beginT).Seconds())
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	table := tbl.OldTable
