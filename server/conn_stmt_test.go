@@ -255,17 +255,18 @@ func TestParseStmtFetchCmd(t *testing.T) {
 }
 
 func TestCursorExistsFlag(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
 	defer srv.Close()
 
 	appendUint32 := binary.LittleEndian.AppendUint32
 	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
+	c := CreateMockConn(t, store, srv).(*mockConn)
 	out := new(bytes.Buffer)
 	c.pkt.bufWriter.Reset(out)
-	c.capability |= mysql.ClientDeprecateEOF | mysql.ClientProtocol41
+	c.capability |= mysql.ClientProtocol41
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -275,7 +276,7 @@ func TestCursorExistsFlag(t *testing.T) {
 
 	getLastStatus := func() uint16 {
 		raw := out.Bytes()
-		return binary.LittleEndian.Uint16(raw[len(raw)-4 : len(raw)-2])
+		return binary.LittleEndian.Uint16(raw[len(raw)-2 : len(raw)])
 	}
 
 	stmt, _, _, err := c.Context().Prepare("select * from t")
@@ -311,17 +312,18 @@ func TestCursorExistsFlag(t *testing.T) {
 }
 
 func TestCursorReadWithRCCheckTS(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
 	defer srv.Close()
 
 	appendUint32 := binary.LittleEndian.AppendUint32
 	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
+	c := CreateMockConn(t, store, srv).(*mockConn)
 	out := new(bytes.Buffer)
 	c.pkt.bufWriter.Reset(out)
-	c.capability |= mysql.ClientDeprecateEOF | mysql.ClientProtocol41
+	c.capability |= mysql.ClientProtocol41
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	c.Context().GetSessionVars().SetDistSQLScanConcurrency(1)
 	c.Context().GetSessionVars().InitChunkSize = 1
@@ -343,7 +345,7 @@ func TestCursorReadWithRCCheckTS(t *testing.T) {
 
 	getLastStatus := func() uint16 {
 		raw := out.Bytes()
-		return binary.LittleEndian.Uint16(raw[len(raw)-4 : len(raw)-2])
+		return binary.LittleEndian.Uint16(raw[len(raw)-2 : len(raw)])
 	}
 
 	stmtCop, _, _, err := c.Context().Prepare("select * from t")
@@ -381,7 +383,7 @@ func TestCursorReadWithRCCheckTS(t *testing.T) {
 		require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
 
 		// The rows are updated by other transactions before the next fetch.
-		connUpdate := CreateMockConn(t, srv).(*mockConn)
+		connUpdate := CreateMockConn(t, store, srv).(*mockConn)
 		tkUpdate := testkit.NewTestKitWithSession(t, store, connUpdate.Context().Session)
 		tkUpdate.MustExec("use test")
 		tkUpdate.MustExec("update t set c = c + 10 where a in (1, 104, 1007)")
@@ -398,14 +400,15 @@ func TestCursorReadWithRCCheckTS(t *testing.T) {
 }
 
 func TestCursorWithParams(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
 	defer srv.Close()
 
 	appendUint32 := binary.LittleEndian.AppendUint32
 	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
+	c := CreateMockConn(t, store, srv).(*mockConn)
 
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	tk.MustExec("use test")

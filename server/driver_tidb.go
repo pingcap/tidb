@@ -66,6 +66,8 @@ type TiDBStatement struct {
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
 	rs  ResultSet
 	sql string
+
+	hasActiveCursor bool
 }
 
 // ID implements PreparedStatement ID method.
@@ -145,6 +147,7 @@ func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
+	ts.hasActiveCursor = false
 }
 
 // Close implements PreparedStatement Close method.
@@ -174,6 +177,16 @@ func (ts *TiDBStatement) Close() error {
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 	return nil
+}
+
+// GetCursorActive implements PreparedStatement GetCursorActive method.
+func (ts *TiDBStatement) GetCursorActive() bool {
+	return ts.hasActiveCursor
+}
+
+// SetCursorActive implements PreparedStatement SetCursorActive method.
+func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
+	ts.hasActiveCursor = fetchEnd
 }
 
 // OpenCtx implements IDriver.

@@ -232,11 +232,15 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
+	vars := (&cc.ctx).GetSessionVars()
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
+		if useCursor {
+			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		}
 		return false, cc.writeOK(ctx)
 	}
 
@@ -267,7 +271,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 				row := chk.GetRow(i)
 				rows = append(rows, row)
 			}
-			chk = chunk.Renew(chk, (&cc.ctx).GetSessionVars().MaxChunkSize)
+			chk = chunk.Renew(chk, vars.MaxChunkSize)
 		}
 		rs.StoreFetchedRows(rows)
 
@@ -286,6 +290,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if err != nil {
 			return false, err
 		}
+
+		stmt.SetCursorActive(true)
 
 		// explicitly flush columnInfo to client.
 		return false, cc.flush(ctx)
@@ -333,10 +339,20 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
+	sendingEOF := false
+	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
+	if len(rs.GetFetchedRows()) == 0 {
+		sendingEOF = true
+	}
+
 	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
+	if sendingEOF {
+		stmt.SetCursorActive(false)
+	}
+
 	return nil
 }
 
