@@ -36,6 +36,7 @@ type Task struct {
 }
 
 // Subtask is the subtask of LoadData.
+// Dispatcher will split the task into subtasks(FileInfos -> Chunks)
 type Subtask struct {
 	Table  Table
 	Format Format
@@ -44,6 +45,7 @@ type Subtask struct {
 }
 
 // MinimalTask is the minimal task of LoadData.
+// Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
 type MinimalTask struct {
 	Table  Table
 	Format Format
