@@ -250,6 +250,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		// the rows directly to avoid running executor and accessing shared params/variables in the session
 		// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
 		// but the rows are still needed in the following FETCH command.
+		//
+		// TODO: trace the memory used here
 		chk := rs.NewChunk(nil)
 		var rows []chunk.Row
 		for {
