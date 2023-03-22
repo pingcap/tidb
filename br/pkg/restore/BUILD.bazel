@@ -24,6 +24,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/backup",
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/conn",

@@ -358,9 +358,9 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 	}
 }
 
-func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.CheckpointRestoreRunner, result DrainResult) {
+func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.CheckpointRestoreRunner, result DrainResult) error {
 	if runner == nil {
-		return
+		return nil
 	}
 	var startOffset int = 0
 	for i, endOffset := range result.TableEndOffsetInRanges {
@@ -368,10 +368,13 @@ func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.Checkpoint
 		ranges := result.Ranges[startOffset:endOffset]
 		// The checkpoint range shows this ranges of kvs has been restored into
 		// the table corresponding to the table-id.
-		runner.AppendRanges(ctx, table.Table.ID, ranges)
+		if err := runner.AppendRanges(ctx, table.Table.ID, ranges); err != nil {
+			return errors.Trace(err)
+		}
 		// update start offset
 		startOffset = endOffset
 	}
+	return nil
 }
 
 func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone, runner *checkpoint.CheckpointRestoreRunner) {
@@ -404,7 +407,12 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
-				appendRangesToCheckpoint(ctx, runner, r.result)
+				e = appendRangesToCheckpoint(ctx, runner, r.result)
+				if e != nil {
+					log.Error("restore batch meet error, caused by checkpoint", logutil.ShortError(e))
+					r.done()
+					return e
+				}
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
 				b.sink.EmitTables(r.result.BlankTablesAfterSend...)

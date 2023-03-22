@@ -642,23 +642,55 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	tree, id, err := client.InitCheckpoint(ctx, s, &restoreTS, cfg.UseCheckpoint)
+	tree, gcID, err := client.InitCheckpoint(ctx, s, &restoreTS, cfg.UseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	var gcTTL int64 = utils.DefaultBRGCSafePointTTL
+	if cfg.UseCheckpoint {
+		gcTTL = utils.DefaultCheckpointGCSafePointTTL
+	}
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       id,
+		TTL:      gcTTL,
+		ID:       gcID,
 	}
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
 
+	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
+	gcSafePointKeeperRemovable := false
+	defer func() {
+		// don't reset the gc-safe-point if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
+			log.Info("skip removing gc-safepoint keeper for next retry", zap.String("gc-id", sp.ID))
+			return
+		}
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	if cfg.UseCheckpoint {
+		defer func() {
+			if !gcSafePointKeeperRemovable {
+				log.Info("wait for flush checkpoint...")
+				client.WaitForFinishCheckpoint(ctx)
+			}
+		}()
+	}
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -863,6 +895,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
 	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+
+	gcSafePointKeeperRemovable = true
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
