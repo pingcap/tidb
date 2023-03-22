@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -28,17 +27,6 @@ import (
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation, dbname and optionally the tls state.
 	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
-}
-
-// PreparedStatementCtx stores the context generated in `execute` statement for a prepared statement
-// subsequent stmt fetching could restore the session variables from this context
-type PreparedStatementCtx struct {
-	// Params is the params used in `execute` statement
-	Params variable.PreparedParams
-	// TODO: store and restore variables, but be careful that we'll also need to restore the variables after FETCH
-	// a cleaner way to solve this problem is to always reading params from a statement scope (but not session scope)
-	// context. But switching in/out related context is simpler on current code base, and the affected radius is more
-	// controllable.
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -69,12 +57,6 @@ type PreparedStatement interface {
 
 	// GetResultSet gets ResultSet associated this statement
 	GetResultSet() ResultSet
-
-	// StorePreparedCtx stores context in `execute` statement for subsequent stmt fetching
-	StorePreparedCtx(ctx *PreparedStatementCtx)
-
-	// GetPreparedParams gets the prepared params associated this statement
-	GetPreparedCtx() *PreparedStatementCtx
 
 	// Reset removes all bound parameters.
 	Reset()
