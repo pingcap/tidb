@@ -61,10 +61,10 @@ func TestAbs(t *testing.T) {
 func TestCeil(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	tmpIT := sc.IgnoreTruncate.Load()
+	sc.IgnoreTruncate.Store(true)
 	defer func() {
-		sc.IgnoreTruncate = tmpIT
+		sc.IgnoreTruncate.Store(tmpIT)
 	}()
 
 	type testCase struct {
@@ -177,10 +177,10 @@ func TestExp(t *testing.T) {
 func TestFloor(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	tmpIT := sc.IgnoreTruncate.Load()
+	sc.IgnoreTruncate.Store(true)
 	defer func() {
-		sc.IgnoreTruncate = tmpIT
+		sc.IgnoreTruncate.Store(tmpIT)
 	}()
 
 	genDuration := func(h, m, s int64) types.Duration {
@@ -631,10 +631,10 @@ func TestConv(t *testing.T) {
 func TestSign(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	tmpIT := sc.IgnoreTruncate.Load()
+	sc.IgnoreTruncate.Store(true)
 	defer func() {
-		sc.IgnoreTruncate = tmpIT
+		sc.IgnoreTruncate.Store(tmpIT)
 	}()
 
 	for _, tt := range []struct {
@@ -666,7 +666,7 @@ func TestSign(t *testing.T) {
 func TestDegrees(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate = false
+	sc.IgnoreTruncate.Store(false)
 	cases := []struct {
 		args       interface{}
 		expected   float64
