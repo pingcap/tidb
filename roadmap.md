@@ -27,8 +27,8 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           </li>
           <br />
           <li>
-            <b>Partitioned Raft KV storage engine</b><br /><i>
-              Provide increased write velocity, faster scaling operations,
+            <b>Physical isolation of KV keyspaces (regions)</b><br /><i>
+              Enables increased write velocity, faster scaling operations, and 
               larger clusters
             </i>
           </li>
@@ -41,8 +41,8 @@ This roadmap brings you what's coming in the future, so you can see the new feat
           </li>
           <br />
           <li>
-            <b>Fastest online DDL distributed framework</b><br /><i>
-              Complete the distributed framework to support the fastest
+            <b>Distributed online DDL framework</b><br /><i>
+              Alrleady fast, this complete the framework to support the fastest
               online DDL
             </i>
           </li>
@@ -97,8 +97,8 @@ This roadmap brings you what's coming in the future, so you can see the new feat
         <ul>
           <li>
             <b
-              >Resource control: quotas and scheduling for resource groups
-              and background tasks</b
+              >Resource control: quotas and resource scheduling for resource groups
+              and background tasks. Quotas are burstable.</b
             >
             <br /><i>
               Reliably and efficiently manage workloads and applications
@@ -374,3 +374,5 @@ These are non-exhaustive plans and subject to change. Features may differ per se
 
 - [TiDB 6.6.0 Release Notes](https://docs.pingcap.com/tidb/v6.6/release-6.6.0)
 - [TiDB 6.5.0 Release Notes](https://docs.pingcap.com/tidb/v6.5/release-6.5.0)
+
+[![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fpingcap%2Ftidb%2Fblob%2Fmaster%2Froadmap.md&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)](https://hits.seeyoufarm.com)
