@@ -89,6 +89,7 @@ type SourceFileMeta struct {
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
 	RealSize   int64
+	Rows       int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
