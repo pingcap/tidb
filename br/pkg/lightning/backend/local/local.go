@@ -978,7 +978,12 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(
+	ctx context.Context,
+	engine *Engine,
+	splitSize int64,
+	splitKeys int64,
+) ([]Range, error) {
 	firstKey, lastKey, err := engine.getFirstAndLastKey(nil, nil)
 	if err != nil {
 		return nil, err
@@ -992,8 +997,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	engineFileTotalSize := engine.TotalSize.Load()
 	engineFileLength := engine.Length.Load()
 
-	// <= 96MB no need to split into range
-	if engineFileTotalSize <= regionSplitSize && engineFileLength <= regionSplitKeys {
+	if engineFileTotalSize <= splitSize && engineFileLength <= splitKeys {
 		ranges := []Range{{start: firstKey, end: endKey}}
 		return ranges, nil
 	}
@@ -1005,7 +1009,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		regionSplitSize, regionSplitKeys)
+		splitSize, splitKeys)
 
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1279,7 +1283,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
-	// split sorted file into range by 96MB size per file
+	// split sorted file into range about regionSplitSize per file
 	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
