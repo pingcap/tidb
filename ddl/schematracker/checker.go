@@ -166,6 +166,10 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	}
 }
 
+func (d Checker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
+	return nil
+}
+
 // CreateSchema implements the DDL interface.
 func (d Checker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
 	err := d.realDDL.CreateSchema(ctx, stmt)

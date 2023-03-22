@@ -29,6 +29,7 @@ var (
 	_ DDLNode = &AlterSequenceStmt{}
 	_ DDLNode = &AlterPlacementPolicyStmt{}
 	_ DDLNode = &AlterResourceGroupStmt{}
+	_ DDLNode = &CreateCatalogStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
@@ -196,9 +197,10 @@ func (n *CatalogProperty) Restore(ctx *format.RestoreCtx) error {
 type CreateDatabaseStmt struct {
 	ddlNode
 
-	IfNotExists bool
-	Name        model.CIStr
-	Options     []*DatabaseOption
+	IfNotExists       bool
+	Name              model.CIStr
+	Options           []*DatabaseOption
+	CatalogProperties []*CatalogProperty
 }
 
 // Restore implements Node interface.

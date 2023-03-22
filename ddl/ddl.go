@@ -166,6 +166,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
+	CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error
 	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error

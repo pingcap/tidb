@@ -1603,13 +1603,14 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	ID                 int64             `json:"id"`      // Database ID
+	Name               CIStr             `json:"db_name"` // DB name.
+	Charset            string            `json:"charset"`
+	Collate            string            `json:"collate"`
+	Tables             []*TableInfo      `json:"-"` // Tables in the DB.
+	State              SchemaState       `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo    `json:"policy_ref_info"`
+	CatalogProperties  []*CatalogProperty `json:"catalog_properties"`
 }
 
 // Clone clones DBInfo.
@@ -1686,6 +1687,11 @@ type TableItemID struct {
 	TableID int64
 	ID      int64
 	IsIndex bool
+}
+
+type CatalogProperty struct {
+	Name string `json:"name"`
+	Value string `json:"value"`
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1979,4 +1985,10 @@ func (s WindowRepeatType) String() string {
 	default:
 		return ""
 	}
+}
+
+const CATALOGPREFIX = "catalog_"
+
+func NewCatalogDBName(catalogName CIStr) CIStr {
+	return NewCIStr(CATALOGPREFIX + catalogName.O)
 }

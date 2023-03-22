@@ -63,6 +63,10 @@ func NewSchemaTracker(lowerCaseTableNames int) SchemaTracker {
 	}
 }
 
+func (d SchemaTracker) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
+	return nil
+}
+
 // CreateSchema implements the DDL interface.
 func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
 	// we only consider explicit charset/collate, if not found, fallback to default charset/collate.

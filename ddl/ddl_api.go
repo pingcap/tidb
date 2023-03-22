@@ -90,7 +90,19 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+func (d *ddl) CreateCatalog(ctx sessionctx.Context, stmt *ast.CreateCatalogStmt) error {
+	var createDBStmt ast.CreateDatabaseStmt
+	createDBStmt.Name = model.NewCatalogDBName(stmt.Name)
+	createDBStmt.IfNotExists = stmt.IfNotExists
+	createDBStmt.CatalogProperties = stmt.Properties
+	dbInfo, onExist, err := GetDBInfoCore(ctx, &createDBStmt)
+	if err != nil {
+		return err
+	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
+}
+
+func GetDBInfoCore(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (_ *model.DBInfo, _ OnExist, err error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	sessionVars := ctx.GetSessionVars()
 
@@ -99,11 +111,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	if sessionVars.GlobalVarsAccessor != nil {
 		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
 		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
 		if err != nil {
-			return err
+			return nil, 0, err
+		}
+	}
+	var catalogProperties []*model.CatalogProperty
+	if stmt.CatalogProperties != nil {
+		for _, p := range stmt.CatalogProperties {
+			catalogProperties = append(catalogProperties, &model.CatalogProperty{Name: p.Name, Value: p.Name})
 		}
 	}
 
@@ -127,7 +145,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	if charsetOpt.Col != "" {
 		coll, err := collate.GetCollationByName(charsetOpt.Col)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
 
 		// The collation is not valid for the specified character set.
@@ -146,15 +164,30 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	dbInfo := &model.DBInfo{Name: stmt.Name}
 	chs, coll, err := ResolveCharsetCollation(charsetOpt)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	dbInfo.Charset = chs
 	dbInfo.Collate = coll
 	dbInfo.PlacementPolicyRef = placementPolicyRef
+	if stmt.CatalogProperties != nil {
+		dbInfo.CatalogProperties = catalogProperties
+	}
 
 	onExist := OnExistError
 	if stmt.IfNotExists {
 		onExist = OnExistIgnore
+	}
+	return dbInfo, onExist, nil
+}
+
+func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+	var (
+		dbInfo  *model.DBInfo
+		onExist OnExist
+	)
+	dbInfo, onExist, err = GetDBInfoCore(ctx, stmt)
+	if err != nil {
+		return err
 	}
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
