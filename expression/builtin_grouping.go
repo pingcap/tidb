@@ -18,6 +18,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -34,28 +35,35 @@ type groupingFunctionClass struct {
 	baseFunctionClass
 }
 
-// TODO
 func (c *groupingFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	// 	if err := c.verifyArgs(args); err != nil {
-	// 		return nil, err
-	// 	}
-	// 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
-	// 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	bf.tp.SetFlen(1)
-	// 	sig := &builtinIlikeSig{bf, nil, false, sync.Once{}}
-	// 	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
-	// 	return sig, nil
-	return nil, nil
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := []types.EvalType{types.ETInt}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(1)
+	sig := &builtinGroupingSig{bf, 0, map[int64]int64{}}
+	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
+	return sig, nil
 }
 
 type builtinGroupingSig struct {
 	baseBuiltinFunc
 
-	version      uint32
-	grouping_ids map[int64]int64
+	// TODO these are two temporary fields for tests
+	version     uint32
+	groupingIDs map[int64]int64
+}
+
+func (b *builtinGroupingSig) SetMetaVersion(version uint32) {
+	b.version = version
+}
+
+func (b *builtinGroupingSig) SetMetaGroupingIDs(groupingIDs map[int64]int64) {
+	b.groupingIDs = groupingIDs
 }
 
 func (b *builtinGroupingSig) getMetaVersion() uint32 {
@@ -70,26 +78,25 @@ func (b *builtinGroupingSig) metadata() proto.Message {
 	return args
 }
 
-// TODO
 func (b *builtinGroupingSig) Clone() builtinFunc {
 	newSig := &builtinGroupingSig{}
-	// newSig.cloneFrom(&b.baseBuiltinFunc)
-	// newSig.pattern = b.pattern
-	// newSig.isMemorizedPattern = b.isMemorizedPattern
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.version = b.version
+	newSig.groupingIDs = b.groupingIDs
 	return newSig
 }
 
 func (b *builtinGroupingSig) getMetaGroupingIDs() map[int64]int64 {
-	return b.grouping_ids
+	return b.groupingIDs
 }
 
 func (b *builtinGroupingSig) getMetaGroupingID() int64 {
-	var meta_grouping_id int64
+	var metaGroupingID int64
 	grouping_ids := b.getMetaGroupingIDs()
 	for key := range grouping_ids {
-		meta_grouping_id = key
+		metaGroupingID = key
 	}
-	return meta_grouping_id
+	return metaGroupingID
 }
 
 func (b *builtinGroupingSig) checkMetadata() error {
@@ -97,40 +104,43 @@ func (b *builtinGroupingSig) checkMetadata() error {
 	grouping_ids := b.getMetaGroupingIDs()
 	if version < 1 || version > 3 {
 		return errors.Errorf("Version of meta data in grouping function is invalid. input version: %d", version)
-	} else if (version == 1 || version == 2) && len(grouping_ids) != 0 {
-		return errors.Errorf("Invalid number of grouping_id. version: %d, number of grouping_id: %d", version, len(b.grouping_ids))
+	} else if (version == 1 || version == 2) && len(grouping_ids) != 1 {
+		return errors.Errorf("Invalid number of groupingID. version: %d, number of groupingID: %d", version, len(b.groupingIDs))
 	}
 	return nil
 }
 
-func (b *builtinGroupingSig) groupingImplV1(grouping_id int64, meta_grouping_id int64) int64 {
-	return grouping_id & meta_grouping_id
-}
-
-func (b *builtinGroupingSig) groupingImplV2(grouping_id int64, meta_grouping_id int64) int64 {
-	if grouping_id > meta_grouping_id {
+func (b *builtinGroupingSig) groupingImplV1(groupingID int64, metaGroupingID int64) int64 {
+	if groupingID&metaGroupingID > 0 {
 		return 1
 	}
 	return 0
 }
 
-func (b *builtinGroupingSig) groupingImplV3(grouping_id int64) int64 {
+func (b *builtinGroupingSig) groupingImplV2(groupingID int64, metaGroupingID int64) int64 {
+	if groupingID > metaGroupingID {
+		return 1
+	}
+	return 0
+}
+
+func (b *builtinGroupingSig) groupingImplV3(groupingID int64) int64 {
 	grouping_ids := b.getMetaGroupingIDs()
-	_, ok := grouping_ids[grouping_id]
+	_, ok := grouping_ids[groupingID]
 	if ok {
 		return 0
 	}
 	return 1
 }
 
-func (b *builtinGroupingSig) grouping(grouping_id int64) int64 {
+func (b *builtinGroupingSig) grouping(groupingID int64) int64 {
 	switch b.version {
 	case 1:
-		return b.groupingImplV1(grouping_id, b.getMetaGroupingID())
+		return b.groupingImplV1(groupingID, b.getMetaGroupingID())
 	case 2:
-		return b.groupingImplV2(grouping_id, b.getMetaGroupingID())
+		return b.groupingImplV2(groupingID, b.getMetaGroupingID())
 	case 3:
-		return b.groupingImplV3(grouping_id)
+		return b.groupingImplV3(groupingID)
 	}
 	return 0
 }
@@ -142,12 +152,12 @@ func (b *builtinGroupingSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, err
 	}
 
-	grouping_id, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	groupingID, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	return b.grouping(grouping_id), false, nil
+	return b.grouping(groupingID), false, nil
 }
 
 func (b *builtinGroupingSig) groupingVec(groupingIds *chunk.Column, rowNum int, result *chunk.Column) {
