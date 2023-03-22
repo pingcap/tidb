@@ -405,7 +405,7 @@ func TestRefine(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
-		sc.IgnoreTruncate = false
+		sc.IgnoreTruncate.Store(false)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
@@ -438,7 +438,7 @@ func TestAggEliminator(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
-		sc.IgnoreTruncate = false
+		sc.IgnoreTruncate.Store(false)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {

@@ -8,7 +8,6 @@ go_test(
         "write_test.go",
     ],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//br/pkg/lightning/mydump",
