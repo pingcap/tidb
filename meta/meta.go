@@ -77,6 +77,20 @@ var (
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mMetaDataLock        = []byte("metadataLock")
+	// the id for 'default' group, the internal ddl can ensure
+	// user created resource group won't duplicate with this id.
+	defaultGroupID = int64(1)
+	// the default meta of the `default` group
+	defaultRGroupMeta = &model.ResourceGroupInfo{
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate:     1000000,
+			BurstLimit: -1,
+			Priority:   model.MediumPriorityValue,
+		},
+		ID:    defaultGroupID,
+		Name:  model.NewCIStr("default"),
+		State: model.StatePublic,
+	}
 )
 
 const (
@@ -559,8 +573,11 @@ func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 // UpdateResourceGroup updates a resource group.
 func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 	groupKey := m.resourceGroupKey(group.ID)
-	if err := m.checkResourceGroupExists(groupKey); err != nil {
-		return errors.Trace(err)
+	// do not check the default because it may not be persisted.
+	if group.ID != defaultGroupID {
+		if err := m.checkResourceGroupExists(groupKey); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	data, err := json.Marshal(group)
@@ -964,6 +981,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
+	hasDefault := false
 	groups := make([]*model.ResourceGroupInfo, 0, len(res))
 	for _, r := range res {
 		value, err := detachMagicByte(r.Value)
@@ -976,8 +994,16 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
+		hasDefault = hasDefault || (group.Name.L == "default")
+	}
+	if !hasDefault {
+		groups = append(groups, defaultRGroupMeta)
 	}
 	return groups, nil
+}
+
+func DefaultGroupMeta4Test() *model.ResourceGroupInfo {
+	return defaultRGroupMeta
 }
 
 // GetResourceGroup gets the database value with ID.
@@ -988,6 +1014,10 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
+		// the default group is not persistanted to tikv by default.
+		if groupID == defaultGroupID {
+			return defaultRGroupMeta, nil
+		}
 		return nil, ErrResourceGroupNotExists.GenWithStack("resource group id : %d doesn't exist", groupID)
 	}
 
