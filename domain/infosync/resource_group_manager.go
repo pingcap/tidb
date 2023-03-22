@@ -28,6 +28,7 @@ type mockResourceGroupManager struct {
 	groups map[string]*rmpb.ResourceGroup
 }
 
+// NewMockResourceGroupManager return a mock ResourceManagerClient for test usage.
 func NewMockResourceGroupManager() pd.ResourceManagerClient {
 	mockMgr := &mockResourceGroupManager{
 		groups: make(map[string]*rmpb.ResourceGroup),
