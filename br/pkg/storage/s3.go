@@ -361,7 +361,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	c := s3.New(ses, s3CliConfigs...)
 
 	// s3manager.GetBucketRegionWithClient failed to get region from client if the client is ceph or minio
-	// It defaut back to us-west-1 which break the code if a region is already set
+	// It defaults back to us-west-1 which breaks the code if a region is already set
 	if qs.Provider != "ceph" && qs.Provider != "minio" {
 
 		confCred := ses.Config.Credentials
