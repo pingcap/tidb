@@ -643,6 +643,7 @@ func ReadUntil(parser Parser, pos int64) error {
 	return nil
 }
 
+// OpenReader opens a reader for the given file and storage.
 func OpenReader(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (
 	reader storage.ReadSeekCloser, err error) {
 	switch {
