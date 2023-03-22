@@ -68,7 +68,7 @@ func TestBitCount(t *testing.T) {
 			continue
 		}
 		sc := new(stmtctx.StatementContext)
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		res, err := count.ToInt64(sc)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
