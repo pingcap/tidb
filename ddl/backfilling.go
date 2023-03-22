@@ -570,47 +570,47 @@ func (s *resultConsumer) getErr() error {
 	return s.err.Load().(error)
 }
 
-func consumeResults(scheduler *backfillScheduler, syncer *resultConsumer, start kv.Key, totalAddedCount *int64) {
+func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) {
 	keeper := newDoneTaskKeeper(start)
 	handledTaskCnt := 0
 	for {
 		select {
 		case result := <-scheduler.resultCh:
-			handleOneResult(result, scheduler, syncer, keeper, totalAddedCount, handledTaskCnt)
+			handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
 			handledTaskCnt++
-		case <-syncer.doneCh:
-			for i := int64(0); i < syncer.taskCnt.Load(); i++ {
+		case <-consumer.doneCh:
+			for i := int64(0); i < consumer.taskCnt.Load(); i++ {
 				result := <-scheduler.resultCh
-				handleOneResult(result, scheduler, syncer, keeper, totalAddedCount, handledTaskCnt)
+				handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
 				handledTaskCnt++
 			}
 		}
 	}
 }
 
-func handleOneResult(result *backfillResult, scheduler *backfillScheduler, syncer *resultConsumer,
+func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consumer *resultConsumer,
 	keeper *doneTaskKeeper, totalAddedCount *int64, taskSeq int) {
 	reorgInfo := scheduler.reorgInfo
 	if result.err != nil {
 		// Only stores the first error.
-		syncer.err.CompareAndSwap(nil, result.err)
+		consumer.err.CompareAndSwap(nil, result.err)
 		logutil.BgLogger().Warn("[ddl] backfill worker failed",
 			zap.Int64("job ID", reorgInfo.ID),
 			zap.String("result next key", hex.EncodeToString(result.nextKey)),
 			zap.Error(result.err))
 		cnt := drainTasks(scheduler.taskCh)
-		syncer.taskCnt.Add(int64(-cnt))
+		consumer.taskCnt.Add(int64(-cnt))
 		return
 	}
 	*totalAddedCount += int64(result.addedCount)
 	keeper.updateNextKey(result.taskID, result.nextKey)
 	if taskSeq%scheduler.workerSize()*4 == 0 {
-		err := syncer.dc.isReorgRunnable(reorgInfo.ID, false)
+		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
 		if err != nil {
-			syncer.err.CompareAndSwap(nil, err)
+			consumer.err.CompareAndSwap(nil, err)
 			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
 			cnt := drainTasks(scheduler.taskCh)
-			syncer.taskCnt.Add(int64(-cnt))
+			consumer.taskCnt.Add(int64(-cnt))
 			return
 		}
 		failpoint.Inject("MockGetIndexRecordErr", func() {
@@ -693,7 +693,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 }
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func sendTasks(scheduler *backfillScheduler, syncer *resultConsumer, t table.PhysicalTable,
+func sendTasks(scheduler *backfillScheduler, consumer *resultConsumer, t table.PhysicalTable,
 	kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
@@ -705,10 +705,10 @@ func sendTasks(scheduler *backfillScheduler, syncer *resultConsumer, t table.Phy
 			scheduler.copReqSenderPool.sendTask(task)
 		}
 		scheduler.taskCh <- task
-		syncer.taskCnt.Add(1)
-		err := syncer.getErr()
+		consumer.taskCnt.Add(1)
+		err := consumer.getErr()
 		if err != nil {
-			return nil, errors.Trace(syncer.err.Load().(error))
+			return nil, errors.Trace(consumer.err.Load().(error))
 		}
 	}
 
