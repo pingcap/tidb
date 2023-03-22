@@ -2184,7 +2184,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
@@ -2192,16 +2192,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
-		sc.IgnoreTruncate = false
+		sc.IgnoreTruncate.Store(false)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
