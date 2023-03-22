@@ -836,7 +836,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := deriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
@@ -851,7 +851,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				for _, partialScan := range cop.idxMergePartPlans {
 					childProfile := partialScan.statsInfo()
 					stats := deriveLimitStats(childProfile, float64(newCount))
-					pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+					pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 					pushedDownLimit.SetChildren(partialScan)
 					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 					limitChildren = append(limitChildren, pushedDownLimit)
@@ -1211,6 +1211,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
 			stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1229,6 +1230,18 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			if selSelectivity > 0 && selSelectivity < 1 {
 				scaledRowCount := child.Stats().RowCount / selSelectivity
 				idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+			}
+
+			rootTask := copTsk.convertToRootTask(p.ctx)
+			// only support IndexReader now.
+			if _, ok := rootTask.p.(*PhysicalIndexReader); ok {
+				rootLimit := PhysicalLimit{
+					Count:       p.Count,
+					Offset:      p.Offset,
+					PartitionBy: newPartitionBy,
+				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+				rootLimit.SetSchema(rootTask.plan().Schema())
+				return attachPlan2Task(rootLimit, rootTask), true
 			}
 		}
 	} else if copTsk.indexPlan == nil {
@@ -1251,6 +1264,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 		tblScan.Desc = isDesc
 		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
 		tblScan.KeepOrder = true
+		tblScan.ByItems = p.ByItems
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1271,6 +1285,15 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			scaledRowCount := child.Stats().RowCount / selSelectivity
 			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
 		}
+
+		rootTask := copTsk.convertToRootTask(p.ctx)
+		rootLimit := PhysicalLimit{
+			Count:       p.Count,
+			Offset:      p.Offset,
+			PartitionBy: newPartitionBy,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		rootLimit.SetSchema(rootTask.plan().Schema())
+		return attachPlan2Task(rootLimit, rootTask), true
 	} else {
 		return nil, false
 	}
@@ -2849,10 +2872,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}.Init(ctx, t.p.statsInfo())
 
 	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
-		// Use compress when exchange type is `Hash`
-		if sender.ExchangeType == tipb.ExchangeType_Hash {
-			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
-		}
+		sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
 	}
 
 	sender.SetChildren(t.p)

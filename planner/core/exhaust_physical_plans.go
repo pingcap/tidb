@@ -947,7 +947,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
 		}
 	}
-	innerTask := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	innerTask := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.ctx.GetSessionVars().InRestrictedSQL {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
@@ -962,7 +962,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		if innerTask2 != nil {
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		}
@@ -1146,13 +1146,76 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	return physicalUnionScan
 }
 
+func getColsNDVLowerBoundFromHistColl(cols []*expression.Column, histColl *statistics.HistColl) int64 {
+	if len(cols) == 0 || histColl == nil {
+		return -1
+	}
+	colUIDs := make([]int64, len(cols))
+	for i, col := range cols {
+		colUIDs[i] = col.UniqueID
+	}
+
+	// Note that we don't need to specially handle prefix index in this function, because the NDV of a prefix index is
+	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
+
+	// 1. Try to get NDV from column stats if it's a single column.
+	if len(colUIDs) == 1 && histColl.Columns != nil {
+		uid := colUIDs[0]
+		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil {
+			return colStats.NDV
+		}
+	}
+
+	slices.Sort(colUIDs)
+	if histColl.Indices == nil || histColl.Idx2ColumnIDs == nil {
+		return -1
+	}
+
+	// 2. Try to get NDV from index stats.
+	for idxID, idxCols := range histColl.Idx2ColumnIDs {
+		if len(idxCols) != len(colUIDs) {
+			continue
+		}
+		orderedIdxCols := make([]int64, len(idxCols))
+		copy(orderedIdxCols, idxCols)
+		slices.Sort(orderedIdxCols)
+		if !slices.Equal(orderedIdxCols, colUIDs) {
+			continue
+		}
+		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil {
+			return idxStats.NDV
+		}
+	}
+
+	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
+	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
+
+	// 3. If we still haven't got an NDV, we use the minimal NDV in the column stats as a lower bound.
+	// This would happen when len(cols) > 1 and no proper index stats are available.
+	minNDV := int64(-1)
+	for _, colStats := range histColl.Columns {
+		if colStats == nil || colStats.Info == nil {
+			continue
+		}
+		col := colStats.Info
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
+		if (colStats.NDV > 0 && minNDV <= 0) ||
+			colStats.NDV < minNDV {
+			minNDV = colStats.NDV
+		}
+	}
+	return minNDV
+}
+
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func (p *LogicalJoin) constructInnerIndexScanTask(
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	_ []*expression.Column,
+	innerJoinKeys []*expression.Column,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -1239,6 +1302,23 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
+
+	// Note: due to a regression in JOB workload, we need to revert the logic below for now.
+	//
+	// Because we are estimating an average row count of the inner side corresponding to each row from the outer side,
+	// the estimated row count of the IndexScan should be no larger than (total row count / NDV of join key columns).
+	// We use it as an upper bound here.
+	rowCountUpperBound := -1.0
+	//if ds.tableStats != nil {
+	//	joinKeyNDV := getColsNDVLowerBoundFromHistColl(innerJoinKeys, ds.tableStats.HistColl)
+	//	if joinKeyNDV > 0 {
+	//		rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
+	//	}
+	//}
+
+	if rowCountUpperBound > 0 {
+		rowCount = math.Min(rowCount, rowCountUpperBound)
+	}
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -1261,6 +1341,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
 		cnt := rowCount / selectivity
+		if rowCountUpperBound > 0 {
+			cnt = math.Min(cnt, rowCountUpperBound)
+		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
 		}
@@ -1274,6 +1357,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			selectivity = SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
+		if rowCountUpperBound > 0 {
+			cnt = math.Min(cnt, rowCountUpperBound)
+		}
 		if maxOneRow {
 			cnt = math.Min(cnt, 1.0)
 		}
@@ -1991,22 +2077,115 @@ func checkChildFitBC(p Plan) bool {
 	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
+func calcBroadcastExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(mppStoreCnt-1)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	size := avg * row
+	return row, size, true
+}
+
+func calcBroadcastExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcBroadcastExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcBroadcastExchangeSize(p2, mppStoreCnt)
+
+	// broadcast exchange size:
+	//   Build: (mppStoreCnt - 1) * sizeof(BuildTable)
+	//   Probe: 0
+	// choose the child plan with the maximum approximate value as Probe
+
+	if hasSize1 && hasSize2 {
+		return math.Min(row1, row2), math.Min(size1, size2), true
+	}
+
+	return math.Min(row1, row2), 0, false
+}
+
+func calcHashExchangeSize(p Plan, mppStoreCnt int) (float64, float64, bool) {
+	s := p.statsInfo()
+	row := float64(s.Count()) * float64(mppStoreCnt-1) / float64(mppStoreCnt)
+	if s.HistColl == nil {
+		return row, 0, false
+	}
+	avg := s.HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	sz := avg * row
+	return row, sz, true
+}
+
+func calcHashExchangeSizeByChild(p1 Plan, p2 Plan, mppStoreCnt int) (float64, float64, bool) {
+	row1, size1, hasSize1 := calcHashExchangeSize(p1, mppStoreCnt)
+	row2, size2, hasSize2 := calcHashExchangeSize(p2, mppStoreCnt)
+
+	// hash exchange size:
+	//   Build: sizeof(BuildTable) * (mppStoreCnt - 1) / mppStoreCnt
+	//   Probe: sizeof(ProbeTable) * (mppStoreCnt - 1) / mppStoreCnt
+
+	if hasSize1 && hasSize2 {
+		return row1 + row2, size1 + size2, true
+	}
+	return row1 + row2, 0, false
+}
+
+func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	if hasSizeBC && hasSizeHash {
+		return szBC <= szHash
+	}
+	return rowBC <= rowHash
+}
+
+func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.children[childIndexToBC], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+
+	if hasSizeBC && hasSizeHash {
+		return szBC <= szHash
+	}
+	return rowBC <= rowHash
+}
+
 // If we can use mpp broadcast join, that's our first choice.
-func (p *LogicalJoin) shouldUseMPPBCJ() bool {
+func (p *LogicalJoin) preferMppBCJ() bool {
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
-	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+
+	onlyCheckChild1 := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
+	onlyCheckChild0 := p.JoinType == RightOuterJoin
+
+	if p.ctx.GetSessionVars().PreferBCJByExchangeDataSize {
+		mppStoreCnt, err := p.ctx.GetMPPClient().GetMPPStoreCount()
+
+		// No need to exchange data if there is only ONE mpp store. But the behavior of optimizer is unexpected if use broadcast way forcibly, such as tpch q4.
+		// TODO: always use broadcast way to exchange data if there is only ONE mpp store.
+
+		if err == nil && mppStoreCnt > 0 {
+			if onlyCheckChild1 || onlyCheckChild0 {
+				if mppStoreCnt > 1 {
+					if onlyCheckChild1 {
+						return isJoinChildFitMPPBCJ(p, 1, mppStoreCnt)
+					} else if onlyCheckChild0 {
+						return isJoinChildFitMPPBCJ(p, 0, mppStoreCnt)
+					}
+				}
+				// If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+				// Otherwise, the plan of tpch q4 may be unexpected.
+			} else {
+				return isJoinFitMPPBCJ(p, mppStoreCnt)
+			}
+		}
+	}
+
+	if onlyCheckChild1 {
 		return checkChildFitBC(p.children[1])
-	} else if p.JoinType == RightOuterJoin {
+	} else if onlyCheckChild0 {
 		return checkChildFitBC(p.children[0])
 	}
 	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
-}
-
-// canPushToCop checks if it can be pushed to some stores.
-func (p *LogicalJoin) canPushToCop(storeTp kv.StoreType) bool {
-	return len(p.NAEQConditions) == 0 && p.baseLogicalPlan.canPushToCop(storeTp)
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
@@ -2050,7 +2229,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 				return bcastJoins, true, nil
 			}
 		}
-		if p.shouldUseMPPBCJ() {
+		if p.preferMppBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			joins = append(joins, mppJoins...)
 		} else {
@@ -2175,10 +2354,6 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	lNAkeys, rNAKeys := p.GetNAJoinKeys()
-	if len(lNAkeys) > 0 || len(rNAKeys) > 0 {
-		return nil
-	}
-	// todo: mpp na-keys.
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,

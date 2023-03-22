@@ -158,5 +158,19 @@
       "select count(distinct a), count(distinct b), avg(c+d) from t",
       "explain select count(distinct a), count(distinct b), avg(c+d) from t"
     ]
+  },
+  {
+    "name": "TestMPPNullAwareSemiJoinPushDown",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_enable_null_aware_anti_join=on;",
+      "EXPLAIN select * from t where t.a not in (select s.a from s); -- 1. anti semi join, one join key",
+      "EXPLAIN select * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition",
+      "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s); -- 3. anti semi join, two join key",
+      "EXPLAIN select * from t where (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c); -- 4. anti semi join, two join key + other condition",
+      "EXPLAIN select *, t.a not in (select s.a from s) from t; -- 5. left anti semi join, one join key",
+      "EXPLAIN select *, t.a not in (select s.a from s where t.c > s.c) from t; -- 6. left anti semi join, one join key + other condition",
+      "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
+      "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition"
+    ]
   }
 ]

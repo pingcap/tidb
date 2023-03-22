@@ -79,7 +79,7 @@ func (ei *engineInfo) Clean() {
 		return
 	}
 	indexEngine := ei.openedEngine
-	closedEngine, err := indexEngine.Close(ei.ctx, ei.cfg)
+	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
@@ -102,7 +102,7 @@ func (ei *engineInfo) ImportAndClean() error {
 	// Close engine and finish local tasks of lightning.
 	logutil.BgLogger().Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	indexEngine := ei.openedEngine
-	closeEngine, err1 := indexEngine.Close(ei.ctx, ei.cfg)
+	closeEngine, err1 := indexEngine.Close(ei.ctx)
 	if err1 != nil {
 		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err1),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))

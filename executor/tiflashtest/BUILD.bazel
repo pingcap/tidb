@@ -2,18 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "tiflashtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "tiflash_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 28,
+    shard_count = 37,
     deps = [
         "//config",
         "//domain",
-        "//executor",
         "//kv",
         "//meta/autoid",
         "//parser/terror",
@@ -22,6 +21,7 @@ go_test(
         "//store/mockstore/unistore",
         "//testkit",
         "//testkit/external",
+        "//util/dbterror/exeerrors",
         "//util/israce",
         "//util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",

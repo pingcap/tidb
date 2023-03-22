@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -256,11 +257,42 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initResourceGroupManager(pdCli pd.Client) pd.ResourceManagerClient {
+func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
 	if pdCli == nil {
-		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
+		cli = &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
 	}
-	return pdCli
+	cli = pdCli
+	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
+		if val.(bool) {
+			_, err := cli.AddResourceGroup(context.TODO(),
+				&rmpb.ResourceGroup{
+					Name: "default",
+					Mode: rmpb.GroupMode_RUMode,
+					RUSettings: &rmpb.GroupRequestUnitSettings{
+						RU: &rmpb.TokenBucket{
+							Settings: &rmpb.TokenLimitSettings{FillRate: 1000000, BurstLimit: -1},
+						},
+					},
+				})
+			if err != nil {
+				log.Warn("fail to create default group", zap.Error(err))
+			}
+			_, err = cli.AddResourceGroup(context.TODO(),
+				&rmpb.ResourceGroup{
+					Name: "oltp",
+					Mode: rmpb.GroupMode_RUMode,
+					RUSettings: &rmpb.GroupRequestUnitSettings{
+						RU: &rmpb.TokenBucket{
+							Settings: &rmpb.TokenLimitSettings{FillRate: 1000000, BurstLimit: -1},
+						},
+					},
+				})
+			if err != nil {
+				log.Warn("fail to create default group", zap.Error(err))
+			}
+		}
+	})
+	return
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
@@ -1222,7 +1254,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	ctx := context.Background()
 	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
-	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
 		return errors.Trace(e)
 	}
 	return nil
@@ -1238,7 +1270,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	for _, p := range *definitions {
 		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
-		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
 			return errors.Trace(e)
 		}
 		if accel {

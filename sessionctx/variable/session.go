@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -64,9 +65,6 @@ import (
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
-
-// DefaultResourceGroupName is the default resource group name.
-const DefaultResourceGroupName = "default"
 
 var (
 	// PreparedStmtCount is exported for test.
@@ -241,13 +239,13 @@ type TxnCtxNoNeedToRestore struct {
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
-	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode.
-	AggressiveLockingUsed bool
-	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
-	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode.
+	FairLockingUsed bool
+	// FairLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
-	AggressiveLockingEffective bool
+	FairLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -701,10 +699,10 @@ type SessionVars struct {
 	ConnectionID uint64
 
 	// PlanID is the unique id of logical and physical plan.
-	PlanID int
+	PlanID atomic.Int32
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int64
+	PlanColumnID atomic.Int64
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -815,6 +813,24 @@ type SessionVars struct {
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiFlashMaxThreads int64
 
+	// TiFlashMaxBytesBeforeExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalJoin int64
+
+	// TiFlashMaxBytesBeforeExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalGroupBy int64
+
+	// TiFlashMaxBytesBeforeExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	// Default value is -1, means it will not be pushed down to TiFlash
+	// If the value is bigger than -1, it will be pushed down to TiFlash, and if the value is 0, it means
+	// not limit and spill will never happen
+	TiFlashMaxBytesBeforeExternalSort int64
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -825,6 +841,11 @@ type SessionVars struct {
 	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
+
+	// PreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	// false: choose mpp broadcast join by `BroadcastJoinThresholdSize` and `BroadcastJoinThresholdCount`
+	// true: compare data exchange size of join and choose the smallest one
+	PreferBCJByExchangeDataSize bool
 
 	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	LimitPushDownThreshold int64
@@ -1060,7 +1081,7 @@ type SessionVars struct {
 
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
-	PlannerSelectBlockAsName []ast.HintTable
+	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64
@@ -1366,13 +1387,20 @@ type SessionVars struct {
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
 
-	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	PessimisticTransactionAggressiveLocking bool
+	PessimisticTransactionFairLocking bool
 
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
+
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
 
 	// SlowTxnThreshold is the threshold of slow transaction logs
 	SlowTxnThreshold uint64
@@ -1380,6 +1408,11 @@ type SessionVars struct {
 	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
 	// If exceeding the threshold, try other stores using replica read.
 	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1575,8 +1608,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
-	s.PlanID++
-	return s.PlanID
+	return int(s.PlanID.Add(1))
 }
 
 const (
@@ -1783,6 +1815,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1818,6 +1852,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
+	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
+	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
+	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -1940,8 +1977,7 @@ func (s *SessionVars) CleanBuffers() {
 
 // AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
-	s.PlanColumnID++
-	return s.PlanColumnID
+	return s.PlanColumnID.Add(1)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -2364,7 +2400,7 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 }
 
 // EncodeSessionStates saves session states into SessionStates.
-func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
 	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
@@ -2401,7 +2437,7 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 }
 
 // DecodeSessionStates restores session states from SessionStates.
-func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())

@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbutil"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -69,45 +70,70 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+const (
+	tiflashReplica1 = 1
+	tiflashReplica2 = 2
+	tblSize         = 222
+)
+
 type tableRestoreSuiteBase struct {
 	tr  *TableImporter
 	cfg *config.Config
 
-	tableInfo *checkpoints.TidbTableInfo
-	dbInfo    *checkpoints.TidbDBInfo
-	tableMeta *mydump.MDTableMeta
+	tableInfo  *checkpoints.TidbTableInfo
+	dbInfo     *checkpoints.TidbDBInfo
+	tableMeta  *mydump.MDTableMeta
+	tableMeta2 *mydump.MDTableMeta
 
 	store storage.ExternalStorage
 }
 
-func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.EnableCurrentProgress()
-	// Produce a mock table info
-
+func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
-	node, err := p.ParseOneStmt(`
-	CREATE TABLE "table" (
+	node, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+	require.NoError(t, err)
+	core.State = model.StatePublic
+	core.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     replica,
+		Available: true,
+	}
+
+	return core
+}
+
+func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
+	web.EnableCurrentProgress()
+
+	core := mockTiflashTableInfo(t, `CREATE TABLE "table" (
 		a INT,
 		b INT,
 		c INT,
 		KEY (b)
 	)
-`, "", "")
-	require.NoError(t, err)
-	core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
-	require.NoError(t, err)
-	core.State = model.StatePublic
+`, tiflashReplica1)
+
+	core2 := mockTiflashTableInfo(t, `CREATE TABLE "table" (
+	a INT,
+	b INT,
+	c INT,
+	KEY (b)
+)
+`, tiflashReplica2)
 
 	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
 	s.dbInfo = &checkpoints.TidbDBInfo{
-		Name:   "db",
-		Tables: map[string]*checkpoints.TidbTableInfo{"table": s.tableInfo},
+		Name: "db",
+		Tables: map[string]*checkpoints.TidbTableInfo{
+			"table":  s.tableInfo,
+			"table2": {Name: "table2", DB: "db", Core: core2},
+		},
 	}
 
 	// Write some sample SQL dump
-
 	fakeDataDir := t.TempDir()
 	store, err := storage.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
@@ -152,7 +178,21 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:        "db",
 		Name:      "table",
-		TotalSize: 222,
+		TotalSize: tblSize,
+		SchemaFile: mydump.FileInfo{
+			TableName: filter.Table{Schema: "db", Name: "table"},
+			FileMeta: mydump.SourceFileMeta{
+				Path: "db.table-schema.sql",
+				Type: mydump.SourceTypeTableSchema,
+			},
+		},
+		DataFiles: fakeDataFiles,
+	}
+
+	s.tableMeta2 = &mydump.MDTableMeta{
+		DB:        "db",
+		Name:      "table2",
+		TotalSize: tblSize,
 		SchemaFile: mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
 			FileMeta: mydump.SourceFileMeta{
@@ -830,9 +870,9 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 		CleanupEngine(ctx, engineUUID).
 		Return(nil)
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.NoError(s.T(), err)
 }
 
@@ -862,9 +902,9 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
-	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
+	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID, 0)
 	require.NoError(s.T(), err)
-	err = s.tr.importKV(ctx, closedEngine, rc, 1)
+	err = s.tr.importKV(ctx, closedEngine, rc)
 	require.Regexp(s.T(), "fake import error.*", err.Error())
 }
 
@@ -999,13 +1039,13 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
 	err = rc.saveStatusCheckpoint(
 		context.Background(),
-		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.UniqueTable("test", "tbl"), common.IndexEngineID,
 		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
 		checkpoints.CheckpointStatusImported,
 	)
@@ -1013,7 +1053,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
-	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
@@ -1047,7 +1087,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster available is rich(.*)",
+			"(.*)The storage space is rich(.*)",
 			true,
 			0,
 		},
@@ -1068,7 +1108,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster doesn't have enough space(.*)",
+			"(.*)Please increase storage(.*)",
 			true,
 			0,
 		},
@@ -1391,13 +1431,11 @@ func (s *tableRestoreSuite) TestEstimate() {
 		AutoRandomSeed: 0,
 	}, nil, log.L())).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
-	s.cfg.TikvImporter.Backend = config.BackendLocal
 
-	template := NewSimpleTemplate()
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   "db1",
-			Tables: []*mydump.MDTableMeta{s.tableMeta},
+			Tables: []*mydump.MDTableMeta{s.tableMeta, s.tableMeta2},
 		},
 	}
 	dbInfos := map[string]*checkpoints.TidbDBInfo{
@@ -1415,34 +1453,34 @@ func (s *tableRestoreSuite) TestEstimate() {
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
-	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
-	rc := &Controller{
-		cfg:                 s.cfg,
-		checkTemplate:       template,
-		store:               s.store,
-		backend:             importer,
-		dbMetas:             dbMetas,
-		dbInfos:             dbInfos,
-		ioWorkers:           ioWorkers,
-		preInfoGetter:       preInfoGetter,
-		precheckItemBuilder: theCheckBuilder,
-	}
+
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendLocal
 	preInfoGetter.dbInfosCache = dbInfos
 	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
 	s.Require().NoError(err)
-	source := estimateResult.SizeWithIndex
+
 	// Because this file is small than region split size so we does not sample it.
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	tikvExpected := 2 * int64(compressionRatio*float64(tblSize))
+	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
+	tiflashExpected := int64(compressionRatio * float64(tblSize) * float64(tiflashReplica1+tiflashReplica2))
+	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
+
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	tikvExpected = int64(compressionRatio * float64(config.SplitRegionSize+tblSize))
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Greater(source, s.tableMeta.TotalSize)
-	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	s.Require().Greater(estimateResult.SizeWithIndex, tikvExpected)
+	tiflashExpected = int64(compressionRatio * (float64(config.SplitRegionSize*tiflashReplica1) + float64(tblSize*tiflashReplica2)))
+	s.Require().Greater(estimateResult.TiFlashSize, tiflashExpected)
+
+	// tidb backend don't compress
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendTiDB
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	source = estimateResult.SizeWithIndex
-	s.Require().Equal(s.tableMeta.TotalSize, source)
+	tikvExpected = int64((int(config.SplitRegionSize) + tblSize))
+	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
+	tiflashExpected = int64(config.SplitRegionSize*tiflashReplica1 + tblSize*tiflashReplica2)
+	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid() {
@@ -2230,4 +2268,193 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	}, dbInfos)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), msgs, 0)
+}
+
+func TestBuildAddIndexSQL(t *testing.T) {
+	tests := []struct {
+		table     string
+		current   string
+		desired   string
+		singleSQL string
+		multiSQLs []string
+	}{
+		{
+			table:     "`test`.`non_pk_auto_inc`",
+			current:   "CREATE TABLE `non_pk_auto_inc` (`pk` varchar(255), `id` int(11) NOT NULL AUTO_INCREMENT, UNIQUE KEY uniq_id (`id`))",
+			desired:   "CREATE TABLE `non_pk_auto_inc` (`pk` varchar(255) PRIMARY KEY NONCLUSTERED, `id` int(11) NOT NULL AUTO_INCREMENT, UNIQUE KEY uniq_id (`id`))",
+			singleSQL: "ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)",
+			multiSQLs: []string{"ALTER TABLE `test`.`non_pk_auto_inc` ADD PRIMARY KEY (`pk`)"},
+		},
+		{
+			table: "`test`.`multi_indexes`",
+			current: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL
+)
+`,
+			desired: `
+CREATE TABLE multi_indexes (
+    c1 bigint PRIMARY KEY CLUSTERED,
+    c2 varchar(255) NOT NULL UNIQUE KEY,
+    c3 varchar(255) NOT NULL,
+    c4 varchar(255) NOT NULL,
+    c5 varchar(255) NOT NULL,
+    c6 varchar(255) NOT NULL,
+    c7 varchar(255) NOT NULL,
+    c8 varchar(255) NOT NULL,
+    c9 varchar(255) NOT NULL,
+    c10 varchar(255) NOT NULL,
+    c11 varchar(255) NOT NULL,
+    INDEX idx_c2 (c2) COMMENT 'single column index',
+    INDEX idx_c2_c3(c2, c3) COMMENT 'multiple column index',
+    UNIQUE KEY uniq_c4 (c4) COMMENT 'single column unique key',
+    UNIQUE KEY uniq_c4_c5 (c4, c5) COMMENT 'multiple column unique key',
+    INDEX idx_c6 (c6 ASC)  COMMENT 'single column index with asc order',
+    INDEX idx_c7 (c7 DESC) COMMENT 'single column index with desc order',
+    INDEX idx_c6_c7 (c6 ASC, c7 DESC) COMMENT 'multiple column index with asc and desc order',
+    INDEX idx_c8 (c8) VISIBLE COMMENT 'single column index with visible',
+    INDEX idx_c9 (c9) INVISIBLE COMMENT 'single column index with invisible',
+    INDEX idx_lower_c10 ((lower(c10))) COMMENT 'single column index with function',
+    INDEX idx_prefix_c11 (c11(3)) COMMENT 'single column index with prefix'
+);`,
+			singleSQL: "ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index', ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index', ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key', ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key', ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order', ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order', ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order', ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible', ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible', ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function', ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix', ADD UNIQUE KEY `c2`(`c2`)",
+			multiSQLs: []string{
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2`(`c2`) COMMENT 'single column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c2_c3`(`c2`,`c3`) COMMENT 'multiple column index'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4`(`c4`) COMMENT 'single column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `uniq_c4_c5`(`c4`,`c5`) COMMENT 'multiple column unique key'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6`(`c6`) COMMENT 'single column index with asc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c7`(`c7`) COMMENT 'single column index with desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c6_c7`(`c6`,`c7`) COMMENT 'multiple column index with asc and desc order'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c8`(`c8`) COMMENT 'single column index with visible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_c9`(`c9`) INVISIBLE COMMENT 'single column index with invisible'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_lower_c10`((lower(`c10`))) COMMENT 'single column index with function'",
+				"ALTER TABLE `test`.`multi_indexes` ADD KEY `idx_prefix_c11`(`c11`(3)) COMMENT 'single column index with prefix'",
+				"ALTER TABLE `test`.`multi_indexes` ADD UNIQUE KEY `c2`(`c2`)",
+			},
+		}}
+
+	p := parser.New()
+
+	for _, tt := range tests {
+		curTblInfo, err := dbutil.GetTableInfoBySQL(tt.current, p)
+		require.NoError(t, err)
+		desiredTblInfo, err := dbutil.GetTableInfoBySQL(tt.desired, p)
+		require.NoError(t, err)
+
+		singleSQL, multiSQLs := buildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
+		require.Equal(t, tt.singleSQL, singleSQL)
+		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
+}
+
+func TestGetDDLStatus(t *testing.T) {
+	const adminShowDDLJobQueries = "ADMIN SHOW DDL JOB QUERIES LIMIT 30"
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	// test 1
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 61").
+		WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+			AddRow(61, "many_tables_test", "t6", "alter table", "public", 1, 61, 123, "2022-08-02 2:51:39", "2022-08-02 2:51:39", nil, "running"))
+
+	createTime, err := time.Parse(time.DateTime, "2022-08-02 2:51:38")
+	require.NoError(t, err)
+	status, err := getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp", createTime)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateRunning, status.state)
+	require.Equal(t, int64(123), status.rowCount)
+
+	// test 2
+	// ddl query is matched, but job is created before the ddl query
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 59").
+		WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+			AddRow(59, "many_tables_test", "t4", "alter table", "public", 1, 59, 0, "2022-08-02 2:50:37", "2022-08-02 2:50:37", nil, "none"))
+
+	createTime, err = time.Parse("2006-01-02 15:04:05", "2022-08-02 2:50:38")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp", createTime)
+	require.NoError(t, err)
+	require.Nil(t, status)
+
+	// test 3
+	// ddl query is not matched
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(61, "ALTER TABLE many_tables_test.t6 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(60, "ALTER TABLE many_tables_test.t5 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)"))
+
+	createTime, err = time.Parse("2006-01-02 15:04:05", "2022-08-03 12:35:00")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "CREATE TABLE IF NOT EXISTS many_tables_test.t7(i TINYINT, j INT UNIQUE KEY)", createTime)
+	require.NoError(t, err)
+	require.Nil(t, status) // DDL does not exist
+
+	// test 5
+	// multi-schema change tests
+	mock.ExpectQuery(adminShowDDLJobQueries).WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "QUERY"}).
+		AddRow(59, "ALTER TABLE many_tables_test.t4 ADD y INT, ADD z INT").
+		AddRow(58, "ALTER TABLE many_tables_test.t3 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(57, "ALTER TABLE many_tables_test.t2 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(56, "ALTER TABLE many_tables_test.t1 ADD x timestamp DEFAULT current_timestamp").
+		AddRow(55, "CREATE TABLE IF NOT EXISTS many_tables_test.t6(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(54, "CREATE TABLE IF NOT EXISTS many_tables_test.t5(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(53, "CREATE TABLE IF NOT EXISTS many_tables_test.t4(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(52, "CREATE TABLE IF NOT EXISTS many_tables_test.t3(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(51, "CREATE TABLE IF NOT EXISTS many_tables_test.t2(i TINYINT, j INT UNIQUE KEY)").
+		AddRow(50, "CREATE TABLE IF NOT EXISTS many_tables_test.t1(i TINYINT, j INT UNIQUE KEY)"))
+
+	mock.ExpectQuery("ADMIN SHOW DDL JOBS 30 WHERE job_id = 59").WillReturnRows(sqlmock.NewRows([]string{"JOB_ID", "DB_NAME", "TABLE_NAME", "JOB_TYPE", "SCHEMA_STATE", "SCHEMA_ID", "TABLE_ID", "ROW_COUNT", "CREATE_TIME", "START_TIME", "END_TIME", "STATE"}).
+		AddRow(59, "many_tables_test", "t4", "alter table multi-schema change", "public", 1, 59, 0, "2022-08-02 2:51:39", "2022-08-02 2:51:39", nil, "running").
+		AddRow(59, "many_tables_test", "t4", "add column /* subjob */", "public", 1, 59, 123, nil, nil, nil, "done").
+		AddRow(59, "many_tables_test", "t4", "add column /* subjob */", "public", 1, 59, 456, nil, nil, nil, "done"))
+
+	createTime, err = time.Parse(time.DateTime, "2022-08-02 2:50:36")
+	require.NoError(t, err)
+	status, err = getDDLStatus(context.Background(), db, "ALTER TABLE many_tables_test.t4 ADD y INT, ADD z INT", createTime)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateRunning, status.state)
+	require.Equal(t, int64(123)+int64(456), status.rowCount)
 }

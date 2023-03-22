@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -1724,6 +1725,9 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 	return &cloned
 }
 
+// DefaultJobInterval sets the default interval between TTL jobs
+const DefaultJobInterval = time.Hour
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      CIStr  `json:"column"`
@@ -1732,6 +1736,7 @@ type TTLInfo struct {
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
 	// JobInterval is the interval between two TTL scan jobs.
+	// It's suggested to get a duration with `(*TTLInfo).GetJobInterval`
 	JobInterval string `json:"job_interval"`
 }
 
@@ -1739,6 +1744,19 @@ type TTLInfo struct {
 func (t *TTLInfo) Clone() *TTLInfo {
 	cloned := *t
 	return &cloned
+}
+
+// GetJobInterval parses the job interval and return
+// if the job interval is an empty string, the "1h" will be returned, to keep compatible with 6.5 (in which
+// TTL_JOB_INTERVAL attribute doesn't exist)
+// Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
+// and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
+func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	if len(t.JobInterval) == 0 {
+		return DefaultJobInterval, nil
+	}
+
+	return duration.ParseDuration(t.JobInterval)
 }
 
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
@@ -1818,17 +1836,52 @@ type ResourceGroupRefInfo struct {
 // ResourceGroupSettings is the settings of the resource group
 type ResourceGroupSettings struct {
 	RURate           uint64 `json:"ru_per_sec"`
+	Priority         uint64 `json:"priority"`
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
 	BurstLimit       int64  `json:"burst_limit"`
 }
 
+// NewResourceGroupSettings creates a new ResourceGroupSettings.
+func NewResourceGroupSettings() *ResourceGroupSettings {
+	return &ResourceGroupSettings{
+		RURate:           0,
+		Priority:         MediumPriorityValue,
+		CPULimiter:       "",
+		IOReadBandwidth:  "",
+		IOWriteBandwidth: "",
+		BurstLimit:       0,
+	}
+}
+
+// PriorityValueToName converts the priority value to corresponding name
+func PriorityValueToName(value uint64) string {
+	switch value {
+	case LowPriorityValue:
+		return "LOW"
+	case MediumPriorityValue:
+		return "MEDIUM"
+	case HighPriorityValue:
+		return "HIGH"
+	default:
+		return "MEDIUM"
+	}
+}
+
+//revive:disable:exported
+const (
+	LowPriorityValue    = 1
+	MediumPriorityValue = 8
+	HighPriorityValue   = 16
+)
+
 func (p *ResourceGroupSettings) String() string {
 	sb := new(strings.Builder)
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
 	}
+	writeSettingItemToBuilder(sb, "PRIORITY="+PriorityValueToName(p.Priority))
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
 	}

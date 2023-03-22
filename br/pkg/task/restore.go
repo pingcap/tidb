@@ -4,9 +4,11 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -31,6 +33,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -502,11 +505,33 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
+func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
+	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
+	err = register.RegisterTask(ctx)
+	return register.Close, errors.Trace(err)
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	if err := checkTaskExists(c, cfg); err != nil {
-		return errors.Annotate(err, "failed to check task exits")
+	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
+	if err != nil {
+		return err
 	}
+	defer func() {
+		if err := etcdCLI.Close(); err != nil {
+			log.Error("failed to close the etcd client", zap.Error(err))
+		}
+	}()
+	if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
+		return errors.Annotate(err, "failed to check task exists")
+	}
+	closeF, err := registerTaskToPD(c, etcdCLI)
+	if err != nil {
+		return errors.Annotate(err, "failed to register task to pd")
+	}
+	defer func() {
+		_ = closeF(c)
+	}()
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = cfg.KeyspaceName

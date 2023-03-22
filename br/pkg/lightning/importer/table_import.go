@@ -15,15 +15,21 @@
 package importer
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -34,14 +40,16 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -246,7 +254,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		}
 
 		// Add index engine checkpoint
-		cp.Engines[indexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+		cp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	}
 	task.End(zap.ErrorLevel, err,
 		zap.Int("enginesCnt", len(cp.Engines)),
@@ -324,7 +332,7 @@ func createColumnPermutation(
 }
 
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
-	indexEngineCp := cp.Engines[indexEngineID]
+	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
 		tr.logger.Error("fail to importEngines because indexengine is nil")
 		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
@@ -361,8 +369,8 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := estimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
-			idxEngineCfg.Local = &backend.LocalEngineConfig{
+			threshold := local.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
+			idxEngineCfg.Local = backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
 				CompactThreshold:   threshold,
@@ -373,11 +381,11 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		var indexEngine *backend.OpenedEngine
 		var err error
 		for engineID, engine := range cp.Engines {
-			if engineID == indexEngineID {
+			if engineID == common.IndexEngineID {
 				continue
 			}
 			if engine.Status < checkpoints.CheckpointStatusAllWritten {
-				indexEngine, err = rc.backend.OpenEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+				indexEngine, err = rc.backend.OpenEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -439,7 +447,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 					if err == nil {
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
-						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
+						err = tr.importEngine(ctx, dataClosedEngine, rc, ecp)
 						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.TotalSize())
@@ -466,18 +474,18 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		}
 
 		if indexEngine != nil {
-			closedIndexEngine, restoreErr = indexEngine.Close(ctx, idxEngineCfg)
+			closedIndexEngine, restoreErr = indexEngine.Close(ctx)
 		} else {
-			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 		}
 
-		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, indexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
+		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, common.IndexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
 			return errors.Trace(firstErr(restoreErr, err))
 		}
 	} else if indexEngineCp.Status == checkpoints.CheckpointStatusClosed {
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
-		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
@@ -500,7 +508,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				tr.logger.Warn(errMsg)
 				failpoint.Return(errors.New(errMsg))
 			})
-			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			err = tr.importKV(ctx, closedIndexEngine, rc)
 			failpoint.Inject("FailBeforeIndexEngineImported", func() {
 				finished := rc.status.FinishedFileSize.Load()
 				total := rc.status.TotalFileSize.Load()
@@ -568,12 +576,11 @@ func (tr *TableImporter) preprocessEngine(
 	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
-		Local:     &backend.LocalEngineConfig{},
 	}
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = compactionUpperThreshold
+		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
 	dataEngine, err := rc.backend.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -783,7 +790,7 @@ ChunkLoop:
 		// if process is canceled, we should flush all chunk checkpoints for local backend
 		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
-			if _, err2 := dataEngine.Close(context.Background(), dataEngineCfg); err2 != nil {
+			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
@@ -794,7 +801,7 @@ ChunkLoop:
 		return nil, errors.Trace(err)
 	}
 
-	closedDataEngine, err := dataEngine.Close(ctx, dataEngineCfg)
+	closedDataEngine, err := dataEngine.Close(ctx)
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && isLocalBackend(rc.cfg) {
@@ -817,7 +824,6 @@ func (tr *TableImporter) importEngine(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
-	engineID int32,
 	cp *checkpoints.EngineCheckpoint,
 ) error {
 	if cp.Status >= checkpoints.CheckpointStatusImported {
@@ -825,7 +831,7 @@ func (tr *TableImporter) importEngine(
 	}
 
 	// 1. calling import
-	if err := tr.importKV(ctx, closedEngine, rc, engineID); err != nil {
+	if err := tr.importKV(ctx, closedEngine, rc); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -857,7 +863,7 @@ func (tr *TableImporter) postProcess(
 		return false, nil
 	}
 
-	// 3. alter table set auto_increment
+	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
@@ -1006,7 +1012,27 @@ func (tr *TableImporter) postProcess(
 		cp.Status = nextStage
 	}
 
-	// 5. do table analyze
+	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
+		var err error
+		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+			var db *sql.DB
+			db, err = rc.tidbGlue.GetDB()
+			if err == nil {
+				w := rc.addIndexLimit.Apply()
+				err = tr.addIndexes(ctx, db)
+				rc.addIndexLimit.Recycle(w)
+			}
+			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
+			shouldSkipAnalyze = true
+		}
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexAdded)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = checkpoints.CheckpointStatusIndexAdded
+	}
+
+	// do table analyze
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
@@ -1029,8 +1055,6 @@ func (tr *TableImporter) postProcess(
 				return false, errors.Trace(err)
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
-		default:
-			return true, nil
 		}
 	}
 
@@ -1110,7 +1134,6 @@ func (tr *TableImporter) importKV(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
-	engineID int32,
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
@@ -1135,7 +1158,7 @@ func (tr *TableImporter) importKV(
 		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
-	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
+	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {
 		err = multierr.Append(err, closedEngine.Cleanup(ctx))
@@ -1180,47 +1203,341 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, g glue.SQLExecutor) e
 	return err
 }
 
-// estimate SST files compression threshold by total row file size
-// with a higher compression threshold, the compression time increases, but the iteration time decreases.
-// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
-// we set the upper bound to 32GB to avoid too long compression time.
-// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
-	totalRawFileSize := int64(0)
-	var lastFile string
-	fileSizeMap := make(map[string]int64, len(files))
-	for _, file := range files {
-		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr error) {
+	const progressStep = "add-index"
+	task := tr.logger.Begin(zap.InfoLevel, "add indexes")
+	defer func() {
+		task.End(zap.ErrorLevel, retErr)
+	}()
+
+	tblInfo := tr.tableInfo
+	tableName := tr.tableName
+
+	singleSQL, multiSQLs := buildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	if len(multiSQLs) == 0 {
+		return nil
 	}
 
-	for _, engineCp := range cp.Engines {
-		for _, chunk := range engineCp.Chunks {
-			if chunk.FileMeta.Path == lastFile {
-				continue
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+
+	defer func() {
+		if retErr == nil {
+			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+		} else if !log.IsContextCanceledError(retErr) {
+			// Try to strip the prefix of the error message.
+			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
+			cause := errors.Cause(retErr)
+			if cause == nil {
+				cause = retErr
 			}
-			size, ok := fileSizeMap[chunk.FileMeta.Path]
-			if !ok {
-				size = chunk.FileMeta.FileSize
+			retErr = common.ErrAddIndexFailed.GenWithStack(
+				"add index failed on table %s: %v, you can add index manually by the following SQL: %s",
+				tableName, cause, singleSQL)
+		}
+	}()
+
+	var totalRows int
+	if m, ok := metric.FromContext(ctx); ok {
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+	}
+
+	// Try to add all indexes in one statement.
+	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
+		if totalRows > 0 {
+			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
+			if progress > 1 {
+				progress = 1
 			}
-			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				// parquet file is compressed, thus estimates with a factor of 2
-				size *= 2
+			web.BroadcastTableProgress(tableName, progressStep, progress)
+			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
+		}
+	})
+	if err == nil {
+		return nil
+	}
+	if !isDupKeyError(err) {
+		return err
+	}
+	if len(multiSQLs) == 1 {
+		return nil
+	}
+	logger.Warn("cannot add all indexes in one statement, try to add them one by one", zap.Strings("sqls", multiSQLs), zap.Error(err))
+
+	baseProgress := float64(0)
+	for _, ddl := range multiSQLs {
+		err := tr.executeDDL(ctx, db, ddl, func(status *ddlStatus) {
+			if totalRows > 0 {
+				p := float64(status.rowCount) / float64(totalRows)
+				progress := baseProgress + p/float64(len(multiSQLs))
+				web.BroadcastTableProgress(tableName, progressStep, progress)
+				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
-			totalRawFileSize += size
-			lastFile = chunk.FileMeta.Path
+		})
+		if err != nil && !isDupKeyError(err) {
+			return err
+		}
+		baseProgress += 1.0 / float64(len(multiSQLs))
+		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
+	}
+	return nil
+}
+
+func (tr *TableImporter) executeDDL(
+	ctx context.Context,
+	db *sql.DB,
+	ddl string,
+	updateProgress func(status *ddlStatus),
+) error {
+	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
+	logger.Info("execute ddl")
+
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: logger,
+	}
+
+	var currentTS int64
+	if err := s.QueryRow(ctx, "", "SELECT UNIX_TIMESTAMP()", &currentTS); err != nil {
+		currentTS = time.Now().Unix()
+		logger.Warn("failed to query current timestamp, use current time instead", zap.Int64("currentTS", currentTS), zap.Error(err))
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- s.Exec(ctx, "add index", ddl)
+	}()
+
+	failpoint.Inject("AddIndexCrash", func() {
+		_ = common.KillMySelf()
+	})
+
+	var ddlErr error
+	for {
+		select {
+		case ddlErr = <-resultCh:
+			failpoint.Inject("AddIndexFail", func() {
+				ddlErr = errors.New("injected error")
+			})
+			if ddlErr == nil {
+				return nil
+			}
+			if log.IsContextCanceledError(ddlErr) {
+				return ddlErr
+			}
+			if isDeterminedError(ddlErr) {
+				return ddlErr
+			}
+			logger.Warn("failed to execute ddl, try to query ddl status", zap.Error(ddlErr))
+		case <-time.After(getDDLStatusInterval):
+		}
+
+		var status *ddlStatus
+		err := common.Retry("query ddl status", logger, func() error {
+			var err error
+			status, err = getDDLStatus(ctx, db, ddl, time.Unix(currentTS, 0))
+			return err
+		})
+		if err != nil || status == nil {
+			logger.Warn("failed to query ddl status", zap.Error(err))
+			if ddlErr != nil {
+				return ddlErr
+			}
+			continue
+		}
+		updateProgress(status)
+
+		if ddlErr != nil {
+			switch state := status.state; state {
+			case model.JobStateDone, model.JobStateSynced:
+				logger.Info("ddl job is finished", zap.Stringer("state", state))
+				return nil
+			case model.JobStateRunning, model.JobStateQueueing, model.JobStateNone:
+				logger.Info("ddl job is running", zap.Stringer("state", state))
+			default:
+				logger.Warn("ddl job is canceled or rollbacked", zap.Stringer("state", state))
+				return ddlErr
+			}
 		}
 	}
-	totalRawFileSize *= factor
+}
 
-	// try restrict the total file number within 512
-	threshold := totalRawFileSize / 512
-	threshold = utils.NextPowerOfTwo(threshold)
-	if threshold < compactionLowerThreshold {
-		// too may small SST files will cause inaccuracy of region range estimation,
-		threshold = compactionLowerThreshold
-	} else if threshold > compactionUpperThreshold {
-		threshold = compactionUpperThreshold
+// buildAddIndexSQL builds the SQL statement to create missing indexes.
+// It returns both a single SQL statement that creates all indexes at once,
+// and a list of SQL statements that creates each index individually.
+func buildAddIndexSQL(tableName string, curTblInfo, desiredTblInfo *model.TableInfo) (singleSQL string, multiSQLs []string) {
+	addIndexSpecs := make([]string, 0, len(desiredTblInfo.Indices))
+	for _, desiredIdxInfo := range desiredTblInfo.Indices {
+		present := false
+		for _, curIdxInfo := range curTblInfo.Indices {
+			if curIdxInfo.Name.L == desiredIdxInfo.Name.L {
+				present = true
+			}
+		}
+		if present {
+			continue
+		}
+
+		var buf bytes.Buffer
+		if desiredIdxInfo.Primary {
+			buf.WriteString("ADD PRIMARY KEY ")
+		} else if desiredIdxInfo.Unique {
+			buf.WriteString("ADD UNIQUE KEY ")
+		} else {
+			buf.WriteString("ADD KEY ")
+		}
+		// "primary" is a special name for primary key, we should not use it as index name.
+		if desiredIdxInfo.Name.L != "primary" {
+			buf.WriteString(common.EscapeIdentifier(desiredIdxInfo.Name.O))
+		}
+
+		colStrs := make([]string, 0, len(desiredIdxInfo.Columns))
+		for _, col := range desiredIdxInfo.Columns {
+			var colStr string
+			if desiredTblInfo.Columns[col.Offset].Hidden {
+				colStr = fmt.Sprintf("(%s)", desiredTblInfo.Columns[col.Offset].GeneratedExprString)
+			} else {
+				colStr = common.EscapeIdentifier(col.Name.O)
+				if col.Length != types.UnspecifiedLength {
+					colStr = fmt.Sprintf("%s(%s)", colStr, strconv.Itoa(col.Length))
+				}
+			}
+			colStrs = append(colStrs, colStr)
+		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(colStrs, ","))
+
+		if desiredIdxInfo.Invisible {
+			fmt.Fprint(&buf, " INVISIBLE")
+		}
+		if desiredIdxInfo.Comment != "" {
+			fmt.Fprintf(&buf, ` COMMENT '%s'`, format.OutputFormat(desiredIdxInfo.Comment))
+		}
+		addIndexSpecs = append(addIndexSpecs, buf.String())
+	}
+	if len(addIndexSpecs) == 0 {
+		return "", nil
 	}
 
-	return threshold
+	singleSQL = fmt.Sprintf("ALTER TABLE %s %s", tableName, strings.Join(addIndexSpecs, ", "))
+	for _, spec := range addIndexSpecs {
+		multiSQLs = append(multiSQLs, fmt.Sprintf("ALTER TABLE %s %s", tableName, spec))
+	}
+	return singleSQL, multiSQLs
+}
+
+func isDupKeyError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique:
+			return true
+		}
+	}
+	return false
+}
+
+func isDeterminedError(err error) bool {
+	if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
+		switch merr.Number {
+		case errno.ErrDupKeyName, errno.ErrMultiplePriKey, errno.ErrDupUnique, errno.ErrDupEntry:
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	getDDLStatusInterval = time.Minute
+	// Limit the number of jobs to query. Large limit may result in empty result. See https://github.com/pingcap/tidb/issues/42298.
+	// A new TiDB cluster has at least 40 jobs in the history queue, so 30 is a reasonable value.
+	getDDLStatusMaxJobs = 30
+)
+
+type ddlStatus struct {
+	state    model.JobState
+	rowCount int64
+}
+
+func getDDLStatus(
+	ctx context.Context,
+	db *sql.DB,
+	query string,
+	minCreateTime time.Time,
+) (*ddlStatus, error) {
+	jobID, err := getDDLJobIDByQuery(ctx, db, query)
+	if err != nil || jobID == 0 {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOBS %d WHERE job_id = %d", getDDLStatusMaxJobs, jobID))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var (
+		rowCount      int64
+		state         string
+		createTimeStr sql.NullString
+	)
+	dest := make([]any, len(cols))
+	for i, col := range cols {
+		switch strings.ToLower(col) {
+		case "row_count":
+			dest[i] = &rowCount
+		case "state":
+			dest[i] = &state
+		case "create_time":
+			dest[i] = &createTimeStr
+		default:
+			var anyStr sql.NullString
+			dest[i] = &anyStr
+		}
+	}
+	status := &ddlStatus{}
+
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return nil, errors.Trace(err)
+		}
+		status.rowCount += rowCount
+		// subjob doesn't have create_time, ignore it.
+		if !createTimeStr.Valid || createTimeStr.String == "" {
+			continue
+		}
+		createTime, err := time.Parse(time.DateTime, createTimeStr.String)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// The job is not created by the current task, ignore it.
+		if createTime.Before(minCreateTime) {
+			return nil, nil
+		}
+		status.state = model.StrToJobState(state)
+	}
+	return status, errors.Trace(rows.Err())
+}
+
+func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int64, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("ADMIN SHOW DDL JOB QUERIES LIMIT %d", getDDLStatusMaxJobs))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			jobID int64
+			query string
+		)
+		if err := rows.Scan(&jobID, &query); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if query == wantQuery {
+			return jobID, errors.Trace(rows.Err())
+		}
+	}
+	return 0, errors.Trace(rows.Err())
 }
