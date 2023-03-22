@@ -1211,6 +1211,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 				return nil, false
 			}
 			idxScan.Desc = isDesc
+			idxScan.KeepOrder = true
 			idxScan.ByItems = p.ByItems
 			childProfile := copTsk.plan().statsInfo()
 			newCount := p.Offset + p.Count
@@ -1233,16 +1234,29 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			// only support IndexReader now.
-			if _, ok := rootTask.p.(*PhysicalIndexReader); ok {
-				rootLimit := PhysicalLimit{
-					Count:       p.Count,
-					Offset:      p.Offset,
-					PartitionBy: newPartitionBy,
-				}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-				rootLimit.SetSchema(rootTask.plan().Schema())
-				return attachPlan2Task(rootLimit, rootTask), true
+			// embeded limit in indexLookUp, no more limit needed.
+			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
+				idxLookup.PushedLimit = &PushedDownLimit{
+					Offset: p.Offset,
+					Count:  p.Count,
+				}
+				extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(p.ctx.GetSessionVars(), tblInfo)
+				if hasExtraCol {
+					idxLookup.ExtraHandleCol = extraCol
+					ts := idxLookup.TablePlans[0].(*PhysicalTableScan)
+					ts.Columns = append(ts.Columns, extraInfo)
+					ts.schema.Append(extraCol)
+					ts.HandleIdx = []int{len(ts.Columns) - 1}
+				}
+				return rootTask, true
 			}
+			rootLimit := PhysicalLimit{
+				Count:       p.Count,
+				Offset:      p.Offset,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			rootLimit.SetSchema(rootTask.plan().Schema())
+			return attachPlan2Task(rootLimit, rootTask), true
 		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {

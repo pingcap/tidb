@@ -552,9 +552,9 @@ func TestOrderByAndLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
-		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // but not fully pushed
-		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-		require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+		require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
+		require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
+		require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)

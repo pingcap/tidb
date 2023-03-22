@@ -377,7 +377,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -428,6 +428,7 @@ type IndexLookUpExecutor struct {
 	kvRanges      []kv.KeyRange
 	workerStarted bool
 
+	byItems   []*plannerutil.ByItems
 	keepOrder bool
 	desc      bool
 
@@ -589,12 +590,17 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 
 func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	var tps []*types.FieldType
+	if len(e.byItems) != 0 {
+		for _, item := range e.byItems {
+			tps = append(tps, item.Expr.GetType())
+		}
+	}
 	if e.isCommonHandle() {
 		for _, handleCol := range e.handleCols {
 			tps = append(tps, handleCol.RetType)
 		}
 	} else {
-		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.index.Global {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
@@ -617,6 +623,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	kvRanges := [][]kv.KeyRange{e.kvRanges}
 	if e.partitionTableMode {
 		kvRanges = e.partitionKVRanges
+	}
+	// When len(kvrange) = 1, no sorting is required,
+	// so remove byItems and non-necessary output colums
+	if len(kvRanges) == 1 {
+		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
+		e.byItems = nil
 	}
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
@@ -649,6 +661,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
+		results := make([]distsql.SelectResult, len(kvRanges))
+		pids := make([]int64, 0, len(kvRanges))
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
@@ -658,9 +672,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			default:
 			}
 			if finished {
-				break
-			}
-			if worker.PushedLimit != nil && worker.scannedKeys >= worker.PushedLimit.Count+worker.PushedLimit.Offset {
 				break
 			}
 
@@ -679,29 +690,34 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
+			results[partTblIdx] = result
 			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
 			}
 			if e.partitionTableMode {
 				worker.partitionTable = e.prunedPartitions[partTblIdx]
-			}
-
-			// fetch data from this partition
-			ctx1, cancel := context.WithCancel(ctx)
-			fetchErr := worker.fetchHandles(ctx1, result)
-			if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
-				e.feedback.Invalidate()
-			}
-			cancel()
-			if err := result.Close(); err != nil {
-				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
-			}
-			e.ctx.StoreQueryFeedback(e.feedback)
-			if fetchErr != nil {
-				break // if any error occurs, exit after releasing all resources
+				pids = append(pids, worker.partitionTable.GetPhysicalID())
 			}
 		}
+		var ssr distsql.SelectResult
+		if len(results) > 1 && len(e.byItems) != 0 {
+			ssr = distsql.NewSortedSelectResults(results, pids, e.byItems, e.memTracker)
+		} else if len(results) > 1 {
+			ssr = distsql.NewSerialSelectResults(results, pids)
+		} else {
+			ssr = results[0]
+		}
+		ctx1, cancel := context.WithCancel(ctx)
+		fetchErr := worker.fetchHandles(ctx1, ssr)
+		if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
+			e.feedback.Invalidate()
+		}
+		cancel()
+		if err := ssr.Close(); err != nil {
+			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+		}
+		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
@@ -753,6 +769,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		corColInFilter:   e.corColInTblSide,
 		plans:            e.tblPlans,
 		netDataSize:      e.avgRowSize * float64(len(task.handles)),
+		byItems:          e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
@@ -934,6 +951,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
+	if !w.idxLookup.index.Global && len(w.idxLookup.byItems) > 0 {
+		retTps = append(retTps, types.NewFieldType(mysql.TypeLonglong))
+	}
 	chk := w.idxLookup.ctx.GetSessionVars().GetNewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize, w.idxLookup.maxChunkSize, w.idxLookup.AllocPool)
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -973,7 +993,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	if w.idxLookup.index.Global {
+	if w.idxLookup.index.Global || len(w.idxLookup.byItems) > 0 {
 		numColsWithoutPid = numColsWithoutPid - 1
 	}
 	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
@@ -1027,6 +1047,11 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			if ph, ok := h.(kv.PartitionHandle); ok {
 				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
 					continue
+				}
+			} else if ssr, ok := idxResult.(*distsql.SerialSelectResults); ok {
+				pid, err := ssr.GetCurrentPID()
+				if err == nil {
+					h = kv.PartitionHandle{Handle: h, PartitionID: pid}
 				}
 			}
 			handles = append(handles, h)
@@ -1165,7 +1190,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	if e.index.Global {
+	if e.index.Global || len(e.byItems) > 0 {
 		pidOffset := row.Len() - 1
 		pid := row.GetInt64(pidOffset)
 		handle = kv.NewPartitionHandle(pid, handle)

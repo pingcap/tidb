@@ -3809,6 +3809,26 @@ func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []pla
 	if len(indexReq.OutputOffsets) == 0 {
 		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
 	}
+
+	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
+		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+		tblInfo := idxScan.Table
+		offset := make([]uint32, len(idxScan.ByItems))
+		for i, item := range idxScan.ByItems {
+			if c, ok := item.Expr.(*expression.Column); !ok {
+				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
+			} else {
+				for _, c1 := range tblInfo.Columns {
+					if c1.ID == c.ID {
+						offset[i] = uint32(c1.Offset)
+						break
+					}
+				}
+			}
+		}
+
+		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
+	}
 	return indexReq, err
 }
 
@@ -3824,6 +3844,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
+
 	indexReq, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
@@ -3854,6 +3875,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
+		byItems:           is.ByItems,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           ts.Columns,
@@ -3938,7 +3960,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	if is.Index.Global {
+	indexScanPlan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+
+	if is.Index.Global || len(indexScanPlan.ByItems) != 0 {
 		tmp, ok := b.is.TableByID(ts.Table.ID)
 		if !ok {
 			b.err = err
@@ -3955,7 +3979,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			return nil
 		}
 
-		return ret
+		if is.Index.Global {
+			return ret
+		}
 	}
 	if ok, _ := is.IsPartition(); ok {
 		// Already pruned when translated to logical union.
