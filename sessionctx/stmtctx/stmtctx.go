@@ -158,7 +158,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreTruncate                atomic.Bool
+	IgnoreTruncate                atomic2.Bool
 	IgnoreZeroInDate              bool
 	NoZeroDate                    bool
 	DupKeyAsWarning               bool
