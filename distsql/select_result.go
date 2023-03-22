@@ -245,10 +245,9 @@ func (ssr *sortedSelectResults) Close() (err error) {
 }
 
 // NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
-func NewSerialSelectResults(selectResults []SelectResult, pids []int64) SelectResult {
+func NewSerialSelectResults(selectResults []SelectResult) SelectResult {
 	return &serialSelectResults{
 		selectResults: selectResults,
-		pids:          pids,
 		cur:           0,
 	}
 }
@@ -256,7 +255,6 @@ func NewSerialSelectResults(selectResults []SelectResult, pids []int64) SelectRe
 // serialSelectResults reads each SelectResult serially
 type serialSelectResults struct {
 	selectResults []SelectResult
-	pids          []int64
 	cur           int
 }
 
