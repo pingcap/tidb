@@ -71,6 +71,8 @@ type TiDBStatement struct {
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
 	rs  ResultSet
 	sql string
+
+	hasActiveCursor bool
 }
 
 // ID implements PreparedStatement ID method.
@@ -150,6 +152,7 @@ func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
+	ts.hasActiveCursor = false
 }
 
 // Close implements PreparedStatement Close method.
@@ -181,6 +184,16 @@ func (ts *TiDBStatement) Close() error {
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 	return nil
+}
+
+// GetCursorActive implements PreparedStatement GetCursorActive method.
+func (ts *TiDBStatement) GetCursorActive() bool {
+	return ts.hasActiveCursor
+}
+
+// SetCursorActive implements PreparedStatement SetCursorActive method.
+func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
+	ts.hasActiveCursor = fetchEnd
 }
 
 // OpenCtx implements IDriver.
@@ -348,13 +361,8 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
 			}
 		}
-		if rs := stmt.GetResultSet(); rs != nil {
-			if !rs.IsClosed() {
-				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
-			}
-			if len(rs.GetFetchedRows()) > 0 {
-				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have unfetched rows")
-			}
+		if stmt.GetCursorActive() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have unfetched rows")
 		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
