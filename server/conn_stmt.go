@@ -338,11 +338,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			return false, err
 		}
 
+		stmt.SetCursorActive(true)
+
 		// explicitly flush columnInfo to client.
 		err = cc.writeEOF(ctx, cc.ctx.Status())
 		if err != nil {
 			return false, err
 		}
+
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
@@ -391,10 +394,19 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
+	sendingEOF := false
+	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
+	if len(rs.GetFetchedRows()) == 0 {
+		sendingEOF = true
+	}
 	_, err = cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
+	if sendingEOF {
+		stmt.SetCursorActive(false)
+	}
+
 	return nil
 }
 
