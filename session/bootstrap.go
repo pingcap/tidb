@@ -2501,6 +2501,10 @@ func doDDLWorks(s Session, dom *domain.Domain) {
 		tableInfosPart1 = append(tableInfosPart1, tblInfo)
 	}
 	batchCreateTable(s, dom.DDL(), tableInfosPart1)
+	// batchCreateTable is an optimization, in order to keep same behaviour with
+	// before (such as assign same table ID to these tables), we need to execute
+	// the DDLs in order. CreateMDLView is a view that cannot use batchCreateTable,
+	// so it breaks tables into allCreateTablesPart1 and allCreateTablesPart2.
 	mustExecute(s, CreateMDLView)
 	tableInfosPart2 := make([]*model.TableInfo, 0, len(allCreateTablesPart2))
 	for _, createTable := range allCreateTablesPart2 {
