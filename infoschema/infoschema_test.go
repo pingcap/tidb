@@ -746,9 +746,9 @@ func TestLocalTemporaryTables(t *testing.T) {
 	normalTbTestC := createNewTable(db1.ID, "tbc", model.TempTableNone)
 
 	is := &infoschema.SessionExtendedInfoSchema{
-		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
-		LocalTemporaryTables: sc,
+		InfoSchema: infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
 	}
+	is.LocalTemporaryTables.Store(sc)
 
 	err = sc.AddTable(dbTest, tmpTbTestA)
 	require.NoError(t, err)
