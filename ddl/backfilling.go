@@ -47,7 +47,6 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -147,16 +146,15 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	sessCtx       sessionctx.Context
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *JobContext
-	metricCounter prometheus.Counter
+	reorgTp    model.ReorgType
+	sessCtx    sessionctx.Context
+	schemaName string
+	table      table.Table
+	batchCnt   int
 }
 
-func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
-	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
+func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp model.ReorgType,
+	schemaName string, tbl table.Table, isDistributed bool) *backfillCtx {
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
@@ -164,17 +162,15 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 		id:         id,
 		ddlCtx:     ctx,
 		sessCtx:    sessCtx,
+		reorgTp:    reorgTp,
 		schemaName: schemaName,
 		table:      tbl,
 		batchCnt:   int(variable.GetDDLReorgBatchSize()),
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
 	}
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
 	GetTasks() ([]*BackfillJob, error)
 	UpdateTask(bfJob *BackfillJob) error
@@ -316,7 +312,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	}
 	for {
 		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in bf.BackfillData we will never cancel the job.
+		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(jobID, isDistReorg)
@@ -325,7 +321,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillDataInTxn(handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -387,13 +383,9 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) initPartitionIndexInfo(task *reorgBackfillTask) {
 	if pt, ok := w.GetCtx().table.(table.PartitionedTable); ok {
-		switch w := w.backfiller.(type) {
-		case *addIndexTxnWorker:
+		if addIdxWorker, ok := w.backfiller.(*addIndexWorker); ok {
 			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
-			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
-		case *addIndexIngestWorker:
-			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
-			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
+			addIdxWorker.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 		}
 	}
 }
@@ -870,31 +862,21 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
-			if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-				idxWorker, err := newAddIndexIngestWorker(b.tbl, backfillCtx,
-					job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
-				if err != nil {
-					if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
-						continue
-					}
-					return err
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
+			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
+				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+			if err != nil {
+				if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
+					continue
 				}
-				idxWorker.copReqSenderPool = b.copReqSenderPool
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-				worker = idxWorker
-			} else {
-				idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-					job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
-				if err != nil {
-					return err
-				}
-				runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-				worker = idxWorker
+				return err
 			}
+			idxWorker.copReqSenderPool = b.copReqSenderPool
+			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
+			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.currElement.ID)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
+			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, i, b.tbl, reorgInfo.currElement.ID, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
@@ -935,7 +917,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 }
 
 func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.tp != typeAddIndexWorker || b.reorgInfo.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
+	if b.tp != typeAddIndexWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
 		b.copReqSenderPool != nil || len(b.workers) > 0 {
 		return
 	}
@@ -1023,7 +1005,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	defer scheduler.Close()
 
 	var ingestBeCtx *ingest.BackendContext
-	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 			ingestBeCtx = bc
 		} else {
