@@ -108,7 +108,7 @@ var (
 	reflectTpFloat64  = reflect.TypeOf(float64(0))
 	reflectTpBool     = reflect.TypeOf(false)
 	reflectTpTime     = reflect.TypeOf(time.Time{})
-	reflectTpJson     = reflect.TypeOf(json.RawMessage{})
+	reflectTpJSON     = reflect.TypeOf(json.RawMessage{})
 	reflectTpBytes    = reflect.TypeOf([]byte{})
 	reflectTpString   = reflect.TypeOf("")
 	reflectTpStrings  = reflect.TypeOf([]string{})
@@ -118,7 +118,7 @@ var (
 	reflectUnderlyingTypes = []reflect.Type{
 		reflectTpInt, reflectTpInt8, reflectTpInt16, reflectTpInt32, reflectTpInt64,
 		reflectTpUint, reflectTpUint8, reflectTpUint16, reflectTpUint32, reflectTpUint64,
-		reflectTpFloat32, reflectTpFloat64, reflectTpBool, reflectTpTime, reflectTpJson,
+		reflectTpFloat32, reflectTpFloat64, reflectTpBool, reflectTpTime, reflectTpJSON,
 		reflectTpBytes, reflectTpString, reflectTpStrings, reflectTpFloat32s, reflectTpFloat64s,
 	}
 )
