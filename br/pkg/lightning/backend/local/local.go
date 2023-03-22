@@ -1073,11 +1073,24 @@ func (local *local) generateJobInRanges(
 	ranges []Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
+	logger := log.FromContext(ctx)
+	logger.Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
 	ret := make([]*regionJob, 0, len(ranges))
+	if regionSplitSize > 2*int64(config.SplitRegionSize) {
+		sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		ranges = splitRangeBySizeProps(
+			Range{start: ranges[0].start, end: ranges[len(ranges)-1].end}, sizeProps,
+			int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	}
 
 	for _, r := range ranges {
+		// when use dynamic region feature, the region may be very big, we need
+		// to split it into small regions to increase the concurrency.
 		start, end := r.start, r.end
 		pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 		if err != nil {
@@ -1284,21 +1297,21 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	regionRanges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
 
-	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+	if len(regionRanges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		var startKey, endKey []byte
-		if len(ranges[0].start) > 0 {
-			startKey = codec.EncodeBytes(nil, ranges[0].start)
+		if len(regionRanges[0].start) > 0 {
+			startKey = codec.EncodeBytes(nil, regionRanges[0].start)
 		}
-		if len(ranges[len(ranges)-1].end) > 0 {
-			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
+		if len(regionRanges[len(regionRanges)-1].end) > 0 {
+			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].end)
 		}
 		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
 		if err != nil {
@@ -1311,7 +1324,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	}
 
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
-		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+		zap.Int("region ranges", len(regionRanges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
@@ -1386,7 +1399,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			ctx,
 			engineUUID,
 			lf,
-			ranges,
+			regionRanges,
 			regionSplitSize,
 			regionSplitKeys,
 		)
