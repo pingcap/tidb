@@ -1002,6 +1002,7 @@ func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 	return groups, nil
 }
 
+// DefaultGroupMeta4Test return the default group info for test usage.
 func DefaultGroupMeta4Test() *model.ResourceGroupInfo {
 	return defaultRGroupMeta
 }
