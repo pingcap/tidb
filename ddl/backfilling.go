@@ -528,6 +528,7 @@ type resultConsumer struct {
 	taskCnt *atomic.Int64
 	doneCh  chan struct{}
 	err     *atomic.Value
+	closed  bool
 }
 
 func newResultConsumer(dc *ddlCtx) *resultConsumer {
@@ -560,14 +561,30 @@ func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAd
 	}()
 }
 
-func (s *resultConsumer) wait() {
+func (s *resultConsumer) close() {
+	if s.closed {
+		return
+	}
+	s.doneCh <- struct{}{}
+	s.closed = true
+}
+
+func (s *resultConsumer) gracefulClose() {
+	if s.closed {
+		return
+	}
 	s.doneCh <- struct{}{}
 	s.wg.Wait()
+	s.closed = true
 }
 
 func (s *resultConsumer) getErr() error {
+	v := s.err.Load()
+	if v == nil {
+		return nil
+	}
 	//nolint:forcetypeassert
-	return s.err.Load().(error)
+	return v.(error)
 }
 
 func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) {
@@ -584,6 +601,7 @@ func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, star
 				handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
 				handledTaskCnt++
 			}
+			return
 		}
 	}
 }
@@ -993,7 +1011,7 @@ func canSkipError(jobID int64, workerCnt int, err error) bool {
 	return false
 }
 
-func (b *backfillScheduler) Close() {
+func (b *backfillScheduler) close() {
 	if b.copReqSenderPool != nil {
 		b.copReqSenderPool.close()
 	}
@@ -1044,12 +1062,13 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 	jc := dc.jobContext(job.ID)
 	scheduler := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, decodeColMap, jc)
-	defer scheduler.Close()
+	defer scheduler.close()
 
 	var ingestBeCtx *ingest.BackendContext
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 			ingestBeCtx = bc
+			defer bc.EngMgr.ResetWorkers(bc, job.ID, reorgInfo.currElement.ID)
 		} else {
 			return errors.New(ingest.LitErrGetBackendFail)
 		}
@@ -1057,6 +1076,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 	consumer := newResultConsumer(dc)
 	consumer.run(scheduler, startKey, &totalAddedCount)
+	defer consumer.close()
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
@@ -1099,10 +1119,10 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			break
 		}
 	}
-	consumer.wait()
-	if ingestBeCtx != nil {
-		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
+	if scheduler.copReqSenderPool != nil {
+		scheduler.copReqSenderPool.gracefulClose()
 	}
+	consumer.gracefulClose()
 	return nil
 }
 

@@ -67,6 +67,12 @@ func (c *copReqSenderPool) fetchChunk() (*chunk.Chunk, error) {
 				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed")
 				return nil, nil
 			}
+			if rs.err != nil {
+				logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
+					zap.Int("id", rs.id), zap.Error(rs.err))
+			} else if rs.done {
+				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
+			}
 			return rs.chunk, rs.err
 		}
 	}
@@ -82,6 +88,7 @@ type copReqSenderPool struct {
 
 	senders []*copReqSender
 	wg      sync.WaitGroup
+	closed  bool
 
 	srcChkPool chan *chunk.Chunk
 }
@@ -186,6 +193,9 @@ func (c *copReqSenderPool) adjustSize(n int) {
 }
 
 func (c *copReqSenderPool) close() {
+	if c.closed {
+		return
+	}
 	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool")
 	close(c.tasksCh)
 	for _, w := range c.senders {
@@ -198,6 +208,17 @@ func (c *copReqSenderPool) close() {
 	close(c.resultsCh)
 	cleanupWg.Wait()
 	close(c.srcChkPool)
+	c.closed = true
+}
+
+func (c *copReqSenderPool) gracefulClose() {
+	if c.closed {
+		return
+	}
+	close(c.tasksCh)
+	c.wg.Wait()
+	close(c.resultsCh)
+	c.closed = true
 }
 
 func (c *copReqSenderPool) drainResults() {
