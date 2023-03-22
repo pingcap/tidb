@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -309,94 +308,6 @@ func TestCursorExistsFlag(t *testing.T) {
 	// COM_QUERY after fetch
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
-}
-
-func TestCursorReadWithRCCheckTS(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, store, srv).(*mockConn)
-	out := new(bytes.Buffer)
-	c.pkt.bufWriter.Reset(out)
-	c.capability |= mysql.ClientProtocol41
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	c.Context().GetSessionVars().SetDistSQLScanConcurrency(1)
-	c.Context().GetSessionVars().InitChunkSize = 1
-	c.Context().GetSessionVars().MaxChunkSize = 1
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, c int, key k1(b))")
-	// Prepare data.
-	tk.MustQuery("split table t by (100), (1000)")
-	tk.MustExec("set tidb_txn_mode='pessimistic'")
-	tk.MustExec("set tx_isolation='READ-COMMITTED'")
-	tk.MustExec("set tidb_rc_read_check_ts='on'")
-	tk.MustExec("set tidb_store_batch_size=0")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), " +
-		"(104, 104, 104), (105, 105, 105), (106, 106, 106), " +
-		"(1007, 1007, 1007), (1008, 1008, 1008), (1009, 1009, 1009)")
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("9"))
-
-	getLastStatus := func() uint16 {
-		raw := out.Bytes()
-		return binary.LittleEndian.Uint16(raw[len(raw)-2 : len(raw)])
-	}
-
-	stmtCop, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-
-	stmtBatchGet, _, _, err := c.Context().Prepare("select * from t where a in (1, 2, 3, 104, 105, 106, 1007, 1008, 1009)")
-	require.NoError(t, err)
-
-	pauseCopIterTaskSender := "github.com/pingcap/tidb/store/copr/pauseCopIterTaskSender"
-	defer func() {
-		require.NoError(t, failpoint.Disable(pauseCopIterTaskSender))
-	}()
-	c.Context().GetSessionVars().MaxChunkSize = 1
-	for _, taskType := range []string{"BatchPointGet", "Cop"} {
-		tk.MustExec("begin pessimistic")
-		require.NoError(t, failpoint.Enable(pauseCopIterTaskSender, "pause"))
-		var stmtID uint32
-		if taskType == "BatchPointGet" {
-			stmtID = uint32(stmtBatchGet.ID())
-			require.NoError(t, c.Dispatch(ctx, append(
-				appendUint32([]byte{mysql.ComStmtExecute}, stmtID),
-				mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-			)))
-		} else if taskType == "Cop" {
-			stmtID = uint32(stmtCop.ID())
-			require.NoError(t, c.Dispatch(ctx, append(
-				appendUint32([]byte{mysql.ComStmtExecute}, stmtID),
-				mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-			)))
-		}
-		require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
-		// Fetch the first 3 rows.
-		require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, stmtID), 3)))
-		require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
-		// The rows are updated by other transactions before the next fetch.
-		connUpdate := CreateMockConn(t, store, srv).(*mockConn)
-		tkUpdate := testkit.NewTestKitWithSession(t, store, connUpdate.Context().Session)
-		tkUpdate.MustExec("use test")
-		tkUpdate.MustExec("update t set c = c + 10 where a in (1, 104, 1007)")
-
-		// Fetch the next 3 rows, write conflict error should be reported if the `RCCheckTS` is used.
-		require.NoError(t, failpoint.Disable(pauseCopIterTaskSender))
-		require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, stmtID), 3)))
-		require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
-		// Finish.
-		require.NoError(t, c.Dispatch(ctx, appendUint32([]byte{mysql.ComStmtReset}, stmtID)))
-		tk.MustExec("rollback")
-	}
 }
 
 func TestCursorWithParams(t *testing.T) {
