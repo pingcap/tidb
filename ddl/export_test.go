@@ -32,8 +32,8 @@ func SetBatchInsertDeleteRangeSize(i int) {
 
 var NewCopContext4Test = newCopContext
 
-func FetchRowsFromCop4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
-	batchSize int) (*chunk.Chunk, bool, error) {
+func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
+	batchSize int) (*chunk.Chunk, error) {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
 		id:            1,
@@ -44,9 +44,9 @@ func FetchRowsFromCop4Test(copCtx *copContext, tbl table.PhysicalTable, startKey
 	pool := newCopReqSenderPool(context.Background(), copCtx, store)
 	pool.adjustSize(1)
 	pool.tasksCh <- task
-	copChunk, _, done, err := pool.fetchRowColValsFromCop(*task)
+	copChunk, err := pool.fetchChunk()
 	pool.close()
-	return copChunk, done, err
+	return copChunk, err
 }
 
 func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Handle, []types.Datum, error) {

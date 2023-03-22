@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -61,39 +59,15 @@ func copReadChunkPoolSize() int {
 	return 10 * int(variable.GetDDLReorgWorkerCounter())
 }
 
-func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask) (*chunk.Chunk, kv.Key, bool, error) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+func (c *copReqSenderPool) fetchChunk() (*chunk.Chunk, error) {
 	for {
 		select {
 		case rs, ok := <-c.resultsCh:
 			if !ok {
-				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed",
-					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
-				return nil, handleRange.endKey, true, nil
+				logutil.BgLogger().Info("[ddl-ingest] cop-response channel is closed")
+				return nil, nil
 			}
-			if rs.err != nil {
-				return nil, handleRange.startKey, false, rs.err
-			}
-			if rs.done {
-				logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task",
-					zap.Int("id", rs.id))
-				c.results.Store(rs.id, struct{}{})
-			}
-			if _, found := c.results.Load(handleRange.id); found {
-				logutil.BgLogger().Info("[ddl-ingest] task is found in results",
-					zap.Int("id", handleRange.id), zap.String("task", handleRange.String()))
-				c.results.Delete(handleRange.id)
-				return rs.chunk, handleRange.endKey, true, nil
-			}
-			return rs.chunk, handleRange.startKey, false, nil
-		case <-ticker.C:
-			logutil.BgLogger().Info("[ddl-ingest] cop-request result channel is empty",
-				zap.Int("id", handleRange.id))
-			if _, found := c.results.Load(handleRange.id); found {
-				c.results.Delete(handleRange.id)
-				return nil, handleRange.endKey, true, nil
-			}
+			return rs.chunk, rs.err
 		}
 	}
 }
@@ -101,7 +75,6 @@ func (c *copReqSenderPool) fetchRowColValsFromCop(handleRange reorgBackfillTask)
 type copReqSenderPool struct {
 	tasksCh   chan *reorgBackfillTask
 	resultsCh chan idxRecResult
-	results   generic.SyncMap[int, struct{}]
 
 	ctx    context.Context
 	copCtx *copContext
@@ -178,7 +151,6 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 	return &copReqSenderPool{
 		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
-		results:    generic.NewSyncMap[int, struct{}](10),
 		ctx:        ctx,
 		copCtx:     copCtx,
 		store:      store,
@@ -214,7 +186,7 @@ func (c *copReqSenderPool) adjustSize(n int) {
 }
 
 func (c *copReqSenderPool) close() {
-	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool", zap.Int("results not handled", len(c.results.Keys())))
+	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool")
 	close(c.tasksCh)
 	for _, w := range c.senders {
 		w.cancel()

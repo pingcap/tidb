@@ -522,43 +522,116 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func waitTaskResults(scheduler *backfillScheduler, batchTasks []*reorgBackfillTask,
-	totalAddedCount *int64) (kv.Key, int64, error) {
-	var (
-		firstErr   error
-		addedCount int64
-	)
-	keeper := newDoneTaskKeeper(batchTasks[0].startKey)
-	taskSize := len(batchTasks)
-	for i := 0; i < taskSize; i++ {
-		result := <-scheduler.resultCh
-		if result.err != nil {
-			if firstErr == nil {
-				firstErr = result.err
-			}
-			logutil.BgLogger().Warn("[ddl] backfill worker failed",
-				zap.String("result next key", hex.EncodeToString(result.nextKey)),
-				zap.Error(result.err))
-			// Drain tasks.
-			cnt := drainTasks(scheduler.taskCh)
-			// We need to wait all the tasks to finish before closing it
-			// to prevent send on closed channel error.
-			taskSize -= cnt
-			continue
+type resultConsumer struct {
+	dc      *ddlCtx
+	wg      *sync.WaitGroup
+	taskCnt *atomic.Int64
+	doneCh  chan struct{}
+	err     *atomic.Value
+}
+
+func newResultConsumer(dc *ddlCtx) *resultConsumer {
+	return &resultConsumer{
+		dc:      dc,
+		wg:      &sync.WaitGroup{},
+		taskCnt: &atomic.Int64{},
+		doneCh:  make(chan struct{}),
+		err:     &atomic.Value{},
+	}
+}
+
+func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAddedCount *int64) {
+	s.wg.Add(1)
+	go func() {
+		reorgInfo := scheduler.reorgInfo
+		consumeResults(scheduler, s, start, totalAddedCount)
+		err := s.getErr()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] backfill worker handle tasks failed",
+				zap.Int64("total added count", *totalAddedCount),
+				zap.String("start key", hex.EncodeToString(start)),
+				zap.String("task failed error", err.Error()))
 		}
-		*totalAddedCount += int64(result.addedCount)
-		addedCount += int64(result.addedCount)
-		keeper.updateNextKey(result.taskID, result.nextKey)
-		if i%scheduler.workerSize()*4 == 0 {
-			// We try to adjust the worker size regularly to reduce
-			// the overhead of loading the DDL related global variables.
-			err := scheduler.adjustWorkerSize()
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] cannot adjust backfill worker size", zap.Error(err))
+		logutil.BgLogger().Info("[ddl] backfill workers successfully processed",
+			zap.Stringer("element", reorgInfo.currElement),
+			zap.Int64("total added count", *totalAddedCount),
+			zap.String("start key", hex.EncodeToString(start)))
+		s.wg.Done()
+	}()
+}
+
+func (s *resultConsumer) wait() {
+	s.doneCh <- struct{}{}
+	s.wg.Wait()
+}
+
+func (s *resultConsumer) getErr() error {
+	//nolint:forcetypeassert
+	return s.err.Load().(error)
+}
+
+func consumeResults(scheduler *backfillScheduler, syncer *resultConsumer, start kv.Key, totalAddedCount *int64) {
+	keeper := newDoneTaskKeeper(start)
+	handledTaskCnt := 0
+	for {
+		select {
+		case result := <-scheduler.resultCh:
+			handleOneResult(result, scheduler, syncer, keeper, totalAddedCount, handledTaskCnt)
+			handledTaskCnt++
+		case <-syncer.doneCh:
+			for i := int64(0); i < syncer.taskCnt.Load(); i++ {
+				result := <-scheduler.resultCh
+				handleOneResult(result, scheduler, syncer, keeper, totalAddedCount, handledTaskCnt)
+				handledTaskCnt++
 			}
 		}
 	}
-	return keeper.nextKey, addedCount, errors.Trace(firstErr)
+}
+
+func handleOneResult(result *backfillResult, scheduler *backfillScheduler, syncer *resultConsumer,
+	keeper *doneTaskKeeper, totalAddedCount *int64, taskSeq int) {
+	reorgInfo := scheduler.reorgInfo
+	if result.err != nil {
+		// Only stores the first error.
+		syncer.err.CompareAndSwap(nil, result.err)
+		logutil.BgLogger().Warn("[ddl] backfill worker failed",
+			zap.Int64("job ID", reorgInfo.ID),
+			zap.String("result next key", hex.EncodeToString(result.nextKey)),
+			zap.Error(result.err))
+		cnt := drainTasks(scheduler.taskCh)
+		syncer.taskCnt.Add(int64(-cnt))
+		return
+	}
+	*totalAddedCount += int64(result.addedCount)
+	keeper.updateNextKey(result.taskID, result.nextKey)
+	if taskSeq%scheduler.workerSize()*4 == 0 {
+		err := syncer.dc.isReorgRunnable(reorgInfo.ID, false)
+		if err != nil {
+			syncer.err.CompareAndSwap(nil, err)
+			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
+			cnt := drainTasks(scheduler.taskCh)
+			syncer.taskCnt.Add(int64(-cnt))
+			return
+		}
+		failpoint.Inject("MockGetIndexRecordErr", func() {
+			// Make sure this job didn't failed because by the "Write conflict" error.
+			if dbterror.ErrNotOwner.Equal(err) {
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
+		err = reorgInfo.UpdateReorgMeta(keeper.nextKey, scheduler.sessPool)
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] update reorg meta failed",
+				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+		}
+		// We try to adjust the worker size regularly to reduce
+		// the overhead of loading the DDL related global variables.
+		err = scheduler.adjustWorkerSize()
+		if err != nil {
+			logutil.BgLogger().Warn("[ddl] cannot adjust backfill worker size",
+				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
+		}
+	}
 }
 
 func drainTasks(taskCh chan *reorgBackfillTask) int {
@@ -568,61 +641,6 @@ func drainTasks(taskCh chan *reorgBackfillTask) int {
 		cnt++
 	}
 	return cnt
-}
-
-// sendTasksAndWait sends tasks to workers, and waits for all the running workers to return results,
-// there are taskCnt running workers.
-func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount *int64,
-	batchTasks []*reorgBackfillTask) error {
-	reorgInfo := scheduler.reorgInfo
-	for _, task := range batchTasks {
-		if scheduler.copReqSenderPool != nil {
-			scheduler.copReqSenderPool.sendTask(task)
-		}
-		scheduler.taskCh <- task
-	}
-
-	startKey := batchTasks[0].startKey
-	startTime := time.Now()
-	nextKey, taskAddedCount, err := waitTaskResults(scheduler, batchTasks, totalAddedCount)
-	elapsedTime := time.Since(startTime)
-	if err == nil {
-		err = dc.isReorgRunnable(reorgInfo.Job.ID, false)
-	}
-
-	// Update the reorg handle that has been processed.
-	err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
-
-	if err != nil {
-		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
-		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
-
-			zap.Int64("total added count", *totalAddedCount),
-			zap.String("start key", hex.EncodeToString(startKey)),
-			zap.String("next key", hex.EncodeToString(nextKey)),
-			zap.Int64("batch added count", taskAddedCount),
-			zap.String("task failed error", err.Error()),
-			zap.String("take time", elapsedTime.String()),
-			zap.NamedError("updateHandleError", err1))
-		failpoint.Inject("MockGetIndexRecordErr", func() {
-			// Make sure this job didn't failed because by the "Write conflict" error.
-			if dbterror.ErrNotOwner.Equal(err) {
-				time.Sleep(50 * time.Millisecond)
-			}
-		})
-		return errors.Trace(err)
-	}
-
-	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
-		zap.Stringer("element", reorgInfo.currElement),
-		zap.Int64("total added count", *totalAddedCount),
-		zap.String("start key", hex.EncodeToString(startKey)),
-		zap.String("next key", hex.EncodeToString(nextKey)),
-		zap.Int64("batch added count", taskAddedCount),
-		zap.String("take time", elapsedTime.String()),
-		zap.NamedError("updateHandleError", err1))
-	return nil
 }
 
 func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
@@ -674,18 +692,24 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 	return batchTasks
 }
 
-// handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
-	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+// sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
+func sendTasks(scheduler *backfillScheduler, syncer *resultConsumer, t table.PhysicalTable,
+	kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
 		return nil, nil
 	}
 
-	// Wait tasks finish.
-	err := dc.sendTasksAndWait(scheduler, totalAddedCount, batchTasks)
-	if err != nil {
-		return nil, errors.Trace(err)
+	for _, task := range batchTasks {
+		if scheduler.copReqSenderPool != nil {
+			scheduler.copReqSenderPool.sendTask(task)
+		}
+		scheduler.taskCh <- task
+		syncer.taskCnt.Add(1)
+		err := syncer.getErr()
+		if err != nil {
+			return nil, errors.Trace(syncer.err.Load().(error))
+		}
 	}
 
 	if len(batchTasks) < len(kvRanges) {
@@ -1031,6 +1055,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 	}
 
+	consumer := newResultConsumer(dc)
+	consumer.run(scheduler, startKey, &totalAddedCount)
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
@@ -1059,7 +1085,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 				return errors.Trace(err)
 			}
 		}
-		remains, err := dc.handleRangeTasks(scheduler, t, &totalAddedCount, kvRanges)
+		remains, err := sendTasks(scheduler, consumer, t, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1073,6 +1099,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			break
 		}
 	}
+	consumer.wait()
 	if ingestBeCtx != nil {
 		ingestBeCtx.EngMgr.ResetWorkers(ingestBeCtx, job.ID, reorgInfo.currElement.ID)
 	}
