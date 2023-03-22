@@ -947,6 +947,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 		}
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
+	// for sortedSelectResult, add pids in last column
 	if !w.idxLookup.index.Global && len(w.idxLookup.byItems) > 0 {
 		retTps = append(retTps, types.NewFieldType(mysql.TypeLonglong))
 	}

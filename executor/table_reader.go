@@ -301,7 +301,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 				}
 				results = append(results, result)
 			}
-			return distsql.NewSerialSelectResults(results, nil), nil
+			return distsql.NewSerialSelectResults(results), nil
 		}
 		// Use PartitionTable Scan
 		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
