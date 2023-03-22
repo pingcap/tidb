@@ -24,7 +24,7 @@ import (
 	"sync"
 
 	"github.com/docker/go-units"
-	common2 "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
@@ -257,11 +257,11 @@ type session struct {
 }
 
 // NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *common2.SessionOptions, logger log.Logger) sessionctx.Context {
+func NewSession(options *encode.SessionOptions, logger log.Logger) sessionctx.Context {
 	return newSession(options, logger)
 }
 
-func newSession(options *common2.SessionOptions, logger log.Logger) *session {
+func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	s := &session{
 		values: make(map[fmt.Stringer]interface{}, 1),
 	}

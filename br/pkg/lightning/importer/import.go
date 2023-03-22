@@ -34,7 +34,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	common2 "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -2211,7 +2211,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs     common2.Row // if kvs is nil, this indicated we've got the last message.
+	kvs     encode.Row // if kvs is nil, this indicated we've got the last message.
 	columns []string
 	offset  int64
 	rowID   int64
