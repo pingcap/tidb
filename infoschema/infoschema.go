@@ -750,8 +750,5 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 // HasTemporaryTable returns whether information schema has temporary table
 func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	t := ts.LocalTemporaryTables.Load()
-	if t == nil {
-		return false
-	}
-	return t.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+	return t != nil && t.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }
