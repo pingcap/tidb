@@ -3649,3 +3649,24 @@ func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 	n = newNode.(*SetResourceGroupStmt)
 	return v.Leave(n)
 }
+
+// CalibrateResourceStmt is a statement to fetch the cluster RU capacity
+type CalibrateResourceStmt struct {
+	stmtNode
+}
+
+// Restore implements Node interface.
+func (n *CalibrateResourceStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CALIBRATE RESOURCE")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CalibrateResourceStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CalibrateResourceStmt)
+	return v.Leave(n)
+}

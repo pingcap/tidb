@@ -66,6 +66,8 @@ go_test(
     ],
     embed = [":backup"],
     flaky = True,
+    race = "on",
+    shard_count = 9,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/gluetidb",

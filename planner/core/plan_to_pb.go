@@ -260,6 +260,17 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 	if *(ptsExec.IsFastScan) {
 		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 	}
+
+	if len(p.lateMaterializationFilterCondition) > 0 {
+		sc := ctx.GetSessionVars().StmtCtx
+		client := ctx.GetClient()
+		conditions, err := expression.ExpressionsToPBList(sc, p.lateMaterializationFilterCondition, client)
+		if err != nil {
+			return nil, err
+		}
+		ptsExec.PushedDownFilterConditions = conditions
+	}
+
 	ptsExec.Desc = p.Desc
 	executorID := p.ExplainID().String()
 	err := tables.SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
