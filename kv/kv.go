@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -639,13 +638,13 @@ func (t *RefreshableReadTS) CheckIsEquivalentForTest(rhs *RefreshableReadTS) boo
 }
 
 func (t *RefreshableReadTS) String() string {
-	tsFuture := t.getInnerFuture()
-
-	if value, ok := tsFuture.(util2.ConstantFuture); ok {
-		return strconv.FormatUint(uint64(value), 10)
-	} else {
-		return fmt.Sprintf("(future, initial value: %v)", t.initialTS)
-	}
+	//tsFuture := t.getInnerFuture()
+	//
+	//if value, ok := tsFuture.(util2.ConstantFuture); ok {
+	//	return strconv.FormatUint(uint64(value), 10)
+	//} else {
+	return fmt.Sprintf("(initial value: %v)", t.initialTS)
+	//}
 }
 
 type MultiAccessTSFuture struct {
