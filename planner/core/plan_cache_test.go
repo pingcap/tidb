@@ -838,17 +838,17 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIgnoreInsertStmt(t *testing.T) {
+func TestInsertStmtHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 
-	// do not cache native insert-stmt
+	// without hint
 	tk.MustExec("prepare st from 'insert into t values (1)'")
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// ignore-hint in insert-stmt can work
 	tk.MustExec("prepare st from 'insert into t select * from t'")
@@ -859,6 +859,24 @@ func TestIgnoreInsertStmt(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestLongInsertStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec(`prepare inert200 from 'insert into t values (1)` + strings.Repeat(", (1)", 199) + "'")
+	tk.MustExec(`execute inert200`)
+	tk.MustExec(`execute inert200`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare inert201 from 'insert into t values (1)` + strings.Repeat(", (1)", 200) + "'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values (more than 200) in the insert statement"))
+	tk.MustExec(`execute inert201`)
+	tk.MustExec(`execute inert201`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestIssue38710(t *testing.T) {
@@ -1638,5 +1656,18 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
+	}
+}
+
+func BenchmarkPlanCacheInsert(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("prepare st from 'insert into t values (1)'")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("execute st")
 	}
 }
