@@ -1129,7 +1129,6 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	cfg.TikvImporter.AddIndexBySQL = true
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.ErrorContains(t, err, "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
-
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
