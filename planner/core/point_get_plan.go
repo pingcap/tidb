@@ -320,6 +320,7 @@ type BatchPointGetPlan struct {
 	IdxColLens       []int
 	PartitionColPos  int
 	PartitionExpr    *tables.PartitionExpr
+	PartitionIDs     []int64 // pre-calculated partition IDs for Handles or IndexValues
 	KeepOrder        bool
 	Desc             bool
 	Lock             bool
@@ -708,15 +709,16 @@ func newBatchPointGetPlan(
 		if len(partitionInfos) == 0 {
 			partitionInfos = nil
 		}
-
-		return BatchPointGetPlan{
+		p := &BatchPointGetPlan{
 			TblInfo:        tbl,
 			Handles:        handles,
 			HandleParams:   handleParams,
 			HandleType:     &handleCol.FieldType,
 			PartitionExpr:  partitionExpr,
 			PartitionInfos: partitionInfos,
-		}.Init(ctx, statsInfo, schema, names, 0)
+		}
+
+		return p.Init(ctx, statsInfo, schema, names, 0)
 	}
 
 	// The columns in where clause should be covered by unique index
@@ -895,8 +897,7 @@ func newBatchPointGetPlan(
 	if len(partitionInfos) == 0 {
 		partitionInfos = nil
 	}
-
-	return BatchPointGetPlan{
+	p := &BatchPointGetPlan{
 		TblInfo:          tbl,
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
@@ -905,7 +906,9 @@ func newBatchPointGetPlan(
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
 		PartitionInfos:   partitionInfos,
-	}.Init(ctx, statsInfo, schema, names, 0)
+	}
+
+	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
 func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {

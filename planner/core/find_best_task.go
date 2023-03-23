@@ -2223,7 +2223,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
-	batchPointGetPlan := BatchPointGetPlan{
+	batchPointGetPlan := &BatchPointGetPlan{
 		ctx:              ds.ctx,
 		dbName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
@@ -2233,7 +2233,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
 		PartitionExpr:    getPartitionExpr(ds.ctx, ds.TableInfo()),
-	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
@@ -2277,6 +2277,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			rTsk.p = sel
 		}
 	}
+	batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 
 	return rTsk
 }
