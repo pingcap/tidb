@@ -1125,40 +1125,11 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
 
-	var (
-		trueVal  = true
-		falseVal = false
-	)
 	cfg.TikvImporter.IncrementalImport = true
-	cfg.TikvImporter.AddIndexBySQL = &trueVal
+	cfg.TikvImporter.AddIndexBySQL = true
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.ErrorContains(t, err, "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 
-	cfg.TikvImporter.IncrementalImport = true
-	cfg.TikvImporter.AddIndexBySQL = nil
-	err = cfg.CheckAndAdjustForLocalBackend()
-	require.NoError(t, err)
-	require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
-
-	cfg.TikvImporter.IncrementalImport = false
-	cfg.TikvImporter.AddIndexBySQL = nil
-	err = cfg.CheckAndAdjustForLocalBackend()
-	require.NoError(t, err)
-	if common.IsFailpointBuild {
-		require.Equal(t, &trueVal, cfg.TikvImporter.AddIndexBySQL)
-	} else {
-		require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
-	}
-
-	cfg.TikvImporter.AddIndexBySQL = &trueVal
-	err = cfg.CheckAndAdjustForLocalBackend()
-	require.NoError(t, err)
-	require.Equal(t, &trueVal, cfg.TikvImporter.AddIndexBySQL)
-
-	cfg.TikvImporter.AddIndexBySQL = &falseVal
-	err = cfg.CheckAndAdjustForLocalBackend()
-	require.NoError(t, err)
-	require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {

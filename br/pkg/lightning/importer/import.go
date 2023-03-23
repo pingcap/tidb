@@ -1549,7 +1549,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			if err := rc.dropAllIndexes(ctx); err != nil {
 				return err
 			}
