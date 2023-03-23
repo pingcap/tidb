@@ -1142,10 +1142,12 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		}
 	} else {
 		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
-		// TODO: remove this after TiDB v7.0.0 is released, in which add-index-by-sql is enabled by default.
 		if cfg.TikvImporter.AddIndexBySQL == nil && common.IsFailpointBuild {
 			trueVal := true
 			cfg.TikvImporter.AddIndexBySQL = &trueVal
+		} else {
+			falseVal := false
+			cfg.TikvImporter.AddIndexBySQL = &falseVal
 		}
 	}
 
