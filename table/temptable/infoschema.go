@@ -27,22 +27,22 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 	}
 	if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 		se.LocalTemporaryTablesOnce.Do(func() {
-			se.LocalTemporaryTables.Store(localTemporaryTables)
+			se.LocalTemporaryTables = localTemporaryTables
 		})
 		return is
 	}
-	result := &infoschema.SessionExtendedInfoSchema{
-		InfoSchema: is,
+
+	return &infoschema.SessionExtendedInfoSchema{
+		InfoSchema:           is,
+		LocalTemporaryTables: localTemporaryTables,
 	}
-	result.LocalTemporaryTables.Store(localTemporaryTables)
-	return result
 }
 
 // DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
 	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 		newIs := attachedInfoSchema
-		newIs.LocalTemporaryTables.Store(nil)
+		newIs.LocalTemporaryTables = nil
 		return newIs
 	}
 

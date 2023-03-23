@@ -382,7 +382,7 @@ func (c *statsCache) update(ctx context.Context, sctx sessionctx.Context) error 
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
