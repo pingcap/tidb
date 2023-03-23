@@ -1234,7 +1234,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 			}
 
 			rootTask := copTsk.convertToRootTask(p.ctx)
-			// embeded limit in indexLookUp, no more limit needed.
+			// embedded limit in indexLookUp, no more limit needed.
 			if idxLookup, ok := rootTask.p.(*PhysicalIndexLookUpReader); ok {
 				idxLookup.PushedLimit = &PushedDownLimit{
 					Offset: p.Offset,

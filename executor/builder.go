@@ -3815,18 +3815,17 @@ func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []pla
 		tblInfo := idxScan.Table
 		offset := make([]uint32, len(idxScan.ByItems))
 		for i, item := range idxScan.ByItems {
-			if c, ok := item.Expr.(*expression.Column); !ok {
+			c, ok := item.Expr.(*expression.Column)
+			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
-			} else {
-				for _, c1 := range tblInfo.Columns {
-					if c1.ID == c.ID {
-						offset[i] = uint32(c1.Offset)
-						break
-					}
+			}
+			for _, c1 := range tblInfo.Columns {
+				if c1.ID == c.ID {
+					offset[i] = uint32(c1.Offset)
+					break
 				}
 			}
 		}
-
 		indexReq.OutputOffsets = append(offset, indexReq.OutputOffsets...)
 	}
 	return indexReq, err

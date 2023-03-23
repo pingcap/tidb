@@ -329,11 +329,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			}
 			results = append(results, result)
 		}
-		if len(results) > 1 {
-			return distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker), nil
-		} else {
+		if len(results) == 1 {
 			return results[0], nil
 		}
+		return distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker), nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
