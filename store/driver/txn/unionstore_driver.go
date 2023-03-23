@@ -167,6 +167,10 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 		v = kv.ApplyFlagsOps(v, kv.SetNeedConstraintCheckInPrewrite)
 	}
 
+	if flag.HasLocked() {
+		v = kv.ApplyFlagsOps(v, kv.SetKeyLocked)
+	}
+
 	return v
 }
 

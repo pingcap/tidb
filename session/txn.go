@@ -550,6 +550,14 @@ func (txn *LazyTxn) IsInFairLockingMode() bool {
 	}
 }
 
+// IsKeyInFairLockingStage wraps the inner transaction to support using fair locking with lazy initialization.
+func (txn *LazyTxn) IsKeyInFairLockingStage(key kv.Key) bool {
+	if txn.Valid() {
+		return txn.Transaction.IsKeyInFairLockingStage(key)
+	}
+	return false
+}
+
 func (txn *LazyTxn) reset() {
 	txn.cleanup()
 	txn.changeToInvalid()
@@ -572,6 +580,9 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
 		if !keyNeedToLock(k, v, flags) {
+			return
+		}
+		if txn.IsKeyInFairLockingStage(k) {
 			return
 		}
 		keys = append(keys, k)
@@ -608,6 +619,10 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+	if flags.HasKeyLocked() {
+		return false
+	}
+
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.

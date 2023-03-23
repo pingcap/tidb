@@ -35,6 +35,7 @@ const (
 	// to the next pessimistic lock or prewrite request.
 	flagNeedConstraintCheckInPrewrite
 	flagPreviousPresumeKNE
+	flagKeyLocked
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -72,6 +73,12 @@ func (f KeyFlags) HasNeedConstraintCheckInPrewrite() bool {
 	return f&flagNeedConstraintCheckInPrewrite != 0
 }
 
+// HasKeyLocked returns whether the key is already locked by a certain transaction.
+// Note that this flag won't be set for keys locked in an ongoing fair locking stage.
+func (f KeyFlags) HasKeyLocked() bool {
+	return f&flagKeyLocked != 0
+}
+
 // FlagsOp describes KeyFlags modify operation.
 type FlagsOp uint16
 
@@ -93,6 +100,9 @@ const (
 	// SetPreviousPresumeKeyNotExists marks the PNE flag is set in previous statements, thus it cannot be unset when
 	// retrying or rolling back a statement.
 	SetPreviousPresumeKeyNotExists
+	// SetKeyLocked marks the key is already locked in the current transaction.
+	// This flag should not be set manually. It's only used to read the state of a transaction.
+	SetKeyLocked
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -116,6 +126,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagNeedConstraintCheckInPrewrite
 		case SetPreviousPresumeKeyNotExists:
 			origin |= flagPreviousPresumeKNE
+		case SetKeyLocked:
+			origin |= flagKeyLocked
 		}
 	}
 	return origin

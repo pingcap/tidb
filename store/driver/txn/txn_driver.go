@@ -428,6 +428,11 @@ func (txn *tikvTxn) IsInFairLockingMode() bool {
 	return txn.KVTxn.IsInAggressiveLockingMode()
 }
 
+// IsKeyInFairLockingStage adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
+func (txn *tikvTxn) IsKeyInFairLockingStage(key kv.Key) bool {
+	return txn.KVTxn.IsInAggressiveLockingStage(key)
+}
+
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
 type TiDBKVFilter struct{}
 

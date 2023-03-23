@@ -296,6 +296,7 @@ type FairLockingController interface {
 	CancelFairLocking(ctx context.Context) error
 	DoneFairLocking(ctx context.Context) error
 	IsInFairLockingMode() bool
+	IsKeyInFairLockingStage(key Key) bool
 }
 
 // Client is used to send request to KV layer.
