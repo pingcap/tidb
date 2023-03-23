@@ -661,7 +661,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnID(e.ctx.GetSessionVars().ConnectionID)
 
-		results := make([]distsql.SelectResult, len(kvRanges))
+		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		pids := make([]int64, 0, len(kvRanges))
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed
@@ -690,7 +690,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			results[partTblIdx] = result
+			results = append(results, result)
 			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
