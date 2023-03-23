@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -251,14 +251,15 @@ type testTablePartitionInfo struct {
 }
 
 // getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
-//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
-//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
-//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
-//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
-//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
-//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
-//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+//	"Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//	"└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//	"  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//	"  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//	"  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//	"  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//	"    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//	"      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
 func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) string {
@@ -461,7 +462,7 @@ partition by range (a) (
 	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
 
-//issue 22079
+// issue 22079
 func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
@@ -490,6 +491,43 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestIssue42135(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database issue42135`)
+	tk.MustExec(`use issue42135`)
+	tk.MustExec("CREATE TABLE `tx1` (`ID` varchar(13), `a` varchar(13), `b` varchar(4000), `ltype` int(5) NOT NULL)")
+	tk.MustExec("CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST (`ltype`) (PARTITION `p1` VALUES IN (501), PARTITION `p2` VALUES IN (502))")
+	tk.MustExec("insert into tx1 values(1,1,1,501)")
+	tk.MustExec("insert into tx2 values(1,1,1,1,1,1,501)")
+	tk.MustExec(`analyze table tx1`)
+	tk.MustExec(`analyze table tx2`)
+	tk.MustQuery(`select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows("1 1 1 501 1 1 1 1 1 1 501"))
+	tk.MustQuery(`explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows(""+
+		"HashJoin 1.00 root  inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]",
+		`├─TableReader(Build) 1.00 root partition:all data:Selection`,
+		`│ └─Selection 1.00 cop[tikv]  eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))`,
+		`│   └─TableFullScan 1.00 cop[tikv] table:tx2 keep order:false`,
+		`└─TableReader(Probe) 1.00 root  data:Selection`,
+		`  └─Selection 1.00 cop[tikv]  not(isnull(issue42135.tx1.id))`,
+		`    └─TableFullScan 1.00 cop[tikv] table:tx1 keep order:false`))
+
+	tk.MustExec(`drop table tx2`)
+	tk.MustExec("CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST COLUMNS (`ltype`,d) (PARTITION `p1` VALUES IN ((501,1)), PARTITION `p2` VALUES IN ((502,1)))")
+	tk.MustExec("insert into tx2 values(1,1,1,1,1,1,501)")
+	tk.MustExec(`analyze table tx2`)
+	tk.MustQuery(`select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows("1 1 1 501 1 1 1 1 1 1 501"))
+	tk.MustQuery(`explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1'`).Check(testkit.Rows(""+
+		"HashJoin 1.00 root  inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]",
+		"├─TableReader(Build) 1.00 root partition:all data:Selection",
+		"│ └─Selection 1.00 cop[tikv]  eq(issue42135.tx2.rid, \"1\"), not(isnull(issue42135.tx2.id))",
+		"│   └─TableFullScan 1.00 cop[tikv] table:tx2 keep order:false",
+		"└─TableReader(Probe) 1.00 root  data:Selection",
+		"  └─Selection 1.00 cop[tikv]  not(isnull(issue42135.tx1.id))",
+		"    └─TableFullScan 1.00 cop[tikv] table:tx1 keep order:false"))
 }
 
 func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
