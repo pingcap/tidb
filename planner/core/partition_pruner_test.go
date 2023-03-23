@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
