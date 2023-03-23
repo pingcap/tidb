@@ -481,7 +481,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		s.tableSchemas = append(s.tableSchemas, info)
 	case SourceTypeViewSchema:
 		s.viewSchemas = append(s.viewSchemas, info)
-	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet, SourceTypeORC:
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {

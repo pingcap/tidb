@@ -85,6 +85,11 @@ func newChunkProcessor(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	case mydump.SourceTypeORC:
+		parser, err = mydump.NewORCParser(log.L(), reader, chunk.FileMeta.Path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}

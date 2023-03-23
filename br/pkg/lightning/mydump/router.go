@@ -33,6 +33,7 @@ const (
 	SourceTypeParquet
 	// SourceTypeViewSchema means this source file is a schema file for the view.
 	SourceTypeViewSchema
+	SourceTypeORC
 )
 
 const (
@@ -46,6 +47,7 @@ const (
 	TypeSQL = "sql"
 	// TypeCSV is the source type value for csv data file.
 	TypeCSV = "csv"
+	TypeORC = "orc"
 	// TypeParquet is the source type value for parquet data file.
 	TypeParquet = "parquet"
 	// TypeIgnore is the source type value for a ignored data file.
@@ -98,6 +100,8 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeSQL, nil
 	case TypeCSV:
 		return SourceTypeCSV, nil
+	case TypeORC:
+		return SourceTypeORC, nil
 	case TypeParquet:
 		return SourceTypeParquet, nil
 	case TypeIgnore:

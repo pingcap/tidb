@@ -481,6 +481,11 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+	case mydump.SourceTypeORC:
+		parser, err = mydump.NewORCParser(log.L(), nil, dataFileMeta.Path)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
 	}
@@ -641,6 +646,11 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, sampleFile.Path)
+		if err != nil {
+			return 0.0, false, errors.Trace(err)
+		}
+	case mydump.SourceTypeORC:
+		parser, err = mydump.NewORCParser(log.L(), nil, sampleFile.Path)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}

@@ -15,10 +15,13 @@
 package mydump
 
 import (
+	"io"
+	"os"
 	"reflect"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/scritchley/orc"
 	"go.uber.org/zap"
@@ -33,8 +36,28 @@ type ORCParser struct {
 
 var _ Parser = &ORCParser{}
 
-func NewORCParser(logger log.Logger, path string) (*ORCParser, error) {
-	r, err := orc.Open(path)
+// todo: copied from orc.go
+type fileReader struct {
+	*os.File
+}
+
+// Size returns the size of the file in bytes.
+func (f fileReader) Size() int64 {
+	stats, err := f.Stat()
+	if err != nil {
+		return 0
+	}
+	return stats.Size()
+}
+
+func NewORCParser(logger log.Logger, reader storage.ReadSeekCloser, path string) (*ORCParser, error) {
+	file, ok := reader.(*os.File)
+	if !ok {
+		panic("not implemented")
+	}
+	r, err := orc.NewReader(fileReader{
+		File: file,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -71,18 +94,37 @@ func (p *ORCParser) Close() error {
 
 func (p *ORCParser) ReadRow() error {
 	//TODO implement me
-	if p.cursor.Stripes() {
+	if p.cursor.Next() {
+		r := p.cursor.Row()
+		length := len(p.Columns())
+		p.lastRow.Row = make([]types.Datum, length)
+		for i := 0; i < length; i++ {
+			if r[i] == nil {
+				p.lastRow.Row[i].SetNull()
+				continue
+			}
+			v := reflect.ValueOf(r[i])
+			p.lastRow.Length += getDatumLen(v)
+			if err := setORCDatumValue(&p.lastRow.Row[i], v, p.logger); err != nil {
+				return err
+			}
+		}
+	} else if p.cursor.Stripes() {
 		if p.cursor.Next() {
-			v := reflect.ValueOf(p.cursor.Row())
+			r := p.cursor.Row()
 			length := len(p.Columns())
 			p.lastRow.Row = make([]types.Datum, length)
 			for i := 0; i < length; i++ {
-				p.lastRow.Length += getDatumLen(v.Field(i))
-				if err := setORCDatumValue(&p.lastRow.Row[i], v.Field(i), p.logger); err != nil {
+				v := reflect.ValueOf(r[i])
+				p.lastRow.Length += getDatumLen(v)
+				if err := setORCDatumValue(&p.lastRow.Row[i], v, p.logger); err != nil {
 					return err
 				}
 			}
 		}
+		// todo: empty stripe???
+	} else if p.cursor.Err() == nil {
+		return io.EOF
 	}
 	return p.cursor.Err()
 }
@@ -138,6 +180,14 @@ func setORCDatumValue(d *types.Datum, v reflect.Value, logger log.Logger) error 
 			d.SetNull()
 		} else {
 			return setORCDatumValue(d, v.Elem(), logger)
+		}
+	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			d.SetBytes(v.Bytes())
+		} else {
+			logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
+				zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
+			return errors.Errorf("unknown value: %v", v)
 		}
 	default:
 		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),

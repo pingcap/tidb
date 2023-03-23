@@ -23,7 +23,7 @@ import (
 )
 
 func TestORCParser(t *testing.T) {
-	parser, err := NewORCParser(log.L(), "/Users/jujiajia/code/orc/examples/TestOrcFile.testTimestamp.orc")
+	parser, err := NewORCParser(log.L(), nil, "/Users/jujiajia/code/orc/examples/TestOrcFile.testStringAndBinaryStatistics.orc")
 	require.NoError(t, err)
 	fmt.Println(parser.Columns())
 	require.NoError(t, parser.ReadRow())
