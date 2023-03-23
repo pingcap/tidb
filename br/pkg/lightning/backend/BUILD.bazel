@@ -28,6 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["backend_test.go"],
     flaky = True,
+    shard_count = 10,
     deps = [
         ":backend",
         "//br/pkg/lightning/backend/kv",
