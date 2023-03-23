@@ -1149,6 +1149,16 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	} else {
 		require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
 	}
+
+	cfg.TikvImporter.AddIndexBySQL = &trueVal
+	err = cfg.CheckAndAdjustForLocalBackend()
+	require.NoError(t, err)
+	require.Equal(t, &trueVal, cfg.TikvImporter.AddIndexBySQL)
+
+	cfg.TikvImporter.AddIndexBySQL = &falseVal
+	err = cfg.CheckAndAdjustForLocalBackend()
+	require.NoError(t, err)
+	require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
