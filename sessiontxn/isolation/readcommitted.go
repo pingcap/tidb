@@ -107,8 +107,14 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
+<<<<<<< HEAD
 	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() && sessionVars.InTxn() &&
 		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+=======
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
+		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
+		plannercore.IsReadOnly(node, sessionVars) {
+>>>>>>> 2e8a982cb0f (session, com_stmt: fetch all rows during EXECUTE command (#42473))
 		return true
 	}
 	return false

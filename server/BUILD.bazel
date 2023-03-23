@@ -194,7 +194,12 @@ go_test(
         "//util/plancodec",
         "//util/resourcegrouptag",
         "//util/rowcodec",
+<<<<<<< HEAD
         "//util/sqlexec",
+=======
+        "//util/stmtsummary/v2:stmtsummary",
+        "//util/syncutil",
+>>>>>>> 2e8a982cb0f (session, com_stmt: fetch all rows during EXECUTE command (#42473))
         "//util/topsql",
         "//util/topsql/collector",
         "//util/topsql/collector/mock",

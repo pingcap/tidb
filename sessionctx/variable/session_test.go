@@ -487,6 +487,7 @@ func TestGetReuseChunk(t *testing.T) {
 	require.Nil(t, sessVars.ChunkPool.Alloc)
 }
 
+<<<<<<< HEAD
 func TestPretectedTSList(t *testing.T) {
 	lst := &variable.NewSessionVars(nil).ProtectedTSList
 
@@ -539,4 +540,36 @@ func TestPretectedTSList(t *testing.T) {
 	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
 	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
 	require.Equal(t, 0, lst.Size())
+=======
+func TestUserVarConcurrently(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	var wg util2.WaitGroupWrapper
+	wg.Run(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-time.After(time.Millisecond):
+				name := strconv.Itoa(i)
+				sv.SetUserVarVal(name, types.Datum{})
+				sv.GetUserVarVal(name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Run(func() {
+		for {
+			select {
+			case <-time.After(time.Millisecond):
+				var states sessionstates.SessionStates
+				require.NoError(t, sv.EncodeSessionStates(ctx, &states))
+				require.NoError(t, sv.DecodeSessionStates(ctx, &states))
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Wait()
+	cancel()
+>>>>>>> 2e8a982cb0f (session, com_stmt: fetch all rows during EXECUTE command (#42473))
 }
