@@ -381,7 +381,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
 		},
-		nil, 1)
+		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
 	dbs = restore.GetExistedUserDBs(dom)
@@ -393,7 +393,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 			{Name: model.NewCIStr("test")},
 			{Name: model.NewCIStr("d1")},
 		},
-		nil, 1)
+		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
 	dbs = restore.GetExistedUserDBs(dom)
@@ -409,7 +409,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 				State:  model.StatePublic,
 			},
 		},
-		nil, 1)
+		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
 	dbs = restore.GetExistedUserDBs(dom)

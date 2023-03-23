@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "iter_test",
+    timeout = "short",
     srcs = ["combinator_test.go"],
     flaky = True,
     race = "on",

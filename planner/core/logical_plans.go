@@ -110,21 +110,31 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsINLJInner uint = 1 << iota
+	// Hint flag for join
+	preferINLJ uint = 1 << iota
+	preferINLHJ
+	preferINLMJ
+	preferHJBuild
+	preferHJProbe
+	preferHashJoin
+	preferMergeJoin
+	preferBCJoin
+	preferShuffleJoin
+	preferRewriteSemiJoin
+
+	// Hint flag to specify the join with direction
+	preferLeftAsINLJInner
 	preferRightAsINLJInner
 	preferLeftAsINLHJInner
 	preferRightAsINLHJInner
 	preferLeftAsINLMJInner
 	preferRightAsINLMJInner
-	preferHashJoin
 	preferLeftAsHJBuild
 	preferRightAsHJBuild
 	preferLeftAsHJProbe
 	preferRightAsHJProbe
-	preferMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
+
+	// Hint flag for Agg
 	preferHashAgg
 	preferStreamAgg
 	preferMPP1PhaseAgg
@@ -146,11 +156,14 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo        *tableHintInfo
-	preferJoinType  uint
-	preferJoinOrder bool
+	hintInfo            *tableHintInfo
+	preferJoinType      uint
+	preferJoinOrder     bool
+	leftPreferJoinType  uint
+	rightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
+	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
 	NAEQConditions  []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
@@ -1224,6 +1237,11 @@ type DataSource struct {
 	// colsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
 	colsRequiringFullLen []*expression.Column
+
+	// accessPathMinSelectivity is the minimal selectivity among the access paths.
+	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
+	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
+	accessPathMinSelectivity float64
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1570,6 +1588,8 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		} else {
 			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
 		}
+	} else {
+		path.CountAfterIndex = path.CountAfterAccess
 	}
 }
 
@@ -1637,10 +1657,17 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems    []*util.ByItems
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	ByItems []*util.ByItems
+	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1661,9 +1688,15 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	PartitionBy []property.SortItem // This is used for enhanced topN optimization
+	Offset      uint64
+	Count       uint64
+	limitHints  limitHintInfo
+}
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 // LogicalLock represents a select lock plan.
@@ -1732,6 +1765,11 @@ type LogicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+}
+
+// GetPartitionBy returns partition by fields.
+func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
@@ -1878,15 +1916,16 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.S
 
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    string
-	Table     *ast.TableName  // Used for showing columns.
-	Partition model.CIStr     // Use for showing partition
-	Column    *ast.ColumnName // Used for `desc table column`.
-	IndexName model.CIStr
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	User      *auth.UserIdentity   // Used for show grants.
-	Roles     []*auth.RoleIdentity // Used for show grants.
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *ast.TableName  // Used for showing columns.
+	Partition         model.CIStr     // Use for showing partition
+	Column            *ast.ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string               // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	User              *auth.UserIdentity   // Used for show grants.
+	Roles             []*auth.RoleIdentity // Used for show grants.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -1895,6 +1934,8 @@ type ShowContents struct {
 	GlobalScope bool       // Used by show variables.
 	Extended    bool       // Used for `show extended columns from ...`
 	Limit       *ast.Limit // Used for limit Result Set row number.
+
+	LoadDataJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))

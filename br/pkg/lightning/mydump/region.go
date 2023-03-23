@@ -146,6 +146,7 @@ func AllocateEngineIDs(
 }
 
 // MakeTableRegions create a new table region.
+// row-id range of returned TableRegion is increasing monotonically
 func MakeTableRegions(
 	ctx context.Context,
 	meta *MDTableMeta,
@@ -226,31 +227,20 @@ func MakeTableRegions(
 
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
-	prevRowIDMax := int64(0)
+	// rebase row-id for all chunk
+	rowIDBase := int64(0)
 	for _, dataFile := range meta.DataFiles {
 		fileRegionsRes := fileRegionsMap[dataFile.FileMeta.Path]
-		var delta int64
-		if len(fileRegionsRes.regions) > 0 {
-			delta = prevRowIDMax - fileRegionsRes.regions[0].Chunk.PrevRowIDMax
-		}
-
 		for _, region := range fileRegionsRes.regions {
-			region.Chunk.PrevRowIDMax += delta
-			region.Chunk.RowIDMax += delta
+			region.Chunk.PrevRowIDMax += rowIDBase
+			region.Chunk.RowIDMax += rowIDBase
 		}
 		filesRegions = append(filesRegions, fileRegionsRes.regions...)
 		dataFileSizes = append(dataFileSizes, fileRegionsRes.sizes...)
-		prevRowIDMax = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
+		rowIDBase = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
 	}
 
-	batchSize := float64(cfg.Mydumper.BatchSize)
-	if cfg.Mydumper.BatchSize <= 0 {
-		if meta.IsRowOrdered {
-			batchSize = float64(config.DefaultBatchSize)
-		} else {
-			batchSize = math.Max(float64(config.DefaultBatchSize), float64(meta.TotalSize))
-		}
-	}
+	batchSize := CalculateBatchSize(float64(cfg.Mydumper.BatchSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
 	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
@@ -259,6 +249,19 @@ func MakeTableRegions(
 		zap.Duration("cost", time.Since(start)))
 	AllocateEngineIDs(filesRegions, dataFileSizes, batchSize, cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
+}
+
+// CalculateBatchSize calculates batch size according to row order and file size.
+func CalculateBatchSize(mydumperBatchSize float64, isRowOrdered bool, totalSize float64) float64 {
+	batchSize := mydumperBatchSize
+	if batchSize <= 0 {
+		if isRowOrdered {
+			batchSize = float64(config.DefaultBatchSize)
+		} else {
+			batchSize = math.Max(float64(config.DefaultBatchSize), totalSize)
+		}
+	}
+	return batchSize
 }
 
 // MakeSourceFileRegion create a new source file region.
@@ -272,7 +275,7 @@ func MakeSourceFileRegion(
 	store storage.ExternalStorage,
 ) ([]*TableRegion, []float64, error) {
 	if fi.FileMeta.Type == SourceTypeParquet {
-		_, region, err := makeParquetFileRegion(ctx, store, meta, fi, 0)
+		region, err := makeParquetFileRegion(ctx, store, meta, fi)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -293,7 +296,7 @@ func MakeSourceFileRegion(
 	// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
 	if isCsvFile && cfg.Mydumper.StrictFormat && fi.FileMeta.Compression == CompressionNone &&
 		dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
-		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
+		regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
 
@@ -341,17 +344,16 @@ func makeParquetFileRegion(
 	store storage.ExternalStorage,
 	meta *MDTableMeta,
 	dataFile FileInfo,
-	prevRowIdxMax int64,
-) (int64, *TableRegion, error) {
-	r, err := store.Open(ctx, dataFile.FileMeta.Path)
-	if err != nil {
-		return prevRowIdxMax, nil, errors.Trace(err)
+) (*TableRegion, error) {
+	numberRows := dataFile.FileMeta.Rows
+	var err error
+	// for safety
+	if numberRows <= 0 {
+		numberRows, err = ReadParquetFileRowCountByFile(ctx, store, dataFile.FileMeta)
+		if err != nil {
+			return nil, err
+		}
 	}
-	numberRows, err := ReadParquetFileRowCount(ctx, store, r, dataFile.FileMeta.Path)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	rowIDMax := prevRowIdxMax + numberRows
 	region := &TableRegion{
 		DB:       meta.DB,
 		Table:    meta.Name,
@@ -359,11 +361,12 @@ func makeParquetFileRegion(
 		Chunk: Chunk{
 			Offset:       0,
 			EndOffset:    numberRows,
-			PrevRowIDMax: prevRowIdxMax,
-			RowIDMax:     rowIDMax,
+			RealOffset:   0,
+			PrevRowIDMax: 0,
+			RowIDMax:     numberRows,
 		},
 	}
-	return rowIDMax, region, nil
+	return region, nil
 }
 
 // SplitLargeFile splits a large csv file into multiple regions, the size of
@@ -379,32 +382,34 @@ func SplitLargeFile(
 	cfg *config.Config,
 	dataFile FileInfo,
 	divisor int64,
-	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
 	store storage.ExternalStorage,
-) (prevRowIDMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
+) (regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := int64(cfg.Mydumper.MaxRegionSize)
 	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
+	var prevRowIdxMax int64
 	if cfg.Mydumper.CSV.Header {
 		r, err := store.Open(ctx, dataFile.FileMeta.Path)
 		if err != nil {
-			return 0, nil, nil, err
+			return nil, nil, err
 		}
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
-			return 0, nil, nil, err
+			return nil, nil, err
 		}
 		parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
 		if err != nil {
-			return 0, nil, nil, err
+			return nil, nil, err
 		}
 		if err = parser.ReadColumns(); err != nil {
-			return 0, nil, nil, err
+			return nil, nil, err
 		}
-		columns = parser.Columns()
+		if cfg.Mydumper.CSV.HeaderSchemaMatch {
+			columns = parser.Columns()
+		}
 		startOffset, _ = parser.Pos()
 		endOffset = startOffset + maxRegionSize
 		if endOffset > dataFile.FileMeta.FileSize {
@@ -417,24 +422,24 @@ func SplitLargeFile(
 		if endOffset != dataFile.FileMeta.FileSize {
 			r, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
-				return 0, nil, nil, err
+				return nil, nil, err
 			}
 			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 			charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 			if err != nil {
-				return 0, nil, nil, err
+				return nil, nil, err
 			}
 			parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
 			if err != nil {
-				return 0, nil, nil, err
+				return nil, nil, err
 			}
-			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
-				return 0, nil, nil, err
+			if err = parser.SetPos(endOffset, 0); err != nil {
+				return nil, nil, err
 			}
-			pos, err := parser.ReadUntilTerminator()
+			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
-					return 0, nil, nil, err
+					return nil, nil, err
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
@@ -467,5 +472,5 @@ func SplitLargeFile(
 			endOffset = dataFile.FileMeta.FileSize
 		}
 	}
-	return prevRowIdxMax, regions, dataFileSizes, nil
+	return regions, dataFileSizes, nil
 }

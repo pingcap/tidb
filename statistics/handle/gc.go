@@ -22,7 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -51,8 +54,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
-			return errors.Trace(err)
+		_, existed := is.TableByID(row.GetInt64(0))
+		if !existed {
+			if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
@@ -77,9 +83,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 			return errors.Trace(err)
 		}
 	}
-	h.mu.Lock()
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
-	h.mu.Unlock()
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
@@ -110,7 +114,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	// Mark records in mysql.stats_extended as `deleted`.
-	rows, _, err = h.execRestrictedSQL(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
+	rows, _, err = h.execRestrictedSQL(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,14 +157,32 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	sql := "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
-	_, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	sql := "select count(*) from mysql.stats_meta_history where NOW() - create_time >= %?"
+	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
 		return err
 	}
-	sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
-	_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-	return err
+	if rs == nil {
+		return nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return errors.Trace(err)
+	}
+	count := rows[0].GetInt64(0)
+	if count > 0 {
+		sql = "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
+		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+		if err != nil {
+			return err
+		}
+		sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
+		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+		logutil.BgLogger().Info("clear outdated historical stats")
+		return err
+	}
+	return nil
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
@@ -269,7 +291,7 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_feedback where table_id = %?", statsID); err != nil {
 			return err
 		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, statsID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
 			return err
 		}
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
@@ -298,6 +320,6 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 		err = finishTransaction(ctx, exec, err)
 	}()
 	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
-	_, err = exec.ExecuteInternal(ctx, sql, StatsStatusDeleted, version)
+	_, err = exec.ExecuteInternal(ctx, sql, statistics.ExtendedStatsDeleted, version)
 	return
 }

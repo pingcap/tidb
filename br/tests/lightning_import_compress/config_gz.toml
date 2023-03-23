@@ -1,0 +1,6 @@
+[tikv-importer]
+backend = 'local'
+compress-kv-pairs = 'gz'
+
+[mydumper.csv]
+header = false

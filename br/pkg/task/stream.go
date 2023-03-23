@@ -54,6 +54,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -367,6 +368,21 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
+// checkImportTaskRunning checks whether there is any import task running.
+func (s *streamMgr) checkImportTaskRunning(ctx context.Context) error {
+	list, err := utils.GetImportTasksFrom(ctx, s.mgr.GetDomain().GetEtcdClient())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !list.Empty() {
+		return errors.Errorf("There are some lightning/restore tasks running: %s"+
+			"please stop or wait finishing at first. "+
+			"If the lightning/restore task is forced to terminate by system, "+
+			"please wait for ttl to decrease to 0.", list.MessageToUser())
+	}
+	return nil
+}
+
 // setGCSafePoint sets the server safe point to PD.
 func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
 	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
@@ -480,6 +496,12 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// If the oldRatio is negative, which is not normal status.
+	// It should set default value "1.1" after PiTR finished.
+	if strings.HasPrefix(oldRatio, "-") {
+		oldRatio = "1.1"
+	}
+
 	return func() error {
 		return utils.SetGcRatio(execCtx, oldRatio)
 	}, nil
@@ -539,6 +561,9 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.checkImportTaskRunning(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -862,8 +887,8 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
-func checkConfigForStatus(cfg *StreamConfig) error {
-	if len(cfg.PD) == 0 {
+func checkConfigForStatus(pd []string) error {
+	if len(pd) == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the command needs access to PD, please specify `-u` or `--pd`")
 	}
@@ -913,7 +938,7 @@ func RunStreamStatus(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	if err := checkConfigForStatus(cfg); err != nil {
+	if err := checkConfigForStatus(cfg.PD); err != nil {
 		return err
 	}
 	ctl, err := makeStatusController(ctx, cfg, g)
@@ -1028,6 +1053,34 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
+// checkTaskExists checks whether there is a log backup task running.
+// If so, return an error.
+func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
+	if err := checkConfigForStatus(cfg.PD); err != nil {
+		return err
+	}
+
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	// check log backup task
+	tasks, err := cli.GetAllTasks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(tasks) > 0 {
+		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	}
+
+	// check cdc changefeed
+	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+	if err != nil {
+		return err
+	}
+	if !nameSet.Empty() {
+		return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+	}
+	return nil
+}
+
 // RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
@@ -1089,7 +1142,7 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+		if err = runRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
@@ -1236,10 +1289,22 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
+	ingestRecorder := schemasReplace.GetIngestRecorder()
+	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
+		return errors.Trace(err)
+	}
+
 	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIter, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1255,6 +1320,10 @@ func restoreStream(
 
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage()); err != nil {
+		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
 	if cfg.tiflashRecorder != nil {

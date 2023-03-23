@@ -5,6 +5,7 @@ package task
 import (
 	"bytes"
 	"context"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -203,7 +204,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, backupRanges, req, uint(cfg.Concurrency), metaWriter, progressCallBack)
+	err = client.BackupRanges(ctx, backupRanges, req, uint(cfg.Concurrency), nil, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

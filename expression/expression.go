@@ -816,7 +816,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		return expr
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -983,11 +983,11 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
 	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for i, col := range colInfos {
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
@@ -1139,7 +1139,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
@@ -1171,7 +1171,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr:
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
 		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
@@ -1262,14 +1262,16 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Least, ast.Greatest:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
-			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
+			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal, tipb.ScalarFuncSig_LeastString, tipb.ScalarFuncSig_GreatestString:
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex, ast.Bin:
+	case ast.Hex, ast.Unhex, ast.Bin:
 		return true
 	case ast.GetFormat:
+		return true
+	case ast.IsIPv4, ast.IsIPv6:
 		return true
 	}
 	return false
@@ -1574,6 +1576,10 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
 			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
+		case types.KindBytes:
+			ft = types.NewFieldType(mysql.TypeBlob)
 		default:
 			exprs[i] = nil
 			continue

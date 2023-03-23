@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -55,6 +56,7 @@ type DBReplace struct {
 type SchemasReplace struct {
 	DbMap                     map[OldID]*DBReplace
 	globalTableIdMap          map[OldID]NewID
+	ingestRecorder            *ingestrec.IngestRecorder
 	RewriteTS                 uint64        // used to rewrite commit ts in meta kv.
 	TableFilter               filter.Filter // used to filter schema/table
 	genGenGlobalID            func(ctx context.Context) (int64, error)
@@ -107,6 +109,7 @@ func NewSchemasReplace(
 	return &SchemasReplace{
 		DbMap:                     dbMap,
 		globalTableIdMap:          globalTableIdMap,
+		ingestRecorder:            ingestrec.New(),
 		RewriteTS:                 restoreTS,
 		TableFilter:               tableFilter,
 		genGenGlobalID:            genID,
@@ -336,6 +339,11 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		}
 	}
 
+	// Force to disable TTL_ENABLE when restore
+	if newTableInfo.TTLInfo != nil {
+		newTableInfo.TTLInfo.Enable = false
+	}
+
 	if sr.AfterTableRewritten != nil {
 		sr.AfterTableRewritten(false, newTableInfo)
 	}
@@ -504,6 +512,10 @@ func (sr *SchemasReplace) rewriteValue(
 	return r.NewValue, r.NeedRewrite, nil
 }
 
+func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
+	return sr.ingestRecorder
+}
+
 // RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
@@ -518,7 +530,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
-			return nil, sr.tryToGCJob(job)
+			return nil, sr.restoreFromHistory(job)
 		}
 		return nil, nil
 	}
@@ -547,21 +559,22 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	}
 }
 
-func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
+func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 	if !job.IsCancelled() {
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State == model.JobStateRollbackDone {
 				return sr.deleteRange(job)
 			}
-			return nil
+			err := sr.ingestRecorder.AddJob(job)
+			return errors.Trace(err)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job)
-				if err := sr.tryToGCJob(&proxyJob); err != nil {
+				if err := sr.restoreFromHistory(&proxyJob); err != nil {
 					return err
 				}
 			}

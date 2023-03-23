@@ -74,6 +74,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, p.GetAvgRowSize()))
 	}
+	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -280,18 +281,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 			if len(e.handleVal) == 0 {
 				return nil
-			}
-
-			// Change the unique index LOCK into PUT record.
-			if e.lock {
-				if !e.txn.Valid() {
-					return kv.ErrInvalidTxn
-				}
-				memBuffer := e.txn.GetMemBuffer()
-				err = memBuffer.Set(e.idxKey, e.handleVal)
-				if err != nil {
-					return err
-				}
 			}
 
 			var iv kv.Handle

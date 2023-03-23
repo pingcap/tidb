@@ -46,7 +46,7 @@ func TestSimple(t *testing.T) {
 		"exists", "explain", "false", "float", "fetch", "for", "force", "foreign", "from",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
-		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
+		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "ilike", "limit", "lines", "load",
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "optionally", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real", "recursive",
@@ -99,6 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
+		"burstable", "calibrate",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -657,14 +658,34 @@ func TestDMLStmt(t *testing.T) {
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' escaped by '' enclosed by 'b'", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t` FIELDS TERMINATED BY 'ab' ENCLOSED BY 'b' ESCAPED BY ''"},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' escaped by '' enclosed by 'b' SET b = CAST(CONV(MID(@var1, 3, LENGTH(@var1)-3), 2, 10) AS UNSIGNED)", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t` FIELDS TERMINATED BY 'ab' ENCLOSED BY 'b' ESCAPED BY '' SET `b`=CAST(CONV(MID(@`var1`, 3, LENGTH(@`var1`)-3), 2, 10) AS UNSIGNED)"},
 
+		{"load data infile '/tmp/t.csv' into table t fields enclosed by ''", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS ENCLOSED BY ''"},
+		{"load data infile '/tmp/t.csv' into table t fields enclosed by 'a'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS ENCLOSED BY 'a'"},
+		{"load data infile '/tmp/t.csv' into table t fields enclosed by 'aa'", false, ""},
+		{"load data infile '/tmp/t.csv' into table t fields escaped by ''", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS ESCAPED BY ''"},
+		{"load data infile '/tmp/t.csv' into table t fields escaped by 'a'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS ESCAPED BY 'a'"},
+		{"load data infile '/tmp/t.csv' into table t fields escaped by 'aa'", false, ""},
+
 		{"LOAD DATA INFILE 'file.txt' INTO TABLE t1 (column1, @dummy, column2, @dummy, column3)", true, "LOAD DATA INFILE 'file.txt' INTO TABLE `t1` (`column1`,@`dummy`,`column2`,@`dummy`,`column3`)"},
 		{"LOAD DATA INFILE 'file.txt' INTO TABLE t1 (column1, @var1) SET column2 = @var1/100", true, "LOAD DATA INFILE 'file.txt' INTO TABLE `t1` (`column1`,@`var1`) SET `column2`=@`var1`/100"},
 		{"LOAD DATA INFILE 'file.txt' INTO TABLE t1 (column1, @var1, @var2) SET column2 = @var1/100, column3 = DEFAULT, column4=CURRENT_TIMESTAMP, column5=@var2+1", true, "LOAD DATA INFILE 'file.txt' INTO TABLE `t1` (`column1`,@`var1`,@`var2`) SET `column2`=@`var1`/100, `column3`=DEFAULT, `column4`=CURRENT_TIMESTAMP(), `column5`=@`var2`+1"},
 
-		{"LOAD DATA INFILE '/tmp/t.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t1` FIELDS TERMINATED BY ','"},
-		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
-		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
-		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
+		{"LOAD DATA INFILE '/tmp/t.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t1` FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'"},
+		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'"},
+		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'"},
+		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE `t1` FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'"},
+
+		{"load data infile 's3://bucket-name/t.csv' into table t", true, "LOAD DATA INFILE 's3://bucket-name/t.csv' INTO TABLE `t`"},
+		{"load data infile '/tmp/t.csv' into table t fields defined null by 'nil'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'nil'"},
+		{"load data infile '/tmp/t.csv' into table t fields defined null by X'00'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS DEFINED NULL BY '\x00'"},
+		{"load data infile '/tmp/t.csv' into table t fields defined null by 'NULL' optionally enclosed ignore 1 lines", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS DEFINED NULL BY 'NULL' OPTIONALLY ENCLOSED IGNORE 1 LINES"},
+		{"load data infile '/tmp/t.csv' format 'delimited data' into table t (column1, @var1) SET column2 = @var1/100", true, "LOAD DATA INFILE '/tmp/t.csv' FORMAT 'delimited data' INTO TABLE `t` (`column1`,@`var1`) SET `column2`=@`var1`/100"},
+		{"load data local infile '/tmp/t.sql' format 'sql file' replace into table t (a,b)", true, "LOAD DATA LOCAL INFILE '/tmp/t.sql' FORMAT 'sql file' REPLACE INTO TABLE `t` (`a`,`b`)"},
+		{"load data infile '/tmp/t.parquet' format 'parquet' into table t (column1, @var1) SET column2 = @var1/100", true, "LOAD DATA INFILE '/tmp/t.parquet' FORMAT 'parquet' INTO TABLE `t` (`column1`,@`var1`) SET `column2`=@`var1`/100"},
+
+		{"load data infile '/tmp/t.csv' into table t with detached", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH detached"},
+		// we must add "`" to table name, since the offset of restored sql might be different with the source
+		{"load data infile '/tmp/t.csv' into table `t` with threads=10", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10"},
+		{"load data infile '/tmp/t.csv' into table `t` with threads=10, detached", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` WITH threads=10, detached"},
 
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},
@@ -696,7 +717,7 @@ func TestDMLStmt(t *testing.T) {
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ','", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ','"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"'"},
-		{"select a,b,a+b from t into outfile '/tmp/result.txt' lines terminated BY '\n'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt'"},
+		{"select a,b,a+b from t into outfile '/tmp/result.txt' lines terminated BY '\n'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' LINES TERMINATED BY '\n'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"' lines terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
@@ -1047,6 +1068,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SET SESSION_STATES", false, ""},
 		{"SET SESSION_STATES 1", false, ""},
 		{"SET SESSION_STATES now()", false, ""},
+
+		// for calibrate resource
+		{"calibrate resource", true, "CALIBRATE RESOURCE"},
 	}
 	RunTest(t, table, false)
 }
@@ -1171,9 +1195,6 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
-		{"show imports", true, "SHOW IMPORTS"},
-		// for show create import
-		{"show create import test", true, "SHOW CREATE IMPORT `test`"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -1530,6 +1551,7 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT CURRENT_USER;", true, "SELECT CURRENT_USER()"},
 		{"SELECT CONNECTION_ID();", true, "SELECT CONNECTION_ID()"},
 		{"SELECT VERSION();", true, "SELECT VERSION()"},
+		{"SELECT CURRENT_RESOURCE_GROUP();", true, "SELECT CURRENT_RESOURCE_GROUP()"},
 		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(1000000, AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT BENCHMARK(AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true, "SELECT BENCHMARK(AES_ENCRYPT(_UTF8MB4'text', UNHEX(_UTF8MB4'F3229A0B371ED2D9441B830D21A390C3')))"},
 		{"SELECT CHARSET('abc');", true, "SELECT CHARSET(_UTF8MB4'abc')"},
@@ -2170,6 +2192,9 @@ func TestBuiltin(t *testing.T) {
 		{"select regexp_substr('aBc', 'abc', 1, 1, 'im');", true, "SELECT REGEXP_SUBSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, _UTF8MB4'im')"},
 		{"select regexp_instr('aBc', 'abc', 1, 1, 0, 'im');", true, "SELECT REGEXP_INSTR(_UTF8MB4'aBc', _UTF8MB4'abc', 1, 1, 0, _UTF8MB4'im')"},
 		{"select regexp_replace('aBc', 'abc', 'def', 1, 1, 'i');", true, "SELECT REGEXP_REPLACE(_UTF8MB4'aBc', _UTF8MB4'abc', _UTF8MB4'def', 1, 1, _UTF8MB4'i')"},
+
+		// Test ilike functions
+		{"select 'aBc' ilike 'abc';", true, "SELECT _UTF8MB4'aBc' ILIKE _UTF8MB4'abc'"},
 	}
 	RunTest(t, table, false)
 
@@ -2507,6 +2532,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) follower_constraints="ww";`, false, ""},
 		{`create table t (c int) voter_constraints="ww";`, false, ""},
 		{`create table t (c int) learner_constraints="ww";`, false, ""},
+		{`create table t (c int) survival_preference="ww";`, false, ""},
 		{`create table t (c int) /*T![placement] primary_region="us" */;`, false, ""},
 		{`create table t (c int) /*T![placement] regions="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
@@ -2823,6 +2849,11 @@ func TestDDL(t *testing.T) {
 		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
 		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
 		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default current_date)", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3244,6 +3275,7 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null comment 'ttt');", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL COMMENT 'ttt')"},
+		{"create table t(a int, index idx((cast(a as binary(1)))));", true, "CREATE TABLE `t` (`a` INT,INDEX `idx`((CAST(`a` AS BINARY(1)))))"},
 		{"alter table t add column (f timestamp as (a+1) default '2019-01-01 11:11:11');", false, ""},
 		{"alter table t modify column f int as (a+1) default 55;", false, ""},
 
@@ -3636,26 +3668,37 @@ func TestDDL(t *testing.T) {
 		{"alter placement policy x placement policy y", false, ""},
 
 		// for create resource group
-		{"create resource group x cpu ='8c'", true, "CREATE RESOURCE GROUP `x` CPU = '8c'"},
+		{"create resource group x cpu ='8c'", false, ""},
 		{"create resource group x region ='us, 3'", false, ""},
-		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "CREATE RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"create resource group x rru_per_sec='2000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"create resource group x wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"create resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
+		{"create resource group x ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
+		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 BURSTABLE"},
+		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000 BURSTABLE"},
+		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
+		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = LOW BURSTABLE"},
 
-		{"alter resource group x cpu ='8c'", true, "ALTER RESOURCE GROUP `x` CPU = '8c'"},
+		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
-		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "ALTER RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"alter resource group x rru_per_sec='2000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"alter resource group x wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"alter resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
+		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000 BURSTABLE"},
+		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000 BURSTABLE"},
 		{"alter resource group x followers=0", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=MID BURSTABLE", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20 PRIORITY = HIGH BURSTABLE"},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group if exists x;", true, "DROP RESOURCE GROUP IF EXISTS `x`"},
 		{"drop resource group x,y", false, ""},
 		{"drop resource group if exists x,y", false, ""},
+
+		{"set resource group x;", true, "SET RESOURCE GROUP `x`"},
+		{"set resource group x y", false, ""},
 
 		{"CREATE ROLE `RESOURCE`", true, "CREATE ROLE `RESOURCE`@`%`"},
 		{"CREATE ROLE RESOURCE", false, ""},
@@ -3854,12 +3897,12 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
 	// Test FORCE_INDEX
-	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ FORCE_INDEX(T1,T2), force_index(t3,t4) RESOURCE_GROUP(rg1)*/ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
+	require.Len(t, hints, 3)
 	require.Equal(t, "force_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
@@ -3871,6 +3914,9 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	require.Equal(t, "resource_group", hints[2].HintName.L)
+	require.Equal(t, hints[2].HintData, "rg1")
 
 	// Test IGNORE_INDEX
 	stmt, _, err = p.Parse("select /*+ IGNORE_INDEX(T1,T2), ignore_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -3891,39 +3937,39 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
-	// Test KEEP_ORDER
-	stmt, _, err = p.Parse("select /*+ KEEP_ORDER(T1,T2), keep_order(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test ORDER_INDEX
+	stmt, _, err = p.Parse("select /*+ ORDER_INDEX(T1,T2), order_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "keep_order", hints[0].HintName.L)
+	require.Equal(t, "order_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Len(t, hints[0].Indexes, 1)
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
-	require.Equal(t, "keep_order", hints[1].HintName.L)
+	require.Equal(t, "order_index", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
-	// Test NO_KEEP_ORDER
-	stmt, _, err = p.Parse("select /*+ NO_KEEP_ORDER(T1,T2), no_keep_order(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test NO_ORDER_INDEX
+	stmt, _, err = p.Parse("select /*+ NO_ORDER_INDEX(T1,T2), no_order_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "no_keep_order", hints[0].HintName.L)
+	require.Equal(t, "no_order_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Len(t, hints[0].Indexes, 1)
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
-	require.Equal(t, "no_keep_order", hints[1].HintName.L)
+	require.Equal(t, "no_order_index", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
@@ -4521,10 +4567,10 @@ func TestPrivilege(t *testing.T) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "CREATE USER `root`@`localhost` IDENTIFIED BY 'new-password'"},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true, "CREATE USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "CREATE USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
-		{`CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY 'hashstring' RESOURCE GROUP 'rg1'`, true, "CREATE USER `root`@`127.0.0.1` IDENTIFIED BY 'hashstring' RESOURCE GROUP 'rg1'"},
+		{`CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY 'hashstring' RESOURCE GROUP rg1`, true, "CREATE USER `root`@`127.0.0.1` IDENTIFIED BY 'hashstring' RESOURCE GROUP `rg1`"},
 		{`ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS `root`@`localhost` IDENTIFIED BY 'new-password'"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password'"},
-		{`ALTER USER 'root'@'localhost' RESOURCE GROUP 'rg2'`, true, "ALTER USER `root`@`localhost` RESOURCE GROUP 'rg2'"},
+		{`ALTER USER 'root'@'localhost' RESOURCE GROUP rg2`, true, "ALTER USER `root`@`localhost` RESOURCE GROUP `rg2`"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
@@ -6420,9 +6466,9 @@ func TestIndexAdviseStmt(t *testing.T) {
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_IDXNUM PER_DB 4 PER_TABLE 8", false, ""},
 
 		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
 
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4"},
@@ -6436,14 +6482,14 @@ func TestIndexAdviseStmt(t *testing.T) {
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4", false, ""},
 
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 LINES STARTING BY 'ab' TERMINATED BY '\n'", false, ""},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 LINES STARTING BY 'ab' TERMINATED BY 'cd'", false, ""},
@@ -6451,11 +6497,11 @@ func TestIndexAdviseStmt(t *testing.T) {
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 4 LINES STARTING BY 'ab'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_DB 4 LINES STARTING BY 'ab'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 3 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
-		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab'"},
+		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", false, ""},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", false, ""},
@@ -6510,70 +6556,6 @@ func TestBRIE(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
-}
-
-func TestPurge(t *testing.T) {
-	cases := []testCase{
-		{"purge import 100", true, "PURGE IMPORT 100"},
-		{"purge import abc", false, ""},
-	}
-	RunTest(t, cases, false)
-}
-
-func TestAsyncImport(t *testing.T) {
-	cases := []testCase{
-		{"create import test from 'file:///d/'", true, "CREATE IMPORT `test` FROM 'file:///d/'"},
-		{
-			"create import if not exists test from 'file:///d/' skip all csv_header = columns strict_format = true csv_backslash_escape = true",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' SKIP ALL CSV_HEADER = COLUMNS STRICT_FORMAT = 1 CSV_BACKSLASH_ESCAPE = 1",
-		},
-		{
-			"create import if not exists test from 'file:///d/' replace SKIP_SCHEMA_FILES TRUE",
-			true,
-			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' REPLACE SKIP_SCHEMA_FILES = 1",
-		},
-		{"create import test from 'file:///d/' csv_header = 0", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 0"},
-		{"create import test from 'file:///d/' csv_header = 1", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 1"},
-		{"create import test from 'file:///d/' csv_header = 9001", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 9001"},
-		{"create import test from 'file:///d/' csv_header = fields", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = COLUMNS"},
-		{"create import test from 'file:///d/' csv_header = 'columns'", false, ""},
-		{"create import test from 'file:///d/' on_duplicate = ignore", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'ignore'"},
-		{"create import test from 'file:///d/' on_duplicate = replace", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'replace'"},
-		{"create import test from 'file:///d/' on_duplicate = error", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'error'"},
-		{"create import test from 'file:///d/' backend = local", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'local'"},
-		{"create import test from 'file:///d/' backend = tidb", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'tidb'"},
-		{"create import test from 'file:///d/' backend = importer", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'importer'"},
-		{"create import test from 'file:///d/' checkpoint = 'false'", false, ""},
-		{"create import test from 'file:///d/' checkpoint = 30", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKPOINT = 1"},
-		{"create import test from 'file:///d/' csv_null = null", false, ""},
-		{"create import test from 'file:///d/' csv_null = false", false, ""},
-		{"create import test from 'file:///d/' csv_null = 0", false, ""},
-		{"create import test from 'file:///d/' csv_null = abcdefgh", false, ""},
-		{"create import test from 'file:///d/' resume 1", true, "CREATE IMPORT `test` FROM 'file:///d/' RESUME = 1"},
-		{"create import test from 'file:///d/' resume abc", false, ""},
-		{"create import test from 'file:///d/' analyze = optional", true, "CREATE IMPORT `test` FROM 'file:///d/' ANALYZE = OPTIONAL"},
-		{"create import test from 'file:///d/' analyze = abc", false, ""},
-		// still support boolean checksum/analyze, non-zero represent true thus goes REQUIRED
-		{"create import test from 'file:///d/' checksum true analyze 2", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKSUM = REQUIRED ANALYZE = REQUIRED"},
-		{"stop import test", true, "STOP IMPORT `test`"},
-		{"stop import if running test", true, "STOP IMPORT IF RUNNING `test`"},
-		{"resume import test", true, "RESUME IMPORT `test`"},
-		{"resume import if not running test", true, "RESUME IMPORT IF NOT RUNNING `test`"},
-		// empty alter import is OK
-		{"alter import test", true, "ALTER IMPORT `test`"},
-		{"alter import test truncate all", true, "ALTER IMPORT `test` TRUNCATE ALL"},
-		{"alter import test skip duplicate csv_delimiter = '''' truncate errors table tbl", true, "ALTER IMPORT `test` SKIP DUPLICATE CSV_DELIMITER = '''' TRUNCATE ERRORS TABLE `tbl`"},
-		{"alter import test truncate errors table db.tbl", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tbl`"},
-		{"alter import test truncate errors table db.tb1, tb2", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tb1`, `tb2`"},
-		{"drop import test", true, "DROP IMPORT `test`"},
-		{"drop import if exists test", true, "DROP IMPORT IF EXISTS `test`"},
-		{"show import test", true, "SHOW IMPORT `test`"},
-		{"show import test table tbl", true, "SHOW IMPORT `test` TABLE `tbl`"},
-		{"show import test errors table tbl", true, "SHOW IMPORT `test` ERRORS TABLE `tbl`"},
-		{"show import test errors table tb1, db.tb2", true, "SHOW IMPORT `test` ERRORS TABLE `tb1`, `db`.`tb2`"},
-	}
-	RunTest(t, cases, false)
 }
 
 func TestStatisticsOps(t *testing.T) {
@@ -6901,6 +6883,7 @@ func TestPlanReplayer(t *testing.T) {
 		{"PLAN REPLAYER DUMP EXPLAIN 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'"},
 		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'"},
 		{"PLAN REPLAYER CAPTURE '123' '123'", true, "PLAN REPLAYER CAPTURE '123' '123'"},
+		{"PLAN REPLAYER CAPTURE REMOVE '123' '123'", true, "PLAN REPLAYER CAPTURE REMOVE '123' '123'"},
 	}
 	RunTest(t, table, false)
 
@@ -7105,6 +7088,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
 		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF' TTL_JOB_INTERVAL='8h'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '8h'"},
 		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
 
 		// alter table with various temporal interval
@@ -7112,7 +7096,10 @@ func TestTTLTableOption(t *testing.T) {
 		{"alter table t TTL_ENABLE = 'ON'", true, "ALTER TABLE `t` TTL_ENABLE = 'ON'"},
 		{"alter table t TTL_ENABLE = 'OFF'", true, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
 		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF'"},
+		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF' TTL_JOB_INTERVAL '1h'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1h'"},
 		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8h'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8.645124531235h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8.645124531235h'"},
 
 		// alter table to remove ttl settings
 		{"alter table t remove ttl", true, "ALTER TABLE `t` REMOVE TTL"},
@@ -7121,7 +7108,30 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
+
+		// validate invalid TTL_JOB_INTERVAL settings
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '@monthly'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10hourxx'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10.10.255h'", false, ""},
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestMultiStmt(t *testing.T) {
+	p := parser.New()
+	stmts, _, err := p.Parse("SELECT 'foo'; SELECT 'foo;bar','baz'; select 'foo' , 'bar' , 'baz' ;select 1", "", "")
+	require.NoError(t, err)
+	require.Equal(t, len(stmts), 4)
+	stmt1 := stmts[0].(*ast.SelectStmt)
+	stmt2 := stmts[1].(*ast.SelectStmt)
+	stmt3 := stmts[2].(*ast.SelectStmt)
+	stmt4 := stmts[3].(*ast.SelectStmt)
+	require.Equal(t, "'foo'", stmt1.Fields.Fields[0].Text())
+	require.Equal(t, "'foo;bar'", stmt2.Fields.Fields[0].Text())
+	require.Equal(t, "'baz'", stmt2.Fields.Fields[1].Text())
+	require.Equal(t, "'foo'", stmt3.Fields.Fields[0].Text())
+	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
+	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
+	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
 }

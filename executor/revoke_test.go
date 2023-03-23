@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -220,7 +221,7 @@ func TestRevokeDynamicPrivs(t *testing.T) {
 
 	// try revoking only on test.* - should fail:
 	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
-	require.True(t, terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel))
+	require.True(t, terror.ErrorEqual(err, exeerrors.ErrIllegalPrivilegeLevel))
 
 	// privs should still be intact:
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
@@ -270,4 +271,19 @@ func TestRevokeOnNonExistTable(t *testing.T) {
 	// REVOKE ON non-existent table success
 	tk.MustExec("DROP TABLE t1;")
 	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
+}
+
+// Check https://github.com/pingcap/tidb/issues/41773.
+func TestIssue41773(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists xx (id int)")
+	tk.MustExec("CREATE USER 't1234'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON * TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.* TO 't1234'@'%';")
+	tk.MustExec("GRANT USAGE ON test.xx TO 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON * FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.* FROM 't1234'@'%';")
+	tk.MustExec("REVOKE USAGE ON test.xx FROM 't1234'@'%';")
 }

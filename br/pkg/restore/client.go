@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -63,6 +65,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -167,6 +170,9 @@ type Client struct {
 
 	// the successfully preallocated table IDs.
 	preallocedTableIDs *tidalloc.PreallocIDs
+
+	// the rewrite mode of the downloaded SST files in TiKV.
+	rewriteMode RewriteMode
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -315,6 +321,14 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
+func (rc *Client) SetRewriteMode(mode RewriteMode) {
+	rc.rewriteMode = mode
+}
+
+func (rc *Client) GetRewriteMode() RewriteMode {
+	return rc.rewriteMode
+}
+
 // Close a client.
 func (rc *Client) Close() {
 	// rc.db can be nil in raw kv mode.
@@ -344,7 +358,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -872,7 +886,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 				}
 			})
 			if err != nil {
-				log.Error("create tables fail")
+				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
 			for _, ct := range cts {
@@ -1044,7 +1058,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1130,6 +1144,18 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
+func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
+}
+
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
@@ -1164,6 +1190,15 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
+		if ectx.Err() != nil {
+			log.Warn("Restoring encountered error and already stopped, give up remained files.",
+				zap.Int("remained", len(leftFiles)),
+				logutil.ShortError(ectx.Err()))
+			// We will fetch the error from the errgroup then (If there were).
+			// Also note if the parent context has been canceled or something,
+			// breaking here directly is also a reasonable behavior.
+			break
+		}
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				fileStart := time.Now()
@@ -1172,7 +1207,7 @@ func (rc *Client) RestoreSSTFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 			})
 	}
 
@@ -1184,7 +1219,10 @@ func (rc *Client) RestoreSSTFiles(
 		)
 		return errors.Trace(err)
 	}
-	return nil
+	// Once the parent context canceled and there is no task running in the errgroup,
+	// we may break the for loop without error in the errgroup. (Will this happen?)
+	// At that time, return the error in the context here.
+	return ctx.Err()
 }
 
 func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
@@ -1295,7 +1333,7 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		finalStore := store
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
-				opt := grpc.WithInsecure()
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
 					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
 				}
@@ -1407,7 +1445,7 @@ func (rc *Client) execChecksum(
 	concurrency uint,
 	loadStatCh chan<- *CreatedTable,
 ) error {
-	logger := log.With(
+	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
@@ -1430,6 +1468,8 @@ func (rc *Client) execChecksum(
 	exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
 		SetOldTable(tbl.OldTable).
 		SetConcurrency(concurrency).
+		SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
+		SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
@@ -1440,7 +1480,6 @@ func (rc *Client) execChecksum(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	table := tbl.OldTable
 	if checksumResp.Checksum != table.Crc64Xor ||
 		checksumResp.TotalKvs != table.TotalKvs ||
@@ -1455,7 +1494,7 @@ func (rc *Client) execChecksum(
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-
+	logger.Info("success in validate checksum")
 	loadStatCh <- &tbl
 	return nil
 }
@@ -2053,19 +2092,21 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
-					filenames := make([]string, 0, len(files))
-					for _, f := range files {
-						filenames = append(filenames, f.Path+", ")
+					if err == nil {
+						filenames := make([]string, 0, len(files))
+						for _, f := range files {
+							filenames = append(filenames, f.Path+", ")
+						}
+						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 					}
-					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
 
 				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
@@ -2073,13 +2114,18 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
-	} else {
-		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
-	}
-	if err != nil {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		if supportBatch {
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		} else {
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+		}
 		return errors.Trace(err)
+	})
+
+	if err = eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error("restore files failed", zap.Error(err))
 	}
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
@@ -2087,10 +2133,6 @@ func (rc *Client) RestoreKVFiles(
 		log.Debug("table id in full backup storage", zap.Any("tables", rules))
 	}
 
-	if err = eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error("restore files failed", zap.Error(err))
-	}
 	return errors.Trace(err)
 }
 
@@ -2506,6 +2548,78 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 }
 
 const (
+	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
+	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
+	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
+)
+
+// RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	ingestRecorder.UpdateIndexInfo(allSchema)
+	console := glue.GetConsole(g)
+	err = ingestRecorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+		var (
+			addSQL        strings.Builder
+			addArgs       []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			progressTitle string        = fmt.Sprintf("repair ingest index %s for table %s.%s", info.IndexInfo.Name.O, info.SchemaName, info.TableName)
+		)
+		w := console.StartProgressBar(progressTitle, glue.OnlyOneTask)
+		if info.IsPrimary {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.Unique {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		} else {
+			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
+			addArgs = append(addArgs, info.SchemaName, info.TableName, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
+		}
+		// USING BTREE/HASH/RTREE
+		indexTypeStr := info.IndexInfo.Tp.String()
+		if len(indexTypeStr) > 0 {
+			addSQL.WriteString(" USING ")
+			addSQL.WriteString(indexTypeStr)
+		}
+
+		// COMMENT [...]
+		if len(info.IndexInfo.Comment) > 0 {
+			addSQL.WriteString(" COMMENT %?")
+			addArgs = append(addArgs, info.IndexInfo.Comment)
+		}
+
+		if info.IndexInfo.Invisible {
+			addSQL.WriteString(" INVISIBLE")
+		} else {
+			addSQL.WriteString(" VISIBLE")
+		}
+
+		if err := rc.db.se.ExecuteInternal(ctx, alterTableDropIndexSQL, info.SchemaName, info.TableName, info.IndexInfo.Name.O); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rc.db.se.ExecuteInternal(ctx, addSQL.String(), addArgs...); err != nil {
+			return errors.Trace(err)
+		}
+		w.Inc()
+		if err := w.Wait(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		w.Close()
+		return nil
+	})
+	return errors.Trace(err)
+}
+
+const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
 
@@ -2656,6 +2770,107 @@ func (rc *Client) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
 }
 
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, &waitTiFlashBackoffer{
+		Attempts:    30,
+		BaseBackoff: 4 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
+}
+
+// RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
+// TODO: need to implement the range filter out feature
+func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
+	err := recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
+		rewriteRule, exists := rewriteRules[tableID]
+		if !exists {
+			// since the table's files will be skipped restoring, here also skips.
+			return 0, true, nil
+		}
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			return 0, false, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+		}
+		return newTableID, false, nil
+	})
+	return errors.Trace(err)
+	/* TODO: we can use range filter to skip restoring the index kv using accelerated indexing feature
+	filter := rtree.NewRangeTree()
+	err = recorder.Iterate(func(tableID int64, indexID int64, info *ingestrec.IngestIndexInfo) error {
+		// range after table ID rewritten
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		rg := rtree.Range{
+			StartKey: codec.EncodeBytes([]byte{}, startKey),
+			EndKey:   codec.EncodeBytes([]byte{}, endKey),
+		}
+		filter.InsertRange(rg)
+		return nil
+	})
+	return errors.Trace(err)
+	*/
+}
+
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
@@ -2686,6 +2901,10 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
+	return version.CheckClusterVersion(ctx, pdClient, version.CheckVersionForKeyspaceBR)
 }
 
 func CheckNewCollationEnable(
@@ -2730,4 +2949,28 @@ func CheckNewCollationEnable(
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
+}
+
+type waitTiFlashBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > 32*time.Second {
+		b.BaseBackoff = 32 * time.Second
+	}
+	return bo
+}
+
+// Attempt returns the remain attempt times
+func (b *waitTiFlashBackoffer) Attempt() int {
+	return b.Attempts
 }

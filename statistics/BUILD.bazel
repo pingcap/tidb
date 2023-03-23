@@ -13,6 +13,7 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
+        "interact_with_storage.go",
         "merge_worker.go",
         "row_sampler.go",
         "sample.go",
@@ -81,6 +82,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//config",
         "//domain",
@@ -112,6 +114,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
     ],

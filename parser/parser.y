@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/parser/duration"
 )
 
 %}
@@ -50,10 +51,11 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier  "identifier"
-	asof        "AS OF"
-	toTimestamp "TO TIMESTAMP"
-	memberof    "MEMBER OF"
+	identifier           "identifier"
+	asof                 "AS OF"
+	toTimestamp          "TO TIMESTAMP"
+	memberof             "MEMBER OF"
+	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -78,7 +80,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
-	array		  "ARRAY"
+	array             "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -178,6 +180,7 @@ import (
 	leading           "LEADING"
 	left              "LEFT"
 	like              "LIKE"
+	ilike             "ILIKE"
 	limit             "LIMIT"
 	lines             "LINES"
 	linear            "LINEAR"
@@ -329,6 +332,7 @@ import (
 	btree                 "BTREE"
 	byteType              "BYTE"
 	cache                 "CACHE"
+	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
 	causal                "CAUSAL"
@@ -460,7 +464,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
-	member		      "MEMBER"
+	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -501,6 +505,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	pause                 "PAUSE"
 	percent               "PERCENT"
 	per_db                "PER_DB"
 	per_table             "PER_TABLE"
@@ -621,6 +626,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -651,12 +657,15 @@ import (
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
 	briefType             "BRIEF"
+	burstable             "BURSTABLE"
 	cast                  "CAST"
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
 	curTime               "CURTIME"
+	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
+	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
 	exact                 "EXACT"
@@ -705,6 +714,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
@@ -729,8 +739,11 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
-	rruRate               "RRU_PER_SEC"
-	wruRate               "WRU_PER_SEC"
+	ruRate                "RU_PER_SEC"
+	priority              "PRIORITY"
+	high                  "HIGH"
+	medium                "MEDIUM"
+	low                   "LOW"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -876,7 +889,6 @@ import (
 	AlterDatabaseStmt          "Alter database statement"
 	AlterTableStmt             "Alter table statement"
 	AlterUserStmt              "Alter user statement"
-	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterResourceGroupStmt     "Alter Resource Group statement"
@@ -885,6 +897,7 @@ import (
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
+	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
@@ -892,7 +905,6 @@ import (
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
 	CreateIndexStmt            "CREATE INDEX statement"
-	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
@@ -900,8 +912,8 @@ import (
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
 	DropDatabaseStmt           "DROP DATABASE statement"
-	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
@@ -938,14 +950,12 @@ import (
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
-	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
 	SelectStmtWithClause       "common table expression SELECT statement"
 	RenameTableStmt            "rename table statement"
 	RenameUserStmt             "rename user statement"
 	ReplaceIntoStmt            "REPLACE INTO statement"
 	RecoverTableStmt           "recover table statement"
-	ResumeImportStmt           "RESUME IMPORT statement"
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
@@ -957,10 +967,8 @@ import (
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
-	ShowImportStmt             "SHOW IMPORT statement"
 	ShowStmt                   "Show engines/databases/tables/user/columns/warnings/status statement"
 	Statement                  "statement"
-	StopImportStmt             "STOP IMPORT statement"
 	TraceStmt                  "TRACE statement"
 	TraceableStmt              "traceable statement"
 	TruncateTableStmt          "TRUNCATE TABLE statement"
@@ -977,6 +985,10 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
+	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
+	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
+	CancelLoadDataStmt         "CANCEL LOAD DATA JOB statement"
+	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -989,7 +1001,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
-	ArrayKwdOpt	  		       "Array options"
+	ArrayKwdOpt                            "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -1042,7 +1054,6 @@ import (
 	RequireClause                          "Encrypted connections options"
 	RequireClauseOpt                       "optional Encrypted connections options"
 	EqOpt                                  "= or empty"
-	ErrorHandling                          "specify exit, replace or skip when meet error"
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
@@ -1075,10 +1086,7 @@ import (
 	HandleRangeList                        "handle range list"
 	IfExists                               "If Exists"
 	IfNotExists                            "If Not Exists"
-	IfNotRunning                           "If Not Running"
-	IfRunning                              "If Running"
 	IgnoreOptional                         "IGNORE or empty"
-	ImportTruncate                         "truncate all data or data related to errors"
 	IndexHint                              "index hint"
 	IndexHintList                          "index hint list"
 	IndexHintListOpt                       "index hint list opt"
@@ -1108,7 +1116,11 @@ import (
 	LimitClause                            "LIMIT clause"
 	LimitOption                            "Limit option could be integer or parameter marker."
 	Lines                                  "Lines clause"
+	LinesTerminated                        "Lines terminated by"
 	LoadDataSetSpecOpt                     "Optional load data specification"
+	LoadDataOptionListOpt                  "Optional load data option list"
+	LoadDataOptionList                     "Load data option list"
+	LoadDataOption                         "Load data option"
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
@@ -1122,8 +1134,8 @@ import (
 	OnDuplicateKeyUpdate                   "ON DUPLICATE KEY UPDATE value list"
 	OnCommitOpt                            "ON COMMIT DELETE |PRESERVE ROWS"
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
+	FormatOpt                              "FORMAT 'SQL FILE'..."
 	OfTablesOpt                            "OF table_name [, ...]"
-	OptErrors                              "ERRORS or empty"
 	OptFull                                "Full or empty"
 	OptTemporary                           "TEMPORARY or empty"
 	OptOrder                               "Optional ordering keyword: ASC/DESC. Default to ASC"
@@ -1212,6 +1224,7 @@ import (
 	ShowProfileTypes                       "Show profile types"
 	SplitOption                            "Split Option"
 	SplitSyntaxOption                      "Split syntax Option"
+	Starting                               "Starting by"
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
@@ -1316,6 +1329,7 @@ import (
 	IsOrNotOp                              "Is predicate"
 	InOrNotOp                              "In predicate"
 	LikeOrNotOp                            "Like predicate"
+	IlikeOrNotOp                           "Ilike predicate"
 	RegexpOrNotOp                          "Regexp predicate"
 	NumericType                            "Numeric types"
 	IntegerType                            "Integer Types types"
@@ -1366,6 +1380,7 @@ import (
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	DirectResourceGroupOption              "Subset of anonymous or direct resource group option"
 	ResourceGroupOptionList                "Anomymous or direct resource group option list"
+	ResourceGroupPriorityOption            "Resource group priority option"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
@@ -1379,6 +1394,7 @@ import (
 	PrimaryOpt        "Optional primary keyword"
 	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
 	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	CurdateSym        "CURDATE or CURRENT_DATE"
 	DefaultKwdOpt     "optional DEFAULT keyword"
 	DatabaseSym       "DATABASE or SCHEMA"
 	ExplainSym        "EXPLAIN or DESCRIBE or DESC"
@@ -1438,14 +1454,12 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeEscapeOpt                   "like escape option"
-	LinesTerminated                 "Lines terminated by"
+	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
 	RoleNameString                  "role name string"
 	ShowDatabaseNameOpt             "Show tables/columns statement database name option"
-	Starting                        "Starting by"
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
@@ -1499,7 +1513,7 @@ import (
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like in
+%left eq ge le neq neqSynonym '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -1593,33 +1607,49 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
+ResourceGroupPriorityOption:
+	"LOW"
+	{
+		$$ = uint64(1)
+	}
+|	"MEDIUM"
+	{
+		$$ = uint64(8)
+	}
+|	"HIGH"
+	{
+		$$ = uint64(16)
+	}
+
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt stringLit
+	"RU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt stringLit
+|	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourcePriority, UintValue: $3.(uint64)}
 	}
-|	"CPU" EqOpt stringLit
+|	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
-	}
-|	"IO_READ_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
-	}
-|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
 
 PlacementOptionList:
@@ -1685,6 +1715,10 @@ DirectPlacementOption:
 |	"LEARNER_CONSTRAINTS" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
+	}
+|	"SURVIVAL_PREFERENCES" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionSurvivalPreferences, StrValue: $3}
 	}
 
 PlacementPolicyOption:
@@ -3619,6 +3653,14 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr($3, parser.charset, parser.collation)}}
 	}
+|	CurdateSym '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
+|	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
 
 NextValueForSequence:
 	"NEXT" "VALUE" forKwd TableName
@@ -3656,6 +3698,10 @@ NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+
+CurdateSym:
+	builtinCurDate
+|	"CURRENT_DATE"
 
 SignedLiteral:
 	Literal
@@ -5361,160 +5407,39 @@ OptionLevel:
 		$$ = ast.BRIEOptionLevelRequired
 	}
 
-PurgeImportStmt:
-	"PURGE" "IMPORT" NUM
+PauseLoadDataStmt:
+	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.PurgeImportStmt{TaskID: getUint64FromNUM($3)}
-	}
-
-/*******************************************************************
- * import statements
- *
- *	CREATE IMPORT [IF NOT EXISTS] import_name
- *		FROM data_location [REPLACE | SKIP {ALL | CONSTRAINT | DUPLICATE ｜ STRICT}]
- *		[options_list]
- *	STOP IMPORT [IF RUNNING] import_name
- *	RESUME IMPORT [IF NOT RUNNING] import_name
- *	ALTER IMPORT import_name
- *		[REPLACE | SKIP {ALL | CONSTRAINT | DUPLICATE | STRICT}]
- *		[options_list]
- *		[TRUNCATE
- *			{ALL | ERRORS} [TABLE table_name [, table_name] ...]
- *		]
- *	DROP IMPORT [IF EXISTS] import_name
- *	SHOW IMPORT import_name [ERRORS] [TABLE table_name [, table_name] ...]
- */
-CreateImportStmt:
-	"CREATE" "IMPORT" IfNotExists Identifier "FROM" stringLit ErrorHandling BRIEOptions
-	{
-		$$ = &ast.CreateImportStmt{
-			IfNotExists:   $3.(bool),
-			Name:          $4,
-			Storage:       $6,
-			ErrorHandling: $7.(ast.ErrorHandlingOption),
-			Options:       $8.([]*ast.BRIEOption),
+		$$ = &ast.LoadDataActionStmt{
+			Tp:    ast.LoadDataPause,
+			JobID: $5.(int64),
 		}
 	}
 
-StopImportStmt:
-	"STOP" "IMPORT" IfRunning Identifier
+ResumeLoadDataStmt:
+	"RESUME" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.StopImportStmt{
-			IfRunning: $3.(bool),
-			Name:      $4,
+		$$ = &ast.LoadDataActionStmt{
+			Tp:    ast.LoadDataResume,
+			JobID: $5.(int64),
 		}
 	}
 
-ResumeImportStmt:
-	"RESUME" "IMPORT" IfNotRunning Identifier
+CancelLoadDataStmt:
+	"CANCEL" "LOAD" "DATA" "JOB" Int64Num
 	{
-		$$ = &ast.ResumeImportStmt{
-			IfNotRunning: $3.(bool),
-			Name:         $4,
+		$$ = &ast.LoadDataActionStmt{
+			Tp:    ast.LoadDataCancel,
+			JobID: $5.(int64),
 		}
 	}
 
-AlterImportStmt:
-	"ALTER" "IMPORT" Identifier ErrorHandling BRIEOptions ImportTruncate
+DropLoadDataStmt:
+	"DROP" "LOAD" "DATA" "JOB" Int64Num
 	{
-		s := &ast.AlterImportStmt{
-			Name:          $3,
-			ErrorHandling: $4.(ast.ErrorHandlingOption),
-			Options:       $5.([]*ast.BRIEOption),
-		}
-		if $6 != nil {
-			s.Truncate = $6.(*ast.ImportTruncate)
-		}
-		$$ = s
-	}
-
-DropImportStmt:
-	"DROP" "IMPORT" IfExists Identifier
-	{
-		$$ = &ast.DropImportStmt{
-			IfExists: $3.(bool),
-			Name:     $4,
-		}
-	}
-
-ShowImportStmt:
-	"SHOW" "IMPORT" Identifier OptErrors TableNameListOpt2
-	{
-		$$ = &ast.ShowImportStmt{
-			Name:       $3,
-			ErrorsOnly: $4.(bool),
-			TableNames: $5.([]*ast.TableName),
-		}
-	}
-
-IfRunning:
-	{
-		$$ = false
-	}
-|	"IF" "RUNNING"
-	{
-		$$ = true
-	}
-
-IfNotRunning:
-	{
-		$$ = false
-	}
-|	"IF" NotSym "RUNNING"
-	{
-		$$ = true
-	}
-
-OptErrors:
-	{
-		$$ = false
-	}
-|	"ERRORS"
-	{
-		$$ = true
-	}
-
-ErrorHandling:
-	{
-		$$ = ast.ErrorHandleError
-	}
-|	"REPLACE"
-	{
-		$$ = ast.ErrorHandleReplace
-	}
-|	"SKIP" "ALL"
-	{
-		$$ = ast.ErrorHandleSkipAll
-	}
-|	"SKIP" "CONSTRAINT"
-	{
-		$$ = ast.ErrorHandleSkipConstraint
-	}
-|	"SKIP" "DUPLICATE"
-	{
-		$$ = ast.ErrorHandleSkipDuplicate
-	}
-|	"SKIP" "STRICT"
-	{
-		$$ = ast.ErrorHandleSkipStrict
-	}
-
-ImportTruncate:
-	{
-		$$ = nil
-	}
-|	"TRUNCATE" "ALL" TableNameListOpt2
-	{
-		$$ = &ast.ImportTruncate{
-			IsErrorsOnly: false,
-			TableNames:   $3.([]*ast.TableName),
-		}
-	}
-|	"TRUNCATE" "ERRORS" TableNameListOpt2
-	{
-		$$ = &ast.ImportTruncate{
-			IsErrorsOnly: true,
-			TableNames:   $3.([]*ast.TableName),
+		$$ = &ast.LoadDataActionStmt{
+			Tp:    ast.LoadDataDrop,
+			JobID: $5.(int64),
 		}
 	}
 
@@ -5754,6 +5679,16 @@ LikeOrNotOp:
 		$$ = false
 	}
 
+IlikeOrNotOp:
+	"ILIKE"
+	{
+		$$ = true
+	}
+|	NotSym "ILIKE"
+	{
+		$$ = false
+	}
+
 RegexpOrNotOp:
 	RegexpSym
 	{
@@ -5798,7 +5733,7 @@ PredicateExpr:
 			Not:   !$2.(bool),
 		}
 	}
-|	BitExpr LikeOrNotOp SimpleExpr LikeEscapeOpt
+|	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
 		escape := $4
 		if len(escape) > 1 {
@@ -5807,11 +5742,29 @@ PredicateExpr:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
 			Escape:  escape[0],
+			IsLike:  true,
+		}
+	}
+|	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
+	{
+		escape := $4
+		if len(escape) > 1 {
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &ast.PatternLikeOrIlikeExpr{
+			Expr:    $1,
+			Pattern: $3,
+			Not:     !$2.(bool),
+			Escape:  escape[0],
+			IsLike:  false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -5828,7 +5781,7 @@ RegexpSym:
 	"REGEXP"
 |	"RLIKE"
 
-LikeEscapeOpt:
+LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
 		$$ = "\\"
@@ -5884,19 +5837,22 @@ FieldList:
 	{
 		field := $1.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
+		if field.Expr != nil && field.AsName.O == "" {
+			endOffset := parser.yylval.offset
+			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+		}
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
 	{
 		fl := $1.([]*ast.SelectField)
-		last := fl[len(fl)-1]
-		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
+		field := $3.(*ast.SelectField)
+		field.Offset = parser.startOffset(&yyS[yypt])
+		if field.Expr != nil && field.AsName.O == "" {
+			endOffset := parser.yylval.offset
+			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
-		newField := $3.(*ast.SelectField)
-		newField.Offset = parser.startOffset(&yyS[yypt])
-		$$ = append(fl, newField)
+		$$ = append(fl, field)
 	}
 
 GroupByClause:
@@ -6452,6 +6408,7 @@ UnReservedKeyword:
 |	"BERNOULLI"
 |	"SYSTEM"
 |	"PERCENT"
+|	"PAUSE"
 |	"RESUME"
 |	"OFF"
 |	"OPTIONAL"
@@ -6466,10 +6423,12 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"TTL_JOB_INTERVAL"
 |	"FAILED_LOGIN_ATTEMPTS"
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"CALIBRATE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -6528,8 +6487,10 @@ NotKeywordToken:
 |	"CAST"
 |	"COPY"
 |	"CURTIME"
+|	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
+|	"DEFINED"
 |	"DOT"
 |	"DUMP"
 |	"EXTRACT"
@@ -6599,6 +6560,7 @@ NotKeywordToken:
 |	"CONSTRAINTS"
 |	"PRIMARY_REGION"
 |	"SCHEDULE"
+|	"SURVIVAL_PREFERENCES"
 |	"LEADER_CONSTRAINTS"
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
@@ -6606,8 +6568,12 @@ NotKeywordToken:
 |	"TIDB_JSON"
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
-|	"RRU_PER_SEC"
-|	"WRU_PER_SEC"
+|	"RU_PER_SEC"
+|	"PRIORITY"
+|	"HIGH"
+|	"MEDIUM"
+|	"LOW"
+|	"BURSTABLE"
 
 /************************************************************************************
  *
@@ -7250,7 +7216,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -7261,8 +7227,13 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		tp.SetArray($6.(bool))
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
 		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
 			Expr:            $3,
@@ -8650,30 +8621,6 @@ SelectStmt:
 		if $6 != nil {
 			st.LockInfo = $6.(*ast.SelectLockInfo)
 		}
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			src := parser.src
-			var lastEnd int
-			if $2 != nil {
-				lastEnd = yyS[yypt-5].offset - 1
-			} else if $3 != nil {
-				lastEnd = yyS[yypt-4].offset - 1
-			} else if $4 != nil {
-				lastEnd = yyS[yypt-3].offset - 1
-			} else if $5 != nil {
-				lastEnd = yyS[yypt-2].offset - 1
-			} else if st.LockInfo != nil && st.LockInfo.LockType != ast.SelectLockNone {
-				lastEnd = yyS[yypt-1].offset - 1
-			} else if $7 != nil {
-				lastEnd = yyS[yypt].offset - 1
-			} else {
-				lastEnd = len(src)
-				if src[lastEnd-1] == ';' {
-					lastEnd--
-				}
-			}
-			lastField.SetText(parser.lexer.client, src[lastField.Offset:lastEnd])
-		}
 		if $2 != nil {
 			st.Where = $2.(ast.ExprNode)
 		}
@@ -10056,6 +10003,10 @@ SetStmt:
 	{
 		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
 	}
+|	"SET" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.SetResourceGroupStmt{Name: model.NewCIStr($4)}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
@@ -10721,7 +10672,7 @@ ShowStmt:
 	{
 		stmt := $2.(*ast.ShowStmt)
 		if $3 != nil {
-			if x, ok := $3.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+			if x, ok := $3.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
 				stmt.Pattern = x
 			} else {
 				stmt.Where = $3.(ast.ExprNode)
@@ -10765,19 +10716,19 @@ ShowStmt:
 			DBName: $5,
 		}
 	}
+|	"SHOW" "CREATE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:                ast.ShowCreateResourceGroup,
+			ResourceGroupName: $5,
+		}
+	}
 |	"SHOW" "CREATE" "USER" Username
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
 		$$ = &ast.ShowStmt{
 			Tp:   ast.ShowCreateUser,
 			User: $4.(*auth.UserIdentity),
-		}
-	}
-|	"SHOW" "CREATE" "IMPORT" Identifier
-	{
-		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowCreateImport,
-			DBName: $4, // we reuse DBName of ShowStmt
 		}
 	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
@@ -10884,6 +10835,14 @@ ShowStmt:
 |	"SHOW" "PLACEMENT" "FOR" ShowPlacementTarget
 	{
 		$$ = $4.(*ast.ShowStmt)
+	}
+|	"SHOW" "LOAD" "DATA" "JOB" Int64Num
+	{
+		v := $5.(int64)
+		$$ = &ast.ShowStmt{
+			Tp:            ast.ShowLoadDataJobs,
+			LoadDataJobID: &v,
+		}
 	}
 
 ShowPlacementTarget:
@@ -11216,10 +11175,6 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowRestores}
 	}
-|	"IMPORTS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImports}
-	}
 |	"PLACEMENT"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacement}
@@ -11228,6 +11183,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
 	}
+|	"LOAD" "DATA" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowLoadDataJobs}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -11235,9 +11194,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
-		$$ = &ast.PatternLikeExpr{
+		$$ = &ast.PatternLikeOrIlikeExpr{
 			Pattern: $2,
 			Escape:  '\\',
+			IsLike:  true,
 		}
 	}
 |	"WHERE" Expression
@@ -11437,7 +11397,6 @@ Statement:
 |	AlterDatabaseStmt
 |	AlterTableStmt
 |	AlterUserStmt
-|	AlterImportStmt
 |	AlterInstanceStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
@@ -11451,9 +11410,9 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	CalibrateResourceStmt
 |	ChangeStmt
 |	CreateDatabaseStmt
-|	CreateImportStmt
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
@@ -11466,13 +11425,13 @@ Statement:
 |	CreateStatisticsStmt
 |	DoStmt
 |	DropDatabaseStmt
-|	DropImportStmt
 |	DropIndexStmt
 |	DropTableStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -11494,14 +11453,12 @@ Statement:
 |	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
-|	PurgeImportStmt
 |	RollbackStmt
 |	RenameTableStmt
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
 |	ReleaseSavepointStmt
-|	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
 |	SavepointStmt
@@ -11526,8 +11483,6 @@ Statement:
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
-|	StopImportStmt
-|	ShowImportStmt
 |	ShowStmt
 |	TraceStmt
 |	TruncateTableStmt
@@ -11539,6 +11494,10 @@ Statement:
 |	RestartStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
+|	PauseLoadDataStmt
+|	ResumeLoadDataStmt
+|	CancelLoadDataStmt
+|	DropLoadDataStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -11877,6 +11836,15 @@ TableOption:
 			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
 			return 1
 		}
+	}
+|	"TTL_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The TTL_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
 
 ForceOpt:
@@ -13016,9 +12984,9 @@ ResourceGroupNameOption:
 	{
 		$$ = nil
 	}
-|	"RESOURCE" "GROUP" stringLit
+|	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+		$$ = &ast.ResourceGroupNameOption{Value: $3}
 	}
 
 PasswordOrLockOptions:
@@ -13744,33 +13712,31 @@ RevokeRoleStmt:
 
 /**************************************LoadDataStmt*****************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
+ * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
+			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
-			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
-			Table:              $9.(*ast.TableName),
-			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $13.(uint64),
+			Format:             $6.(*string),
+			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
+			Table:              $10.(*ast.TableName),
+			FieldsInfo:         $12.(*ast.FieldsClause),
+			LinesInfo:          $13.(*ast.LinesClause),
+			IgnoreLines:        $14.(*uint64),
+			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $16.([]*ast.Assignment),
+			Options:            $17.([]*ast.LoadDataOpt),
 		}
 		if $3 != nil {
-			x.IsLocal = true
+			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
 			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
 				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
 			}
-		}
-		if $11 != nil {
-			x.FieldsInfo = $11.(*ast.FieldsClause)
-		}
-		if $12 != nil {
-			x.LinesInfo = $12.(*ast.LinesClause)
-		}
-		if $15 != nil {
-			x.ColumnAssignments = $15.([]*ast.Assignment)
 		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
@@ -13783,13 +13749,24 @@ LoadDataStmt:
 		$$ = x
 	}
 
+FormatOpt:
+	{
+		$$ = (*string)(nil)
+	}
+|	"FORMAT" stringLit
+	{
+		str := $2
+		$$ = &str
+	}
+
 IgnoreLines:
 	{
-		$$ = uint64(0)
+		$$ = (*uint64)(nil)
 	}
 |	"IGNORE" NUM "LINES"
 	{
-		$$ = getUint64FromNUM($2)
+		v := getUint64FromNUM($2)
+		$$ = &v
 	}
 
 CharsetOpt:
@@ -13807,38 +13784,24 @@ LocalOpt:
 
 Fields:
 	{
-		escape := "\\"
-		$$ = &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    escape[0],
-		}
+		$$ = (*ast.FieldsClause)(nil)
 	}
 |	FieldsOrColumns FieldItemList
 	{
-		fieldsClause := &ast.FieldsClause{
-			Terminated: "\t",
-			Escaped:    []byte("\\")[0],
-		}
+		fieldsClause := &ast.FieldsClause{}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {
 			switch item.Type {
 			case ast.Terminated:
-				fieldsClause.Terminated = item.Value
+				fieldsClause.Terminated = &item.Value
 			case ast.Enclosed:
-				var enclosed byte
-				if len(item.Value) > 0 {
-					enclosed = item.Value[0]
-				}
-				fieldsClause.Enclosed = enclosed
-				if item.OptEnclosed {
-					fieldsClause.OptEnclosed = true
-				}
+				fieldsClause.Enclosed = &item.Value
+				fieldsClause.OptEnclosed = item.OptEnclosed
 			case ast.Escaped:
-				var escaped byte
-				if len(item.Value) > 0 {
-					escaped = item.Value[0]
-				}
-				fieldsClause.Escaped = escaped
+				fieldsClause.Escaped = &item.Value
+			case ast.DefinedNullBy:
+				fieldsClause.DefinedNullBy = &item.Value
+				fieldsClause.NullValueOptEnclosed = item.OptEnclosed
 			}
 		}
 		$$ = fieldsClause
@@ -13869,9 +13832,9 @@ FieldItem:
 			Value: $3,
 		}
 	}
-|	"OPTIONALLY" "ENCLOSED" "BY" FieldTerminator
+|	optionallyEnclosedBy FieldTerminator
 	{
-		str := $4
+		str := $2
 		if str != "\\" && len(str) > 1 {
 			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
@@ -13906,6 +13869,21 @@ FieldItem:
 			Value: str,
 		}
 	}
+|	"DEFINED" "NULL" "BY" TextString
+	{
+		$$ = &ast.FieldItem{
+			Type:  ast.DefinedNullBy,
+			Value: $4.(*ast.TextString).Value,
+		}
+	}
+|	"DEFINED" "NULL" "BY" TextString "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.FieldItem{
+			Type:        ast.DefinedNullBy,
+			Value:       $4.(*ast.TextString).Value,
+			OptEnclosed: true,
+		}
+	}
 
 FieldTerminator:
 	stringLit
@@ -13920,34 +13898,36 @@ FieldTerminator:
 
 Lines:
 	{
-		$$ = &ast.LinesClause{Terminated: "\n"}
+		$$ = (*ast.LinesClause)(nil)
 	}
 |	"LINES" Starting LinesTerminated
 	{
-		$$ = &ast.LinesClause{Starting: $2, Terminated: $3}
+		$$ = &ast.LinesClause{Starting: $2.(*string), Terminated: $3.(*string)}
 	}
 
 Starting:
 	{
-		$$ = ""
+		$$ = (*string)(nil)
 	}
 |	"STARTING" "BY" FieldTerminator
 	{
-		$$ = $3
+		s := $3
+		$$ = &s
 	}
 
 LinesTerminated:
 	{
-		$$ = "\n"
+		$$ = (*string)(nil)
 	}
 |	"TERMINATED" "BY" FieldTerminator
 	{
-		$$ = $3
+		s := $3
+		$$ = &s
 	}
 
 LoadDataSetSpecOpt:
 	{
-		$$ = nil
+		$$ = ([]*ast.Assignment)(nil)
 	}
 |	"SET" LoadDataSetList
 	{
@@ -13972,6 +13952,35 @@ LoadDataSetItem:
 			Column: $1.(*ast.ColumnNameExpr).Name,
 			Expr:   $3,
 		}
+	}
+
+LoadDataOptionListOpt:
+	{
+		$$ = []*ast.LoadDataOpt{}
+	}
+|	"WITH" LoadDataOptionList
+	{
+		$$ = $2.([]*ast.LoadDataOpt)
+	}
+
+LoadDataOptionList:
+	LoadDataOption
+	{
+		$$ = []*ast.LoadDataOpt{$1.(*ast.LoadDataOpt)}
+	}
+|	LoadDataOptionList ',' LoadDataOption
+	{
+		$$ = append($1.([]*ast.LoadDataOpt), $3.(*ast.LoadDataOpt))
+	}
+
+LoadDataOption:
+	identifier
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
+	}
+|	identifier "=" SignedLiteral
+	{
+		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
 
 /*********************************************************************
@@ -14177,8 +14186,8 @@ AlterResourceGroupStmt:
 		}
 	}
 
-DropPolicyStmt:
-	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+DropResourceGroupStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists ResourceGroupName
 	{
 		$$ = &ast.DropResourceGroupStmt{
 			IfExists:          $4.(bool),
@@ -14637,4 +14646,32 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
+|	"PLAN" "REPLAYER" "CAPTURE" "REMOVE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Remove:     true,
+			SQLDigest:  $5,
+			PlanDigest: $6,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
+		}
+
+		$$ = x
+	}
+
+/********************************************************************
+ *
+ * Calibrate Resource Statement
+ *
+ * CALIBRATE RESOURCE
+ *******************************************************************/
+CalibrateResourceStmt:
+	"CALIBRATE" "RESOURCE"
+	{
+		$$ = &ast.CalibrateResourceStmt{}
+	}
+
 %%
