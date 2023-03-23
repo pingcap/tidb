@@ -2237,7 +2237,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
-	rTsk := &rootTask{p: batchPointGetPlan}
+	rTsk := &rootTask{}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -2278,6 +2278,9 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.p = sel
 		}
+	}
+	if rTsk.p == nil {
+		rTsk.p = batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	}
 
 	return rTsk
