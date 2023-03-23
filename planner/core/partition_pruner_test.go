@@ -492,11 +492,8 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
-
-func TestIssue42135(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testPartitionPruneSuit) TestIssue42135(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database issue42135`)
 	tk.MustExec(`use issue42135`)
 	tk.MustExec("CREATE TABLE `tx1` (`ID` varchar(13), `a` varchar(13), `b` varchar(4000), `ltype` int(5) NOT NULL)")
