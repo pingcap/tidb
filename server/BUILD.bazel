@@ -194,7 +194,6 @@ go_test(
         "//util/plancodec",
         "//util/resourcegrouptag",
         "//util/rowcodec",
-        "//util/sqlexec",
         "//util/topsql",
         "//util/topsql/collector",
         "//util/topsql/collector/mock",
