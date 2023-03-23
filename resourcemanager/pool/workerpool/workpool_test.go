@@ -48,7 +48,7 @@ func createMyWorker() Worker {
 
 func TestWorkerPool(t *testing.T) {
 	// Create a worker pool with 3 workers.
-	pool, err := NewWorkerPool("test", util.UNKNOWN, 3, createMyWorker)
+	pool, err := NewWorkerPool[int64]("test", util.UNKNOWN, 3, createMyWorker)
 	require.NoError(t, err)
 	globalCnt.Store(0)
 

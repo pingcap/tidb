@@ -31,11 +31,11 @@ type Worker interface {
 }
 
 // WorkerPool is a pool of workers.
-type WorkerPool struct {
+type WorkerPool[T any] struct {
 	name           string
 	numWorkers     int32
 	runningWorkers atomicutil.Int32
-	taskChan       chan any
+	taskChan       chan T
 	quitChan       chan struct{}
 	wg             tidbutil.WaitGroupWrapper
 	createWorker   func() Worker
@@ -44,15 +44,15 @@ type WorkerPool struct {
 }
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool(name string, component util.Component, numWorkers int, createWorker func() Worker) (*WorkerPool, error) {
+func NewWorkerPool[T any](name string, component util.Component, numWorkers int, createWorker func() Worker) (*WorkerPool[T], error) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
 
-	p := &WorkerPool{
+	p := &WorkerPool[T]{
 		name:         name,
 		numWorkers:   int32(numWorkers),
-		taskChan:     make(chan any),
+		taskChan:     make(chan T),
 		quitChan:     make(chan struct{}),
 		createWorker: createWorker,
 	}
@@ -70,7 +70,7 @@ func NewWorkerPool(name string, component util.Component, numWorkers int, create
 	return p, nil
 }
 
-func (p *WorkerPool) runAWorker() {
+func (p *WorkerPool[T]) runAWorker() {
 	p.wg.Run(func() {
 		w := p.createWorker()
 		for {
@@ -88,12 +88,12 @@ func (p *WorkerPool) runAWorker() {
 }
 
 // AddTask adds a task to the pool.
-func (p *WorkerPool) AddTask(task any) {
+func (p *WorkerPool[T]) AddTask(task T) {
 	p.taskChan <- task
 }
 
 // Tune tunes the pool to the specified number of workers.
-func (p *WorkerPool) Tune(numWorkers int32) {
+func (p *WorkerPool[T]) Tune(numWorkers int32) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -115,25 +115,25 @@ func (p *WorkerPool) Tune(numWorkers int32) {
 	p.numWorkers = numWorkers
 }
 
-func (p *WorkerPool) LastTunerTs() time.Time {
+func (p *WorkerPool[T]) LastTunerTs() time.Time {
 	return p.lastTuneTs.Load()
 }
 
-func (p *WorkerPool) Cap() int32 {
+func (p *WorkerPool[T]) Cap() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.numWorkers
 }
 
-func (p *WorkerPool) Running() int32 {
+func (p *WorkerPool[T]) Running() int32 {
 	return p.runningWorkers.Load()
 }
 
-func (p *WorkerPool) Name() string {
+func (p *WorkerPool[T]) Name() string {
 	return p.name
 }
 
-func (p *WorkerPool) ReleaseAndWait() {
+func (p *WorkerPool[T]) ReleaseAndWait() {
 	close(p.quitChan)
 	p.wg.Wait()
 	resourcemanager.InstanceResourceManager.Unregister(p.Name())
