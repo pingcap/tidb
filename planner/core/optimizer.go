@@ -76,6 +76,7 @@ const (
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagDeriveTopNFromWindow
+	flagPredicateSimplification
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -99,6 +100,7 @@ var optRuleList = []logicalOptRule{
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
 	&deriveTopNFromWindow{},
+	&predicateSimplification{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
@@ -148,7 +150,7 @@ type logicalOptRule interface {
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
-	sctx.GetSessionVars().PlanID = 0
+	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)

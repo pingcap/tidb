@@ -1741,7 +1741,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition {
-		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
+		// It is rollback from reorganize partition, just remove DroppingDefinitions from tableInfo
+		tblInfo.Partition.DroppingDefinitions = nil
+		// It is rollback from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
