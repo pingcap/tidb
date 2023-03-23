@@ -258,10 +258,10 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 }
 
 func initResourceGroupManager(pdCli pd.Client) (cli pd.ResourceManagerClient) {
-	if pdCli == nil {
-		cli = &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
-	}
 	cli = pdCli
+	if pdCli == nil {
+		cli = NewMockResourceGroupManager()
+	}
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
 			_, err := cli.AddResourceGroup(context.TODO(),
