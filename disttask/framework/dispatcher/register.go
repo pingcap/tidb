@@ -37,6 +37,13 @@ func RegisterTaskFlowHandle(taskType string, dispatcherHandle TaskFlowHandle) {
 	taskFlowHandleMap.Unlock()
 }
 
+// ClearTaskFlowHandle is only used in test
+func ClearTaskFlowHandle() {
+	taskFlowHandleMap.Lock()
+	taskFlowHandleMap.handleMap = make(map[string]TaskFlowHandle)
+	taskFlowHandleMap.Unlock()
+}
+
 // GetTaskFlowHandle is used to get the global task handle.
 func GetTaskFlowHandle(taskType string) TaskFlowHandle {
 	taskFlowHandleMap.Lock()

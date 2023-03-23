@@ -41,6 +41,9 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -1153,6 +1156,11 @@ func (do *Domain) Init(
 			do.closestReplicaReadCheckLoop(ctx, pdCli)
 		}, "closestReplicaReadCheckLoop")
 	}
+
+	if err = do.initDistTaskLoop(ctx); err != nil {
+		return err
+	}
+
 	err = do.initLogBackup(ctx, pdCli)
 	if err != nil {
 		return err
@@ -1311,6 +1319,84 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
 	}
 	return nil
+}
+
+func (do *Domain) initDistTaskLoop(ctx context.Context) error {
+	se1, err := do.sysExecutorFactory(do)
+	if err != nil {
+		return err
+	}
+
+	se2, err := do.sysExecutorFactory(do)
+	if err != nil {
+		se1.Close()
+		return err
+	}
+
+	gm := storage.NewGlobalTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se1.(sessionctx.Context))
+	sm := storage.NewSubTaskManager(kv.WithInternalSourceType(ctx, kv.InternalDistTask), se2.(sessionctx.Context))
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, do.ddl.GetID(), gm, sm)
+	if err != nil {
+		se1.Close()
+		se2.Close()
+		return err
+	}
+
+	do.wg.Run(func() {
+		do.distTaskFrameworkLoop(ctx, gm, sm, schedulerManager)
+		se1.Close()
+		se2.Close()
+	}, "distTaskFrameworkLoop")
+	return nil
+}
+
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, globalTaskManager *storage.GlobalTaskManager, subtaskManager *storage.SubTaskManager, schedulerManager *scheduler.Manager) {
+	schedulerManager.Start()
+	logutil.BgLogger().Info("dist task scheduler started")
+	defer func() {
+		logutil.BgLogger().Info("stopping dist task scheduler")
+		schedulerManager.Stop()
+		logutil.BgLogger().Info("dist task scheduler stopped")
+	}()
+
+	var dispatch dispatcher.Dispatch
+	startDispatchIfNeeded := func() {
+		if dispatch != nil {
+			return
+		}
+
+		newDispatch, err := dispatcher.NewDispatcher(ctx, globalTaskManager, subtaskManager)
+		if err != nil {
+			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
+			return
+		}
+		dispatch = newDispatch
+		dispatch.Start()
+		logutil.BgLogger().Info("a new dist task dispatcher started for current node becomes the DDL owner")
+	}
+	stopDispatchIfNeeded := func() {
+		if dispatch != nil {
+			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore")
+			dispatch.Stop()
+			dispatch = nil
+			logutil.BgLogger().Info("dist task dispatcher stopped")
+		}
+	}
+
+	ticker := time.Tick(time.Second)
+	for {
+		select {
+		case <-do.exit:
+			stopDispatchIfNeeded()
+			return
+		case <-ticker:
+			if do.ddl.OwnerManager().IsOwner() {
+				startDispatchIfNeeded()
+			} else {
+				stopDispatchIfNeeded()
+			}
+		}
+	}
 }
 
 type sessionPool struct {
