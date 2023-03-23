@@ -2245,6 +2245,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		batchPointGetPlan.accessCols = ds.TblCols
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2270,6 +2271,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
+			batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 			sel := PhysicalSelection{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
@@ -2277,7 +2279,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 			rTsk.p = sel
 		}
 	}
-	batchPointGetPlan.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 
 	return rTsk
 }
