@@ -1669,6 +1669,7 @@ func TestIssue42323(t *testing.T) {
 			PARTITION p2022 VALUES LESS THAN (202300),
 			PARTITION p2023 VALUES LESS THAN (202400))`)
 	tk.MustExec("insert into t values(202303)")
+	tk.MustExec("analyze table t")
 	tk.MustQuery(`select * from t where col1 = 202303`).Check(testkit.Rows("202303"))
 	tk.MustQuery(`select * from t where col1 = floor(202303)`).Check(testkit.Rows("202303"))
 }
