@@ -15,6 +15,7 @@
 package unistore
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/pingcap/errors"
@@ -33,6 +34,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		}
 		persistent = false
 	}
+	fmt.Println("path===", path)
 
 	if err := os.MkdirAll(path, 0750); err != nil {
 		return nil, nil, nil, err
