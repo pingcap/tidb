@@ -51,11 +51,11 @@ func TestCalibrateResource(t *testing.T) {
 	err = rs.Next(context.Background(), rs.NewChunk(nil))
 	require.ErrorContains(t, err, "PD request-unit config not found")
 
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "request-unit.read-base-cost", "0.25"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "request-unit.read-cost-per-byte", "0.0000152587890625"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "request-unit.read-cpu-ms-cost", "0.3333333333333333"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "request-unit.write-base-cost", "1"))
-	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "request-unit.write-cost-per-byte", "0.0009765625"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-base-cost", "0.25"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-cost-per-byte", "0.0000152587890625"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.read-cpu-ms-cost", "0.3333333333333333"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.write-base-cost", "1"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2379", "controller.request-unit.write-cost-per-byte", "0.0009765625"))
 
 	// empty metrics error
 	rs, err = tk.Exec("CALIBRATE RESOURCE")
