@@ -689,8 +689,7 @@ func TestRangePartitionPredicatePruner(t *testing.T) {
 }
 
 func TestIssue42135(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database issue42135`)
 	tk.MustExec(`use issue42135`)
