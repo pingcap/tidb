@@ -376,6 +376,11 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
+	if len(c.hCtx.naKeyColIdx) > 0 {
+		return codec.EqualChunkRow(c.sc,
+			buildRow, c.hCtx.allTypes, c.hCtx.naKeyColIdx,
+			probeRow, probeHCtx.allTypes, probeHCtx.naKeyColIdx)
+	}
 	return codec.EqualChunkRow(c.sc,
 		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
