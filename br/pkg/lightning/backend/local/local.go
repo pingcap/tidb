@@ -1032,29 +1032,30 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 	lfLength := lf.Length.Load()
 	unfinishedRanges := lf.unfinishedRanges(initialSplitRanges)
 	log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
+	if len(unfinishedRanges) == 0 {
+		return nil, nil
+	}
 
-	if len(unfinishedRanges) > 0 {
-		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
-		// the table when table is created.
-		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
-		var err error
-		// split region by given ranges
-		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-			needSplit = true
-		})
-		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
-			if err == nil || common.IsContextCanceledError(err) {
-				break
-			}
+	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+	// the table when table is created.
+	needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+	var err error
+	// split region by given ranges
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		needSplit = true
+	})
+	for i := 0; i < maxRetryTimes; i++ {
+		err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+		if err == nil || common.IsContextCanceledError(err) {
+			break
+		}
 
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
-		}
-		if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return nil, err
-		}
+		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+			log.ShortError(err), zap.Int("retry", i))
+	}
+	if err != nil {
+		log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+		return nil, err
 	}
 
 	return local.generateJobInRanges(
