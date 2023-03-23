@@ -32,15 +32,15 @@ type Worker interface {
 
 // WorkerPool is a pool of workers.
 type WorkerPool[T any] struct {
-	name           string
-	numWorkers     int32
-	runningWorkers atomicutil.Int32
-	taskChan       chan T
-	quitChan       chan struct{}
-	wg             tidbutil.WaitGroupWrapper
-	createWorker   func() Worker
-	lastTuneTs     atomicutil.Time
-	mu             syncutil.RWMutex
+	name         string
+	numWorkers   int32
+	runningTask  atomicutil.Int32
+	taskChan     chan T
+	quitChan     chan struct{}
+	wg           tidbutil.WaitGroupWrapper
+	createWorker func() Worker
+	lastTuneTs   atomicutil.Time
+	mu           syncutil.RWMutex
 }
 
 // NewWorkerPool creates a new worker pool.
@@ -76,9 +76,9 @@ func (p *WorkerPool[T]) runAWorker() {
 		for {
 			select {
 			case task := <-p.taskChan:
-				p.runningWorkers.Add(1)
+				p.runningTask.Add(1)
 				w.HandleTask(task)
-				p.runningWorkers.Add(-1)
+				p.runningTask.Add(-1)
 			case <-p.quitChan:
 				w.Close()
 				return
@@ -115,24 +115,29 @@ func (p *WorkerPool[T]) Tune(numWorkers int32) {
 	p.numWorkers = numWorkers
 }
 
+// LastTunerTs returns the last time when the pool was tuned.
 func (p *WorkerPool[T]) LastTunerTs() time.Time {
 	return p.lastTuneTs.Load()
 }
 
+// Cap returns the capacity of the pool.
 func (p *WorkerPool[T]) Cap() int32 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.numWorkers
 }
 
+// Running returns the number of running workers.
 func (p *WorkerPool[T]) Running() int32 {
-	return p.runningWorkers.Load()
+	return p.runningTask.Load()
 }
 
+// Name returns the name of the pool.
 func (p *WorkerPool[T]) Name() string {
 	return p.name
 }
 
+// ReleaseAndWait releases the pool and wait for complete.
 func (p *WorkerPool[T]) ReleaseAndWait() {
 	close(p.quitChan)
 	p.wg.Wait()
