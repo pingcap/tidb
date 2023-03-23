@@ -1134,6 +1134,13 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.ErrorContains(t, err, "tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 
+	cfg.TikvImporter.IncrementalImport = true
+	cfg.TikvImporter.AddIndexBySQL = nil
+	err = cfg.CheckAndAdjustForLocalBackend()
+	require.NoError(t, err)
+	require.Equal(t, &falseVal, cfg.TikvImporter.AddIndexBySQL)
+
+	cfg.TikvImporter.IncrementalImport = false
 	cfg.TikvImporter.AddIndexBySQL = nil
 	err = cfg.CheckAndAdjustForLocalBackend()
 	require.NoError(t, err)
