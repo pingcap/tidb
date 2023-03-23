@@ -172,7 +172,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_atomic//:atomic",  #keep
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
