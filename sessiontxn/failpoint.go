@@ -89,7 +89,7 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
 			panic("Expected to be a SessionExtendedInfoSchema")
 		}
 
-		if got.LocalTemporaryTables.Load() != localTables {
+		if got.LocalTemporaryTables != localTables {
 			panic("Local tables should be the same with the one in session")
 		}
 	}

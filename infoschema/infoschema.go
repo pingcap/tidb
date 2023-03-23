@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -676,14 +675,14 @@ func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 type SessionExtendedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTablesOnce sync.Once
-	LocalTemporaryTables     atomic.Pointer[SessionTables]
+	LocalTemporaryTables     *SessionTables
 	MdlTables                *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName
 func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
-	if t := ts.LocalTemporaryTables.Load(); t != nil {
-		if tbl, ok := t.TableByName(schema, table); ok {
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
 			return tbl, nil
 		}
 	}
@@ -699,8 +698,8 @@ func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (tab
 
 // TableByID implements InfoSchema.TableByID
 func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
-	if t := ts.LocalTemporaryTables.Load(); t != nil {
-		if tbl, ok := t.TableByID(id); ok {
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
 		}
 	}
@@ -720,8 +719,8 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 		return nil, false
 	}
 
-	if t := ts.LocalTemporaryTables.Load(); t != nil {
-		if db, ok := t.SchemaByTable(tableInfo); ok {
+	if ts.LocalTemporaryTables != nil {
+		if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
 			return db, true
 		}
 	}
@@ -749,6 +748,18 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 
 // HasTemporaryTable returns whether information schema has temporary table
 func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
-	t := ts.LocalTemporaryTables.Load()
-	return t != nil && t.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+}
+
+// AttachMDLTableInfoSchema attach MDL related table information schema to is
+func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
+	mdlTables := NewSessionTables()
+	if iss, ok := is.(*SessionExtendedInfoSchema); ok {
+		iss.MdlTables = mdlTables
+		return iss
+	}
+	return &SessionExtendedInfoSchema{
+		InfoSchema: is,
+		MdlTables:  mdlTables,
+	}
 }
