@@ -1169,7 +1169,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 var tableSequencesCols = []columnInfo{
