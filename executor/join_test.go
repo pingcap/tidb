@@ -681,7 +681,6 @@ func TestUsingAndNaturalJoinSchema(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestNaturalJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -805,14 +804,10 @@ AND b44=a42`)
 }
 
 func TestSubquerySameTable(t *testing.T) {
-=======
-func TestTiDBNAAJ(t *testing.T) {
->>>>>>> 7c05f82212a (executor: fix naaj panic caused by wrong field types check (#42482))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-<<<<<<< HEAD
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert t values (1), (2)")
 	result := tk.MustQuery("select a from t where exists(select 1 from t as x where x.a < t.a)")
@@ -2896,7 +2891,13 @@ func TestOuterJoin(t *testing.T) {
 			"3 2 <nil> <nil> 3 4",
 		),
 	)
-=======
+}
+
+func TestTiDBNAAJ(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_enable_null_aware_anti_join=0;")
 	tk.MustExec("create table t(a decimal(40,0), b bigint(20) not null);")
 	tk.MustExec("insert into t values(7,8),(7,8),(3,4),(3,4),(9,2),(9,2),(2,0),(2,0),(0,4),(0,4),(8,8),(8,8),(6,1),(6,1),(NULL, 0),(NULL,0);")
@@ -2905,5 +2906,4 @@ func TestOuterJoin(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_null_aware_anti_join=1;")
 	tk.MustQuery("select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;").Check(testkit.Rows(
 		"0", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
->>>>>>> 7c05f82212a (executor: fix naaj panic caused by wrong field types check (#42482))
 }
