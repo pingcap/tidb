@@ -3813,15 +3813,15 @@ func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []pla
 	if len(plans[0].(*plannercore.PhysicalIndexScan).ByItems) != 0 {
 		idxScan := plans[0].(*plannercore.PhysicalIndexScan)
 		tblInfo := idxScan.Table
-		offset := make([]uint32, len(idxScan.ByItems))
-		for i, item := range idxScan.ByItems {
+		offset := make([]uint32, 0, len(idxScan.ByItems))
+		for _, item := range idxScan.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
 			}
 			for _, c1 := range tblInfo.Columns {
 				if c1.ID == c.ID {
-					offset[i] = uint32(c1.Offset)
+					offset = append(offset, uint32(c1.Offset))
 					break
 				}
 			}
