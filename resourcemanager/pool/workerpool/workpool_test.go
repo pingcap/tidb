@@ -59,7 +59,7 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(3), pool.Running())
+	require.Equal(t, int32(3), pool.Cap())
 	require.Equal(t, int64(45), globalCnt.Load())
 
 	// Enlarge the pool to 5 workers.
@@ -72,7 +72,7 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(5), pool.Running())
+	require.Equal(t, int32(5), pool.Cap())
 	require.Equal(t, int64(90), globalCnt.Load())
 
 	// Decrease the pool to 2 workers.
@@ -85,7 +85,7 @@ func TestWorkerPool(t *testing.T) {
 	}
 
 	cntWg.Wait()
-	require.Equal(t, int32(2), pool.Running())
+	require.Equal(t, int32(2), pool.Cap())
 	require.Equal(t, int64(135), globalCnt.Load())
 
 	// Wait for the tasks to be completed.

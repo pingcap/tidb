@@ -32,14 +32,15 @@ type Worker interface {
 
 // WorkerPool is a pool of workers.
 type WorkerPool struct {
-	name         string
-	numWorkers   int32
-	taskChan     chan any
-	quitChan     chan struct{}
-	wg           tidbutil.WaitGroupWrapper
-	createWorker func() Worker
-	lastTuneTs   atomicutil.Time
-	mu           deadlock.RWMutex
+	name           string
+	numWorkers     int32
+	runningWorkers atomicutil.Int32
+	taskChan       chan any
+	quitChan       chan struct{}
+	wg             tidbutil.WaitGroupWrapper
+	createWorker   func() Worker
+	lastTuneTs     atomicutil.Time
+	mu             deadlock.RWMutex
 }
 
 // NewWorkerPool creates a new worker pool.
@@ -75,7 +76,9 @@ func (p *WorkerPool) runAWorker() {
 		for {
 			select {
 			case task := <-p.taskChan:
+				p.runningWorkers.Add(1)
 				w.HandleTask(task)
+				p.runningWorkers.Add(-1)
 			case <-p.quitChan:
 				w.Close()
 				return
@@ -123,9 +126,7 @@ func (p *WorkerPool) Cap() int32 {
 }
 
 func (p *WorkerPool) Running() int32 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.numWorkers
+	return p.runningWorkers.Load()
 }
 
 func (p *WorkerPool) Name() string {
