@@ -564,9 +564,6 @@ const (
 		key(state)
 	);`
 
-	// CreateDefaultResourceGroup is the statement to create the default resource group
-	CreateDefaultResourceGroup = "CREATE RESOURCE GROUP IF NOT EXISTS `default` RU_PER_SEC=1000000 BURSTABLE;"
-
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
        job_id bigint(64) NOT NULL AUTO_INCREMENT,
@@ -2411,10 +2408,7 @@ func upgradeToVer136(s Session, ver int64) {
 }
 
 func upgradeToVer137(s Session, ver int64) {
-	if ver >= version137 {
-		return
-	}
-	doReentrantDDL(s, CreateDefaultResourceGroup)
+	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
 // For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
@@ -2544,8 +2538,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
-	// Create default resource group
-	mustExecute(s, CreateDefaultResourceGroup)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
 }

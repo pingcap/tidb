@@ -28,6 +28,27 @@ type mockResourceGroupManager struct {
 	groups map[string]*rmpb.ResourceGroup
 }
 
+// NewMockResourceGroupManager return a mock ResourceManagerClient for test usage.
+func NewMockResourceGroupManager() pd.ResourceManagerClient {
+	mockMgr := &mockResourceGroupManager{
+		groups: make(map[string]*rmpb.ResourceGroup),
+	}
+	mockMgr.groups["default"] = &rmpb.ResourceGroup{
+		Name: "default",
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{
+					FillRate:   1000000,
+					BurstLimit: -1,
+				},
+			},
+		},
+		Priority: 8,
+	}
+	return mockMgr
+}
+
 var _ pd.ResourceManagerClient = (*mockResourceGroupManager)(nil)
 
 func (m *mockResourceGroupManager) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
