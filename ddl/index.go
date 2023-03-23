@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -698,6 +700,23 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
+
+		// after the DDL is public, attach the charset and collation to the query.
+		// to make the DDL can be correctly handled by the TiDB tools, such as TiCDC.
+		charset, collation := w.sess.session().GetSessionVars().GetCharsetInfo()
+		stmt, _, err := parser.New().Parse(job.Query, charset, collation)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if len(stmt) != 1 {
+			return ver, errors.Trace(err)
+		}
+
+		var sb strings.Builder
+		if err = stmt[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Query = sb.String()
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
