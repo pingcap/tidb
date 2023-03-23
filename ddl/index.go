@@ -700,28 +700,31 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
-
 		// after the DDL is public, attach the charset and collation to the query.
 		// to make the DDL can be correctly handled by the TiDB tools, such as TiCDC.
 		charset, collation := w.sess.session().GetSessionVars().GetCharsetInfo()
-		stmt, _, err := parser.New().Parse(job.Query, charset, collation)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		if len(stmt) != 1 {
-			return ver, errors.Trace(err)
-		}
-
-		var sb strings.Builder
-		if err = stmt[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.Query = sb.String()
+		rewriteDDLQuery4MultiValueIndex(job, charset, collation)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func rewriteDDLQuery4MultiValueIndex(job *model.Job, charset, collation string) {
+	stmt, _, err := parser.New().Parse(job.Query, charset, collation)
+	if err != nil {
+		return
+	}
+	if len(stmt) != 1 {
+		return
+	}
+
+	var sb strings.Builder
+	if err = stmt[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+		return
+	}
+	job.Query = sb.String()
 }
 
 // pickBackfillType determines which backfill process will be used.
