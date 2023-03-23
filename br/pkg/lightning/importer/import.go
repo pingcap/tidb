@@ -120,9 +120,8 @@ const (
 )
 
 var (
-	minTiKVVersionForDuplicateResolution     = *semver.New("5.2.0")
-	maxTiKVVersionForDuplicateResolution     = version.NextMajorVersion()
-	minTiDBVersionForAutoEnableAddIndexBySql = *semver.New("7.0.0")
+	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
+	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -354,25 +353,6 @@ func NewImportControllerWithPauser(
 				} else {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
-			}
-		}
-
-		if cfg.TikvImporter.AddIndexBySQL == nil {
-			versionStr, err := version.FetchVersion(ctx, db)
-			if err != nil {
-				return nil, err
-			}
-			if err := version.CheckTiDBVersion(versionStr, minTiDBVersionForAutoEnableAddIndexBySql, version.NextMajorVersion()); err != nil {
-				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					falseVal := false
-					cfg.TikvImporter.AddIndexBySQL = &falseVal
-				} else {
-					return nil, err
-				}
-			} else {
-				trueVal := true
-				cfg.TikvImporter.AddIndexBySQL = &trueVal
-				log.FromContext(ctx).Info("auto enable add-index-by-sql", zap.String("tidb_version", versionStr))
 			}
 		}
 
@@ -1569,7 +1549,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
 		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			if err := rc.dropAllIndexes(ctx); err != nil {
 				return err
 			}
