@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build intest
-
 package bootstraptest_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -101,10 +101,10 @@ func TestUpgradeVersion66(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	mustExec(t, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
-	mustExec(t, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
-	mustExec(t, seV65, "commit")
-	unsetStoreBootstrapped(store.UUID())
+	session.MustExec(t, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
+	session.MustExec(t, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
+	session.MustExec(t, seV65, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV65)
 	require.NoError(t, err)
 	require.Equal(t, int64(65), ver)
@@ -115,8 +115,8 @@ func TestUpgradeVersion66(t *testing.T) {
 	seV66 := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seV66)
 	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExecToRecodeSet(t, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	r := session.MustExecToRecodeSet(t, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 1, req.NumRows())
@@ -151,10 +151,10 @@ func TestUpgradeVersion74(t *testing.T) {
 			require.NoError(t, err)
 			err = txn.Commit(context.Background())
 			require.NoError(t, err)
-			mustExec(t, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
-			mustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
-			mustExec(t, seV73, "commit")
-			unsetStoreBootstrapped(store.UUID())
+			session.MustExec(t, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
+			session.MustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
+			session.MustExec(t, seV73, "commit")
+			session.UnsetStoreBootstrapped(store.UUID())
 			ver, err := session.GetBootstrapVersion(seV73)
 			require.NoError(t, err)
 			require.Equal(t, int64(72), ver)
@@ -165,8 +165,8 @@ func TestUpgradeVersion74(t *testing.T) {
 			seV74 := session.CreateSessionAndSetID(t, store)
 			ver, err = session.GetBootstrapVersion(seV74)
 			require.NoError(t, err)
-			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExecToRecodeSet(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
+			r := session.MustExecToRecodeSet(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
@@ -190,16 +190,16 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	mustExec(t, seV74, "update mysql.tidb set variable_value='74' where variable_name='tidb_server_version'")
-	mustExec(t, seV74, "commit")
-	mustExec(t, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
-	mustExec(t, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
-	mustExec(t, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
-	unsetStoreBootstrapped(store.UUID())
+	session.MustExec(t, seV74, "update mysql.tidb set variable_value='74' where variable_name='tidb_server_version'")
+	session.MustExec(t, seV74, "commit")
+	session.MustExec(t, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
+	session.MustExec(t, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
+	session.MustExec(t, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
+	session.UnsetStoreBootstrapped(store.UUID())
 	ver, err := session.GetBootstrapVersion(seV74)
 	require.NoError(t, err)
 	require.Equal(t, int64(74), ver)
-	r := mustExecToRecodeSet(t, seV74, `desc mysql.user`)
+	r := session.MustExecToRecodeSet(t, seV74, `desc mysql.user`)
 	req := r.NewChunk(nil)
 	row := req.GetRow(0)
 	require.NoError(t, r.Next(ctx, req))
@@ -212,8 +212,8 @@ func TestUpgradeVersion75(t *testing.T) {
 	seV75 := session.CreateSessionAndSetID(t, store)
 	ver, err = session.GetBootstrapVersion(seV75)
 	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r = mustExecToRecodeSet(t, seV75, `desc mysql.user`)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	r = session.MustExecToRecodeSet(t, seV75, `desc mysql.user`)
 	req = r.NewChunk(nil)
 	row = req.GetRow(0)
 	require.NoError(t, r.Next(ctx, req))

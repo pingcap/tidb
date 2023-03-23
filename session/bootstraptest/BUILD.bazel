@@ -12,6 +12,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//config",
+        "//meta",
         "//session",  #keep
         "//testkit",  #keep
         "//testkit/testmain",
