@@ -66,7 +66,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	return store
 }
 
-// tryMakeImage return a new mock kv.Storage and *domain.Domain.
+// tryMakeImage tries to create a bootstraped storage, the store is used as image for testing later.
 func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
 	if mockstore.ImageAvailable() {
 		return

@@ -15,7 +15,6 @@
 package mockstore
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -190,7 +189,6 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 			// Create the store from the image.
 			if path, err := copyImage(); err == nil {
 				opt.path = path
-				fmt.Println("use copyed image ==", path)
 			}
 		}
 
@@ -208,8 +206,10 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	return store, nil
 }
 
+// ImageFilePath is used by testing, it's the file path for the bootstraped store image.
 const ImageFilePath = "/tmp/tidb-unistore-bootstraped-image/"
 
+// ImageAvailable checks whether the store image file is available.
 func ImageAvailable() bool {
 	_, err := os.ReadDir(ImageFilePath)
 	if err != nil {
