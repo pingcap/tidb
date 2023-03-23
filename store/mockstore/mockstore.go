@@ -216,10 +216,7 @@ func ImageAvailable() bool {
 		return false
 	}
 	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func copyImage() (string, error) {
