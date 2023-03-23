@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -111,6 +113,9 @@ type copReqSenderPool struct {
 	wg      sync.WaitGroup
 
 	srcChkPool chan *chunk.Chunk
+
+	chkMemUsage   *atomic.Int64
+	memReportQuit chan struct{}
 }
 
 type copReqSender struct {
@@ -157,6 +162,7 @@ func (c *copReqSender) run() {
 		for !done {
 			srcChk := p.getChunk()
 			done, err = p.copCtx.fetchTableScanResult(p.ctx, rs, srcChk)
+			p.chkMemUsage.Add(srcChk.MemoryUsage())
 			if err != nil {
 				p.resultsCh <- idxRecResult{id: task.id, err: err}
 				p.recycleChunk(srcChk)
@@ -175,7 +181,8 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
-	return &copReqSenderPool{
+
+	p := &copReqSenderPool{
 		tasksCh:    make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultsCh:  make(chan idxRecResult, backfillTaskChanSize),
 		results:    generic.NewSyncMap[int, struct{}](10),
@@ -185,7 +192,30 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Stora
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:         sync.WaitGroup{},
 		srcChkPool: srcChkPool,
+
+		chkMemUsage:   &atomic.Int64{},
+		memReportQuit: make(chan struct{}),
 	}
+	go func() {
+		ticker := time.NewTicker(5000 * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				metrics.MemoryUsage.WithLabelValues("addidx", "inused").Set(float64(p.chkMemUsage.Load()))
+				instanceMem, err := memory.InstanceMemUsed()
+				if err != nil {
+					logutil.BgLogger().Warn("[ddl-ingest] cannot get instance memory usage", zap.Error(err))
+				}
+				logutil.BgLogger().Info("[ddl-ingest] current memory usage",
+					zap.Int64("copr-reader-pool", p.chkMemUsage.Load()),
+					zap.Uint64("instance", instanceMem))
+			case <-p.memReportQuit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	return p
 }
 
 func (c *copReqSenderPool) sendTask(task *reorgBackfillTask) {
@@ -226,6 +256,7 @@ func (c *copReqSenderPool) close() {
 	close(c.resultsCh)
 	cleanupWg.Wait()
 	close(c.srcChkPool)
+	c.memReportQuit <- struct{}{}
 }
 
 func (c *copReqSenderPool) drainResults() {
@@ -237,6 +268,7 @@ func (c *copReqSenderPool) drainResults() {
 
 func (c *copReqSenderPool) getChunk() *chunk.Chunk {
 	chk := <-c.srcChkPool
+	c.chkMemUsage.Add(-chk.MemoryUsage())
 	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
 		chk = chunk.NewChunkWithCapacity(c.copCtx.fieldTps, newCap)
