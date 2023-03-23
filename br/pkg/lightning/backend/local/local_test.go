@@ -1327,7 +1327,6 @@ func (p panicSplitRegionClient) BeforeSplitRegion(context.Context, *split.Region
 
 func (p panicSplitRegionClient) AfterSplitRegion(context.Context, *split.RegionInfo, [][]byte, []*split.RegionInfo, error) ([]*split.RegionInfo, error) {
 	panic("should not be called")
-
 }
 
 func (p panicSplitRegionClient) BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int) {
