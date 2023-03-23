@@ -681,7 +681,7 @@ type TikvImporter struct {
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 	KeyspaceName        string                       `toml:"keyspace-name" json:"keyspace-name"`
-	AddIndexBySQL       *bool                        `toml:"add-index-by-sql" json:"add-index-by-sql"`
+	AddIndexBySQL       bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -1131,26 +1131,9 @@ func (cfg *Config) AdjustCommon() (bool, error) {
 }
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
-	if cfg.TikvImporter.IncrementalImport {
-		addIndexBySQL := cfg.TikvImporter.AddIndexBySQL
-		if addIndexBySQL != nil && *addIndexBySQL {
-			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
-		} else if addIndexBySQL == nil {
-			falseVal := false
-			cfg.TikvImporter.AddIndexBySQL = &falseVal // Disable add-index-by-sql when incremental-import is enabled.
-		}
-	} else {
-		// Automatically enable add-index-by-sql if failpoint is enabled. (For integration test)
-		if cfg.TikvImporter.AddIndexBySQL == nil {
-			if common.IsFailpointBuild {
-				trueVal := true
-				cfg.TikvImporter.AddIndexBySQL = &trueVal
-			} else {
-				falseVal := false
-				cfg.TikvImporter.AddIndexBySQL = &falseVal
-			}
-		}
+	if cfg.TikvImporter.IncrementalImport && cfg.TikvImporter.AddIndexBySQL {
+		return common.ErrInvalidConfig.
+			GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.incremental-import")
 	}
 
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
