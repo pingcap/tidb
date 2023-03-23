@@ -155,7 +155,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 		}
 	}
 	parser.src = sql
-	parser.result = parser.result[:0]
+	parser.result = []ast.StmtNode{}
 
 	var l yyLexer = &parser.lexer
 	yyParse(l, parser)
