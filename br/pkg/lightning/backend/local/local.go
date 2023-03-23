@@ -981,8 +981,8 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 func (local *local) readAndSplitIntoRange(
 	ctx context.Context,
 	engine *Engine,
-	splitSize int64,
-	splitKeys int64,
+	sizeLimit int64,
+	keysLimit int64,
 ) ([]Range, error) {
 	firstKey, lastKey, err := engine.getFirstAndLastKey(nil, nil)
 	if err != nil {
@@ -997,19 +997,19 @@ func (local *local) readAndSplitIntoRange(
 	engineFileTotalSize := engine.TotalSize.Load()
 	engineFileLength := engine.Length.Load()
 
-	if engineFileTotalSize <= splitSize && engineFileLength <= splitKeys {
+	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		ranges := []Range{{start: firstKey, end: endKey}}
 		return ranges, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
-	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+	sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		splitSize, splitKeys)
+		sizeLimit, keysLimit)
 
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1070,27 +1070,30 @@ func (local *local) prepareAndGenerateUnfinishedJob(
 func (local *local) generateJobInRanges(
 	ctx context.Context,
 	engine *Engine,
-	ranges []Range,
+	jobRanges []Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
 	logger := log.FromContext(ctx)
-	logger.Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
-	ret := make([]*regionJob, 0, len(ranges))
+	// when use dynamic region feature, the region may be very big, we need
+	// to split to smaller ranges to increase the concurrency.
 	if regionSplitSize > 2*int64(config.SplitRegionSize) {
-		sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
+		sizeProps, err := getSizePropertiesFn(logger, engine.db, local.keyAdapter)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		ranges = splitRangeBySizeProps(
-			Range{start: ranges[0].start, end: ranges[len(ranges)-1].end}, sizeProps,
-			int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		jobRanges = splitRangeBySizeProps(
+			Range{start: jobRanges[0].start, end: jobRanges[len(jobRanges)-1].end},
+			sizeProps,
+			int64(config.SplitRegionSize),
+			int64(config.SplitRegionKeys))
 	}
+	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	for _, r := range ranges {
-		// when use dynamic region feature, the region may be very big, we need
-		// to split it into small regions to increase the concurrency.
+	ret := make([]*regionJob, 0, len(jobRanges))
+
+	for _, r := range jobRanges {
 		start, end := r.start, r.end
 		pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 		if err != nil {
