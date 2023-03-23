@@ -16,9 +16,35 @@
 
 package session
 
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/stretchr/testify/require"
+)
+
 var (
 	// GetBootstrapVersion is used in test
 	GetBootstrapVersion = getBootstrapVersion
 	// CurrentBootstrapVersion is used in test
 	CurrentBootstrapVersion = currentBootstrapVersion
 )
+
+func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	return store, dom
+}
+
+var sessionKitIDGenerator atomic.Uint64
+
+func CreateSessionAndSetID(t *testing.T, store kv.Storage) Session {
+	se, err := CreateSession4Test(store)
+	se.SetConnectionID(sessionKitIDGenerator.Inc())
+	require.NoError(t, err)
+	return se
+}
