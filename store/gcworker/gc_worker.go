@@ -21,9 +21,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"math"
 	"os"
 	"strconv"
@@ -48,11 +45,14 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -866,7 +866,7 @@ func isRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return string(raftVersion[:]) == raftKv2, nil
+	return string(raftVersion) == raftKv2, nil
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
