@@ -481,9 +481,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	})
 
 	if t.shouldAssert(sctx) {
-		if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
-			return err
-		}
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	}
+	if err != nil {
+		return err
 	}
 
 	if err = injectMutationError(t, txn, sh); err != nil {
@@ -1346,9 +1349,11 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	})
 	if t.shouldAssert(ctx) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
-		if err != nil {
-			return err
-		}
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	}
+	if err != nil {
+		return err
 	}
 	return txn.Delete(key)
 }

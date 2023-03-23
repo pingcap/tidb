@@ -203,3 +203,24 @@ func TestKill(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("kill connection_id();")
 }
+
+func TestIssue42426(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `sbtest1` (" +
+		"`id` bigint(20) NOT NULL AUTO_INCREMENT," +
+		"`k` int(11) NOT NULL DEFAULT '0'," +
+		"`c` char(120) NOT NULL DEFAULT ''," +
+		"`pad` char(60) NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */," +
+		"KEY `k_1` (`k`)" +
+		") PARTITION BY RANGE (`id`)" +
+		"(PARTITION `pnew` VALUES LESS THAN (10000000)," +
+		"PARTITION `p5` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "init", "val");`)
+	tk.MustExec(`BEGIN`)
+	tk.MustExec(`DELETE FROM sbtest1 WHERE id=502571;`)
+	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "abc", "def");`)
+	tk.MustExec(`COMMIT;`)
+}
