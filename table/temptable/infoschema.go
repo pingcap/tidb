@@ -41,9 +41,9 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 // DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
 	if attachedInfoSchema, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
-		newIs := *attachedInfoSchema
+		newIs := attachedInfoSchema
 		newIs.LocalTemporaryTables = nil
-		return &newIs
+		return newIs
 	}
 
 	return is
