@@ -338,6 +338,31 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
+// shouldAssert checks if the partition should be in consistent
+// state and can have assertion.
+func (t *TableCommon) shouldAssert(sctx sessionctx.Context) bool {
+	p := t.Meta().Partition
+	if p != nil {
+		// This disables asserting during Reorganize Partition.
+		switch sctx.GetSessionVars().AssertionLevel {
+		case variable.AssertionLevelFast:
+			// Fast option, just skip assertion for all partitions.
+			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
+				return false
+			}
+		case variable.AssertionLevelStrict:
+			// Strict, only disable assertion for intermediate partitions.
+			// If there were an easy way to get from a TableCommon back to the partitioned table...
+			for i := range p.AddingDefinitions {
+				if t.physicalTableID == p.AddingDefinitions[i].ID {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -454,8 +479,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			}
 		}
 	})
-	if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
-		return err
+
+	if t.shouldAssert(sctx) {
+		if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+			return err
+		}
 	}
 
 	if err = injectMutationError(t, txn, sh); err != nil {
@@ -1144,6 +1172,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	logutil.BgLogger().Debug("RemoveRecord",
+		zap.Stringer("key", t.RecordKey(h)))
 	err = t.removeRowData(ctx, h)
 	if err != nil {
 		return err
@@ -1314,28 +1344,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 			}
 		}
 	})
-	doAssert := true
-	p := t.Meta().Partition
-	if p != nil {
-		// This disables asserting during Reorganize Partition.
-		switch ctx.GetSessionVars().AssertionLevel {
-		case variable.AssertionLevelFast:
-			// Fast option, just skip assertion for all partitions.
-			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
-				doAssert = false
-			}
-		case variable.AssertionLevelStrict:
-			// Strict, only disable assertion for intermediate partitions.
-			// If there were an easy way to get from a TableCommon back to the partitioned table...
-			for i := range p.AddingDefinitions {
-				if t.physicalTableID == p.AddingDefinitions[i].ID {
-					doAssert = false
-					break
-				}
-			}
-		}
-	}
-	if doAssert {
+	if t.shouldAssert(ctx) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 		if err != nil {
 			return err

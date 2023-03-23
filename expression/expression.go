@@ -983,11 +983,11 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
 	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
 	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for i, col := range colInfos {
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)

@@ -51,8 +51,6 @@ func TestResourceGroupBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 YES"))
-
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustExec("create user usr1")
@@ -61,8 +59,10 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
-	tk.MustExec("alter resource group `default` ru_per_sec=10000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 NO"))
+	// test default resource group.
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 MEDIUM YES"))
+	tk.MustExec("alter resource group `default` RU_PER_SEC=1000 PRIORITY=LOW")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW NO"))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
@@ -98,7 +98,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -146,21 +146,25 @@ func TestResourceGroupBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
-	tk.MustExec("create resource group x RU_PER_SEC=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 NO"))
+	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=LOW")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW NO"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM YES"))
 	tk.MustExec("alter resource group x BURSTABLE RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 YES"))
-	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000 BURSTABLE"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 MEDIUM YES"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000 PRIORITY=MEDIUM BURSTABLE"))
 
 	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 YES"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000 BURSTABLE"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM YES"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000 PRIORITY=MEDIUM BURSTABLE"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 YES"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM YES"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 PRIORITY=MEDIUM BURSTABLE"))
+
+	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH YES"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("3"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
@@ -244,11 +248,13 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 	tests = append(tests, TestCase{
 		name: "normal case: ru case 1",
 		input: &model.ResourceGroupSettings{
-			RURate: 2000,
+			RURate:   2000,
+			Priority: 0,
 		},
 		output: &rmpb.ResourceGroup{
-			Name: groupName,
-			Mode: rmpb.GroupMode_RUMode,
+			Name:     groupName,
+			Mode:     rmpb.GroupMode_RUMode,
+			Priority: 0,
 			RUSettings: &rmpb.GroupRequestUnitSettings{
 				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 2000}},
 			},
@@ -258,11 +264,13 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 	tests = append(tests, TestCase{
 		name: "normal case: ru case 2",
 		input: &model.ResourceGroupSettings{
-			RURate: 5000,
+			RURate:   5000,
+			Priority: 8,
 		},
 		output: &rmpb.ResourceGroup{
-			Name: groupName,
-			Mode: rmpb.GroupMode_RUMode,
+			Name:     groupName,
+			Priority: 8,
+			Mode:     rmpb.GroupMode_RUMode,
 			RUSettings: &rmpb.GroupRequestUnitSettings{
 				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 5000}},
 			},

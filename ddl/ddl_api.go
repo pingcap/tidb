@@ -3061,6 +3061,8 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	switch typ {
 	case ast.ResourceRURate:
 		resourceGroupSettings.RURate = uintVal
+	case ast.ResourcePriority:
+		resourceGroupSettings.Priority = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
@@ -5040,10 +5042,12 @@ func GetModifiableColumnJob(
 			}
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx
-			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
-			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
+			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate.Load()
+			sv.TruncateAsWarning = false
+			sv.IgnoreTruncate.Store(false)
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
-			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+			sv.TruncateAsWarning = oldTruncAsWarn
+			sv.IgnoreTruncate.Store(oldIgnoreTrunc)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -5744,7 +5748,7 @@ func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
 	// Check the tiflash replica count should be less than the total tiflash stores.
-	tiflashStoreCnt, err := infoschema.GetTiFlashWriteStoreCount(ctx)
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6958,11 +6962,6 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
-	// Check for drop index on auto_increment column.
-	err = CheckDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
 	if err != nil {
 		return err
@@ -7900,7 +7899,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 }
 
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
-	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	for _, opt := range options {
 		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {
