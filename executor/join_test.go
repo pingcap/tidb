@@ -83,3 +83,18 @@ func TestUsingAndNaturalJoinSchema(t *testing.T) {
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
+
+func TestTiDBNAAJ(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_enable_null_aware_anti_join=0;")
+	tk.MustExec("create table t(a decimal(40,0), b bigint(20) not null);")
+	tk.MustExec("insert into t values(7,8),(7,8),(3,4),(3,4),(9,2),(9,2),(2,0),(2,0),(0,4),(0,4),(8,8),(8,8),(6,1),(6,1),(NULL, 0),(NULL,0);")
+	tk.MustQuery("select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;").Check(testkit.Rows(
+		"0", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
+	tk.MustExec("set @@session.tidb_enable_null_aware_anti_join=1;")
+	tk.MustQuery("select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;").Check(testkit.Rows(
+		"0", "0", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
+}
