@@ -100,7 +100,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if len(node.Lists) > 0 { // avoid index-out-of-range
 				nCols = len(node.Lists[0])
 			}
-			if nRows*nCols > 200 {
+			if nRows*nCols > 200 { // to save memory
 				checker.cacheable = false
 				checker.reason = "too many values (more than 200) in the insert statement"
 				return in, true
