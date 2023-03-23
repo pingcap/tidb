@@ -132,7 +132,7 @@ type ruConfig struct {
 }
 
 func getRUSettings(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (*ruConfig, error) {
-	rows, fields, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW CONFIG WHERE TYPE = 'pd' AND  name like 'request_unit.%'")
+	rows, fields, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SHOW CONFIG WHERE TYPE = 'pd' AND  name like 'controller.request-unit.%'")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -155,7 +155,7 @@ func getRUSettings(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (*ru
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		name, _ := strings.CutPrefix(row.GetString(nameIdx), "request-unit.")
+		name, _ := strings.CutPrefix(row.GetString(nameIdx), "controller.request-unit.")
 
 		switch name {
 		case "read-base-cost":
