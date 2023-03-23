@@ -88,7 +88,7 @@ func tryMakeImageOnce() (retry bool, err error) {
 	if err != nil {
 		return true, nil
 	}
-	defer os.Remove(lockFile)
+	defer func() { err = os.Remove(lockFile) }()
 	defer lock.Close()
 
 	// Prevent other process from creating the image concurrently
@@ -96,7 +96,7 @@ func tryMakeImageOnce() (retry bool, err error) {
 	if err != nil {
 		return true, nil
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer func() { err = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
 
 	// Now this is the only instance to do the operation.
 	store, err := mockstore.NewMockStore(
@@ -117,9 +117,9 @@ func tryMakeImageOnce() (retry bool, err error) {
 	dom.SetStatsUpdating(true)
 
 	dom.Close()
-	store.Close()
+	err = store.Close()
 
-	return false, nil
+	return false, err
 }
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
