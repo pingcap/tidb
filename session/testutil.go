@@ -64,6 +64,7 @@ func MustExec(t *testing.T, se Session, sql string, args ...interface{}) {
 	}
 }
 
+// MustExecToRecodeSet executes a sql statement and asserts no error occurs.
 func MustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
