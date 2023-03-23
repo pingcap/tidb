@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "workerpool",
+    srcs = ["workerpool.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanager/pool/workerpool",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanager",
+        "//resourcemanager/util",
+        "//util",
+        "@com_github_sasha_s_go_deadlock//:go-deadlock",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "workerpool_test",
+    srcs = [
+        "main_test.go",
+        "workpool_test.go",
+    ],
+    embed = [":workerpool"],
+    deps = [
+        "//resourcemanager/util",
+        "//testkit/testsetup",
+        "//util/logutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

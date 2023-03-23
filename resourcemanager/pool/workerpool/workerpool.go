@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/sasha-s/go-deadlock"
+	"github.com/pingcap/tidb/util/syncutil"
 	atomicutil "go.uber.org/atomic"
 )
 
@@ -40,7 +40,7 @@ type WorkerPool struct {
 	wg             tidbutil.WaitGroupWrapper
 	createWorker   func() Worker
 	lastTuneTs     atomicutil.Time
-	mu             deadlock.RWMutex
+	mu             syncutil.RWMutex
 }
 
 // NewWorkerPool creates a new worker pool.
