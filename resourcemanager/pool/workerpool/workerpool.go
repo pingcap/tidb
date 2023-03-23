@@ -25,8 +25,8 @@ import (
 )
 
 // Worker is worker interface.
-type Worker interface {
-	HandleTask(task any)
+type Worker[T any] interface {
+	HandleTask(task T)
 	Close()
 }
 
@@ -38,13 +38,13 @@ type WorkerPool[T any] struct {
 	taskChan     chan T
 	quitChan     chan struct{}
 	wg           tidbutil.WaitGroupWrapper
-	createWorker func() Worker
+	createWorker func() Worker[T]
 	lastTuneTs   atomicutil.Time
 	mu           syncutil.RWMutex
 }
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T any](name string, component util.Component, numWorkers int, createWorker func() Worker) (*WorkerPool[T], error) {
+func NewWorkerPool[T any](name string, component util.Component, numWorkers int, createWorker func() Worker[T]) (*WorkerPool[T], error) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}

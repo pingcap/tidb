@@ -28,22 +28,22 @@ import (
 var globalCnt atomic.Int64
 var cntWg sync.WaitGroup
 
-type MyWorker struct {
+type MyWorker[T int64] struct {
 	id int
 }
 
-func (w *MyWorker) HandleTask(task any) {
-	globalCnt.Add(task.(int64))
+func (w *MyWorker[T]) HandleTask(task int64) {
+	globalCnt.Add(task)
 	cntWg.Done()
 	logutil.BgLogger().Info("Worker handling task")
 }
 
-func (w *MyWorker) Close() {
+func (w *MyWorker[T]) Close() {
 	logutil.BgLogger().Info("Close worker", zap.Any("id", w.id))
 }
 
-func createMyWorker() Worker {
-	return &MyWorker{}
+func createMyWorker() Worker[int64] {
+	return &MyWorker[int64]{}
 }
 
 func TestWorkerPool(t *testing.T) {
