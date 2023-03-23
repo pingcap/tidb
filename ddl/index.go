@@ -724,7 +724,16 @@ func rewriteDDLQuery4MultiValueIndex(job *model.Job, charset, collation string) 
 	if err = stmt[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
 		return
 	}
-	job.Query = sb.String()
+
+	result := sb.String()
+
+	logutil.BgLogger().Info("[ddl] rewrite DDL query for multi-value index",
+		zap.String("original", job.Query),
+		zap.String("charset", charset),
+		zap.String("collation", collation),
+		zap.String("query", job.Query))
+
+	job.Query = result
 }
 
 // pickBackfillType determines which backfill process will be used.
