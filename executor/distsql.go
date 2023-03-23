@@ -710,8 +710,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			e.feedback.Invalidate()
 		}
 		cancel()
-		for _, ssr := range results {
-			if err := ssr.Close(); err != nil {
+		for _, result := range r {
+			if err := result.Close(); err != nil {
 				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 			}
 		}
@@ -958,9 +958,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(idxID)
 		}
 	}
-	i := int(0)
-	result := results[i]
-	for {
+	for i := 0; i < len(results); {
+		result := results[i]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
@@ -972,11 +971,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			return err
 		}
 		if len(handles) == 0 {
-			if i == len(results)-1 {
-				return nil
-			}
 			i++
-			result = results[i]
 			continue
 		}
 		task := w.buildTableTask(handles, retChunk)
