@@ -133,8 +133,13 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
+<<<<<<< HEAD
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
+=======
+# Make tidb panic if the write log operation hang for 15s
+# timeout = 15
+>>>>>>> 942186f3051 (config,go.mod: support timeout for log writting (#42212))
 
 # File logging.
 [log.file]

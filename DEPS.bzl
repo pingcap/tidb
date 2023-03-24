@@ -2754,8 +2754,13 @@ def go_deps():
         name = "com_github_pingcap_log",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/log",
+<<<<<<< HEAD
         sum = "h1:ELiPxACz7vdo1qAvvaWJg1NrYFoY6gqAh/+Uo6aXdD8=",
         version = "v1.1.0",
+=======
+        sum = "h1:2SOzvGvE8beiC1Y4g9Onkvu6UmuBBOeWRGQEjJaT/JY=",
+        version = "v1.1.1-0.20230317032135-a0d097d16e22",
+>>>>>>> 942186f3051 (config,go.mod: support timeout for log writting (#42212))
     )
     go_repository(
         name = "com_github_pingcap_sysutil",
