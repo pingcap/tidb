@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -190,7 +189,9 @@ func TestDDLHistogram(t *testing.T) {
 func TestDDLPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testkit.WithPruneMode(testKit, variable.Static, func() {
+	for _, pruneMode := range []string{"static", "dynamic"} {
+		testKit.MustExec("set @@tidb_partition_prune_mode=`" + pruneMode + "`")
+		testKit.MustExec("set global tidb_partition_prune_mode=`" + pruneMode + "`")
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -261,5 +262,20 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.False(t, statsTbl.Pseudo)
 		}
-	})
+
+		reorganizePartition := "alter table t reorganize partition p0,p1 into (partition p0 values less than (11))"
+		testKit.MustExec(reorganizePartition)
+		is = do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tableInfo = tbl.Meta()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		require.NoError(t, err)
+		require.Nil(t, h.Update(is))
+		pi = tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			require.False(t, statsTbl.Pseudo)
+		}
+	}
 }
