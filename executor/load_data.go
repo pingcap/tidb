@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -67,18 +66,27 @@ type LoadDataExec struct {
 	detachHandled  bool
 }
 
+func buildCloseSessionOnErr(
+	err *error,
+	sctx sessionctx.Context,
+	putBackFn func(context.Context, sessionctx.Context),
+) func() {
+	return func() {
+		if err != nil {
+			ctx := context.Background()
+			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
+			putBackFn(context.Background(), sctx)
+		}
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	defer func() {
-		// in happy path the detached worker will release the system session in
-		// e.loadDataWorker.doLoad, and it must have no error after e.loadDataWorker.doLoad.
-		// Here we handle the case that error occurred before e.loadDataWorker.doLoad/
-		if err != nil && e.loadDataWorker.controller.Detached {
-			ctx2 := context.Background()
-			ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
-			e.loadDataWorker.releaseSysSession(ctx2, e.loadDataWorker.Ctx)
-		}
-	}()
+	// in happy path the detached worker will release the system session in
+	// e.loadDataWorker.doLoad, and it must have no error after e.loadDataWorker.doLoad.
+	// Here we handle the case that error occurred before e.loadDataWorker.doLoad
+	defer buildCloseSessionOnErr(&err, e.loadDataWorker.encodeWorker.ctx, e.loadDataWorker.putSysSessionFn)()
+	defer buildCloseSessionOnErr(&err, e.loadDataWorker.commitWorker.ctx, e.loadDataWorker.putSysSessionFn)()
 
 	req.GrowAndReset(e.maxChunkSize)
 	if e.detachHandled {
@@ -121,7 +129,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 
 		// let caller use handleQuerySpecial to read data in this connection
-		sctx := e.loadDataWorker.ctx
+		sctx := e.loadDataWorker.UserSctx
 		val := sctx.Value(LoadDataVarKey)
 		if val != nil {
 			sctx.SetValue(LoadDataVarKey, nil)
@@ -215,24 +223,6 @@ func (e *LoadDataExec) loadFromRemote(
 	return e.loadDataWorker.Load(ctx, readerInfos)
 }
 
-// Close implements the Executor Close interface.
-func (e *LoadDataExec) Close() error {
-	if e.runtimeStats != nil && e.loadDataWorker != nil && e.loadDataWorker.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.loadDataWorker.stats)
-	}
-	return nil
-}
-
-// Open implements the Executor Open interface.
-func (e *LoadDataExec) Open(_ context.Context) error {
-	if e.loadDataWorker.insertColumns != nil {
-		e.loadDataWorker.initEvalBuffer()
-	}
-	// Init for runtime stats.
-	e.loadDataWorker.collectRuntimeStatsEnabled()
-	return nil
-}
-
 // commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
 	cnt  uint64
@@ -250,23 +240,16 @@ type loadRemoteInfo struct {
 
 // LoadDataWorker does a LOAD DATA job.
 type LoadDataWorker struct {
-	*InsertValues
+	UserSctx sessionctx.Context
 
-	// TODO: remove this field, use embedded InsertValues.ctx instead.
-	Ctx sessionctx.Context
-	// Data interpretation is restrictive if the SQL mode is restrictive and neither
-	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
-	// operation.
-	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
-	restrictive bool
+	// TODO: they should be []T to support concurrent load data.
+	encodeWorker *encodeWorker
+	commitWorker *commitWorker
 
 	controller *importer.LoadDataController
 
-	table           table.Table
-	row             []types.Datum
-	rows            [][]types.Datum
-	commitTaskQueue chan commitTask
-	finishedSize    int64
+	table table.Table
+	// TODO: no need to be atomic
 	progress        atomic.Pointer[asyncloaddata.Progress]
 	getSysSessionFn func() (sessionctx.Context, error)
 	putSysSessionFn func(context.Context, sessionctx.Context)
@@ -280,96 +263,108 @@ func NewLoadDataWorker(
 	getSysSessionFn func() (sessionctx.Context, error),
 	putSysSessionFn func(context.Context, sessionctx.Context),
 ) (w *LoadDataWorker, err error) {
-	ownSession := false
-	defer func() {
-		if err != nil && ownSession {
-			ctx := context.Background()
-			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-			putSysSessionFn(ctx, userSctx)
-		}
-	}()
-
 	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
 	}
 
-	sctx := userSctx
-	if controller.Detached {
-		if plan.FileLocRef == ast.FileLocClient {
-			return nil, exeerrors.ErrLoadDataCantDetachWithLocal
-		}
-		sysSession, err2 := getSysSessionFn()
-		if err2 != nil {
-			return nil, err2
-		}
-		ownSession = true
-
-		err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
-		if err != nil {
-			return nil, err
-		}
-		// copy the related variables to the new session
-		// I have no confident that all needed variables are copied :(
-		from := userSctx.GetSessionVars()
-		to := sysSession.GetSessionVars()
-		to.User = from.User
-		to.CurrentDB = from.CurrentDB
-		to.SQLMode = from.SQLMode
-		sctx = sysSession
-	}
-
-	insertVal := &InsertValues{
-		baseExecutor:   newBaseExecutor(sctx, nil, plan.ID()),
-		Table:          tbl,
-		Columns:        plan.Columns,
-		GenExprs:       plan.GenCols.Exprs,
-		isLoadData:     true,
-		txnInUse:       syncutil.Mutex{},
-		maxRowsInBatch: uint64(controller.GetBatchSize()),
-	}
-	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
-		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-	if !restrictive {
+	if !controller.Restrictive {
 		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 		// meaning of this flag is not clear. I can only reuse it here.
-		sctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-		sctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
-		sctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		userSctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		userSctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+		userSctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	}
+
+	// TODO: create N InsertValues where N is threadCnt
+	encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller, getSysSessionFn, putSysSessionFn)
+	if err2 != nil {
+		return nil, err2
+	}
+	defer buildCloseSessionOnErr(&err, encodeCore.ctx, putSysSessionFn)()
+	commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller, getSysSessionFn, putSysSessionFn)
+	if err2 != nil {
+		return nil, err2
+	}
+	defer buildCloseSessionOnErr(&err, commitCore.ctx, putSysSessionFn)()
+
+	encode := &encodeWorker{
+		InsertValues: encodeCore,
+		controller:   controller,
+		killed:       &userSctx.GetSessionVars().Killed,
+	}
+	encode.ResetBatch()
+	commit := &commitWorker{
+		InsertValues: commitCore,
+		controller:   controller,
+		// TODO: progress
 	}
 	loadDataWorker := &LoadDataWorker{
-		row:             make([]types.Datum, 0, len(insertVal.insertColumns)),
-		commitTaskQueue: make(chan commitTask, taskQueueSize),
-		InsertValues:    insertVal,
+		encodeWorker:    encode,
+		commitWorker:    commit,
 		table:           tbl,
 		controller:      controller,
-		Ctx:             sctx,
-		restrictive:     restrictive,
+		UserSctx:        userSctx,
 		getSysSessionFn: getSysSessionFn,
 		putSysSessionFn: putSysSessionFn,
 	}
-	if err = loadDataWorker.initInsertValues(); err != nil {
-		return nil, err
-	}
-	loadDataWorker.ResetBatch()
 	return loadDataWorker, nil
 }
 
-func (e *LoadDataWorker) initInsertValues() error {
-	e.insertColumns = e.controller.GetInsertColumns()
-	e.rowLen = len(e.insertColumns)
+// createInsertValues creates InsertValues whose session context is a clone of
+// userSctx.
+func createInsertValues(
+	userSctx sessionctx.Context,
+	plan *plannercore.LoadData,
+	tbl table.Table,
+	controller *importer.LoadDataController,
+	getSysSessionFn func() (sessionctx.Context, error),
+	putSysSessionFn func(context.Context, sessionctx.Context),
+) (insertVal *InsertValues, err error) {
+	sysSession, err2 := getSysSessionFn()
+	if err2 != nil {
+		return nil, err2
+	}
+	defer buildCloseSessionOnErr(&err, sysSession, putSysSessionFn)()
 
-	for _, col := range e.insertColumns {
+	err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
+	if err != nil {
+		return nil, err
+	}
+	// copy the related variables to the new session
+	// I have no confident that all needed variables are copied :(
+	fromVars := userSctx.GetSessionVars()
+	toVars := sysSession.GetSessionVars()
+	toVars.User = fromVars.User
+	toVars.CurrentDB = fromVars.CurrentDB
+	toVars.SQLMode = fromVars.SQLMode
+
+	insertColumns := controller.GetInsertColumns()
+	hasExtraHandle := false
+	for _, col := range insertColumns {
 		if col.Name.L == model.ExtraHandleName.L {
-			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("load data statement for _tidb_rowid are not supported")
+			if !userSctx.GetSessionVars().AllowWriteRowID {
+				return nil, errors.Errorf("load data statement for _tidb_rowid are not supported")
 			}
-			e.hasExtraHandle = true
+			hasExtraHandle = true
 			break
 		}
 	}
-
-	return nil
+	ret := &InsertValues{
+		baseExecutor:   newBaseExecutor(sysSession, nil, plan.ID()),
+		Table:          tbl,
+		Columns:        plan.Columns,
+		GenExprs:       plan.GenCols.Exprs,
+		maxRowsInBatch: uint64(controller.GetBatchSize()),
+		insertColumns:  insertColumns,
+		rowLen:         len(insertColumns),
+		hasExtraHandle: hasExtraHandle,
+	}
+	if len(insertColumns) > 0 {
+		ret.initEvalBuffer()
+	}
+	ret.collectRuntimeStatsEnabled()
+	return ret, nil
 }
 
 // LoadDataReaderInfo provides information for a data reader of LOAD DATA.
@@ -406,7 +401,7 @@ func (e *LoadDataWorker) Load(
 		e.controller.SchemaName,
 		e.table.Meta().Name.O,
 		importer.LogicalImportMode,
-		e.Ctx.GetSessionVars().User.String(),
+		e.UserSctx.GetSessionVars().User.String(),
 	)
 	if err != nil {
 		return 0, err
@@ -431,12 +426,16 @@ func (e *LoadDataWorker) doLoad(
 	jobID int64,
 ) (err error) {
 	defer func() {
-		if e.controller.Detached {
-			e.putSysSessionFn(ctx, e.Ctx)
-		}
+		e.encodeWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.encodeWorker.id, e.encodeWorker.stats)
+		e.commitWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.commitWorker.id, e.commitWorker.stats)
+
+		ctx2 := context.Background()
+		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
+		e.putSysSessionFn(ctx2, e.encodeWorker.ctx)
+		e.putSysSessionFn(ctx2, e.commitWorker.ctx)
 	}()
 
-	// get a session for UpdateJobProgress. e.Ctx is exclusively used by commitWork.
+	// get a session for UpdateJobProgress. e.UserSctx is exclusively used by processStream.
 	s, err := e.getSysSessionFn()
 	if err != nil {
 		return err
@@ -445,6 +444,7 @@ func (e *LoadDataWorker) doLoad(
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
+	var msg string
 	defer func() {
 		// write the ending status even if user context is canceled.
 		ctx2 := context.Background()
@@ -454,7 +454,7 @@ func (e *LoadDataWorker) doLoad(
 				ctx2,
 				sqlExec,
 				jobID,
-				e.Ctx.GetSessionVars().StmtCtx.GetMessage())
+				msg)
 			terror.Log(err2)
 			return
 		}
@@ -504,40 +504,40 @@ func (e *LoadDataWorker) doLoad(
 	// done is used to let commitWork goroutine notify UpdateJobProgress
 	// goroutine that the job is finished.
 	done := make(chan struct{})
-	// both processStream and commitWork goroutines will use this txn.
-	err = sessiontxn.NewTxn(ctx, e.Ctx)
-	if err != nil {
-		return err
-	}
+	commitTaskCh := make(chan commitTask, taskQueueSize)
 
 	// processStream goroutine.
 	var parser mydump.Parser
 	group.Go(func() error {
+		err = sessiontxn.NewTxn(ctx, e.encodeWorker.ctx)
+		if err != nil {
+			return err
+		}
 		for _, info := range readerInfos {
 			reader, err2 := info.Opener(ctx)
 			if err2 != nil {
 				return err2
 			}
 
-			parser, err2 = e.buildParser(ctx, reader, info.Remote)
+			parser, err2 = e.encodeWorker.buildParser(ctx, reader, info.Remote)
 			if err2 != nil {
 				terror.Log(reader.Close())
 				return err2
 			}
-			err2 = e.processStream(groupCtx, parser, reader)
+			err2 = e.encodeWorker.processStream(groupCtx, parser, reader, commitTaskCh)
 			terror.Log(reader.Close())
 			if err2 != nil {
 				return err2
 			}
 		}
 
-		close(e.commitTaskQueue)
+		close(commitTaskCh)
 		return nil
 	})
 	// commitWork goroutine.
 	group.Go(func() error {
 		failpoint.Inject("BeforeCommitWork", nil)
-		err2 := e.commitWork(groupCtx)
+		err2 := e.commitWorker.commitWork(groupCtx, commitTaskCh)
 		if err2 == nil {
 			close(done)
 		}
@@ -575,21 +575,30 @@ func (e *LoadDataWorker) doLoad(
 	})
 
 	err = group.Wait()
-	e.SetMessage()
+	msg = e.MergeAndSetMessage()
 	return err
 }
 
-func (e *LoadDataWorker) buildParser(
+// encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
+type encodeWorker struct {
+	*InsertValues
+	controller   *importer.LoadDataController
+	killed       *uint32
+	finishedSize int64
+	rows         [][]types.Datum
+}
+
+func (w *encodeWorker) buildParser(
 	ctx context.Context,
 	reader io.ReadSeekCloser,
 	remote *loadRemoteInfo,
 ) (parser mydump.Parser, err error) {
-	switch e.controller.Format {
+	switch w.controller.Format {
 	case importer.LoadDataFormatDelimitedData:
 		// CSV-like
 		parser, err = mydump.NewCSVParser(
 			ctx,
-			e.controller.GenerateCSVConfig(),
+			w.controller.GenerateCSVConfig(),
 			reader,
 			importer.LoadDataReadBlockSize,
 			nil,
@@ -599,7 +608,7 @@ func (e *LoadDataWorker) buildParser(
 	case importer.LoadDataFormatSQLDump:
 		parser = mydump.NewChunkParser(
 			ctx,
-			e.Ctx.GetSessionVars().SQLMode,
+			w.ctx.GetSessionVars().SQLMode,
 			reader,
 			importer.LoadDataReadBlockSize,
 			nil,
@@ -629,7 +638,7 @@ func (e *LoadDataWorker) buildParser(
 		}
 	}
 
-	ignoreLineCnt := e.controller.IgnoreLines
+	ignoreLineCnt := w.controller.IgnoreLines
 	for ignoreLineCnt > 0 {
 		err = ignoreOneLineFn()
 		if err != nil {
@@ -646,10 +655,11 @@ func (e *LoadDataWorker) buildParser(
 
 // processStream process input stream from parser. When returns nil, it means
 // all data is read.
-func (e *LoadDataWorker) processStream(
+func (w *encodeWorker) processStream(
 	ctx context.Context,
 	parser mydump.Parser,
 	seeker io.Seeker,
+	outCh chan<- commitTask,
 ) (err error) {
 	defer func() {
 		r := recover()
@@ -670,11 +680,11 @@ func (e *LoadDataWorker) processStream(
 	)
 	for {
 		// prepare batch and enqueue task
-		if err = e.ReadOneBatchRows(ctx, parser); err != nil {
+		if err = w.ReadOneBatchRows(ctx, parser); err != nil {
 			return
 		}
-		if e.curBatchCnt == 0 {
-			e.finishedSize += currScannedSize
+		if w.curBatchCnt == 0 {
+			w.finishedSize += currScannedSize
 			return
 		}
 
@@ -689,183 +699,29 @@ func (e *LoadDataWorker) processStream(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-checkKilled.C:
-			if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(w.killed, 1, 0) {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-				close(e.commitTaskQueue)
+				// TODO: after multiple encodeWorker, caller should close this channel
+				close(outCh)
 				return exeerrors.ErrQueryInterrupted
 			}
 			goto TrySendTask
-		case e.commitTaskQueue <- commitTask{
-			cnt:             e.curBatchCnt,
-			rows:            e.rows,
-			loadedRowCnt:    e.rowCount,
-			scannedFileSize: e.finishedSize + currScannedSize,
+		case outCh <- commitTask{
+			cnt:             w.curBatchCnt,
+			rows:            w.rows,
+			loadedRowCnt:    w.rowCount,
+			scannedFileSize: w.finishedSize + currScannedSize,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
-		e.ResetBatch()
+		w.ResetBatch()
 	}
 }
 
 // ResetBatch reset the inner batch.
-func (e *LoadDataWorker) ResetBatch() {
-	e.rows = make([][]types.Datum, 0, e.maxRowsInBatch)
-	e.curBatchCnt = 0
-}
-
-// commitWork commit batch sequentially. When returns nil, it means the job is
-// finished.
-func (e *LoadDataWorker) commitWork(ctx context.Context) (err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.Logger(ctx).Error("commitWork panicked",
-				zap.Reflect("r", r),
-				zap.Stack("stack"))
-			err = errors.Errorf("%v", r)
-		}
-	}()
-
-	var (
-		tasks               uint64
-		lastScannedFileSize int64
-		currScannedFileSize int64
-		backgroundCtx       = context.Background()
-	)
-	for {
-		select {
-		case <-ctx.Done():
-			e.Ctx.StmtRollback(backgroundCtx, false)
-			_ = e.Ctx.RefreshTxnCtx(backgroundCtx)
-			return ctx.Err()
-		case task, ok := <-e.commitTaskQueue:
-			if !ok {
-				p := e.progress.Load()
-				newP := &asyncloaddata.Progress{
-					SourceFileSize: p.SourceFileSize,
-					LoadedFileSize: currScannedFileSize,
-					LoadedRowCnt:   p.LoadedRowCnt,
-				}
-				e.progress.Store(newP)
-				return nil
-			}
-			start := time.Now()
-			if err = e.commitOneTask(ctx, task); err != nil {
-				return err
-			}
-			// we want to report "loaded" progress, not "scanned" progress, the
-			// difference of these two is the latest block we read is still in
-			// processing. So when "scanned" progress get forward we know the
-			// last block is processed.
-			// The corner case is when a record is larger than the block size,
-			// but that should be rare.
-			if task.scannedFileSize != currScannedFileSize {
-				lastScannedFileSize = currScannedFileSize
-				currScannedFileSize = task.scannedFileSize
-			}
-			p := e.progress.Load()
-			newP := &asyncloaddata.Progress{
-				SourceFileSize: p.SourceFileSize,
-				LoadedFileSize: lastScannedFileSize,
-				LoadedRowCnt:   task.loadedRowCnt,
-			}
-			e.progress.Store(newP)
-			tasks++
-			logutil.Logger(ctx).Info("commit one task success",
-				zap.Duration("commit time usage", time.Since(start)),
-				zap.Uint64("keys processed", task.cnt),
-				zap.Uint64("tasks processed", tasks),
-				zap.Int("tasks in queue", len(e.commitTaskQueue)))
-			failpoint.Inject("AfterCommitOneTask", nil)
-		}
-	}
-}
-
-// commitOneTask insert Data from LoadDataWorker.rows, then make commit and refresh txn
-func (e *LoadDataWorker) commitOneTask(ctx context.Context, task commitTask) error {
-	var err error
-	defer func() {
-		if err != nil {
-			e.Ctx.StmtRollback(ctx, false)
-		}
-	}()
-	err = e.CheckAndInsertOneBatch(ctx, task.rows, task.cnt)
-	if err != nil {
-		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
-		return err
-	}
-	failpoint.Inject("commitOneTaskErr", func() error {
-		return errors.New("mock commit one task error")
-	})
-	e.Ctx.StmtCommit(ctx)
-	// Make sure process stream routine never use invalid txn
-	e.txnInUse.Lock()
-	defer e.txnInUse.Unlock()
-	// Make sure that there are no retries when committing.
-	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
-		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
-		return err
-	}
-	return nil
-}
-
-// CheckAndInsertOneBatch is used to commit one transaction batch fulfilled data
-func (e *LoadDataWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
-	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
-		// Since this method will not call by executor Next,
-		// so we need record the basic executor runtime stats by ourselves.
-		start := time.Now()
-		defer func() {
-			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)
-		}()
-	}
-	var err error
-	if cnt == 0 {
-		return err
-	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
-
-	switch e.controller.OnDuplicate {
-	case ast.OnDuplicateKeyHandlingReplace:
-		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, true)
-	case ast.OnDuplicateKeyHandlingIgnore:
-		return e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, false)
-	case ast.OnDuplicateKeyHandlingError:
-		for i, row := range rows[0:cnt] {
-			sizeHintStep := int(e.Ctx.GetSessionVars().ShardAllocateStep)
-			if sizeHintStep > 0 && i%sizeHintStep == 0 {
-				sizeHint := sizeHintStep
-				remain := len(rows[0:cnt]) - i
-				if sizeHint > remain {
-					sizeHint = remain
-				}
-				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
-			} else {
-				err = e.addRecord(ctx, row)
-			}
-			if err != nil {
-				return err
-			}
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-		}
-		return nil
-	default:
-		return errors.Errorf("unknown on duplicate key handling: %v", e.controller.OnDuplicate)
-	}
-}
-
-func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
-	if row == nil {
-		return nil
-	}
-	err := e.addRecord(ctx, row)
-	if err != nil {
-		if e.restrictive {
-			return err
-		}
-		e.handleWarning(err)
-	}
-	return nil
+func (w *encodeWorker) ResetBatch() {
+	w.rows = make([][]types.Datum, 0, w.maxRowsInBatch)
+	w.curBatchCnt = 0
 }
 
 // ReadOneBatchRows reads rows from parser. When parser's reader meet EOF, it
@@ -873,7 +729,7 @@ func (e *LoadDataWorker) addRecordLD(ctx context.Context, row []types.Datum) err
 // batch is full it will also return nil.
 // The result rows are saved in e.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (e *LoadDataWorker) ReadOneBatchRows(ctx context.Context, parser mydump.Parser) error {
+func (w *encodeWorker) ReadOneBatchRows(ctx context.Context, parser mydump.Parser) error {
 	for {
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -886,43 +742,43 @@ func (e *LoadDataWorker) ReadOneBatchRows(ctx context.Context, parser mydump.Par
 		}
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
-		e.rowCount++
-		r, err := e.parserData2TableData(ctx, parser.LastRow().Row)
+		w.rowCount++
+		r, err := w.parserData2TableData(ctx, parser.LastRow().Row)
 		if err != nil {
 			return err
 		}
-		e.rows = append(e.rows, r)
-		e.curBatchCnt++
-		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
-			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
-				zap.Uint64("totalRows", e.rowCount))
+		w.rows = append(w.rows, r)
+		w.curBatchCnt++
+		if w.maxRowsInBatch != 0 && w.rowCount%w.maxRowsInBatch == 0 {
+			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", w.maxChunkSize),
+				zap.Uint64("totalRows", w.rowCount))
 			return nil
 		}
 	}
 }
 
 // parserData2TableData encodes the data of parser output.
-func (e *LoadDataWorker) parserData2TableData(
+func (w *encodeWorker) parserData2TableData(
 	ctx context.Context,
 	parserData []types.Datum,
 ) ([]types.Datum, error) {
 	var errColNumMismatch error
 	switch {
-	case len(parserData) < e.controller.GetFieldCount():
-		errColNumMismatch = exeerrors.ErrWarnTooFewRecords.GenWithStackByArgs(e.rowCount)
-	case len(parserData) > e.controller.GetFieldCount():
-		errColNumMismatch = exeerrors.ErrWarnTooManyRecords.GenWithStackByArgs(e.rowCount)
+	case len(parserData) < w.controller.GetFieldCount():
+		errColNumMismatch = exeerrors.ErrWarnTooFewRecords.GenWithStackByArgs(w.rowCount)
+	case len(parserData) > w.controller.GetFieldCount():
+		errColNumMismatch = exeerrors.ErrWarnTooManyRecords.GenWithStackByArgs(w.rowCount)
 	}
 
 	if errColNumMismatch != nil {
-		if e.restrictive {
+		if w.controller.Restrictive {
 			return nil, errColNumMismatch
 		}
-		e.handleWarning(errColNumMismatch)
+		w.handleWarning(errColNumMismatch)
 	}
 
-	row := make([]types.Datum, 0, len(e.insertColumns))
-	sessionVars := e.Ctx.GetSessionVars()
+	row := make([]types.Datum, 0, len(w.insertColumns))
+	sessionVars := w.ctx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -934,7 +790,7 @@ func (e *LoadDataWorker) parserData2TableData(
 		}
 	}
 
-	fieldMappings := e.controller.GetFieldMapping()
+	fieldMappings := w.controller.GetFieldMapping()
 	for i := 0; i < len(fieldMappings); i++ {
 		if i >= len(parserData) {
 			if fieldMappings[i].Column == nil {
@@ -959,25 +815,25 @@ func (e *LoadDataWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(e.controller.ColumnAssignments); i++ {
+	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(e.Ctx, e.controller.ColumnAssignments[i].Expr)
+		d, err := expression.EvalAstExpr(w.ctx, w.controller.ColumnAssignments[i].Expr)
 		if err != nil {
-			if e.restrictive {
+			if w.controller.Restrictive {
 				return nil, err
 			}
-			e.handleWarning(err)
+			w.handleWarning(err)
 		}
 		row = append(row, d)
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := e.getRow(ctx, row)
+	newRow, err := w.getRow(ctx, row)
 	if err != nil {
-		if e.restrictive {
+		if w.controller.Restrictive {
 			return nil, err
 		}
-		e.handleWarning(err)
+		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
 		// TODO: should not return nil! caller will panic when lookup index
 		return nil, nil
@@ -986,26 +842,196 @@ func (e *LoadDataWorker) parserData2TableData(
 	return newRow, nil
 }
 
-// SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
-// LOAD statement is handled.
-func (e *LoadDataWorker) SetMessage() {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+// commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
+type commitWorker struct {
+	*InsertValues
+	controller *importer.LoadDataController
+	// TODO: no need to use atomic here
+	progress atomic.Pointer[asyncloaddata.Progress]
+}
+
+// commitWork commit batch sequentially. When returns nil, it means the job is
+// finished.
+func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("commitWork panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.Errorf("%v", r)
+		}
+	}()
+
+	var (
+		tasks               uint64
+		lastScannedFileSize int64
+		currScannedFileSize int64
+		backgroundCtx       = context.Background()
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			w.ctx.StmtRollback(backgroundCtx, false)
+			_ = w.ctx.RefreshTxnCtx(backgroundCtx)
+			return ctx.Err()
+		case task, ok := <-inCh:
+			if !ok {
+				p := w.progress.Load()
+				newP := &asyncloaddata.Progress{
+					SourceFileSize: p.SourceFileSize,
+					LoadedFileSize: currScannedFileSize,
+					LoadedRowCnt:   p.LoadedRowCnt,
+				}
+				w.progress.Store(newP)
+				return nil
+			}
+			start := time.Now()
+			if err = w.commitOneTask(ctx, task); err != nil {
+				return err
+			}
+			// we want to report "loaded" progress, not "scanned" progress, the
+			// difference of these two is the latest block we read is still in
+			// processing. So when "scanned" progress get forward we know the
+			// last block is processed.
+			// The corner case is when a record is larger than the block size,
+			// but that should be rare.
+			if task.scannedFileSize != currScannedFileSize {
+				lastScannedFileSize = currScannedFileSize
+				currScannedFileSize = task.scannedFileSize
+			}
+			p := w.progress.Load()
+			newP := &asyncloaddata.Progress{
+				SourceFileSize: p.SourceFileSize,
+				LoadedFileSize: lastScannedFileSize,
+				LoadedRowCnt:   task.loadedRowCnt,
+			}
+			w.progress.Store(newP)
+			tasks++
+			logutil.Logger(ctx).Info("commit one task success",
+				zap.Duration("commit time usage", time.Since(start)),
+				zap.Uint64("keys processed", task.cnt),
+				zap.Uint64("tasks processed", tasks),
+			)
+			failpoint.Inject("AfterCommitOneTask", nil)
+		}
+	}
+}
+
+// commitOneTask insert Data from LoadDataWorker.rows, then make commit and refresh txn
+func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error {
+	var err error
+	defer func() {
+		if err != nil {
+			w.ctx.StmtRollback(ctx, false)
+		}
+	}()
+	err = w.CheckAndInsertOneBatch(ctx, task.rows, task.cnt)
+	if err != nil {
+		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
+		return err
+	}
+	failpoint.Inject("commitOneTaskErr", func() error {
+		return errors.New("mock commit one task error")
+	})
+	w.ctx.StmtCommit(ctx)
+	// Make sure that there are no retries when committing.
+	if err = w.ctx.RefreshTxnCtx(ctx); err != nil {
+		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+// CheckAndInsertOneBatch is used to commit one transaction batch fulfilled data
+func (w *commitWorker) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+	if w.stats != nil && w.stats.BasicRuntimeStats != nil {
+		// Since this method will not call by executor Next,
+		// so we need record the basic executor runtime stats by ourselves.
+		start := time.Now()
+		defer func() {
+			w.stats.BasicRuntimeStats.Record(time.Since(start), 0)
+		}()
+	}
+	var err error
+	if cnt == 0 {
+		return err
+	}
+	w.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
+
+	switch w.controller.OnDuplicate {
+	case ast.OnDuplicateKeyHandlingReplace:
+		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, true)
+	case ast.OnDuplicateKeyHandlingIgnore:
+		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
+	case ast.OnDuplicateKeyHandlingError:
+		for i, row := range rows[0:cnt] {
+			sizeHintStep := int(w.ctx.GetSessionVars().ShardAllocateStep)
+			if sizeHintStep > 0 && i%sizeHintStep == 0 {
+				sizeHint := sizeHintStep
+				remain := len(rows[0:cnt]) - i
+				if sizeHint > remain {
+					sizeHint = remain
+				}
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+			} else {
+				err = w.addRecord(ctx, row)
+			}
+			if err != nil {
+				return err
+			}
+			w.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		}
+		return nil
+	default:
+		return errors.Errorf("unknown on duplicate key handling: %v", w.controller.OnDuplicate)
+	}
+}
+
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+	if row == nil {
+		return nil
+	}
+	err := w.addRecord(ctx, row)
+	if err != nil {
+		if w.controller.Restrictive {
+			return err
+		}
+		w.handleWarning(err)
+	}
+	return nil
+}
+
+// MergeAndSetMessage merges stats from all used session context and sets info
+// message(ERR_LOAD_INFO) generated by LOAD statement to UserSctx, it is
+// public for test.
+func (e *LoadDataWorker) MergeAndSetMessage() string {
+	stmtCtx := e.encodeWorker.ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
 	numDeletes := stmtCtx.DeletedRows()
 	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
+	stmtCtx2 := e.commitWorker.ctx.GetSessionVars().StmtCtx
+	numRecords += stmtCtx2.RecordRows()
+	numDeletes += stmtCtx2.DeletedRows()
+	numSkipped += numRecords - stmtCtx2.CopiedRows()
+	numWarnings += stmtCtx2.WarningCount()
+
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	if !e.controller.Detached {
+		e.UserSctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	}
+	return msg
 }
 
 // GetRows getter for rows
 func (e *LoadDataWorker) GetRows() [][]types.Datum {
-	return e.rows
+	return e.encodeWorker.rows
 }
 
 // GetCurBatchCnt getter for curBatchCnt
 func (e *LoadDataWorker) GetCurBatchCnt() uint64 {
-	return e.curBatchCnt
+	return e.encodeWorker.curBatchCnt
 }
 
 // GetInfilePath get infile path.

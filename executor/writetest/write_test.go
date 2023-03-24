@@ -1484,7 +1484,7 @@ func checkCases(
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 		require.NoError(t, err1)
 		ld.ResetBatch()
-		ld.SetMessage()
+		ld.MergeAndSetMessage()
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		ctx.StmtCommit(context.Background())
 		txn, err := ctx.Txn(true)

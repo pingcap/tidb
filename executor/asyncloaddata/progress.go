@@ -16,6 +16,7 @@ package asyncloaddata
 
 import "encoding/json"
 
+// TODO: make some fields atomic to support concurrent commit.
 // Progress is the progress of the LOAD DATA task.
 type Progress struct {
 	// SourceFileSize is the size of the source file in bytes. When we can't get

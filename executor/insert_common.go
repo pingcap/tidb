@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
@@ -94,11 +93,6 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
-	// The other one for commit task, which will invalid txn.
-	// We use mutex to protect routine from using invalid txn.
-	isLoadData bool
-	txnInUse   syncutil.Mutex
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
@@ -1041,10 +1035,6 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	if shardFmt.IncrementalMask()&autoRandomID != autoRandomID {
 		return 0, autoid.ErrAutoRandReadFailed
-	}
-	if e.isLoadData {
-		e.txnInUse.Lock()
-		defer e.txnInUse.Unlock()
 	}
 	_, err = e.ctx.Txn(true)
 	if err != nil {
