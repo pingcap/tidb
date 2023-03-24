@@ -105,7 +105,7 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	countTsoRequest, countTsoUseConstant, countWaitTsoOracle := getAllTsoCounter(sctx)
-	require.Equal(t, uint64(496), countTsoRequest.(uint64))
+	require.Equal(t, uint64(398), countTsoRequest.(uint64))
 	require.Equal(t, uint64(594), countTsoUseConstant.(uint64))
 	require.Equal(t, uint64(198), countWaitTsoOracle.(uint64))
 
@@ -137,7 +137,7 @@ func TestRcTSOCmdCountForPrepareExecuteNormal(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(693), count)
+	require.Equal(t, uint64(594), count)
 }
 
 func TestRcTSOCmdCountForPrepareExecuteExtra(t *testing.T) {
