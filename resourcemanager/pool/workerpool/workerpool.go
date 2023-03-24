@@ -82,7 +82,6 @@ func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
 
 func (p *WorkerPool[T]) runAWorker() {
 	p.wg.Run(func() {
-		defer tidbutil.Recover(metrics.LabelWorkerPool, "runAWorker", nil, false)
 		w := p.createWorker()
 		for {
 			select {
