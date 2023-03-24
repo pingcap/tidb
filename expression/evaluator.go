@@ -25,7 +25,8 @@ type columnEvaluator struct {
 
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
-//	     since it will change the content of the input Chunk.
+//
+//	since it will change the content of the input Chunk.
 func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
 		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {

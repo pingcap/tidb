@@ -472,7 +472,8 @@ type stmtTask struct {
 }
 
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
-//   insert into t1 values (111), (222), (333), (444);
+//
+//	insert into t1 values (111), (222), (333), (444);
 func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
 	rows := r.(tidbRows)
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
@@ -500,10 +501,12 @@ func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, column
 }
 
 // WriteRowsToDB write rows in row-by-row mode, which will insert multiple rows like this:
-//   insert into t1 values (111);
-//   insert into t1 values (222);
-//   insert into t1 values (333);
-//   insert into t1 values (444);
+//
+//	insert into t1 values (111);
+//	insert into t1 values (222);
+//	insert into t1 values (333);
+//	insert into t1 values (444);
+//
 // See more details in br#1366: https://github.com/pingcap/br/issues/1366
 func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
 	rows := r.(tidbRows)

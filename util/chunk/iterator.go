@@ -25,9 +25,9 @@ var (
 
 // Iterator is used to iterate a number of rows.
 //
-// for row := it.Begin(); row != it.End(); row = it.Next() {
-//     ...
-// }
+//	for row := it.Begin(); row != it.End(); row = it.Next() {
+//	    ...
+//	}
 type Iterator interface {
 	// Begin resets the cursor of the iterator and returns the first Row.
 	Begin() Row

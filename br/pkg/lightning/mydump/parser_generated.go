@@ -32,7 +32,7 @@ import (
 
 //.... lightning/mydump/parser.rl:137
 
-//.... tmp_parser.go:37
+// .... tmp_parser.go:37
 const (
 	chunk_parser_start       int = 21
 	chunk_parser_first_final int = 21
