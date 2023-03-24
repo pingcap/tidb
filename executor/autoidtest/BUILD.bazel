@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 5,
-=======
     shard_count = 11,
->>>>>>> f1df9351785 (ddl: add a warning after successfully reorganizing partitions (#42367))
     deps = [
         "//autoid_service",
         "//config",
