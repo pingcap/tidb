@@ -88,8 +88,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
-			notice := errors.Errorf("skip non-prep plan cache: %v", reason)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(notice)
+			stmtCtx.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason))
 		}
 		return nil, nil, false, nil
 	}
@@ -107,7 +106,13 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		}
 	}()
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	paramExprs := core.Params2Expressions(params)
+
 	if val == nil {
+		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
+		if err := core.SetParameterValuesIntoSCtx(sctx, nil, paramExprs); err != nil {
+			return nil, nil, false, err
+		}
 		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt)
 		if err != nil {
 			return nil, nil, false, err
@@ -117,7 +122,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
 
-	paramExprs := core.Params2Expressions(params)
 	cachedPlan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
 		return nil, nil, false, err
@@ -493,12 +497,12 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanID.Store(0)
+	sctx.GetSessionVars().PlanColumnID.Store(0)
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
 	})
 
 	// reset fields about rewrite

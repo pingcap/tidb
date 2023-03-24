@@ -73,6 +73,7 @@ go_library(
         "//util/chunk",
         "//util/collate",
         "//util/dbterror",
+        "//util/dbterror/exeerrors",
         "//util/execdetails",
         "//util/intest",
         "//util/kvcache",
@@ -109,7 +110,7 @@ go_library(
 
 go_test(
     name = "session_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",

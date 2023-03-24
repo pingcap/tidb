@@ -419,6 +419,9 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 	return r, nil
 }
 
+// getSizePropertiesFn is used to let unit test replace the real function.
+var getSizePropertiesFn = getSizeProperties
+
 func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {

@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -71,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -310,7 +311,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 }
 
 type statsCache struct {
-	mu         sync.RWMutex
+	mu         syncutil.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
@@ -1521,8 +1522,12 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			startTimeStr = startTime.Format(time.RFC3339)
 			upTimeStr = time.Since(startTime).String()
 		}
+		serverType := server.ServerType
+		if server.ServerType == kv.TiFlash.Name() && server.EngineRole == placement.EngineRoleLabelWrite {
+			serverType = infoschema.TiFlashWrite
+		}
 		row := types.MakeDatums(
-			server.ServerType,
+			serverType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
@@ -2926,7 +2931,7 @@ type hugeMemTableRetriever struct {
 	dbs                []*model.DBInfo
 	dbsIdx             int
 	tblIdx             int
-	viewMu             sync.RWMutex
+	viewMu             syncutil.RWMutex
 	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
 	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
 }
@@ -3339,6 +3344,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	for _, group := range resourceGroups {
 		//mode := ""
 		burstable := "NO"
+		priority := model.PriorityValueToName(uint64(group.Priority))
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
@@ -3347,6 +3353,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
+				priority,
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3354,6 +3361,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
+				nil,
 				nil,
 				nil,
 			)

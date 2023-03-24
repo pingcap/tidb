@@ -37,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,13 +51,19 @@ type MPPClient struct {
 	store *kvStore
 }
 
+type mppStoreCnt struct {
+	cnt        int32
+	lastUpdate int64
+	initFlag   int32
+}
+
 // GetAddress returns the network address.
 func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
@@ -67,13 +75,13 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs)
+		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy)
 	} else {
 		if req.KeyRanges == nil {
 			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy)
 	}
 
 	if err != nil {
@@ -573,4 +581,72 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 	}
 	go iter.run(ctxChild)
 	return iter
+}
+
+func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, TTL int64) (int, error) {
+	failpoint.Inject("mppStoreCountSetLastUpdateTime", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
+
+	lastUpdate := atomic.LoadInt64(&c.lastUpdate)
+	now := time.Now().UnixMicro()
+	isInit := atomic.LoadInt32(&c.initFlag) != 0
+
+	if now-lastUpdate < TTL {
+		if isInit {
+			return int(atomic.LoadInt32(&c.cnt)), nil
+		}
+	}
+
+	failpoint.Inject("mppStoreCountSetLastUpdateTimeP2", func(value failpoint.Value) {
+		v, _ := strconv.ParseInt(value.(string), 10, 0)
+		c.lastUpdate = v
+	})
+
+	if !atomic.CompareAndSwapInt64(&c.lastUpdate, lastUpdate, now) {
+		if isInit {
+			return int(atomic.LoadInt32(&c.cnt)), nil
+		}
+		// if has't initialized, always fetch latest mpp store info
+	}
+
+	// update mpp store cache
+	cnt := 0
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+
+	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
+		if value.(bool) {
+			err = errors.New("failed to get mpp store count")
+		}
+	})
+
+	if err == nil {
+		for _, s := range stores {
+			if !tikv.LabelFilterNoTiFlashWriteNode(s.GetLabels()) {
+				continue
+			}
+			cnt += 1
+		}
+	} else {
+		// always to update cache next time
+		atomic.StoreInt32(&c.initFlag, 0)
+		return 0, err
+	}
+
+	failpoint.Inject("mppStoreCountSetMPPCnt", func(value failpoint.Value) {
+		cnt = value.(int)
+	})
+
+	if !isInit || atomic.LoadInt64(&c.lastUpdate) == now {
+		atomic.StoreInt32(&c.cnt, int32(cnt))
+		atomic.StoreInt32(&c.initFlag, 1)
+	}
+
+	return cnt, nil
+}
+
+// GetMPPStoreCount returns number of TiFlash stores
+func (c *MPPClient) GetMPPStoreCount() (int, error) {
+	return c.store.mppStoreCnt.getMPPStoreCount(c.store.store.Ctx(), c.store.store.GetPDClient(), 120*1e6 /* TTL 120sec */)
 }
