@@ -2,14 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "autoidtest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "autoid_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 5,
+=======
+    shard_count = 11,
+>>>>>>> f1df9351785 (ddl: add a warning after successfully reorganizing partitions (#42367))
     deps = [
         "//autoid_service",
         "//config",
