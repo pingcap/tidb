@@ -718,7 +718,7 @@ ChunkLoop:
 			if err == nil {
 				if metrics != nil {
 					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+					metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
@@ -752,14 +752,18 @@ ChunkLoop:
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
 	totalSQLSize := int64(0)
+	logKeyName := "read(bytes)"
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			logKeyName = "read(rows)"
+		}
 	}
 
 	err = chunkErr.Get()
 	logTask.End(zap.ErrorLevel, err,
-		zap.Int64("read", totalSQLSize),
+		zap.Int64(logKeyName, totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
 
@@ -1015,7 +1019,7 @@ func (tr *TableImporter) postProcess(
 
 	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
 		var err error
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			var db *sql.DB
 			db, err = rc.tidbGlue.GetDB()
 			if err == nil {
@@ -1239,7 +1243,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	var totalRows int
 	if m, ok := metric.FromContext(ctx); ok {
-		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(tr.tableName)))
+		totalRows = int(metric.ReadCounter(m.RowsCounter.WithLabelValues(metric.StateRestored, tableName)))
 	}
 
 	// Try to add all indexes in one statement.
