@@ -15,7 +15,6 @@
 package session
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"testing"
@@ -23,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -33,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/atomic"
 	"go.uber.org/goleak"
 )
 
@@ -90,8 +87,6 @@ func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	return store, dom
 }
 
-var sessionKitIDGenerator atomic.Uint64
-
 func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
@@ -111,27 +106,6 @@ func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
-}
-
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
-	if len(args) == 0 {
-		rs, err := se.Execute(ctx, sql)
-		if err == nil && len(rs) > 0 {
-			return rs[0], nil
-		}
-		return nil, err
-	}
-	stmtID, _, _, err := se.PrepareStmt(sql)
-	if err != nil {
-		return nil, err
-	}
-	params := expression.Args2Expressions4Test(args...)
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
-	if err != nil {
-		return nil, err
-	}
-	return rs, nil
 }
 
 func match(t *testing.T, row []types.Datum, expected ...interface{}) {
