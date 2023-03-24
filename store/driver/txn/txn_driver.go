@@ -82,20 +82,28 @@ func (txn *tikvTxn) CheckConstraintForAlreadyLockedKeys(keys ...kv.Key) error {
 	return txn.extractKeyErr(err)
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) (err error) {
+	defer func() {
+		logutil.BgLogger().Info("LockKeys invoked", zap.Uint64("startTS", txn.StartTS()), zap.Uint64("forUpdateTS", lockCtx.ForUpdateTS),
+			zap.Stringers("keys", keysInput), zap.Error(err))
+	}()
 	keys := toTiKVKeys(keysInput)
 	txn.exitFairLockingIfInapplicable(ctx, keys)
-	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
+	err = txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
 	}
 	return txn.generateWriteConflictForLockedWithConflict(lockCtx)
 }
 
-func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) (err error) {
+	defer func() {
+		logutil.BgLogger().Info("LockKeys invoked", zap.Uint64("startTS", txn.StartTS()), zap.Uint64("forUpdateTS", lockCtx.ForUpdateTS),
+			zap.Stringers("keys", keysInput), zap.Error(err))
+	}()
 	keys := toTiKVKeys(keysInput)
 	txn.exitFairLockingIfInapplicable(ctx, keys)
-	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
+	err = txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
 	}
