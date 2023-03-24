@@ -103,7 +103,7 @@ func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)

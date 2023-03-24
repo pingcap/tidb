@@ -65,7 +65,7 @@ func TestSyncerSimple(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
@@ -89,7 +89,7 @@ func TestSyncerSimple(t *testing.T) {
 	checkRespKV(t, 1, key, syncer.InitialVersion, resp.Kvs...)
 
 	ic2 := infoschema.NewCache(2)
-	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0, 0)
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
 		ctx,
 		WithEtcdClient(cli),

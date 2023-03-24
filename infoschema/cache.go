@@ -66,12 +66,20 @@ func (h *InfoCache) GetLatest() InfoSchema {
 
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
 	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
-	i := sort.Search(len(h.cache), func(i int) bool {
-		return uint64(h.cache[i].timestamp) <= ts
-	})
-	// if the request timestamp is earlier then the oldest schema, then it is a cache miss
-	if i < len(h.cache) {
-		return h.cache[i].infoschema, nil
+	// search one by one instead of binary search, because the timestamp of a schema could be 0
+	// this is ok because the size of h.cache is small (currently set to 16)
+	// moreover, the most likely hit element in the array is the first one in steady mode
+	// thus it may have better performance than binary search
+	for _, is := range h.cache {
+		if is.timestamp == 0 {
+			// the schema version doesn't have a timestamp
+			// ignore all the schema cache equals or less than this version in search by timestamp
+			break
+		}
+		if ts >= uint64(is.timestamp) {
+			// found the largest version before the given ts
+			return is.infoschema, nil
+		}
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
@@ -117,8 +125,8 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 }
 
 // GetBySnapshotTS gets the information schema based on snapshotTS.
-// If the snapshotTS is new than maxUpdatedSnapshotTS, that's mean it can directly use
-// the latest infoschema. otherwise, will return nil.
+// It searches the schema cache and find the schema with max schema ts that equals or smaller than given snapshot ts
+// Where the schema ts is the start ts of the txn creates the schema diff
 func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -134,9 +142,9 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
-// snapshotTS is the timestap of the schema update, schemaTS is the timestamp of the schema taking effect
-func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
-	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("snapshot ts", snapshotTS), zap.Uint64("schema ts", schemaTS))
+// schemaTs is the startTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
+func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
+	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -149,6 +157,10 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS, schemaTS uint64) bool {
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+		// update timestamp if it is not 0 and cached one is 0
+		if schemaTS > 0 && h.cache[i].timestamp == 0 {
+			h.cache[i].timestamp = int64(schemaTS)
+		}
 		return true
 	}
 
