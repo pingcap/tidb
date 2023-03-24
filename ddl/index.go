@@ -34,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -700,40 +698,17 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
-		// after the DDL is public, attach the charset and collation to the query.
-		// to make the DDL can be correctly handled by the TiDB tools, such as TiCDC.
-		charset, collation := w.sess.session().GetSessionVars().GetCharsetInfo()
-		rewriteDDLQuery4MultiValueIndex(job, charset, collation)
+		charset, collation := w.sess.GetSessionVars().GetCharsetInfo()
+		job.Charset = charset
+		job.Collate = collation
+		logutil.BgLogger().Info("[ddl] run add index job done",
+			zap.String("charset", charset),
+			zap.String("collation", collation))
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
-}
-
-func rewriteDDLQuery4MultiValueIndex(job *model.Job, charset, collation string) {
-	stmt, _, err := parser.New().Parse(job.Query, charset, collation)
-	if err != nil {
-		return
-	}
-	if len(stmt) != 1 {
-		return
-	}
-
-	var sb strings.Builder
-	if err = stmt[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
-		return
-	}
-
-	result := sb.String()
-
-	logutil.BgLogger().Info("[ddl] rewrite DDL query for multi-value index",
-		zap.String("original", job.Query),
-		zap.String("charset", charset),
-		zap.String("collation", collation),
-		zap.String("query", job.Query))
-
-	job.Query = result
 }
 
 // pickBackfillType determines which backfill process will be used.
