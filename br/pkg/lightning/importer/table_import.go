@@ -1014,7 +1014,7 @@ func (tr *TableImporter) postProcess(
 
 	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
 		var err error
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			var db *sql.DB
 			db, err = rc.tidbGlue.GetDB()
 			if err == nil {
