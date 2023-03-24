@@ -17,6 +17,7 @@ package workerpool
 import (
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -70,15 +71,23 @@ func NewWorkerPool[T any](name string, component util.Component, numWorkers int,
 	return p, nil
 }
 
+func (p *WorkerPool[T]) handleTaskWithRecover(w Worker[T], task T) {
+	p.runningTask.Add(1)
+	defer func() {
+		tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
+		p.runningTask.Add(-1)
+	}()
+	w.HandleTask(task)
+}
+
 func (p *WorkerPool[T]) runAWorker() {
 	p.wg.Run(func() {
+		defer tidbutil.Recover(metrics.LabelWorkerPool, "runAWorker", nil, false)
 		w := p.createWorker()
 		for {
 			select {
 			case task := <-p.taskChan:
-				p.runningTask.Add(1)
-				w.HandleTask(task)
-				p.runningTask.Add(-1)
+				p.handleTaskWithRecover(w, task)
 			case <-p.quitChan:
 				w.Close()
 				return
