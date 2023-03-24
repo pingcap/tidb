@@ -46,7 +46,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stathat_consistent//:consistent",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//metrics",
@@ -55,6 +54,11 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//util",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_twmb_murmur3//:murmur3",
+>>>>>>> 4bcedcc4f0a (tiflash: Distribute disagg requests more evenly (#42407))
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_golang_x_exp//slices",
