@@ -31,6 +31,7 @@ require (
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
+<<<<<<< HEAD
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
@@ -53,6 +54,34 @@ require (
 	github.com/sirupsen/logrus v1.2.0
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
+=======
+	github.com/opentracing/opentracing-go v1.2.0
+	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
+	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
+	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+	github.com/pingcap/kvproto v0.0.0-20230317010544-b47a4830141f
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20230310043643-5362260ee6f7
+	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.14.0
+	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/common v0.39.0
+	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/sasha-s/go-deadlock v0.2.0
+	github.com/shirou/gopsutil/v3 v3.23.1
+	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
+	github.com/soheilhy/cmux v0.1.5
+	github.com/spf13/cobra v1.6.1
+	github.com/spf13/pflag v1.0.5
+	github.com/spkg/bom v1.0.0
+	github.com/stathat/consistent v1.0.0
+	github.com/stretchr/testify v1.8.2
+	github.com/tdakkota/asciicheck v0.1.1
+>>>>>>> 942186f3051 (config,go.mod: support timeout for log writting (#42212))
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
