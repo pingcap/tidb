@@ -1,6 +1,5 @@
 startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
-startup:ci --sandbox_tmpfs_path=/tmp
 
 run:ci --color=yes
 
