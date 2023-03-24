@@ -65,8 +65,13 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20220913025519-586cff113d10
 	github.com/pingcap/log v1.1.0
+=======
+	github.com/pingcap/kvproto v0.0.0-20230317010544-b47a4830141f
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+>>>>>>> 942186f3051 (config,go.mod: support timeout for log writting (#42212))
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220824081009-0714a57aff1d
