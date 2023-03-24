@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -41,15 +40,7 @@ func checkCases(
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
-	origin := ld.GetController().IgnoreLines
 	for _, tt := range tests {
-		ld.GetController().IgnoreLines = origin
-		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
-		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
-		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
-
 		parser, err := mydump.NewCSVParser(
 			context.Background(),
 			ld.GetController().GenerateCSVConfig(),
@@ -60,24 +51,9 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		for ld.GetController().IgnoreLines > 0 {
-			ld.GetController().IgnoreLines--
-			//nolint: errcheck
-			_ = parser.ReadRow()
-		}
-
-		err1 := ld.ReadOneBatchRows(context.Background(), parser)
-		require.NoError(t, err1)
-		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-		require.NoError(t, err1)
-		ld.ResetBatch()
-		ld.MergeAndSetMessage()
+		err = ld.TestLoad(parser)
+		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
-		ctx.StmtCommit(context.Background())
-		txn, err := ctx.Txn(true)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
 	}
@@ -179,24 +155,6 @@ func TestLoadData(t *testing.T) {
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GetController().GenerateCSVConfig(),
-		mydump.NewStringReader(""),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-	err = ld.ReadOneBatchRows(context.Background(), parser)
-	require.NoError(t, err)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-	require.NoError(t, err)
-	ld.ResetBatch()
-	r := tk.MustQuery(selectSQL)
-	r.Check(nil)
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()
@@ -526,27 +484,11 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GetController().GenerateCSVConfig(),
-		mydump.NewStringReader("1,2\n3,4\n5,6\n7,8\n9,10\n"),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-
-	err = ld.ReadOneBatchRows(context.Background(), parser)
-	require.NoError(t, err)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-	require.NoError(t, err)
-	ld.ResetBatch()
-	ld.MergeAndSetMessage()
-	ctx.StmtCommit(context.Background())
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	tests := []testCase{
+		{[]byte("1,2\n3,4\n5,6\n7,8\n9,10\n"), []string{"1|2", "3|4", "5|6", "7|8", "9|10"}, "Records: 5  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from range_t"
+	selectSQL := "select * from range_t order by a;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }

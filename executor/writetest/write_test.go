@@ -1454,15 +1454,7 @@ func checkCases(
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
-	origin := ld.GetController().IgnoreLines
 	for _, tt := range tests {
-		ld.GetController().IgnoreLines = origin
-		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
-		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
-		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
-
 		parser, err := mydump.NewCSVParser(
 			context.Background(),
 			ld.GetController().GenerateCSVConfig(),
@@ -1473,24 +1465,9 @@ func checkCases(
 			nil)
 		require.NoError(t, err)
 
-		for ld.GetController().IgnoreLines > 0 {
-			ld.GetController().IgnoreLines--
-			//nolint: errcheck
-			_ = parser.ReadRow()
-		}
-
-		err1 := ld.ReadOneBatchRows(context.Background(), parser)
-		require.NoError(t, err1)
-		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-		require.NoError(t, err1)
-		ld.ResetBatch()
-		ld.MergeAndSetMessage()
+		err = ld.TestLoad(parser)
+		require.NoError(t, err)
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
-		ctx.StmtCommit(context.Background())
-		txn, err := ctx.Txn(true)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
 	}
@@ -1511,25 +1488,12 @@ func TestLoadDataMissingColumn(t *testing.T) {
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
-	parser, err := mydump.NewCSVParser(
-		context.Background(),
-		ld.GetController().GenerateCSVConfig(),
-		mydump.NewStringReader(""),
-		1,
-		nil,
-		false,
-		nil)
-	require.NoError(t, err)
-	err = ld.ReadOneBatchRows(context.Background(), parser)
-	require.NoError(t, err)
-	require.Len(t, ld.GetRows(), 0)
-	r := tk.MustQuery(selectSQL)
-	r.Check(nil)
 
 	curTime := types.CurrentTime(mysql.TypeTimestamp)
 	timeHour := curTime.Hour()
 	timeMinute := curTime.Minute()
 	tests := []testCase{
+		{[]byte(""), nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
@@ -1543,6 +1507,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	// TODO: why it's stuck?
 }
 
 func TestIssue18681(t *testing.T) {
@@ -1563,7 +1528,6 @@ func TestIssue18681(t *testing.T) {
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	ld.ResetBatch()
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()
