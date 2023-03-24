@@ -16,6 +16,7 @@ go_library(
         "permission.go",
         "pprof.go",
         "progress.go",
+        "register.go",
         "retry.go",
         "safe_point.go",
         "schema.go",
@@ -67,7 +68,7 @@ go_library(
 
 go_test(
     name = "utils_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "backoff_test.go",
         "cdc_test.go",
@@ -79,13 +80,14 @@ go_test(
         "math_test.go",
         "misc_test.go",
         "progress_test.go",
+        "register_test.go",
         "safe_point_test.go",
         "schema_test.go",
         "sensitive_test.go",
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 36,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
@@ -103,6 +105,7 @@ go_test(
         "//util/sqlexec",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",

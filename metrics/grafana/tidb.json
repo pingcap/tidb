@@ -6808,7 +6808,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Counters of transactions or statements in which aggressive locking is enabled / takes effect.",
+          "description": "Counters of transactions or statements in which fair locking is enabled / takes effect.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -6854,7 +6854,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(irate(tidb_session_transaction_aggressive_locking_usage{instance=~\"$instance\"}[30s])) by (type)",
+              "expr": "sum(irate(tidb_session_transaction_fair_locking_usage{instance=~\"$instance\"}[30s])) by (type)",
               "interval": "",
               "legendFormat": "{{type}}",
               "refId": "A"
@@ -6864,7 +6864,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Aggressive Locking Usage",
+          "title": "Fair Locking Usage",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -6907,7 +6907,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Counters of keys involved in aggressive locking.",
+          "description": "Counters of keys involved in fair locking.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -6963,7 +6963,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Aggressive Locking Keys",
+          "title": "Fair Locking Keys",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -17841,7 +17841,7 @@
             "y": 44
           },
           "hiddenSeries": false,
-          "id": 296,
+          "id": 298,
           "legend": {
             "alignAsTable": false,
             "avg": false,
@@ -18580,11 +18580,19 @@
           "targets": [
             {
               "exemplar": true,
+              "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "ALL {{ type }}",
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
               "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, instance)",
               "interval": "",
               "legendFormat": "{{ instance }} {{ type }}",
               "queryType": "randomWalk",
-              "refId": "A"
+              "refId": "B"
             }
           ],
           "thresholds": [],
@@ -18682,11 +18690,20 @@
           "targets": [
             {
               "exemplar": true,
+              "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "ALL {{ type }}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
               "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, instance)",
               "interval": "",
               "legendFormat": "{{ instance }} {{ type }}",
               "queryType": "randomWalk",
-              "refId": "A"
+              "refId": "B"
             }
           ],
           "thresholds": [],
@@ -18729,6 +18746,267 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "Test-Cluster",
+          "description": "TTL Schedule Delay is defined by \"MAX(0, now - lastSuccessJobTime - scheduleInterval)\"",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 8,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 74
+          },
+          "hiddenSeries": false,
+          "id": 300,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 0,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.10",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "1 hour",
+              "color": "#73BF69"
+            },
+            {
+              "alias": "02 hour",
+              "color": "#1F60C4"
+            },
+            {
+              "alias": "06 hour",
+              "color": "#FA6400"
+            },
+            {
+              "alias": "12 hour",
+              "color": "#FFA6B0"
+            },
+            {
+              "alias": "24 hour",
+              "color": "#FF7383"
+            },
+            {
+              "alias": "72 hour",
+              "color": "#E02F44"
+            },
+            {
+              "alias": "one week",
+              "color": "#C4162A"
+            },
+            {
+              "alias": "others",
+              "color": "#8F3BB8"
+            }
+          ],
+          "spaceLength": 10,
+          "stack": true,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "avg(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
+              "interval": "",
+              "legendFormat": "{{ name }}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Table Count By TTL Schedule Delay",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The insert/delete row count for TTL tables by day",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "blue",
+                "mode": "fixed"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "none"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/^insert/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "light-blue",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/^delete/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "light-green",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 74
+          },
+          "id": 304,
+          "options": {
+            "displayMode": "lcd",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true,
+            "text": {}
+          },
+          "pluginVersion": "7.5.10",
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_insert_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[${__to:date:H}h${__to:date:m}m]))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "insert current day",
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[${__to:date:H}h${__to:date:m}m]))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "delete current day",
+              "queryType": "randomWalk",
+              "refId": "B"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_insert_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1d] offset ${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "insert last day",
+              "refId": "C"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1d] offset ${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "delete last day",
+              "refId": "D"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_insert_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "insert 2 days ago",
+              "refId": "E"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "delete 2 days ago",
+              "refId": "F"
+            }
+          ],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "TTL Insert/Delete Rows By Day",
+          "type": "bargauge"
         }
       ],
       "title": "TTL",

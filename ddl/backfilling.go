@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -43,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -146,15 +145,16 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	reorgTp    model.ReorgType
-	sessCtx    sessionctx.Context
-	schemaName string
-	table      table.Table
-	batchCnt   int
+	sessCtx       sessionctx.Context
+	schemaName    string
+	table         table.Table
+	batchCnt      int
+	jobContext    *JobContext
+	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp model.ReorgType,
-	schemaName string, tbl table.Table, isDistributed bool) *backfillCtx {
+func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
+	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
@@ -162,15 +162,17 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp mod
 		id:         id,
 		ddlCtx:     ctx,
 		sessCtx:    sessCtx,
-		reorgTp:    reorgTp,
 		schemaName: schemaName,
 		table:      tbl,
 		batchCnt:   int(variable.GetDDLReorgBatchSize()),
+		jobContext: jobCtx,
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
 	}
 }
 
 type backfiller interface {
-	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
+	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetTasks() ([]*BackfillJob, error)
 	UpdateTask(bfJob *BackfillJob) error
@@ -308,10 +310,11 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	isDistReorg := task.bfJob != nil
 	if isDistReorg {
 		w.initPartitionIndexInfo(task)
+		jobID = genBackfillJobReorgCtxID(jobID)
 	}
 	for {
 		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
+		// if there is panic in bf.BackfillData we will never cancel the job.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := d.isReorgRunnable(jobID, isDistReorg)
@@ -320,7 +323,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillDataInTxn(handleRange)
+		taskCtx, err := bf.BackfillData(handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -382,9 +385,13 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 func (w *backfillWorker) initPartitionIndexInfo(task *reorgBackfillTask) {
 	if pt, ok := w.GetCtx().table.(table.PartitionedTable); ok {
-		if addIdxWorker, ok := w.backfiller.(*addIndexWorker); ok {
+		switch w := w.backfiller.(type) {
+		case *addIndexTxnWorker:
 			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
-			addIdxWorker.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
+			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
+		case *addIndexIngestWorker:
+			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
+			w.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 		}
 	}
 }
@@ -604,7 +611,6 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
-	dc.getReorgCtx(reorgInfo.Job.ID).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
 		zap.Stringer("element", reorgInfo.currElement),
@@ -742,215 +748,11 @@ func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocat
 	return nil
 }
 
-type backfillScheduler struct {
-	ctx          context.Context
-	reorgInfo    *reorgInfo
-	sessPool     *sessionPool
-	tp           backfillerType
-	tbl          table.PhysicalTable
-	decodeColMap map[int64]decoder.Column
-	jobCtx       *JobContext
-
-	workers []*backfillWorker
-	maxSize int
-
-	taskCh   chan *reorgBackfillTask
-	resultCh chan *backfillResult
-
-	copReqSenderPool *copReqSenderPool // for add index in ingest way.
-}
-
 var backfillTaskChanSize = 1024
 
 // SetBackfillTaskChanSizeForTest is only used for test.
 func SetBackfillTaskChanSizeForTest(n int) {
 	backfillTaskChanSize = n
-}
-
-func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessionPool,
-	tp backfillerType, tbl table.PhysicalTable, decColMap map[int64]decoder.Column,
-	jobCtx *JobContext) *backfillScheduler {
-	return &backfillScheduler{
-		ctx:          ctx,
-		reorgInfo:    info,
-		sessPool:     sessPool,
-		tp:           tp,
-		tbl:          tbl,
-		decodeColMap: decColMap,
-		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
-		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
-	}
-}
-
-func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
-	reorgInfo := b.reorgInfo
-	sessCtx := newContext(reorgInfo.d.store)
-	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return sessCtx, nil
-}
-
-func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.TimeZone = &tz
-	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
-	// Set the row encode format version.
-	rowFormat := variable.GetDDLReorgRowFormat()
-	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
-	// Simulate the sql mode environment in the worker sessionCtx.
-	sessCtx.GetSessionVars().SQLMode = sqlMode
-	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
-		return errors.Trace(err)
-	}
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	// Prevent initializing the mock context in the workers concurrently.
-	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	_ = sessCtx.GetDomainInfoSchema()
-	return nil
-}
-
-func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
-	b.maxSize = maxSize
-}
-
-func (b *backfillScheduler) workerSize() int {
-	return len(b.workers)
-}
-
-func (b *backfillScheduler) adjustWorkerSize() error {
-	b.initCopReqSenderPool()
-	reorgInfo := b.reorgInfo
-	job := reorgInfo.Job
-	jc := b.jobCtx
-	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
-	}
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	if b.copReqSenderPool != nil {
-		workerCnt = mathutil.Min(workerCnt/2+1, b.maxSize)
-	} else {
-		workerCnt = mathutil.Min(workerCnt, b.maxSize)
-	}
-	// Increase the worker.
-	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := b.newSessCtx()
-		if err != nil {
-			return err
-		}
-		var (
-			runner *backfillWorker
-			worker backfiller
-		)
-		switch b.tp {
-		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
-			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
-				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
-			if err != nil {
-				if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
-					continue
-				}
-				return err
-			}
-			idxWorker.copReqSenderPool = b.copReqSenderPool
-			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-			worker = idxWorker
-		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, job.SchemaName, b.tbl, false)
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, i, b.tbl, reorgInfo.currElement.ID, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
-			worker = tmpIdxWorker
-		case typeUpdateColumnWorker:
-			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
-			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker)
-			worker = updateWorker
-		case typeCleanUpIndexWorker:
-			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
-			worker = idxWorker
-		case typeReorgPartitionWorker:
-			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			if err != nil {
-				return err
-			}
-			runner = newBackfillWorker(jc.ddlJobCtx, partWorker)
-			worker = partWorker
-		default:
-			return errors.New("unknown backfill type")
-		}
-		runner.taskCh = b.taskCh
-		runner.resultCh = b.resultCh
-		b.workers = append(b.workers, runner)
-		go runner.run(reorgInfo.d, worker, job)
-	}
-	// Decrease the worker.
-	if len(b.workers) > workerCnt {
-		workers := b.workers[workerCnt:]
-		b.workers = b.workers[:workerCnt]
-		closeBackfillWorkers(workers)
-	}
-	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.adjustSize(len(b.workers))
-	}
-	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
-}
-
-func (b *backfillScheduler) initCopReqSenderPool() {
-	if b.tp != typeAddIndexWorker || b.reorgInfo.Job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge ||
-		b.copReqSenderPool != nil || len(b.workers) > 0 {
-		return
-	}
-	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
-	if indexInfo == nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender",
-			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return
-	}
-	sessCtx, err := b.newSessCtx()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
-	}
-	copCtx, err := newCopContext(b.tbl.Meta(), indexInfo, sessCtx)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
-	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
-}
-
-func canSkipError(jobID int64, workerCnt int, err error) bool {
-	if workerCnt > 0 {
-		// The error can be skipped because the rest workers can handle the tasks.
-		return true
-	}
-	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
-		zap.Int("current worker count", workerCnt),
-		zap.Int64("job ID", jobID), zap.Error(err))
-	return false
-}
-
-func (b *backfillScheduler) Close() {
-	if b.copReqSenderPool != nil {
-		b.copReqSenderPool.close()
-	}
-	closeBackfillWorkers(b.workers)
-	close(b.taskCh)
-	close(b.resultCh)
 }
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
@@ -998,7 +800,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	defer scheduler.Close()
 
 	var ingestBeCtx *ingest.BackendContext
-	if bfWorkerType == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		if bc, ok := ingest.LitBackCtxMgr.Load(job.ID); ok {
 			ingestBeCtx = bc
 		} else {

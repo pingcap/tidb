@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -94,11 +95,16 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
-			// do not cache insert-values-stmt like 'insert into t values (...)' since
-			// no performance benefit and to save memory.
-			checker.cacheable = false
-			checker.reason = "ignore insert-values-stmt"
-			return in, true
+			nRows := len(node.Lists)
+			nCols := 0
+			if len(node.Lists) > 0 { // avoid index-out-of-range
+				nCols = len(node.Lists[0])
+			}
+			if nRows*nCols > 200 { // to save memory
+				checker.cacheable = false
+				checker.reason = "too many values (more than 200) in the insert statement"
+				return in, true
+			}
 		}
 		for _, hints := range node.TableHints {
 			if hints.HintName.L == HintIgnorePlanCache {
@@ -322,6 +328,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		return in, !checker.cacheable
 	case *ast.TableName:
 		checker.tableNode = node
+		if filter.IsSystemSchema(node.Schema.O) {
+			checker.cacheable = false
+			checker.reason = "access tables in system schema"
+			return in, !checker.cacheable
+		}
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
@@ -435,7 +446,7 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
 	var pp PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
@@ -447,13 +458,16 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	case PhysicalPlan:
 		pp = x
 	default:
-		return false, fmt.Sprintf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String())
+		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
 	}
 	if pp == nil { // simple DML statements
 		return true, ""
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }
@@ -464,32 +478,32 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {
-			return false, "skip plan-cache: get a TableDual plan"
+			return false, "get a TableDual plan"
 		}
 	case *PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
-			return false, "skip plan-cache: TiFlash plan is un-cacheable"
+			return false, "TiFlash plan is un-cacheable"
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
-		return false, "skip plan-cache: get a Shuffle plan"
+		return false, "get a Shuffle plan"
 	case *PhysicalMemTable:
-		return false, "skip plan-cache: PhysicalMemTable plan is un-cacheable"
+		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex {
-			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalTableScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "skip plan-cache: IndexMerge plan with full-scan is un-cacheable"
+			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalApply:
-		return false, "skip plan-cache: PhysicalApply plan is un-cacheable"
+		return false, "PhysicalApply plan is un-cacheable"
 	}
 
 	subPlans = append(subPlans, p.Children()...)

@@ -17,51 +17,40 @@ package asyncloaddata
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
 
-const (
-	// CreateLoadDataJobs is a table that LOAD DATA uses
-	// TODO: move it to bootstrap.go and create it in bootstrap
-	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
-       job_id bigint(64) NOT NULL AUTO_INCREMENT,
-       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
-       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-       start_time TIMESTAMP(6) NULL DEFAULT NULL,
-       update_time TIMESTAMP(6) NULL DEFAULT NULL,
-       end_time TIMESTAMP(6) NULL DEFAULT NULL,
-       data_source TEXT NOT NULL,
-       table_schema VARCHAR(64) NOT NULL,
-       table_name VARCHAR(64) NOT NULL,
-       import_mode VARCHAR(64) NOT NULL,
-       create_user VARCHAR(32) NOT NULL,
-       progress TEXT DEFAULT NULL,
-       result_message TEXT DEFAULT NULL,
-       error_message TEXT DEFAULT NULL,
-       PRIMARY KEY (job_id),
-       KEY (create_user));`
-)
-
-// CreateLoadDataJob creates a load data job.
+// CreateLoadDataJob creates a load data job by insert a record to system table.
+// The AUTO_INCREMENT value will be returned as jobID.
 func CreateLoadDataJob(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
-	source, db, table string,
+	dataSource, db, table string,
 	importMode string,
 	user string,
 ) (int64, error) {
+	// remove the params in data source URI because it may contains AK/SK
+	u, err := url.Parse(dataSource)
+	if err == nil && u.Scheme != "" {
+		u.RawQuery = ""
+		u.Fragment = ""
+		dataSource = u.String()
+	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
-	_, err := conn.ExecuteInternal(ctx,
+	_, err = conn.ExecuteInternal(ctx,
 		`INSERT INTO mysql.load_data_jobs
     	(data_source, table_schema, table_name, import_mode, create_user)
 		VALUES (%?, %?, %?, %?, %?);`,
-		source, db, table, importMode, user)
+		dataSource, db, table, importMode, user)
 	if err != nil {
 		return 0, err
 	}
@@ -81,7 +70,8 @@ func CreateLoadDataJob(
 	return rows[0].GetInt64(0), nil
 }
 
-// StartJob starts a load data job. A job can only be started once.
+// StartJob tries to start a not-yet-started job with jobID. It will not return
+// error when there's no matched job.
 func StartJob(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -91,7 +81,7 @@ func StartJob(
 	_, err := conn.ExecuteInternal(ctx,
 		`UPDATE mysql.load_data_jobs
 		SET start_time = CURRENT_TIMESTAMP(6), update_time = CURRENT_TIMESTAMP(6)
-		WHERE job_id = %? AND start_time IS NULL;`,
+		WHERE job_id = %? AND start_time IS NULL AND end_time IS NULL;`,
 		jobID)
 	return err
 }
@@ -105,9 +95,12 @@ var (
 )
 
 // UpdateJobProgress updates the progress of a load data job. It should be called
-// periodically as heartbeat.
+// periodically as heartbeat after StartJob.
 // The returned bool indicates whether the keepalive is succeeded. If not, the
 // caller should call FailJob soon.
+// TODO: Currently if the node is crashed after CreateLoadDataJob and before StartJob,
+// it will always be in the status of pending. Maybe we should unify CreateLoadDataJob
+// and StartJob.
 func UpdateJobProgress(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -121,6 +114,7 @@ func UpdateJobProgress(
 		`UPDATE mysql.load_data_jobs
 		SET progress = %?, update_time = CURRENT_TIMESTAMP(6)
 		WHERE job_id = %?
+			AND end_time IS NULL
 			AND (update_time >= DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL %? SECOND)
 				OR update_time IS NULL);`,
 		progress, jobID, OfflineThresholdInSec)
@@ -162,6 +156,95 @@ func FailJob(
 	return err
 }
 
+// CancelJob cancels a load data job. Only a running/paused job can be canceled.
+func CancelJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) (err error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err = conn.ExecuteInternal(ctx, "BEGIN PESSIMISTIC;")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := conn.ExecuteInternal(ctx, "ROLLBACK;")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = conn.ExecuteInternal(ctx, "COMMIT;")
+		if err != nil {
+			return
+		}
+	}()
+
+	var (
+		rs   sqlexec.RecordSet
+		rows []chunk.Row
+	)
+	rs, err = conn.ExecuteInternal(ctx,
+		`SELECT expected_status, end_time, error_message FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err != nil {
+		return err
+	}
+	defer terror.Call(rs.Close)
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+
+	if len(rows) < 1 {
+		return exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
+	}
+	status := rows[0].GetEnum(0).String()
+	if status != "running" && status != "paused" {
+		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs(fmt.Sprintf("need status running or paused, but got %s", status))
+	}
+	endTimeIsNull := rows[0].IsNull(1)
+	if !endTimeIsNull {
+		hasError := !rows[0].IsNull(2)
+		if hasError {
+			return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got failed")
+		}
+		return exeerrors.ErrLoadDataInvalidOperation.GenWithStackByArgs("need status running or paused, but got finished")
+	}
+
+	_, err = conn.ExecuteInternal(ctx,
+		`UPDATE mysql.load_data_jobs
+		SET expected_status = 'canceled',
+		    end_time = CURRENT_TIMESTAMP(6),
+		    error_message = 'canceled by user'
+		WHERE job_id = %?;`,
+		jobID)
+	return err
+}
+
+// DropJob drops a load data job.
+func DropJob(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
+	_, err := conn.ExecuteInternal(ctx,
+		`DELETE FROM mysql.load_data_jobs
+		WHERE job_id = %? AND create_user = %?;`,
+		jobID, user)
+	if err == nil {
+		return err
+	}
+	if conn.GetSessionVars().StmtCtx.AffectedRows() < 1 {
+		return exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
+	}
+	return nil
+}
+
 // JobExpectedStatus is the expected status of a load data job. User can set the
 // expected status of a job and worker will respect it.
 type JobExpectedStatus int
@@ -176,6 +259,7 @@ const (
 )
 
 // UpdateJobExpectedStatus updates the expected status of a load data job.
+// TODO: remove it?
 func UpdateJobExpectedStatus(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
@@ -222,6 +306,25 @@ const (
 	JobRunning
 )
 
+func (s JobStatus) String() string {
+	switch s {
+	case JobFailed:
+		return "failed"
+	case JobCanceled:
+		return "canceled"
+	case JobPaused:
+		return "paused"
+	case JobFinished:
+		return "finished"
+	case JobPending:
+		return "pending"
+	case JobRunning:
+		return "running"
+	default:
+		return "unknown JobStatus"
+	}
+}
+
 // GetJobStatus gets the status of a load data job. The returned error means
 // something wrong when querying the database. Other business logic errors are
 // returned as JobFailed with message.
@@ -251,7 +354,7 @@ func GetJobStatus(
 		return JobFailed, "", err
 	}
 	if len(rows) != 1 {
-		return JobFailed, fmt.Sprintf("job %d not found", jobID), nil
+		return JobFailed, exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID).Error(), nil
 	}
 
 	return getJobStatus(rows[0])
@@ -262,6 +365,7 @@ func GetJobStatus(
 // start_time).
 func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 	// ending status has the highest priority
+	expectedStatus := row.GetEnum(0).String()
 	endTimeIsNull := row.IsNull(2)
 	if !endTimeIsNull {
 		resultMsgIsNull := row.IsNull(3)
@@ -269,13 +373,16 @@ func getJobStatus(row chunk.Row) (JobStatus, string, error) {
 			resultMessage := row.GetString(3)
 			return JobFinished, resultMessage, nil
 		}
+
 		errorMessage := row.GetString(4)
+		if expectedStatus == "canceled" {
+			return JobCanceled, errorMessage, nil
+		}
 		return JobFailed, errorMessage, nil
 	}
 
 	isAlive := row.GetInt64(1) == 1
 	startTimeIsNull := row.IsNull(5)
-	expectedStatus := row.GetEnum(0).String()
 
 	switch expectedStatus {
 	case "canceled":
@@ -309,6 +416,9 @@ type JobInfo struct {
 	Progress      string
 	Status        JobStatus
 	StatusMessage string
+	CreateTime    types.Time
+	StartTime     types.Time
+	EndTime       types.Time
 }
 
 // GetJobInfo gets all needed information of a load data job.
@@ -316,6 +426,7 @@ func GetJobInfo(
 	ctx context.Context,
 	conn sqlexec.SQLExecutor,
 	jobID int64,
+	user string,
 ) (*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalLoadData)
 	rs, err := conn.ExecuteInternal(ctx,
@@ -333,10 +444,11 @@ func GetJobInfo(
 		table_name,
 		import_mode,
 		progress,
-		create_user
+		create_user,
+		create_time
 		FROM mysql.load_data_jobs
-		WHERE job_id = %?;`,
-		OfflineThresholdInSec, jobID)
+		WHERE job_id = %? AND create_user = %?;`,
+		OfflineThresholdInSec, jobID, user)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +458,7 @@ func GetJobInfo(
 		return nil, err
 	}
 	if len(rows) != 1 {
-		return nil, fmt.Errorf("job %d not found", jobID)
+		return nil, exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
 	}
 
 	return getJobInfo(rows[0])
@@ -366,6 +478,9 @@ func getJobInfo(row chunk.Row) (*JobInfo, error) {
 		ImportMode:  row.GetString(10),
 		Progress:    row.GetString(11),
 		User:        row.GetString(12),
+		CreateTime:  row.GetTime(13),
+		StartTime:   row.GetTime(5),
+		EndTime:     row.GetTime(2),
 	}
 	jobInfo.Status, jobInfo.StatusMessage, err = getJobStatus(row)
 	if err != nil {
@@ -396,7 +511,8 @@ func GetAllJobInfo(
 		table_name,
 		import_mode,
 		progress,
-		create_user
+		create_user,
+		create_time
 		FROM mysql.load_data_jobs
 		WHERE create_user = %?;`,
 		OfflineThresholdInSec, user)

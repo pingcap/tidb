@@ -78,6 +78,9 @@ const (
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
 
+	// TiDBPreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
+	TiDBPreferBCJByExchangeDataSize = "tidb_prefer_broadcast_join_by_exchange_data_size"
+
 	// TiDBOptWriteRowID is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -382,6 +385,16 @@ const (
 	// Default value is -1, means it will not be pushed down to tiflash.
 	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
 	TiDBMaxTiFlashThreads = "tidb_max_tiflash_threads"
+
+	// TiDBMaxBytesBeforeTiFlashExternalJoin is the maximum bytes used by a TiFlash join before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalJoin = "tidb_max_bytes_before_tiflash_external_join"
+
+	// TiDBMaxBytesBeforeTiFlashExternalGroupBy is the maximum bytes used by a TiFlash hash aggregation before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalGroupBy = "tidb_max_bytes_before_tiflash_external_group_by"
+
+	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
+	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
+
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -813,9 +826,9 @@ const (
 	// MppVersion indicates the mpp-version used to build mpp plan
 	MppVersion = "mpp_version"
 
-	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// TiDBPessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
-	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+	TiDBPessimisticTransactionFairLocking = "tidb_pessimistic_txn_fair_locking"
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
@@ -829,8 +842,13 @@ const (
 	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
 	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 
+	// TiDBOptEnableLateMaterialization indicates whether to enable late materialization
+	TiDBOptEnableLateMaterialization = "tidb_opt_enable_late_materialization"
 	// TiDBLoadBasedReplicaReadThreshold is the wait duration threshold to enable replica read automatically.
 	TiDBLoadBasedReplicaReadThreshold = "tidb_load_based_replica_read_threshold"
+
+	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
 )
 
 // TiDB vars that have only global scope
@@ -1027,15 +1045,19 @@ const (
 	DefTiDBProjectionConcurrency                   = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize                  = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount                 = 10 * 1024
+	DefPreferBCJByExchangeDataSize                 = true
 	DefTiDBOptimizerSelectivityLevel               = 0
 	DefTiDBOptimizerEnableNewOFGB                  = false
 	DefTiDBEnableOuterJoinReorder                  = true
-	DefTiDBEnableNAAJ                              = false
+	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBHashExchangeWithNewCollation            = true
 	DefTiDBEnforceMPPExecution                     = false
 	DefTiFlashMaxThreads                           = -1
+	DefTiFlashMaxBytesBeforeExternalJoin           = -1
+	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
+	DefTiFlashMaxBytesBeforeExternalSort           = -1
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
@@ -1191,39 +1213,41 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                      float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                        = true
-	DefTiDBExternalTS                                      = 0
-	DefTiDBEnableExternalTSRead                            = false
-	DefTiDBEnableReusechunk                                = true
-	DefTiDBUseAlloc                                        = false
-	DefTiDBEnablePlanReplayerCapture                       = false
-	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
-	DefTiDBTTLJobEnable                                    = true
-	DefTiDBTTLScanBatchSize                                = 500
-	DefTiDBTTLScanBatchMaxSize                             = 10240
-	DefTiDBTTLScanBatchMinSize                             = 1
-	DefTiDBTTLDeleteBatchSize                              = 100
-	DefTiDBTTLDeleteBatchMaxSize                           = 10240
-	DefTiDBTTLDeleteBatchMinSize                           = 1
-	DefTiDBTTLDeleteRateLimit                              = 0
-	DefTiDBTTLRunningTasks                                 = -1
-	DefPasswordReuseHistory                                = 0
-	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 4
-	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture                 = false
-	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                              = 4
-	DefTiDBTTLDeleteWorkerCount                            = 4
-	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
-	DefTiDBEnableResourceControl                           = true
-	DefTiDBPessimisticTransactionAggressiveLocking         = false
-	DefTiDBEnablePlanCacheForParamLimit                    = true
-	DefTiFlashComputeDispatchPolicy                        = tiflashcompute.DispatchPolicyConsistentHashStr
-	DefTiDBEnablePlanCacheForSubquery                      = true
-	DefTiDBLoadBasedReplicaReadThreshold                   = 0
+	DefTiDBGOGCTunerThreshold                float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                  = true
+	DefTiDBExternalTS                                = 0
+	DefTiDBEnableExternalTSRead                      = false
+	DefTiDBEnableReusechunk                          = true
+	DefTiDBUseAlloc                                  = false
+	DefTiDBEnablePlanReplayerCapture                 = false
+	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
+	DefTiDBTTLJobEnable                              = true
+	DefTiDBTTLScanBatchSize                          = 500
+	DefTiDBTTLScanBatchMaxSize                       = 10240
+	DefTiDBTTLScanBatchMinSize                       = 1
+	DefTiDBTTLDeleteBatchSize                        = 100
+	DefTiDBTTLDeleteBatchMaxSize                     = 10240
+	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
+	DefTiDBTTLRunningTasks                           = -1
+	DefPasswordReuseHistory                          = 0
+	DefPasswordReuseTime                             = 0
+	DefTiDBStoreBatchSize                            = 4
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture           = false
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                     = true
+	DefTiDBPessimisticTransactionFairLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit              = true
+	DefTiFlashComputeDispatchPolicy                  = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                = true
+	DefTiDBLoadBasedReplicaReadThreshold             = 0
+	DefTiDBOptEnableLateMaterialization              = false
+	DefTiDBOptOrderingIdxSelThresh                   = 0.0
 )
 
 // Process global variables.

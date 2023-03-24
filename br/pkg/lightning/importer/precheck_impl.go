@@ -65,24 +65,20 @@ func (ci *clusterResourceCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetClusterSize
 }
 
-func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (uint64, error) {
+func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAvail uint64, tiflashAvail uint64, err error) {
 	storeInfo, err := ci.preInfoGetter.GetStorageInfo(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	clusterAvail := uint64(0)
-	for _, store := range storeInfo.Stores {
-		clusterAvail += uint64(store.Status.Available)
-	}
-	return clusterAvail, nil
-}
 
-func (ci *clusterResourceCheckItem) getReplicaCount(ctx context.Context) (uint64, error) {
-	replConfig, err := ci.preInfoGetter.GetReplicationConfig(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
+	for _, store := range storeInfo.Stores {
+		if engine.IsTiFlash(store.Store.Store) {
+			tiflashAvail += uint64(store.Status.Available)
+		} else {
+			tikvAvail += uint64(store.Status.Available)
+		}
 	}
-	return replConfig.MaxReplicas, nil
+	return
 }
 
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
@@ -90,14 +86,16 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
 		Passed:   true,
-		Message:  "Cluster resources are rich for this import task",
+		Message:  "",
 	}
 
 	var (
-		err           error
-		clusterAvail  uint64
-		clusterSource uint64
-		taskMgr       taskMetaMgr
+		err               error
+		tikvAvail         uint64
+		tiflashAvail      uint64
+		tikvSourceSize    uint64
+		tiflashSourceSize uint64
+		taskMgr           taskMetaMgr
 	)
 	taskMgrVal := ctx.Value(taskManagerKey)
 	if taskMgrVal != nil {
@@ -111,36 +109,44 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		clusterSource = uint64(estimatedDataSizeResult.SizeWithIndex)
-		clusterAvail, err = ci.getClusterAvail(ctx)
+		tikvSourceSize = uint64(estimatedDataSizeResult.SizeWithIndex)
+		tiflashSourceSize = uint64(estimatedDataSizeResult.TiFlashSize)
+		tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		if err := taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
-			clusterAvail = 0
-			clusterSource = 0
+			tikvAvail = 0
+			tiflashAvail = 0
+			tikvSourceSize = 0
+			tiflashSourceSize = 0
 			restoreStarted := false
 			for _, task := range tasks {
 				if task.status > taskMetaStatusInitial {
 					restoreStarted = true
 				}
-				clusterSource += task.sourceBytes
-				if task.clusterAvail > 0 {
-					clusterAvail = task.clusterAvail
+				tikvSourceSize += task.tikvSourceBytes
+				tiflashSourceSize += task.tiflashSourceBytes
+				if task.tikvAvail > 0 {
+					tikvAvail = task.tikvAvail
+				}
+				if task.tiflashAvail > 0 {
+					tiflashAvail = task.tiflashAvail
 				}
 			}
-			if restoreStarted || clusterAvail > 0 {
+			if restoreStarted || tikvAvail > 0 || tiflashAvail > 0 {
 				return nil, nil
 			}
 
-			clusterAvail, err = ci.getClusterAvail(ctx)
+			tikvAvail, tiflashAvail, err = ci.getClusterAvail(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			newTasks := append([]taskMeta(nil), tasks...)
 			for i := 0; i < len(newTasks); i++ {
-				newTasks[i].clusterAvail = clusterAvail
+				newTasks[i].tikvAvail = tikvAvail
+				newTasks[i].tiflashAvail = tiflashAvail
 			}
 			return newTasks, nil
 		}); err != nil {
@@ -148,18 +154,29 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, er
 		}
 	}
 
-	replicaCount, err := ci.getReplicaCount(ctx)
+	replicaCount, err := ci.preInfoGetter.GetReplicationConfig(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	estimateSize := clusterSource * replicaCount
-	if estimateSize > clusterAvail {
+	tikvSourceSize = tikvSourceSize * replicaCount.MaxReplicas
+
+	if tikvSourceSize <= tikvAvail && tiflashSourceSize <= tiflashAvail {
+		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
+			units.BytesSize(float64(tikvAvail)), units.BytesSize(float64(tiflashAvail)), units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tiflashSourceSize)))
+	}
+
+	if tikvSourceSize > tikvAvail {
 		theResult.Passed = false
-		theResult.Message = fmt.Sprintf("Cluster doesn't have enough space, available is %s, but we need %s",
-			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
-	} else {
-		theResult.Message = fmt.Sprintf("Cluster available is rich, available is %s, we need %s",
-			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
+		theResult.Message += fmt.Sprintf("TiKV requires more storage space. Estimated required size: %s. Actual size: %s.",
+			units.BytesSize(float64(tikvSourceSize)), units.BytesSize(float64(tikvAvail)))
+	}
+	if tiflashAvail > 0 && tiflashSourceSize > tiflashAvail {
+		theResult.Passed = false
+		theResult.Message += fmt.Sprintf(" TiFlash requires more storage space. Estimated required size: %s. Actual size: %s.",
+			units.BytesSize(float64(tiflashSourceSize)), units.BytesSize(float64(tiflashAvail)))
+	}
+	if !theResult.Passed {
+		theResult.Message += " Please increase storage to prevent import task failures."
 	}
 	return theResult, nil
 }

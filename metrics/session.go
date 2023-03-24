@@ -38,7 +38,7 @@ var (
 	LazyPessimisticUniqueCheckSetCount prometheus.Counter
 	PessimisticDMLDurationByAttempt    *prometheus.HistogramVec
 	ResourceGroupQueryTotalCounter     *prometheus.CounterVec
-	AggressiveLockingUsageCount        *prometheus.CounterVec
+	FairLockingUsageCount              *prometheus.CounterVec
 )
 
 // InitSessionMetrics initializes session metrics.
@@ -220,12 +220,12 @@ func InitSessionMetrics() {
 			Help:      "Counter of the total number of queries for the resource group",
 		}, []string{LblName})
 
-	AggressiveLockingUsageCount = NewCounterVec(
+	FairLockingUsageCount = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "transaction_aggressive_locking_usage",
-			Help:      "The counter of statements and transactions in which aggressive locking is used or takes effect",
+			Subsystem: "session",
+			Name:      "transaction_fair_locking_usage",
+			Help:      "The counter of statements and transactions in which fair locking is used or takes effect",
 		}, []string{LblType})
 }
 
@@ -271,9 +271,9 @@ const (
 
 	LblName = "name"
 
-	LblAggressiveLockingTxnUsed       = "txn-used"
-	LblAggressiveLockingTxnEffective  = "txn-effective"
-	LblAggressiveLockingStmtUsed      = "stmt-used"
-	LblAggressiveLockingStmtEffective = "stmt-effective"
-	LblScope                          = "scope"
+	LblFairLockingTxnUsed       = "txn-used"
+	LblFairLockingTxnEffective  = "txn-effective"
+	LblFairLockingStmtUsed      = "stmt-used"
+	LblFairLockingStmtEffective = "stmt-effective"
+	LblScope                    = "scope"
 )

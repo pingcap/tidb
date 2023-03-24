@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -444,12 +445,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
-				a.Ctx.GetSessionVars().TxnCtx.AggressiveLockingUsed = true
+				a.Ctx.GetSessionVars().TxnCtx.FairLockingUsed = true
 				// If this statement is finished when some of the keys are locked with conflict in the last retry, or
-				// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
+				// some of the keys are derived from the previous retry, we consider the optimization of fair locking
 				// takes effect on this statement.
 				if execDetails.LockKeysDetail.LockedWithConflictCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-					a.Ctx.GetSessionVars().TxnCtx.AggressiveLockingEffective = true
+					a.Ctx.GetSessionVars().TxnCtx.FairLockingEffective = true
 				}
 			}
 			return
@@ -552,19 +553,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
-	failpoint.Inject("mockDelayInnerSessionExecute", func() {
-		var curTxnStartTS uint64
-		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
-			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
-		}
-		if sctx.GetSessionVars().SnapshotTS != 0 {
-			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
-		}
-		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
-			zap.Uint64("startTS", curTxnStartTS))
-		time.Sleep(200 * time.Millisecond)
-	})
-
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
@@ -660,7 +648,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
-		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+		return exeerrors.ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
 	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
 	defer func() {
@@ -989,7 +977,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			)
 			sctx.GetSessionVars().SetInTxn(false)
-			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+			err = exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
 		}
 	}()
 
@@ -1030,7 +1018,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
-				if ErrDeadlock.Equal(err) {
+				if exeerrors.ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
 				return err
@@ -1066,7 +1054,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			// todo: Report deadlock
-			if ErrDeadlock.Equal(err) {
+			if exeerrors.ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
 			return err
@@ -1089,7 +1077,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
-			err = ErrDeadlock
+			err = exeerrors.ErrDeadlock
 		}
 	}()
 
@@ -1387,25 +1375,25 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		metrics.ReadFromTableCacheCounter.Inc()
 	}
 
-	// Update aggressive locking related counters by stmt
+	// Update fair locking related counters by stmt
 	if execDetail.LockKeysDetail != nil {
 		if execDetail.LockKeysDetail.AggressiveLockNewCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-			executor_metrics.AggressiveLockingStmtUsedCount.Inc()
+			executor_metrics.FairLockingStmtUsedCount.Inc()
 			// If this statement is finished when some of the keys are locked with conflict in the last retry, or
-			// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
+			// some of the keys are derived from the previous retry, we consider the optimization of fair locking
 			// takes effect on this statement.
 			if execDetail.LockKeysDetail.LockedWithConflictCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-				executor_metrics.AggressiveLockingStmtEffectiveCount.Inc()
+				executor_metrics.FairLockingStmtEffectiveCount.Inc()
 			}
 		}
 	}
-	// If the transaction is committed, update aggressive locking related counters by txn
+	// If the transaction is committed, update fair locking related counters by txn
 	if execDetail.CommitDetail != nil {
-		if sessVars.TxnCtx.AggressiveLockingUsed {
-			executor_metrics.AggressiveLockingTxnUsedCount.Inc()
+		if sessVars.TxnCtx.FairLockingUsed {
+			executor_metrics.FairLockingTxnUsedCount.Inc()
 		}
-		if sessVars.TxnCtx.AggressiveLockingEffective {
-			executor_metrics.AggressiveLockingTxnEffectiveCount.Inc()
+		if sessVars.TxnCtx.FairLockingEffective {
+			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
 }

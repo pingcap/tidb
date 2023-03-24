@@ -24,6 +24,8 @@ const (
 	checkGCSafePointGapTime         = 5 * time.Second
 	// DefaultBRGCSafePointTTL means PD keep safePoint limit at least 5min.
 	DefaultBRGCSafePointTTL = 5 * 60
+	// DefaultCheckpointGCSafePointTTL means PD keep safePoint limit at least 72 minutes.
+	DefaultCheckpointGCSafePointTTL = 72 * 60
 	// DefaultStreamStartSafePointTTL specifies keeping the server safepoint 30 mins when start task.
 	DefaultStreamStartSafePointTTL = 1800
 	// DefaultStreamPauseSafePointTTL specifies Keeping the server safePoint at list 24h when pause task.
