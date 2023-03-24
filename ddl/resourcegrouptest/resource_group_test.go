@@ -51,8 +51,6 @@ func TestResourceGroupBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 MEDIUM YES"))
-
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
 	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustExec("create user usr1")
@@ -61,8 +59,10 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
-	tk.MustExec("alter resource group `default` ru_per_sec=10000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 10000 MEDIUM NO"))
+	// test default resource group.
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 MEDIUM YES"))
+	tk.MustExec("alter resource group `default` RU_PER_SEC=1000 PRIORITY=LOW")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW NO"))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
