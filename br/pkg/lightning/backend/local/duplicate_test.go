@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -45,12 +46,12 @@ func TestBuildDupTask(t *testing.T) {
 
 	// Test build duplicate detecting task.
 	testCases := []struct {
-		sessOpt       *lkv.SessionOptions
+		sessOpt       *encode.SessionOptions
 		hasTableRange bool
 	}{
-		{&lkv.SessionOptions{}, true},
-		{&lkv.SessionOptions{IndexID: info.Indices[0].ID}, false},
-		{&lkv.SessionOptions{IndexID: info.Indices[1].ID}, false},
+		{&encode.SessionOptions{}, true},
+		{&encode.SessionOptions{IndexID: info.Indices[0].ID}, false},
+		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false},
 	}
 	for _, tc := range testCases {
 		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, keyspace.CodecV1, nil,

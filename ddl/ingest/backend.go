@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -55,7 +55,7 @@ func (bc *BackendContext) FinishImport(indexID int64, unique bool, tbl table.Tab
 
 	// Check remote duplicate value for the index.
 	if unique {
-		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &kv.SessionOptions{
+		hasDupe, err := bc.backend.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,

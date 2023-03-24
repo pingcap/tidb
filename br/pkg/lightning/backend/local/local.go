@@ -36,6 +36,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -248,7 +249,7 @@ type encodingBuilder struct {
 }
 
 // NewEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
-func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
+func NewEncodingBuilder(ctx context.Context) encode.EncodingBuilder {
 	result := new(encodingBuilder)
 	if m, ok := metric.FromContext(ctx); ok {
 		result.metrics = m
@@ -258,13 +259,13 @@ func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
+func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return kv.NewTableKVEncoder(config, b.metrics)
 }
 
 // MakeEmptyRows creates an empty KV rows.
 // It implements the `backend.EncodingBuilder` interface.
-func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+func (b *encodingBuilder) MakeEmptyRows() encode.Rows {
 	return kv.MakeRowsFromKvPairs(nil)
 }
 
@@ -419,7 +420,7 @@ type local struct {
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 
-	encBuilder       backend.EncodingBuilder
+	encBuilder       encode.EncodingBuilder
 	targetInfoGetter backend.TargetInfoGetter
 
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
@@ -456,6 +457,7 @@ func NewLocalBackend(
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
 	keyspaceName string,
+	encodingBuilder encode.EncodingBuilder,
 ) (backend.Backend, error) {
 	localFile := cfg.TikvImporter.SortedKVDir
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
@@ -560,7 +562,7 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
-		encBuilder:              NewEncodingBuilder(ctx),
+		encBuilder:              encodingBuilder,
 		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 		shouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 	}
@@ -1454,7 +1456,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return workGroup.Wait()
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1472,7 +1474,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return atomicHasDupe.Load(), nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1506,7 +1508,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}, log.FromContext(ctx))
 	if err != nil {
@@ -1675,12 +1677,12 @@ func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName strin
 	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
-func (local *local) MakeEmptyRows() kv.Rows {
+func (local *local) MakeEmptyRows() encode.Rows {
 	return local.encBuilder.MakeEmptyRows()
 }
 
-func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return local.encBuilder.NewEncoder(ctx, tbl, options)
+func (local *local) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return local.encBuilder.NewEncoder(ctx, config)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
