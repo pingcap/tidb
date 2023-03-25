@@ -273,6 +273,12 @@ func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *a
 	if tbl != nil {
 		tblName = tbl.Meta().Name.O
 	}
+
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name <> (SELECT max(Table_name) FROM %n.%n WHERE user = %? group by lower(Table_name), Table_priv, Column_priv)", mysql.SystemDB, mysql.TablePrivTable, user, host, strings.ToLower(dbName), mysql.SystemDB, mysql.TablePrivTable, user)
+	if err != nil {
+		return err
+	}
+
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
 	isDelRow, err := composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tblName)
