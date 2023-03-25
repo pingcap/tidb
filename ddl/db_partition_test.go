@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -1950,6 +1951,106 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 2, cnt)
+}
+
+func TestGlobalIndexInsertInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("insert into test_global values (9, 9, 9)")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("9 9 9", "11 11 11", "12 12 12"))
+}
+
+func TestUpdateGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("update test_global set a = 2 where a = 11")
+	tk.MustExec("update test_global set a = 13 where a = 12")
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("1 1 1", "2 11 11", "8 8 8", "13 12 12"))
+}
+
+func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("update test_global set a = 2 where a = 11")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
