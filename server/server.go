@@ -124,6 +124,11 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
 
+const (
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
+)
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -922,6 +927,10 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
+func (s *Server) GetAutoAnalyzeProcID() uint64 {
+	return s.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+}
+
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se interface{}) {
@@ -943,7 +952,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
+	analyzeProcID := s.GetAutoAnalyzeProcID()
 	for se := range s.internalSessions {
 		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
 			if processInfoID == analyzeProcID {

@@ -186,6 +186,9 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// GetAutoAnalyzeProcID returns processID for auto analyze
+	// TODO support IDs for concurrent auto-analyze
+	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})
 	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
@@ -196,16 +199,4 @@ type SessionManager interface {
 	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
-}
-
-const (
-	reservedLocalConns  = 200
-	reservedConnAnalyze = 1
-)
-
-// GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO support IDs for concurrent auto-analyze
-func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
-	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
-	return globalConnID.makeID(reservedConnAnalyze)
 }

@@ -57,6 +57,8 @@ type ConnIDAllocator interface {
 	NextID() uint64
 	// Release releases connection ID to allocator.
 	Release(connectionID uint64)
+	// GetReservedConnID returns reserved connection ID.
+	GetReservedConnID(reservedNo uint64) uint64
 }
 
 var (
@@ -88,6 +90,11 @@ func (a *SimpleConnIDAllocator) NextID() uint64 {
 // Release implements ConnIDAllocator interface.
 func (a *SimpleConnIDAllocator) Release(id uint64) {
 	a.pool.Put(id)
+}
+
+// GetReservedConnID implements ConnIDAllocator interface.
+func (a *SimpleConnIDAllocator) GetReservedConnID(reservedNo uint64) uint64 {
+	return reservedNo
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -154,7 +161,7 @@ func (g *GlobalConnID) ID() uint64 {
 //	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
-		return GlobalConnID{}, false, errors.New("Unexpected connectionID exceeds int64")
+		return GlobalConnID{}, false, errors.New("unexpected connectionID exceeds int64")
 	}
 	if id&0x1 > 0 { // 64bits
 		if id&0xffffffff_00000000 == 0 {
@@ -169,7 +176,7 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 
 	// 32bits
 	if id&0xffffffff_00000000 > 0 {
-		return GlobalConnID{}, false, errors.New("Unexpected connectionID exceeds uint32")
+		return GlobalConnID{}, false, errors.New("unexpected connectionID exceeds uint32")
 	}
 	return GlobalConnID{
 		Is64bits:    false,
@@ -216,6 +223,17 @@ func (g *GlobalConnIDAllocator) SetServerIDGetter(serverIDGetter serverIDGetterF
 // NextID returns next connection ID.
 func (g *GlobalConnIDAllocator) NextID() uint64 {
 	globalConnID := g.Allocate()
+	return globalConnID.ID()
+}
+
+// GetReservedConnID implements ConnIDAllocator interface.
+func (g *GlobalConnIDAllocator) GetReservedConnID(reservedNo uint64) uint64 {
+	serverID := g.serverIDGetter()
+	globalConnID := GlobalConnID{
+		ServerID:    serverID,
+		LocalConnID: reservedNo,
+		Is64bits:    true,
+	}
 	return globalConnID.ID()
 }
 
