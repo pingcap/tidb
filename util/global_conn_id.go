@@ -77,7 +77,7 @@ func (a *SimpleConnIDAllocator) Init() {
 }
 
 // SetServerIDGetter implements ConnIDAllocator interface.
-func (a *SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
+func (*SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
 	// do nothing
 }
 
@@ -93,7 +93,7 @@ func (a *SimpleConnIDAllocator) Release(id uint64) {
 }
 
 // GetReservedConnID implements ConnIDAllocator interface.
-func (a *SimpleConnIDAllocator) GetReservedConnID(reservedNo uint64) uint64 {
+func (*SimpleConnIDAllocator) GetReservedConnID(reservedNo uint64) uint64 {
 	return reservedNo
 }
 
@@ -364,9 +364,9 @@ func (p *AutoIncPool) Put(id uint64) (ok bool) {
 func (p *AutoIncPool) Len() int {
 	if p.existed != nil {
 		p.mu.Lock()
-		len := len(p.existed)
+		length := len(p.existed)
 		p.mu.Unlock()
-		return len
+		return length
 	}
 	return -1
 }
@@ -452,10 +452,10 @@ func (p LockFreeCircularPool) String() string {
 	tail := p.tail.Get()
 	headSlot := &p.slots[head&(p.cap-1)]
 	tailSlot := &p.slots[tail&(p.cap-1)]
-	len := tail - head
+	length := tail - head
 
-	return fmt.Sprintf("cap:%v, len:%v; head:%x, slot:{%x,%x}; tail:%x, slot:{%x,%x}",
-		p.cap, len, head, headSlot.value, headSlot.seq, tail, tailSlot.value, tailSlot.seq)
+	return fmt.Sprintf("cap:%v, length:%v; head:%x, slot:{%x,%x}; tail:%x, slot:{%x,%x}",
+		p.cap, length, head, headSlot.value, headSlot.seq, tail, tailSlot.value, tailSlot.seq)
 }
 
 // Put implements IDPool interface.

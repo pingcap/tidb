@@ -255,10 +255,10 @@ func (p LockBasedCircularPool) String() string {
 	tail := p.tail
 	headVal := p.slots[head&(p.cap-1)]
 	tailVal := p.slots[tail&(p.cap-1)]
-	len := tail - head
+	length := tail - head
 
 	return fmt.Sprintf("cap:%v, len:%v; head:%x, slot:{%x}; tail:%x, slot:{%x}",
-		p.cap, len, head, headVal, tail, tailVal)
+		p.cap, length, head, headVal, tail, tailVal)
 }
 
 func (p *LockBasedCircularPool) Put(val uint64) (ok bool) {
