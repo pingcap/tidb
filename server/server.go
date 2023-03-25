@@ -136,9 +136,9 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
-	capability            uint32
-	dom                   *domain.Domain
-	connectionIDAllocator util.ConnectionIDAllocator
+	capability      uint32
+	dom             *domain.Domain
+	connIDAllocator util.ConnIDAllocator
 
 	statusAddr     string
 	statusListener net.Listener
@@ -179,7 +179,7 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
-	s.connectionIDAllocator.SetServerIDGetter(dom.ServerID)
+	s.connIDAllocator.SetServerIDGetter(dom.ServerID)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -211,12 +211,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		inShutdownMode:    uatomic.NewBool(false),
 	}
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
-		s.connectionIDAllocator = &util.GlobalConnIDAllocator{}
+	if config.GetGlobalConfig().EnableGlobalKill {
+		s.connIDAllocator = &util.GlobalConnIDAllocator{}
 	} else {
-		s.connectionIDAllocator = &util.SimpleConnIDAllocator{}
+		s.connIDAllocator = &util.SimpleConnIDAllocator{}
 	}
-	s.connectionIDAllocator.Init()
+	s.connIDAllocator.Init()
 
 	s.capability = defaultCapability
 	setTxnScope()

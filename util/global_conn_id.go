@@ -28,27 +28,27 @@ import (
 	"go.uber.org/zap"
 )
 
-//////////////////////////////////// Class Diagram //////////////////////////////////////
-//                                                                                     //
-//  +----------+      +-----------------------+         +-----------------------+      //
-//  |  Server  | ---> | ConnectionIDAllocator | <<--+-- | GlobalConnIDAllocator | --+  //
-//  +----------+      +-----------------------+     |   +-----------------------+   |  //
-//                                                  +-- | SimpleConnIDAllocator |   |  //
-//                                                      +----------+------------+   |  //
-//                                                                 |                |  //
-//                                                                 V                |  //
-//                                  +--------+          +----------------------+    |  //
-//                                  | IDPool | <<--+--  |     AutoIncPool      | <--+  //
-//                                  +--------+     |    +----------------------+    |  //
-//                                                 +--  | LockFreeCircularPool | <--+  //
-//                                                      +----------------------+       //
-//                                                                                     //
-/////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// Class Diagram ///////////////////////////////////
+//                                                                               //
+//  +----------+      +-----------------+         +-----------------------+      //
+//  |  Server  | ---> | ConnIDAllocator | <<--+-- | GlobalConnIDAllocator | --+  //
+//  +----------+      +-----------------+     |   +-----------------------+   |  //
+//                                            +-- | SimpleConnIDAllocator |   |  //
+//                                                +----------+------------+   |  //
+//                                                           |                |  //
+//                                                           V                |  //
+//                            +--------+          +----------------------+    |  //
+//                            | IDPool | <<--+--  |     AutoIncPool      | <--+  //
+//                            +--------+     |    +----------------------+    |  //
+//                                           +--  | LockFreeCircularPool | <--+  //
+//                                                +----------------------+       //
+//                                                                               //
+///////////////////////////////////////////////////////////////////////////////////
 
 type serverIDGetterFn func() uint64
 
-// ConnectionIDAllocator allocates connection IDs.
-type ConnectionIDAllocator interface {
+// ConnIDAllocator allocates connection IDs.
+type ConnIDAllocator interface {
 	// Init initiates the allocator.
 	Init()
 	// SetServerIDGetter set serverIDGetter to allocator.
@@ -60,8 +60,8 @@ type ConnectionIDAllocator interface {
 }
 
 var (
-	_ ConnectionIDAllocator = (*SimpleConnIDAllocator)(nil)
-	_ ConnectionIDAllocator = (*GlobalConnIDAllocator)(nil)
+	_ ConnIDAllocator = (*SimpleConnIDAllocator)(nil)
+	_ ConnIDAllocator = (*GlobalConnIDAllocator)(nil)
 )
 
 // SimpleConnIDAllocator is a simple connection id allocator used when GlobalKill feature is disable.
@@ -69,23 +69,23 @@ type SimpleConnIDAllocator struct {
 	pool AutoIncPool
 }
 
-// Init implements ConnectionIDAllocator interface.
+// Init implements ConnIDAllocator interface.
 func (a *SimpleConnIDAllocator) Init() {
 	a.pool.Init(64)
 }
 
-// SetServerIDGetter implements ConnectionIDAllocator interface.
+// SetServerIDGetter implements ConnIDAllocator interface.
 func (a *SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
 	// do nothing
 }
 
-// NextID implements ConnectionIDAllocator interface.
+// NextID implements ConnIDAllocator interface.
 func (a *SimpleConnIDAllocator) NextID() uint64 {
 	id, _ := a.pool.Get()
 	return id
 }
 
-// Release implements ConnectionIDAllocator interface.
+// Release implements ConnIDAllocator interface.
 func (a *SimpleConnIDAllocator) Release(id uint64) {
 	a.pool.Put(id)
 }
@@ -94,17 +94,20 @@ func (a *SimpleConnIDAllocator) Release(id uint64) {
 // Used when GlobalKill feature is enable.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 // 32 bits version:
-//   31    21 20               1    0
-//  +--------+------------------+------+
-//  |serverID|   local connID   |markup|
-//  | (11b)  |       (20b)      |  =0  |
-//  +--------+------------------+------+
+//
+//	 31    21 20               1    0
+//	+--------+------------------+------+
+//	|serverID|   local connID   |markup|
+//	| (11b)  |       (20b)      |  =0  |
+//	+--------+------------------+------+
+//
 // 64 bits version:
-//   63 62                 41 40                                   1   0
-//  +--+---------------------+--------------------------------------+------+
-//  |  |      serverId       |             local connId             |markup|
-//  |=0|       (22b)         |                 (40b)                |  =1  |
-//  +--+---------------------+--------------------------------------+------+
+//
+//	 63 62                 41 40                                   1   0
+//	+--+---------------------+--------------------------------------+------+
+//	|  |      serverId       |             local connId             |markup|
+//	|=0|       (22b)         |                 (40b)                |  =1  |
+//	+--+---------------------+--------------------------------------+------+
 type GlobalConnID struct {
 	ServerID    uint64
 	LocalConnID uint64
@@ -147,7 +150,8 @@ func (g *GlobalConnID) ID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+//
+//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
 		return GlobalConnID{}, false, errors.New("Unexpected connectionID exceeds int64")
