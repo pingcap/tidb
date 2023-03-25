@@ -655,3 +655,24 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, info)
 }
+<<<<<<< HEAD
+=======
+
+func TestIndexComment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS `t1`;")
+	tk.MustExec("create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';")
+	tk.MustQuery("SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' ORDER BY index_comment;").Check(testkit.Rows(" 0 c2", "i1 comment 10 c1"))
+}
+
+func TestIssue42400(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("show create table information_schema.ddl_jobs").CheckContain("`QUERY` text")
+	tk.MustQuery("select length(query) from information_schema.ddl_jobs;") // No error
+}
+>>>>>>> 00a0b1e863a (infoschema: fix ddl_jobs table `query` column's type (#42536))
