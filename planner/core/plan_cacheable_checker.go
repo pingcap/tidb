@@ -291,7 +291,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr:
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
 		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
@@ -306,10 +306,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			}
 		}
 		return in, !checker.cacheable
-	case *ast.BinaryOperationExpr:
-		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
+	case *ast.FuncCallExpr:
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
-			checker.reason = "query has some unsupported binary operation"
+			checker.reason = "query has un-cacheable functions"
 		}
 		return in, !checker.cacheable
 	case *driver.ValueExpr:
