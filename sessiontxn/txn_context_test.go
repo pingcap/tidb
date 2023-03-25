@@ -23,15 +23,15 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -40,24 +40,25 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInCompile", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInRebuildPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual", "return"))
 
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
@@ -74,22 +75,21 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	tk.MustExec("create temporary table tmp (id int)")
 	tk.MustExec("insert into tmp values(10)")
 
-	return store, do, func() {
+	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInCompile"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInRebuildPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
-		clean()
-	}
+	})
+	return store, do
 }
 
 func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
@@ -114,8 +114,7 @@ var normalPathRecords = []string{
 }
 
 func TestTxnContextForSimpleCases(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -150,10 +149,10 @@ func TestTxnContextForSimpleCases(t *testing.T) {
 }
 
 func TestTxnContextInExplicitTxn(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
@@ -196,7 +195,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustExec("commit")
+		tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	})
 
 	// the info schema in new txn should use the newest one
@@ -217,8 +216,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 }
 
 func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -252,11 +250,11 @@ func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
 }
 
 func TestTxnContextWithAutocommitFalse(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	se := tk.Session()
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -288,8 +286,7 @@ func TestTxnContextWithAutocommitFalse(t *testing.T) {
 }
 
 func TestTxnContextInRC(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -338,8 +335,7 @@ func TestTxnContextInRC(t *testing.T) {
 }
 
 func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -363,8 +359,7 @@ func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
 }
 
 func TestTxnContextInOptimisticRetry(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
@@ -393,8 +388,9 @@ func TestTxnContextInOptimisticRetry(t *testing.T) {
 }
 
 func TestTxnContextForHistoricalRead(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -448,8 +444,7 @@ func TestTxnContextForHistoricalRead(t *testing.T) {
 }
 
 func TestTxnContextForStaleRead(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -522,13 +517,10 @@ func TestTxnContextForStaleRead(t *testing.T) {
 }
 
 func TestTxnContextForPrepareExecute(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
 	se := tk.Session()
 
 	stmtID, _, _, err := se.PrepareStmt("select * from t1 where id=1")
@@ -546,8 +538,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	})
 
 	// Test ExecutePreparedStmt
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -577,8 +568,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
 	})
-	path = append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -588,8 +578,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 }
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
@@ -623,8 +612,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	// tx_read_ts
 	tk.MustExec("set @@tx_read_ts=@a")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -642,7 +630,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	// select ... as of ...
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -653,7 +641,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	// tx_read_ts in prepare
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID3, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -672,7 +660,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("update t1 set v=v+1 where id=1")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
@@ -680,7 +668,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=@b")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
@@ -690,9 +678,9 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
@@ -714,8 +702,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
 	})
 
-	path := append([]string{"assertTxnManagerInPreparedStmtExec"}, normalPathRecords...)
-	doWithCheckPath(t, se, path, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
@@ -731,8 +718,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 
 // See issue: https://github.com/pingcap/tidb/issues/35459
 func TestStillWriteConflictAfterRetry(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 
 	queries := []string{
 		"select * from t1 for update",
@@ -752,11 +738,14 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("truncate table t1")
 		tk.MustExec("insert into t1 values(1, 10)")
+		// Fair locking avoids conflicting again after retry in this case. Disable it for this test.
+		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2 := testkit.NewSteppedTestKit(t, store)
 		defer tk2.MustExec("rollback")
 
 		tk2.MustExec("use test")
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
 		autocommit := testfork.PickEnum(t, 0, 1)
 		tk2.MustExec(fmt.Sprintf("set autocommit=%d", autocommit))
@@ -805,8 +794,7 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 }
 
 func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
+	store, _ := setupTxnContextTest(t)
 
 	queries := []string{
 		"update t1 set v=v+1",
@@ -838,6 +826,12 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 		doubleConflictAfterTransfer := testfork.PickEnum(t, true, false)
 		if !conflictAfterTransfer && doubleConflictAfterTransfer {
 			return
+		}
+
+		// If `tidb_pessimistic_txn_fair_locking` is enabled, the double conflict case is
+		// avoided. Disable it to run this test.
+		if doubleConflictAfterTransfer {
+			tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 		}
 
 		tk2.SetBreakPoints(
@@ -893,8 +887,7 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
@@ -919,25 +912,24 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
 		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, expression.Args2Expressions4Test(val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, expression.Args2Expressions4Test(val, val))
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 		tk.MustExec("commit")
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
-
 }
 
 func TestTSOCmdCountForTextSql(t *testing.T) {
@@ -949,8 +941,7 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	sctx := tk.Session()

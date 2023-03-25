@@ -50,7 +50,6 @@ func TestReplacePlaceholder(t *testing.T) {
 		str := ReplacePlaceholder(testCase.originStr, testCase.args)
 		require.Equal(t, testCase.expectStr, str)
 	}
-
 }
 
 func TestTableName(t *testing.T) {

@@ -17,6 +17,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
@@ -26,8 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
+	"go.uber.org/zap"
 )
 
 // emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
@@ -38,21 +41,29 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex          *ClusterIndexUsage               `json:"clusterIndex"`
-	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
-	TemporaryTable        bool                             `json:"temporaryTable"`
-	CTE                   *m.CTEUsageCounter               `json:"cte"`
-	CachedTable           bool                             `json:"cachedTable"`
-	AutoCapture           bool                             `json:"autoCapture"`
-	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
-	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
-	GlobalKill            bool                             `json:"globalKill"`
-	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
-	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
-	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
-	LogBackup             bool                             `json:"logBackup"`
-	EnablePaging          bool                             `json:"enablePaging"`
-	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
+	ClusterIndex              *ClusterIndexUsage               `json:"clusterIndex"`
+	NewClusterIndex           *NewClusterIndexUsage            `json:"newClusterIndex"`
+	TemporaryTable            bool                             `json:"temporaryTable"`
+	CTE                       *m.CTEUsageCounter               `json:"cte"`
+	AccountLock               *m.AccountLockCounter            `json:"accountLock"`
+	CachedTable               bool                             `json:"cachedTable"`
+	AutoCapture               bool                             `json:"autoCapture"`
+	PlacementPolicyUsage      *placementPolicyUsage            `json:"placementPolicy"`
+	NonTransactionalUsage     *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
+	GlobalKill                bool                             `json:"globalKill"`
+	MultiSchemaChange         *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	ExchangePartition         *m.ExchangePartitionUsageCounter `json:"exchangePartition"`
+	TablePartition            *m.TablePartitionUsageCounter    `json:"tablePartition"`
+	LogBackup                 bool                             `json:"logBackup"`
+	EnablePaging              bool                             `json:"enablePaging"`
+	EnableCostModelVer2       bool                             `json:"enableCostModelVer2"`
+	DDLUsageCounter           *m.DDLUsageCounter               `json:"DDLUsageCounter"`
+	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
+	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
+	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
+	ResourceControlUsage      *resourceControlUsage            `json:"resourceControl"`
+	TTLUsage                  *ttlUsageCounter                 `json:"ttlUsage"`
+	StoreBatchCoprUsage       *m.StoreBatchCoprCounter         `json:"storeBatchCopr"`
 }
 
 type placementPolicyUsage struct {
@@ -63,12 +74,17 @@ type placementPolicyUsage struct {
 	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
 }
 
+type resourceControlUsage struct {
+	Enabled           bool   `json:"resourceControlEnabled"`
+	NumResourceGroups uint64 `json:"numResourceGroups"`
+}
+
 func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
 	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
-		logutil.BgLogger().Info(err.Error())
+		logutil.BgLogger().Info("Failed to get feature usage", zap.Error(err))
 		return nil, err
 	}
 
@@ -77,7 +93,11 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.CTE = getCTEUsageInfo()
 
+	usage.AccountLock = getAccountLockUsageInfo()
+
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
+	usage.ExchangePartition = getExchangePartitionUsageInfo()
 
 	usage.TablePartition = getTablePartitionUsageInfo()
 
@@ -89,22 +109,31 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
 
-	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
-
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
+	usage.DDLUsageCounter = getDDLUsageInfo(sctx)
+
+	usage.EnableGlobalMemoryControl = getGlobalMemoryControl()
+
+	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
+
+	usage.TTLUsage = getTTLUsageInfo(ctx, sctx)
+
+	usage.StoreBatchCoprUsage = getStoreBatchUsage(sctx)
+
 	return &usage, nil
 }
 
-// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table and placement policies.
+// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table, placement policies and resource groups.
 func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
 	if usage.PlacementPolicyUsage == nil {
 		usage.PlacementPolicyUsage = &placementPolicyUsage{}
 	}
+
 	is := GetDomainInfoSchema(ctx)
 	for _, dbInfo := range is.AllSchemas() {
 		if dbInfo.PlacementPolicyRef != nil {
@@ -121,6 +150,9 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			if tbInfo.Meta().PlacementPolicyRef != nil {
 				usage.PlacementPolicyUsage.NumTableWithPolicies++
 			}
+			if tbInfo.Meta().AutoIdCache == 1 {
+				usage.AutoIDNoCache = true
+			}
 			partitions := tbInfo.Meta().GetPartitionInfo()
 			if partitions == nil {
 				continue
@@ -132,8 +164,13 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			}
 		}
 	}
-
 	usage.PlacementPolicyUsage.NumPlacementPolicies += uint64(len(is.AllPlacementPolicies()))
+
+	if usage.ResourceControlUsage == nil {
+		usage.ResourceControlUsage = &resourceControlUsage{}
+	}
+	usage.ResourceControlUsage.NumResourceGroups = uint64(len(is.AllResourceGroups()))
+	usage.ResourceControlUsage.Enabled = variable.EnableResourceControl.Load()
 }
 
 // GetDomainInfoSchema is used by the telemetry package to get the latest schema information
@@ -209,49 +246,79 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
-	OnePCUsed           bool                     `json:"onePCUsed"`
-	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
-	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel      string                   `json:"assertionLevel"`
-	RcCheckTS           bool                     `json:"rcCheckTS"`
-	SavepointCounter    int64                    `json:"SavepointCounter"`
+	AsyncCommitUsed           bool                      `json:"asyncCommitUsed"`
+	OnePCUsed                 bool                      `json:"onePCUsed"`
+	TxnCommitCounter          metrics.TxnCommitCounter  `json:"txnCommitCounter"`
+	MutationCheckerUsed       bool                      `json:"mutationCheckerUsed"`
+	AssertionLevel            string                    `json:"assertionLevel"`
+	RcCheckTS                 bool                      `json:"rcCheckTS"`
+	RCWriteCheckTS            bool                      `json:"rcWriteCheckTS"`
+	FairLocking               bool                      `json:"fairLocking"`
+	SavepointCounter          int64                     `json:"SavepointCounter"`
+	LazyUniqueCheckSetCounter int64                     `json:"lazyUniqueCheckSetCounter"`
+	FairLockingUsageCounter   m.FairLockingUsageCounter `json:"FairLockingUsageCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialAccountLockCounter m.AccountLockCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialExchangePartitionCounter m.ExchangePartitionUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
+var initialLazyPessimisticUniqueCheckSetCount int64
+var initialDDLUsageCounter m.DDLUsageCounter
+var initialIndexMergeCounter m.IndexMergeUsageCounter
+var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
+var initialFairLockingUsageCounter m.FairLockingUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnable1PC); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC); err == nil {
 		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableMutationChecker); err == nil {
 		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
+	rcWriteCheckTSUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
+		rcWriteCheckTSUsed = val == variable.On
+	}
+	fairLockingUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionFairLocking); err == nil {
+		fairLockingUsed = val == variable.On
+	}
+
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed, diffSavepointCount}
+
+	currLazyUniqueCheckSetCount := m.GetLazyPessimisticUniqueCheckSetCounter()
+	diffLazyUniqueCheckSetCount := currLazyUniqueCheckSetCount - initialLazyPessimisticUniqueCheckSetCount
+
+	currFairLockingUsageCounter := m.GetFairLockingUsageCounter()
+	diffFairLockingUsageCounter := currFairLockingUsageCounter.Sub(initialFairLockingUsageCounter)
+
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
+		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
+		fairLockingUsed, diffSavepointCount, diffLazyUniqueCheckSetCount, diffFairLockingUsageCounter,
+	}
 }
 
 func postReportTxnUsage() {
@@ -262,15 +329,34 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
+func postReportAccountLockUsage() {
+	initialAccountLockCounter = m.GetAccountLockCounter()
+}
+
 // PostSavepointCount exports for testing.
 func PostSavepointCount() {
 	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
+}
+
+func postReportLazyPessimisticUniqueCheckSetCount() {
+	initialLazyPessimisticUniqueCheckSetCount = m.GetLazyPessimisticUniqueCheckSetCounter()
+}
+
+func postReportFairLockingUsageCounter() {
+	initialFairLockingUsageCounter = m.GetFairLockingUsageCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+// getAccountLockUsageInfo gets the AccountLock usages.
+func getAccountLockUsageInfo() *m.AccountLockCounter {
+	curr := m.GetAccountLockCounter()
+	diff := curr.Sub(initialAccountLockCounter)
 	return &diff
 }
 
@@ -284,8 +370,22 @@ func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	return &diff
 }
 
+func postReportExchangePartitionUsage() {
+	initialExchangePartitionCounter = m.GetExchangePartitionCounter()
+}
+
+func getExchangePartitionUsageInfo() *m.ExchangePartitionUsageCounter {
+	curr := m.GetExchangePartitionCounter()
+	diff := curr.Sub(initialExchangePartitionCounter)
+	return &diff
+}
+
 func postReportTablePartitionUsage() {
 	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
+}
+
+func postReportDDLUsage() {
+	initialDDLUsageCounter = m.GetDDLUsageCounter()
 }
 
 func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
@@ -296,7 +396,7 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBCapturePlanBaseline); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBCapturePlanBaseline); err == nil {
 		return val == variable.On
 	}
 	return false
@@ -316,36 +416,8 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
-// TiFlashModeStatistics records the usage info of Fast Mode
-type TiFlashModeStatistics struct {
-	FastModeTableCount   int64 `json:"fast_mode_table_count"`
-	NormalModeTableCount int64 `json:"normal_mode_table_count"`
-	AllTableCount        int64 `json:"all_table_count"`
-}
-
-func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
-	is := GetDomainInfoSchema(ctx)
-	var fastModeTableCount int64 = 0
-	var normalModeTableCount int64 = 0
-	var allTableCount int64 = 0
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			allTableCount++
-			if tbInfo.Meta().TiFlashReplica != nil {
-				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
-					fastModeTableCount++
-				} else {
-					normalModeTableCount++
-				}
-			}
-		}
-	}
-
-	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount, AllTableCount: allTableCount}
-}
-
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.CheckLogBackupEnabled(ctx)
+	return utils.IsLogBackupInUse(ctx)
 }
 
 func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
@@ -357,4 +429,43 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 // users set it to false manually.
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
+}
+
+func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
+	curr := m.GetDDLUsageCounter()
+	diff := curr.Sub(initialDDLUsageCounter)
+	isEnable, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar("tidb_enable_metadata_lock")
+	if err == nil {
+		diff.MetadataLockUsed = isEnable == "ON"
+	}
+	return &diff
+}
+
+func getGlobalMemoryControl() bool {
+	return memory.ServerMemoryLimit.Load() > 0
+}
+
+func postReportIndexMergeUsage() {
+	initialIndexMergeCounter = m.GetIndexMergeCounter()
+}
+
+func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
+	curr := m.GetIndexMergeCounter()
+	diff := curr.Sub(initialIndexMergeCounter)
+	return &diff
+}
+
+func getStoreBatchUsage(ctx sessionctx.Context) *m.StoreBatchCoprCounter {
+	curr := m.GetStoreBatchCoprCounter()
+	diff := curr.Sub(initialStoreBatchCoprCounter)
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBStoreBatchSize); err == nil {
+		if batchSize, err := strconv.Atoi(val); err == nil {
+			diff.BatchSize = batchSize
+		}
+	}
+	return &diff
+}
+
+func postStoreBatchUsage() {
+	initialStoreBatchCoprCounter = m.GetStoreBatchCoprCounter()
 }

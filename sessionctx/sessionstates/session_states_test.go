@@ -21,24 +21,22 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGrammar(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)
@@ -47,8 +45,7 @@ func TestGrammar(t *testing.T) {
 }
 
 func TestUserVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(" +
 		"j json, b blob, s varchar(255), st set('red', 'green', 'blue'), en enum('red', 'green', 'blue'))")
@@ -93,8 +90,7 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
 		stmts           []string
@@ -111,8 +107,9 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			// hidden variable
-			inSessionStates: false,
+			inSessionStates: true,
 			varName:         variable.TiDBTxnReadTS,
+			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
@@ -135,7 +132,7 @@ func TestSystemVars(t *testing.T) {
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBAllowRemoveAutoInc,
+			varName:         variable.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -219,8 +216,7 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestSessionCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int)")
 
@@ -382,20 +378,6 @@ func TestSessionCtx(t *testing.T) {
 			},
 		},
 		{
-			// check MPPStoreLastFailTime
-			setFunc: func(tk *testkit.TestKit) any {
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
-				return tk.Session().GetSessionVars().MPPStoreLastFailTime
-			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				require.Equal(t, 1, len(failTime))
-				tm, ok := failTime["store1"]
-				require.True(t, ok)
-				require.True(t, param.(map[string]time.Time)["store1"].Equal(tm))
-			},
-		},
-		{
 			// check FoundInPlanCache
 			setFunc: func(tk *testkit.TestKit) any {
 				require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
@@ -455,8 +437,7 @@ func TestSessionCtx(t *testing.T) {
 }
 
 func TestStatementCtx(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int auto_increment primary key, str char(1))")
 
@@ -574,8 +555,7 @@ func TestStatementCtx(t *testing.T) {
 }
 
 func TestPreparedStatements(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 
@@ -861,8 +841,7 @@ func TestPreparedStatements(t *testing.T) {
 				return stmtID
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -884,8 +863,7 @@ func TestPreparedStatements(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, conn server.MockConn, param any) {
 				tk.MustQuery("execute stmt").Check(testkit.Rows("10"))
-				datum := []types.Datum{types.NewDatum(1)}
-				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), datum)
+				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), param.(uint32), expression.Args2Expressions4Test(1))
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
 			},
@@ -917,8 +895,7 @@ func TestPreparedStatements(t *testing.T) {
 				rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
 				tk.ResultSetToResult(rs, "").Check(testkit.Rows())
-				datum := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)}
-				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], datum)
+				_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[0], expression.Args2Expressions4Test(1, 2, 3))
 				require.NoError(t, err)
 				rs, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtIDs[1], nil)
 				require.NoError(t, err)
@@ -967,14 +944,14 @@ func TestPreparedStatements(t *testing.T) {
 		//		rootTk := testkit.NewTestKit(t, store)
 		//		rootTk.MustExec(`CREATE USER 'u1'@'localhost'`)
 		//		rootTk.MustExec("create table test.t1(id int)")
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//		rootTk.MustExec(`GRANT SELECT ON test.t1 TO 'u1'@'localhost'`)
 		//		tk.MustExec("prepare stmt from 'select * from test.t1'")
 		//		rootTk.MustExec(`REVOKE SELECT ON test.t1 FROM 'u1'@'localhost'`)
 		//		return nil
 		//	},
 		//	prepareFunc: func(tk *testkit.TestKit, conn server.MockConn) {
-		//		require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+		//		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 		//	},
 		//	restoreErr: errno.ErrNoSuchTable,
 		//	cleanFunc: func(tk *testkit.TestKit) {
@@ -988,6 +965,7 @@ func TestPreparedStatements(t *testing.T) {
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		conn1.Context().Session.GetSessionVars().User = nil
 		var param any
 		if tt.setFunc != nil {
 			param = tt.setFunc(tk1, conn1)
@@ -1015,8 +993,7 @@ func TestPreparedStatements(t *testing.T) {
 }
 
 func TestSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 
@@ -1189,8 +1166,7 @@ func TestSQLBinding(t *testing.T) {
 }
 
 func TestShowStateFail(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
 
@@ -1275,6 +1251,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop table test.t1")
+			},
+		},
+		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
 			},
 		},
 		{
@@ -1373,6 +1359,7 @@ func TestShowStateFail(t *testing.T) {
 	})
 	for _, tt := range tests {
 		conn1 := server.CreateMockConn(t, sv)
+		conn1.Context().Session.GetSessionVars().User = nil
 		tk1 := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 		tt.setFunc(tk1, conn1)
 		if tt.showErr == 0 {

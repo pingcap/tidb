@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
@@ -166,7 +165,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -673,7 +672,7 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		result := json.CompareBinary(evaledArg, arg0)
+		result := types.CompareBinaryJSON(evaledArg, arg0)
 		if result == 0 {
 			return 1, false, nil
 		}
@@ -776,9 +775,7 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	sessionVars.UsersLock.Lock()
-	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
-	sessionVars.UsersLock.Unlock()
+	sessionVars.SetStringUserVar(varName, stringutil.Copy(res), datum.Collation())
 	return res, false, nil
 }
 
@@ -806,9 +803,7 @@ func (b *builtinSetRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool
 	}
 	res = datum.GetFloat64()
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
-	sessionVars.UsersLock.Unlock()
+	sessionVars.SetUserVarVal(varName, datum)
 	return res, false, nil
 }
 
@@ -835,9 +830,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	}
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
-	sessionVars.UsersLock.Unlock()
+	sessionVars.SetUserVarVal(varName, datum)
 	return res, false, nil
 }
 
@@ -864,9 +857,7 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	res := datum.GetInt64()
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
-	sessionVars.UsersLock.Unlock()
+	sessionVars.SetUserVarVal(varName, datum)
 	return res, false, nil
 }
 
@@ -892,9 +883,7 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	}
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
-	sessionVars.UsersLock.Unlock()
+	sessionVars.SetUserVarVal(varName, datum)
 	return res, false, nil
 }
 
@@ -971,9 +960,7 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 		return "", isNull, err
 	}
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
 		// stores the data in datum.x.
 		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
@@ -1025,9 +1012,7 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetInt64(), false, nil
 	}
 	return 0, true, nil
@@ -1067,9 +1052,7 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetFloat64(), false, nil
 	}
 	return 0, true, nil
@@ -1109,9 +1092,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 		return nil, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetMysqlDecimal(), false, nil
 	}
 	return nil, true, nil
@@ -1159,9 +1140,7 @@ func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 		return types.ZeroTime, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.GetUserVarVal(varName); ok {
 		return v.GetMysqlTime(), false, nil
 	}
 	return types.ZeroTime, true, nil
@@ -1178,11 +1157,10 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = c.tp
 	switch c.tp.EvalType() {
 	case types.ETInt:
 		sig = &builtinValuesIntSig{bf, c.offset}
@@ -1410,18 +1388,18 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (types.BinaryJSON, bool, error) {
 	row := b.ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
-			return json.BinaryJSON{}, true, nil
+			return types.BinaryJSON{}, true, nil
 		}
 		return row.GetJSON(b.offset), false, nil
 	}
-	return json.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {

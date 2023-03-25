@@ -11,12 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package server
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"path/filepath"
@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,11 +35,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// isTLSExpiredError checks error is caused by TLS expired.
+func isTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	switch inval := err.(type) {
+	case x509.CertificateInvalidError:
+		if inval.Reason != x509.Expired {
+			return false
+		}
+	case *tls.CertificateVerificationError:
+		invalid, ok := inval.Err.(x509.CertificateInvalidError)
+		if !ok || invalid.Reason != x509.Expired {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+	return true
+}
+
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func TestLoadData1(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataWithColumnList(t, ts.server)
 	ts.runTestLoadData(t, ts.server)
@@ -47,8 +67,7 @@ func TestLoadData1(t *testing.T) {
 }
 
 func TestConfigDefaultValue(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select @@tidb_slow_log_threshold;")
@@ -59,36 +78,49 @@ func TestConfigDefaultValue(t *testing.T) {
 // Fix issue#22540. Change tidb_dml_batch_size,
 // then check if load data into table with auto random column works properly.
 func TestLoadDataAutoRandom(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	err := failpoint.Enable("github.com/pingcap/tidb/executor/BeforeCommitWork", "sleep(1000)")
+	require.NoError(t, err)
+	defer func() {
+		//nolint:errcheck
+		_ = failpoint.Disable("github.com/pingcap/tidb/executor/BeforeCommitWork")
+	}()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandom(t)
 }
 
 func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataAutoRandomWithSpecialTerm(t)
 }
 
 func TestExplainFor(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestExplainForConn(t)
 }
 
 func TestStmtCount(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Status.RecordDBLabel = false
+	cfg.Performance.TCPKeepAlive = true
+	ts := createTidbTestSuiteWithCfg(t, cfg)
 
 	ts.runTestStmtCount(t)
 }
 
+func TestDBStmtCount(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	ts.runTestDBStmtCount(t)
+}
+
 func TestLoadDataListPartition(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	ts.runTestLoadDataForListPartition(t)
 	ts.runTestLoadDataForListPartition2(t)
@@ -97,8 +129,7 @@ func TestLoadDataListPartition(t *testing.T) {
 }
 
 func TestInvalidTLS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -113,8 +144,7 @@ func TestInvalidTLS(t *testing.T) {
 }
 
 func TestTLSAuto(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
 	connOverrider := func(config *mysql.Config) {
@@ -143,8 +173,7 @@ func TestTLSAuto(t *testing.T) {
 }
 
 func TestTLSBasic(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -208,8 +237,7 @@ func TestTLSBasic(t *testing.T) {
 }
 
 func TestTLSVerify(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	dir := t.TempDir()
 
@@ -262,9 +290,9 @@ func TestTLSVerify(t *testing.T) {
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
 
-	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
-	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
-	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
+	require.False(t, isTLSExpiredError(errors.New("unknown test")))
+	require.False(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
+	require.True(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
 
 	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
 	require.Error(t, err)
@@ -301,8 +329,7 @@ func TestTLSVerify(t *testing.T) {
 }
 
 func TestErrorNoRollback(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-rollback.pem", "/tmp/ca-cert-rollback.pem")
@@ -369,10 +396,9 @@ func TestErrorNoRollback(t *testing.T) {
 }
 
 func TestPrepareCount(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
 	ctx := context.Background()
@@ -393,10 +419,9 @@ func TestPrepareCount(t *testing.T) {
 }
 
 func TestPrepareExecute(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -434,12 +459,11 @@ func TestPrepareExecute(t *testing.T) {
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// issue #21194
 	// 255 is the collation id of mysql client 8 default collation_connection
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil, nil)
 	require.NoError(t, err)
 	testCase := []struct {
 		variable string
@@ -458,8 +482,7 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 }
 
 func TestReloadTLS(t *testing.T) {
-	ts, cleanup := createTidbTestSuite(t)
-	defer cleanup()
+	ts := createTidbTestSuite(t)
 
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-reload.pem", "/tmp/ca-cert-reload.pem")
@@ -557,6 +580,6 @@ func TestReloadTLS(t *testing.T) {
 	}
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
-	require.Truef(t, util.IsTLSExpiredError(err), "real error is %+v", err)
+	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
 	server.Close()
 }

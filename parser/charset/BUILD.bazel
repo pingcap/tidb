@@ -35,6 +35,7 @@ go_library(
 
 go_test(
     name = "charset_test",
+    timeout = "short",
     srcs = [
         "charset_test.go",
         "encoding_test.go",

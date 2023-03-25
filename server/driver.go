@@ -18,14 +18,15 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation, dbname and optionally the tls state.
-	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error)
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error)
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -34,7 +35,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(context.Context, []types.Datum) (ResultSet, error)
+	Execute(context.Context, []expression.Expression) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -62,6 +63,12 @@ type PreparedStatement interface {
 
 	// Close closes the statement.
 	Close() error
+
+	// GetCursorActive returns whether the statement has active cursor
+	GetCursorActive() bool
+
+	// SetCursorActive sets whether the statement has active cursor
+	SetCursorActive(active bool)
 }
 
 // ResultSet is the result set of an query.

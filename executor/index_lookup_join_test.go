@@ -21,13 +21,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIndexLookupJoinHang(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -70,8 +70,7 @@ func TestIndexLookupJoinHang(t *testing.T) {
 }
 
 func TestIndexJoinUnionScan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -124,8 +123,7 @@ func TestIndexJoinUnionScan(t *testing.T) {
 }
 
 func TestBatchIndexJoinUnionScanTest(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -146,8 +144,7 @@ func TestBatchIndexJoinUnionScanTest(t *testing.T) {
 }
 
 func TestInapplicableIndexJoinHint(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -189,8 +186,7 @@ func TestInapplicableIndexJoinHint(t *testing.T) {
 }
 
 func TestIndexJoinOverflow(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -204,8 +200,7 @@ func TestIndexJoinOverflow(t *testing.T) {
 }
 
 func TestIssue11061(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -218,8 +213,7 @@ func TestIssue11061(t *testing.T) {
 }
 
 func TestIndexJoinPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -232,8 +226,7 @@ func TestIndexJoinPartitionTable(t *testing.T) {
 }
 
 func TestIndexJoinMultiCondition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -246,8 +239,7 @@ func TestIndexJoinMultiCondition(t *testing.T) {
 }
 
 func TestIssue16887(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -263,8 +255,7 @@ func TestIssue16887(t *testing.T) {
 }
 
 func TestIndexJoinEnumSetIssue19233(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -305,8 +296,7 @@ func TestIndexJoinEnumSetIssue19233(t *testing.T) {
 }
 
 func TestIssue19411(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -324,8 +314,7 @@ func TestIssue19411(t *testing.T) {
 }
 
 func TestIssue23653(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -339,8 +328,7 @@ func TestIssue23653(t *testing.T) {
 }
 
 func TestIssue23656(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -355,8 +343,7 @@ func TestIssue23656(t *testing.T) {
 }
 
 func TestIssue23722(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -365,13 +352,16 @@ func TestIssue23722(t *testing.T) {
 	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("0"))
 
 	// Test lookup content exceeds primary key prefix.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b char(10), c varchar(255), primary key (c(5)) clustered);")
 	tk.MustExec("insert into t values (20301,'Charlie','aaaaaaa');")
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie aaaaaaa"))
 	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 
 	// Test the original case.
 	tk.MustExec("drop table if exists t;")
@@ -391,8 +381,7 @@ func TestIssue23722(t *testing.T) {
 }
 
 func TestIssue24547(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -406,11 +395,13 @@ func TestIssue24547(t *testing.T) {
 }
 
 func TestIssue27138(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("drop table if exists t1,t2")
 
 	tk.MustExec("set @old_tidb_partition_prune_mode=@@tidb_partition_prune_mode")
@@ -437,25 +428,26 @@ PARTITIONS 1`)
 
 	// Why does the t2.prefiller need be at least 2^32 ? If smaller the bug will not appear!?!
 	tk.MustExec("insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0)")
+	tk.MustExec(`analyze table t1`)
+	tk.MustExec(`analyze table t2`)
 
 	// Why must it be = 1 and not 2?
-	tk.MustQuery("explain select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows("" +
-		"IndexJoin_15 10.00 root  inner join, inner:TableReader_14, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)]\n" +
-		"[├─HashAgg_25(Build) 8.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller]\n" +
-		"[│ └─TableReader_26 8.00 root  data:HashAgg_20]\n" +
-		"[│   └─HashAgg_20 8.00 cop[tikv]  group by:test.t2.prefiller, ]\n" +
-		"[│     └─Selection_24 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
-		"[│       └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
-		"[└─TableReader_14(Probe) 1.00 root partition:all data:TableRangeScan_13]\n" +
-		"[  └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.prefiller], keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows(""+
+		`IndexJoin 1.25 root  inner join, inner:TableReader, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)`,
+		`├─HashAgg(Build) 1.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller`,
+		`│ └─TableReader 1.00 root  data:HashAgg`,
+		`│   └─HashAgg 1.00 cop[tikv]  group by:test.t2.prefiller, `,
+		`│     └─Selection 1.00 cop[tikv]  eq(test.t2.postfiller, 1)`,
+		`│       └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false`,
+		`└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan`,
+		`  └─TableRangeScan 1.00 cop[tikv] table:t1 range: decided by [eq(test.t1.id, test.t2.prefiller)], keep order:false, stats:pseudo`))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	// without fix it fails with: "runtime error: index out of range [0] with length 0"
 	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())
 }
 
 func TestIssue27893(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -466,12 +458,13 @@ func TestIssue27893(t *testing.T) {
 	tk.MustExec("insert into t1 values('x')")
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 }
 
 func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -50,5 +50,4 @@ func TestGetConfTables(t *testing.T) {
 	actualDBTables, err := GetConfTables(tablesList)
 	require.NoError(t, err)
 	require.Equal(t, expectedDBTables, actualDBTables)
-
 }

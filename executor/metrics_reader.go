@@ -89,9 +89,12 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	return totalRows, nil
 }
 
+// MockMetricsPromDataKey is for test
+type MockMetricsPromDataKey struct{}
+
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
-		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
+		failpoint.Return(ctx.Value(MockMetricsPromDataKey{}).(pmodel.Matrix), nil)
 	})
 
 	// Add retry to avoid network error.
@@ -156,7 +159,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.NewTime(
-		types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
+		types.FromGoTime(time.UnixMilli(int64(pair.Timestamp))),
 		mysql.TypeDatetime,
 		types.MaxFsp,
 	)))

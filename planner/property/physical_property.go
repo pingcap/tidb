@@ -17,18 +17,20 @@ package property
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
-var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopDoubleReadTaskType, RootTaskType}
+var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopMultiReadTaskType, RootTaskType}
 
 // SortItem wraps the column and its order.
 type SortItem struct {
@@ -46,6 +48,15 @@ func (s *SortItem) String() string {
 // Clone makes a copy of SortItem.
 func (s SortItem) Clone() SortItem {
 	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+}
+
+// MemoryUsage return the memory usage of SortItem
+func (s SortItem) MemoryUsage() (sum int64) {
+	sum = size.SizeOfBool
+	if s.Col != nil {
+		sum += s.Col.MemoryUsage()
+	}
+	return
 }
 
 // MPPPartitionType is the way to partition during mpp data exchanging.
@@ -103,6 +114,19 @@ func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 		}
 	}
 	return partitionCol.Col.Equal(nil, other.Col)
+}
+
+// MemoryUsage return the memory usage of MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
+	if partitionCol == nil {
+		return
+	}
+
+	sum = size.SizeOfInt32
+	if partitionCol.Col != nil {
+		sum += partitionCol.Col.MemoryUsage()
+	}
+	return
 }
 
 // ExplainColumnList generates explain information for a list of columns.
@@ -329,14 +353,35 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 }
 
 // AllSameOrder checks if all the items have same order.
-func (p *PhysicalProperty) AllSameOrder() (bool, bool) {
+func (p *PhysicalProperty) AllSameOrder() (isSame bool, desc bool) {
 	if len(p.SortItems) == 0 {
 		return true, false
 	}
 	for i := 1; i < len(p.SortItems); i++ {
 		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
-			return false, false
+			return
 		}
 	}
 	return true, p.SortItems[0].Desc
+}
+
+const emptyPhysicalPropertySize = int64(unsafe.Sizeof(PhysicalProperty{}))
+
+// MemoryUsage return the memory usage of PhysicalProperty
+func (p *PhysicalProperty) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPhysicalPropertySize + int64(cap(p.hashcode))
+	for _, sortItem := range p.SortItems {
+		sum += sortItem.MemoryUsage()
+	}
+	for _, sortItem := range p.SortItemsForPartition {
+		sum += sortItem.MemoryUsage()
+	}
+	for _, mppCol := range p.MPPPartitionCols {
+		sum += mppCol.MemoryUsage()
+	}
+	return
 }

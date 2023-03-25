@@ -29,6 +29,19 @@ const (
 	resetTSRetryTime       = 16
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 500 * time.Millisecond
+
+	resetTSRetryTimeExt       = 600
+	resetTSWaitIntervalExt    = 500 * time.Millisecond
+	resetTSMaxWaitIntervalExt = 300 * time.Second
+
+	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
+	FlashbackRetryTime       = 3
+	FlashbackWaitInterval    = 3 * time.Second
+	FlashbackMaxWaitInterval = 15 * time.Second
+
+	ChecksumRetryTime       = 8
+	ChecksumWaitInterval    = 1 * time.Second
+	ChecksumMaxWaitInterval = 30 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -73,10 +86,20 @@ func (rs *RetryState) RecordRetry() {
 	rs.retryTimes++
 }
 
+// RetryTimes returns the retry times.
+// usage: unit test.
+func (rs *RetryState) RetryTimes() int {
+	return rs.retryTimes
+}
+
 // Attempt implements the `Backoffer`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
+}
+
+func (rs *RetryState) StopRetry() {
+	rs.retryTimes = rs.maxRetry
 }
 
 // NextBackoff implements the `Backoffer`.
@@ -158,6 +181,14 @@ func NewPDReqBackoffer() Backoffer {
 	}
 }
 
+func NewPDReqBackofferExt() Backoffer {
+	return &pdReqBackoffer{
+		attempt:      resetTSRetryTimeExt,
+		delayTime:    resetTSWaitIntervalExt,
+		maxDelayTime: resetTSMaxWaitIntervalExt,
+	}
+}
+
 func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 	// bo.delayTime = 2 * bo.delayTime
 	// bo.attempt--
@@ -167,6 +198,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		// Excepted error, finish the operation
 		bo.delayTime = 0
 		bo.attempt = 0
+	case berrors.ErrRestoreTotalKVMismatch:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
 	default:
 		switch status.Code(e) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:

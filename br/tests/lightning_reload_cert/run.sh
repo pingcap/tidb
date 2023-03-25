@@ -21,7 +21,7 @@ trap 'mv "$TEST_DIR/certs/lightning-valid.pem" "$TEST_DIR/certs/lightning.pem"' 
 
 # shellcheck disable=SC2089
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetCertExpiredSoon=return(\"$TEST_DIR/certs/ca.key\")"
-export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(15000)"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownWriteRows=sleep(15000)"
 
 # 1. After 10s, the certificate will be expired and import should report connection error.
 run_lightning --backend='local' &
@@ -29,7 +29,7 @@ shpid="$!"
 sleep 15
 ok=0
 for _ in {0..60}; do
-  if grep -Fq "connection closed before server preface received" "$TEST_DIR"/lightning.log; then
+  if grep -Fq "connection error" "$TEST_DIR"/lightning.log; then
     ok=1
     break
   fi

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // Init initializes LogicalAggregation.
@@ -472,6 +473,19 @@ func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
+// MemoryUsage return the memory usage of PhysicalTableSample
+func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
+	if p.TableSampleInfo != nil {
+		sum += p.TableSampleInfo.MemoryUsage()
+	}
+	return
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
@@ -489,19 +503,19 @@ func (p PhysicalIndexJoin) Init(ctx sessionctx.Context, stats *property.StatsInf
 
 // Init initializes PhysicalIndexMergeJoin.
 func (p PhysicalIndexMergeJoin) Init(ctx sessionctx.Context) *PhysicalIndexMergeJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexMergeJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 
 // Init initializes PhysicalIndexHashJoin.
 func (p PhysicalIndexHashJoin) Init(ctx sessionctx.Context) *PhysicalIndexHashJoin {
-	ctx.GetSessionVars().PlanID++
 	p.tp = plancodec.TypeIndexHashJoin
-	p.id = ctx.GetSessionVars().PlanID
+	p.id = int(ctx.GetSessionVars().PlanID.Add(1))
 	p.ctx = ctx
+	p.self = &p
 	return &p
 }
 
@@ -516,7 +530,7 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 }
 
 // Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
@@ -579,5 +593,19 @@ func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETab
 func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.stats = stats
+	return &p
+}
+
+// Init initializes FKCheck.
+func (p FKCheck) Init(ctx sessionctx.Context) *FKCheck {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)
+	p.stats = &property.StatsInfo{}
+	return &p
+}
+
+// Init initializes FKCascade
+func (p FKCascade) Init(ctx sessionctx.Context) *FKCascade {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
+	p.stats = &property.StatsInfo{}
 	return &p
 }

@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/worker",
         "//br/pkg/storage",
+        "//config",
         "//parser/mysql",
         "//types",
         "//util/filter",
@@ -31,9 +32,11 @@ go_library(
         "//util/slice",
         "//util/table-filter",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_spkg_bom//:bom",
         "@com_github_xitongsys_parquet_go//parquet",
         "@com_github_xitongsys_parquet_go//reader",
         "@com_github_xitongsys_parquet_go//source",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_text//encoding",
         "@org_golang_x_text//encoding/simplifiedchinese",
         "@org_uber_go_zap//:zap",
@@ -43,6 +46,7 @@ go_library(
 
 go_test(
     name = "mydump_test",
+    timeout = "short",
     srcs = [
         "charset_convertor_test.go",
         "csv_parser_test.go",
@@ -57,10 +61,12 @@ go_test(
     data = glob([
         "csv/*",
         "examples/*",
+        "parquet/*",
     ]),
     embed = [":mydump"],
     flaky = True,
     deps = [
+        "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/worker",

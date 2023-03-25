@@ -10,12 +10,14 @@ go_library(
         "//util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "store_test",
+    timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
         "main_test.go",
@@ -23,6 +25,7 @@ go_test(
     ],
     embed = [":store"],
     flaky = True,
+    shard_count = 23,
     deps = [
         "//domain",
         "//kv",

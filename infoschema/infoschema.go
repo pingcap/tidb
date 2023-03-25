@@ -42,6 +42,7 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
+	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
@@ -60,6 +61,12 @@ type InfoSchema interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// AllResourceGroups returns all resource groups
+	AllResourceGroups() []*model.ResourceGroupInfo
+	// HasTemporaryTable returns whether information schema has temporary table
+	HasTemporaryTable() bool
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
 type sortedTables []table.Table
@@ -89,13 +96,30 @@ type infoSchema struct {
 	policyMutex sync.RWMutex
 	policyMap   map[string]*model.PolicyInfo
 
+	// resourceGroupMap stores all resource groups.
+	resourceGroupMutex sync.RWMutex
+	resourceGroupMap   map[string]*model.ResourceGroupInfo
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
 
+	// temporaryTables stores the temporary table ids
+	temporaryTableIDs map[int64]struct{}
+
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
+
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+}
+
+// SchemaAndTableName contains the lower-case schema name and table name.
+type SchemaAndTableName struct {
+	schema string
+	table  string
 }
 
 // MockInfoSchema only serves for test.
@@ -103,6 +127,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
+	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -130,6 +155,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
+	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -218,6 +244,17 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	return nil, false
 }
 
+func (is *infoSchema) ResourceGroupByID(id int64) (val *model.ResourceGroupInfo, ok bool) {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	for _, v := range is.resourceGroupMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
@@ -253,7 +290,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
-		return nil, false
+		return autoid.Allocators{}, false
 	}
 	return tbl.Allocators(nil), true
 }
@@ -300,6 +337,11 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 		}
 	}
 	return nil, nil, nil
+}
+
+// HasTemporaryTable returns whether information schema has temporary table
+func (is *infoSchema) HasTemporaryTable() bool {
+	return len(is.temporaryTableIDs) != 0
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
@@ -371,6 +413,25 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	return t, r
 }
 
+// ResourceGroupByName is used to find the resource group.
+func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	t, r := is.resourceGroupMap[name.L]
+	return t, r
+}
+
+// AllResourceGroups returns all resource groups.
+func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	groups := make([]*model.ResourceGroupInfo, 0, len(is.resourceGroupMap))
+	for _, group := range is.resourceGroupMap {
+		groups = append(groups, group)
+	}
+	return groups
+}
+
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -395,6 +456,18 @@ func (is *infoSchema) AllPlacementBundles() []*placement.Bundle {
 	return bundles
 }
 
+func (is *infoSchema) setResourceGroup(resourceGroup *model.ResourceGroupInfo) {
+	is.resourceGroupMutex.Lock()
+	defer is.resourceGroupMutex.Unlock()
+	is.resourceGroupMap[resourceGroup.Name.L] = resourceGroup
+}
+
+func (is *infoSchema) deleteResourceGroup(name string) {
+	is.resourceGroupMutex.Lock()
+	defer is.resourceGroupMutex.Unlock()
+	delete(is.resourceGroupMap, name)
+}
+
 func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
@@ -407,25 +480,92 @@ func (is *infoSchema) deletePolicy(name string) {
 	delete(is.policyMap, name)
 }
 
-// LocalTemporaryTables store local temporary tables
-type LocalTemporaryTables struct {
-	// Local temporary tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
+func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		referredFKList := is.referredForeignKeyMap[refer]
+		found := false
+		for _, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				referredFK.Cols = fk.RefCols
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)+1)
+		newReferredFKList = append(newReferredFKList, referredFKList...)
+		newReferredFKList = append(newReferredFKList, &model.ReferredFKInfo{
+			Cols:        fk.RefCols,
+			ChildSchema: schema,
+			ChildTable:  tbInfo.Name,
+			ChildFKName: fk.Name,
+		})
+		sort.Slice(newReferredFKList, func(i, j int) bool {
+			if newReferredFKList[i].ChildSchema.L != newReferredFKList[j].ChildSchema.L {
+				return newReferredFKList[i].ChildSchema.L < newReferredFKList[j].ChildSchema.L
+			}
+			if newReferredFKList[i].ChildTable.L != newReferredFKList[j].ChildTable.L {
+				return newReferredFKList[i].ChildTable.L < newReferredFKList[j].ChildTable.L
+			}
+			return newReferredFKList[i].ChildFKName.L < newReferredFKList[j].ChildFKName.L
+		})
+		is.referredForeignKeyMap[refer] = newReferredFKList
+	}
+}
+
+func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		refer := SchemaAndTableName{schema: fk.RefSchema.L, table: fk.RefTable.L}
+		referredFKList := is.referredForeignKeyMap[refer]
+		if len(referredFKList) == 0 {
+			continue
+		}
+		newReferredFKList := make([]*model.ReferredFKInfo, 0, len(referredFKList)-1)
+		for _, referredFK := range referredFKList {
+			if referredFK.ChildSchema.L == schema.L && referredFK.ChildTable.L == tbInfo.Name.L && referredFK.ChildFKName.L == fk.Name.L {
+				continue
+			}
+			newReferredFKList = append(newReferredFKList, referredFK)
+		}
+		is.referredForeignKeyMap[refer] = newReferredFKList
+	}
+}
+
+// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	name := SchemaAndTableName{schema: schema, table: table}
+	return is.referredForeignKeyMap[name]
+}
+
+// SessionTables store local temporary tables
+type SessionTables struct {
+	// Session tables can be accessed after the db is dropped, so there needs a way to retain the DBInfo.
 	// schemaTables.dbInfo will only be used when the db is dropped and it may be stale after the db is created again.
 	// But it's fine because we only need its name.
 	schemaMap map[string]*schemaTables
 	idx2table map[int64]table.Table
 }
 
-// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
-func NewLocalTemporaryTables() *LocalTemporaryTables {
-	return &LocalTemporaryTables{
+// NewSessionTables creates a new NewSessionTables object
+func NewSessionTables() *SessionTables {
+	return &SessionTables{
 		schemaMap: make(map[string]*schemaTables),
 		idx2table: make(map[int64]table.Table),
 	}
 }
 
 // TableByName get table by name
-func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t, true
@@ -435,19 +575,19 @@ func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Ta
 }
 
 // TableExists check if table with the name exists
-func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+func (is *SessionTables) TableExists(schema, table model.CIStr) (ok bool) {
 	_, ok = is.TableByName(schema, table)
 	return
 }
 
 // TableByID get table by table id
-func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
+func (is *SessionTables) TableByID(id int64) (tbl table.Table, ok bool) {
 	tbl, ok = is.idx2table[id]
 	return
 }
 
 // AddTable add a table
-func (is *LocalTemporaryTables) AddTable(db *model.DBInfo, tbl table.Table) error {
+func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(db)
 
 	tblMeta := tbl.Meta()
@@ -466,7 +606,7 @@ func (is *LocalTemporaryTables) AddTable(db *model.DBInfo, tbl table.Table) erro
 }
 
 // RemoveTable remove a table
-func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	tbls := is.schemaTables(schema)
 	if tbls == nil {
 		return false
@@ -486,12 +626,12 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 }
 
 // Count gets the count of the temporary tables.
-func (is *LocalTemporaryTables) Count() int {
+func (is *SessionTables) Count() int {
 	return len(is.idx2table)
 }
 
 // SchemaByTable get a table's schema name
-func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+func (is *SessionTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
@@ -507,7 +647,7 @@ func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (*mode
 	return nil, false
 }
 
-func (is *LocalTemporaryTables) ensureSchema(db *model.DBInfo) *schemaTables {
+func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 	if tbls, ok := is.schemaMap[db.Name.L]; ok {
 		return tbls
 	}
@@ -517,7 +657,7 @@ func (is *LocalTemporaryTables) ensureSchema(db *model.DBInfo) *schemaTables {
 	return tbls
 }
 
-func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaTables {
+func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
 	if is.schemaMap == nil {
 		return nil
 	}
@@ -529,41 +669,97 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaTables {
 	return nil
 }
 
-// TemporaryTableAttachedInfoSchema implements InfoSchema
+// SessionExtendedInfoSchema implements InfoSchema
 // Local temporary table has a loose relationship with database.
 // So when a database is dropped, its temporary tables still exist and can be returned by TableByName/TableByID.
-type TemporaryTableAttachedInfoSchema struct {
+type SessionExtendedInfoSchema struct {
 	InfoSchema
-	LocalTemporaryTables *LocalTemporaryTables
+	LocalTemporaryTablesOnce sync.Once
+	LocalTemporaryTables     *SessionTables
+	MdlTables                *SessionTables
 }
 
 // TableByName implements InfoSchema.TableByName
-func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
-	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
-		return tbl, nil
+func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.TableByName(schema, table); ok {
+			return tbl, nil
+		}
 	}
 
 	return ts.InfoSchema.TableByName(schema, table)
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
-	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
-		return tbl, true
+func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if ts.LocalTemporaryTables != nil {
+		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+			return tbl, true
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.TableByID(id); ok {
+			return tbl, true
+		}
 	}
 
 	return ts.InfoSchema.TableByID(id)
 }
 
 // SchemaByTable implements InfoSchema.SchemaByTable, it returns a stale DBInfo even if it's dropped.
-func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
 
-	if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
-		return db, true
+	if ts.LocalTemporaryTables != nil {
+		if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+			return db, true
+		}
+	}
+
+	if ts.MdlTables != nil {
+		if tbl, ok := ts.MdlTables.SchemaByTable(tableInfo); ok {
+			return tbl, true
+		}
 	}
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)
+}
+
+// UpdateTableInfo implements InfoSchema.SchemaByTable.
+func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo table.Table) error {
+	if ts.MdlTables == nil {
+		ts.MdlTables = NewSessionTables()
+	}
+	err := ts.MdlTables.AddTable(db, tableInfo)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// HasTemporaryTable returns whether information schema has temporary table
+func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
+	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
+}
+
+// AttachMDLTableInfoSchema attach MDL related table information schema to is
+func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
+	mdlTables := NewSessionTables()
+	if iss, ok := is.(*SessionExtendedInfoSchema); ok {
+		iss.MdlTables = mdlTables
+		return iss
+	}
+	return &SessionExtendedInfoSchema{
+		InfoSchema: is,
+		MdlTables:  mdlTables,
+	}
 }

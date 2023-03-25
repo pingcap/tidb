@@ -15,13 +15,13 @@
 package core_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -45,7 +45,7 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err = core.Preprocess(ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
@@ -65,12 +65,10 @@ func TestValidator(t *testing.T) {
 		// But it can't be null in MySQL 5.7.
 		{"create table t(id int auto_increment default null, primary key (id))", true, nil},
 		{"create table t(id int default null auto_increment, primary key (id))", true, nil},
-		{"create table t(id int not null auto_increment)", true,
-			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
+		{"create table t(id int not null auto_increment)", true, nil},
 		{"create table t(id int not null auto_increment, c int auto_increment, key (id, c))", true,
 			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
-		{"create table t(id int not null auto_increment, c int, key (c, id))", true,
-			errors.New("[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")},
+		{"create table t(id int not null auto_increment, c int, key (c, id))", true, nil},
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
@@ -234,10 +232,11 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 
-		// issue 13032
-		{"CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);", false, autoid.ErrWrongAutoKey},
-		{"CREATE TABLE origin (a int auto_increment, b int key);", false, autoid.ErrWrongAutoKey},
-		{"CREATE TABLE origin (a int auto_increment, b int unique);", false, autoid.ErrWrongAutoKey},
+		// ~~issue 13032~~
+		// Incompatible as designed here, see https://github.com/pingcap/tidb/issues/40580
+		{"CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);", true, nil},
+		{"CREATE TABLE origin (a int auto_increment, b int key);", true, nil},
+		{"CREATE TABLE origin (a int auto_increment, b int unique);", true, nil},
 		{"CREATE TABLE origin (a int primary key auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int unique auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
@@ -278,8 +277,7 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -290,8 +288,7 @@ func TestValidator(t *testing.T) {
 }
 
 func TestForeignKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(a int, b int, c int)")
 	tk.MustExec("create table test.t2(d int)")
@@ -307,8 +304,7 @@ func TestForeignKey(t *testing.T) {
 }
 
 func TestDropGlobalTempTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -333,8 +329,7 @@ func TestDropGlobalTempTable(t *testing.T) {
 }
 
 func TestErrKeyPart0(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database TestErrKeyPart")
 	tk.MustExec("use TestErrKeyPart")
@@ -350,8 +345,7 @@ func TestErrKeyPart0(t *testing.T) {
 
 // For issue #30328
 func TestLargeVarcharAutoConv(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -372,8 +366,7 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 }
 
 func TestPreprocessCTE(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t, t1, t2;")
@@ -421,7 +414,7 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 
-		err = core.Preprocess(tk.Session(), stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
 		require.NoError(t, err)
 
 		var rs strings.Builder

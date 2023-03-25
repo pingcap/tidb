@@ -58,9 +58,9 @@ var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 
 // DefaultDataSinkRegisterer implements DataSinkRegisterer.
 type DefaultDataSinkRegisterer struct {
-	sync.Mutex
 	ctx       context.Context
 	dataSinks map[DataSink]struct{}
+	sync.Mutex
 }
 
 // NewDefaultDataSinkRegisterer creates a new DefaultDataSinkRegisterer which implements DataSinkRegisterer.

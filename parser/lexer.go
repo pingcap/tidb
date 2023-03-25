@@ -80,6 +80,9 @@ type Scanner struct {
 
 	// true if a dot follows an identifier
 	identifierDot bool
+
+	// keepHint, if true, Scanner will keep hint when normalizing .
+	keepHint bool
 }
 
 // Errors returns the errors and warns during a scan.
@@ -193,6 +196,30 @@ func (s *Scanner) getNextToken() int {
 	return tok
 }
 
+func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
+	r := s.r
+	tok1, pos, lit := s.scan()
+	if tok1 == identifier {
+		tok1 = s.handleIdent(&yySymType{})
+	}
+	if tok1 == identifier {
+		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
+			tok1 = tmpToken
+		}
+	}
+	tok2, pos, lit = s.scan()
+	if tok2 == identifier {
+		tok2 = s.handleIdent(&yySymType{})
+	}
+	if tok2 == identifier {
+		if tmpToken := s.isTokenIdentifier(lit, pos.Offset); tmpToken != 0 {
+			tok2 = tmpToken
+		}
+	}
+	s.r = r
+	return tok1, tok2
+}
+
 // Lex returns a token and store the token value in v.
 // Scanner satisfies yyLexer interface.
 // 0 and invalid are special token id this function would return:
@@ -228,13 +255,41 @@ func (s *Scanner) Lex(v *yySymType) int {
 	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
 		return not2
 	}
-	if tok == as && s.getNextToken() == of {
+	if (tok == as || tok == member) && s.getNextToken() == of {
 		_, pos, lit = s.scan()
 		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
-		s.lastKeyword = asof
 		s.lastScanOffset = pos.Offset
 		v.offset = pos.Offset
-		return asof
+		if tok == as {
+			s.lastKeyword = asof
+			return asof
+		}
+		s.lastKeyword = memberof
+		return memberof
+	}
+	if tok == to {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == timestampType && tok2 == stringLit {
+			_, pos, lit = s.scan()
+			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			s.lastKeyword = toTimestamp
+			s.lastScanOffset = pos.Offset
+			v.offset = pos.Offset
+			return toTimestamp
+		}
+	}
+	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED
+	if tok == optionally {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == enclosed && tok2 == by {
+			_, _, lit = s.scan()
+			_, pos2, lit2 := s.scan()
+			v.ident = fmt.Sprintf("%s %s %s", v.ident, lit, lit2)
+			s.lastKeyword = optionallyEnclosedBy
+			s.lastScanOffset = pos2.Offset
+			v.offset = pos2.Offset
+			return optionallyEnclosedBy
+		}
 	}
 
 	switch tok {
@@ -287,6 +342,11 @@ func (s *Scanner) GetSQLMode() mysql.SQLMode {
 // EnableWindowFunc controls whether the scanner recognize the keywords of window function.
 func (s *Scanner) EnableWindowFunc(val bool) {
 	s.supportWindowFunc = val
+}
+
+// setKeepHint set the keepHint flag when normalizing.
+func (s *Scanner) setKeepHint(val bool) {
+	s.keepHint = val
 }
 
 // InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
@@ -481,7 +541,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 
 	case '+': // '/*+' optimizer hints
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if _, ok := hintedTokens[s.lastKeyword]; ok {
+		if _, ok := hintedTokens[s.lastKeyword]; ok || s.keepHint {
 			// only recognize optimizers hints directly followed by certain
 			// keywords like SELECT, INSERT, etc., only a special case "FOR UPDATE" needs to be handled
 			// we will report a warning in order to match MySQL's behavior, but the hint content will be ignored

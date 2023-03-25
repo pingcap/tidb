@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -64,26 +65,21 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 // RemoteTopSQLReporter implements TopSQLReporter that sends data to a remote agent.
 // This should be called periodically to collect TopSQL resource usage metrics.
 type RemoteTopSQLReporter struct {
-	DefaultDataSinkRegisterer
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
+	ctx                     context.Context
+	reportCollectedDataChan chan collectedData
+	cancel                  context.CancelFunc
 	sqlCPUCollector         *collector.SQLCPUCollector
 	collectCPUTimeChan      chan []collector.SQLCPUTimeRecord
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
-	reportCollectedDataChan chan collectedData
-
-	collecting        *collecting
-	normalizedSQLMap  *normalizedSQLMap
-	normalizedPlanMap *normalizedPlanMap
-	stmtStatsBuffer   map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
-
+	collecting              *collecting
+	normalizedSQLMap        *normalizedSQLMap
+	normalizedPlanMap       *normalizedPlanMap
+	stmtStatsBuffer         map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
 	// calling decodePlan this can take a while, so should not block critical paths.
 	decodePlan planBinaryDecodeFunc
-
 	// Instead of dropping large plans, we compress it into encoded format and report
 	compressPlan planBinaryCompressFunc
+	DefaultDataSinkRegisterer
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
@@ -128,7 +124,7 @@ func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 	case tsr.collectCPUTimeChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -144,7 +140,7 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 	case tsr.collectStmtStatsChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreCollectStmtChannelFullCounter.Inc()
+		reporter_metrics.IgnoreCollectStmtChannelFullCounter.Inc()
 	}
 }
 
@@ -254,7 +250,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
 	}:
 	default:
 		// ignore if chan blocked
-		ignoreReportChannelFullCounter.Inc()
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 

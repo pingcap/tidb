@@ -34,21 +34,19 @@ var (
 // Watcher watches for files or directory changes by polling
 // currently, if multi operations applied to one file or directory, only one event (with single Op) will be sent
 // the priority of Op is:
-//   1. Modify
-//   2. Chmod
-//   3. Rename / Move
-//   4. Create / Remove
+//  1. Modify
+//  2. Chmod
+//  3. Rename / Move
+//  4. Create / Remove
 type Watcher struct {
-	Events chan Event
-	Errors chan error
-
-	running atomic.Int32
+	Events  chan Event
+	Errors  chan error
 	closed  chan struct{}
+	names   map[string]struct{}    // original added names needed to watch
+	files   map[string]os.FileInfo // all latest watching files
 	wg      sync.WaitGroup
+	running atomic.Int32
 	mu      sync.Mutex
-
-	names map[string]struct{}    // original added names needed to watch
-	files map[string]os.FileInfo // all latest watching files
 }
 
 // NewWatcher creates a new Watcher instance
@@ -65,7 +63,7 @@ func NewWatcher() *Watcher {
 
 // Start starts the watching
 func (w *Watcher) Start(d time.Duration) error {
-	if !w.running.CAS(0, 1) {
+	if !w.running.CompareAndSwap(0, 1) {
 		return ErrWatcherStarted
 	}
 
@@ -85,7 +83,7 @@ func (w *Watcher) Start(d time.Duration) error {
 
 // Close stops the watching
 func (w *Watcher) Close() {
-	if !w.running.CAS(1, 0) {
+	if !w.running.CompareAndSwap(1, 0) {
 		return
 	}
 

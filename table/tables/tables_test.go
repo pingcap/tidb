@@ -85,8 +85,7 @@ func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 }
 
 func TestBasic(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
@@ -186,8 +185,7 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 
 func TestTypes(t *testing.T) {
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.NoError(t, err)
@@ -239,8 +237,7 @@ func TestTypes(t *testing.T) {
 
 func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	ctx := context.Background()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(ctx, "drop table if exists test.t")
 	require.NoError(t, err)
@@ -320,8 +317,7 @@ func TestRowKeyCodec(t *testing.T) {
 }
 
 func TestUnsignedPK(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	require.NoError(t, err)
@@ -337,15 +333,14 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestIterRecords(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	require.NoError(t, err)
@@ -370,8 +365,7 @@ func TestIterRecords(t *testing.T) {
 }
 
 func TestTableFromMeta(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
@@ -384,18 +378,18 @@ func TestTableFromMeta(t *testing.T) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.NoError(t, err)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Error(t, err)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 
@@ -423,8 +417,7 @@ func TestTableFromMeta(t *testing.T) {
 }
 
 func TestShardRowIDBitsStep(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
@@ -442,8 +435,7 @@ func TestShardRowIDBitsStep(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
@@ -609,8 +601,7 @@ func TestHiddenColumn(t *testing.T) {
 }
 
 func TestAddRecordWithCtx(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
 	require.NoError(t, err)
@@ -648,15 +639,14 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(records), i)
 
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
@@ -666,7 +656,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into ttt(k,c) values(1, 'tidb')")
 	tk.MustExec("insert into ttt(k,c) values(2, 'tidb')")
 	_, err := tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// no auto-commit
@@ -674,13 +664,13 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
-	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'", err.Error())
+	require.Equal(t, "[kv:1062]Duplicate entry '1-tidb' for key 'ttt.k_1'", err.Error())
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
@@ -713,10 +703,9 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 }
 
 func TestViewColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
@@ -744,8 +733,7 @@ func TestViewColumns(t *testing.T) {
 }
 
 func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -769,13 +757,12 @@ func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
 }
 
 func TestTxnAssertion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	se.SetConnectionID(1)
 	require.NoError(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
 

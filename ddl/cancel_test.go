@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -149,8 +150,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t modify column c11 char(10)", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t modify column c11 char(10)", false, model.StatePublic, false, true, nil},
 	// Add foreign key.
-	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
-	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int key, c2 int, c3 int, c11 tinyint);"}},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, []string{"insert into t_ref (c1) select c1 from t;"}},
 	// Drop foreign key.
 	{"alter table t drop foreign key fk", true, model.StatePublic, true, false, nil},
 	{"alter table t drop foreign key fk", false, model.StateNone, false, true, nil},
@@ -226,8 +227,7 @@ func cancelSuccess(rs *testkit.Result) bool {
 }
 
 func TestCancel(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -245,7 +245,7 @@ func TestCancel(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint
+		c1 int, c2 int, c3 int, c11 tinyint, index fk_c1(c1)
 	);`)
 
 	// Prepare data.
@@ -265,34 +265,36 @@ func TestCancel(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
 	}()
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
-	cancel := false
-	cancelResult := false
-	cancelWhenReorgNotStart := false
+	cancel := atomicutil.NewBool(false)
+	cancelResult := atomicutil.NewBool(false)
+	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel {
-			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
+		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-			cancelResult = cancelSuccess(rs)
-			cancel = true
+			cancelResult.Store(cancelSuccess(rs))
+			cancel.Store(true)
 		}
 	}
-	dom.DDL().SetHook(hook)
+	dom.DDL().SetHook(hook.Clone())
 
-	restHook := func(h *ddl.TestDDLCallback) {
+	restHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
-		h.OnJobUpdatedExported = nil
+		h.OnJobUpdatedExported.Store(nil)
+		dom.DDL().SetHook(h.Clone())
 	}
-	registHook := func(h *ddl.TestDDLCallback, onJobRunBefore bool) {
+	registHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
 			h.OnJobRunBeforeExported = hookFunc
 		} else {
-			h.OnJobUpdatedExported = hookFunc
+			h.OnJobUpdatedExported.Store(&hookFunc)
 		}
+		dom.DDL().SetHook(h.Clone())
 	}
 
 	for j, tc := range allTestCase {
@@ -303,16 +305,16 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel = false
-			cancelWhenReorgNotStart = true
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(true)
 			registHook(hook, true)
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel {
-				require.Equal(t, tc.ok, cancelResult, msg)
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
 			}
 		}
 		if tc.onJobUpdate {
@@ -320,16 +322,16 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel = false
-			cancelWhenReorgNotStart = false
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(false)
 			registHook(hook, false)
 			if tc.ok {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel {
-				require.Equal(t, tc.ok, cancelResult, msg)
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
 			}
 		}
 	}

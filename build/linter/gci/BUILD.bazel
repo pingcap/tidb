@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/build/linter/gci",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_daixiang0_gci//pkg/configuration",
+        "@com_github_daixiang0_gci//pkg/config",
         "@com_github_daixiang0_gci//pkg/gci",
         "@org_golang_x_tools//go/analysis",
     ],

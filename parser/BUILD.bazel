@@ -17,6 +17,7 @@ go_library(
         "//parser/ast",
         "//parser/auth",
         "//parser/charset",
+        "//parser/duration",
         "//parser/model",
         "//parser/mysql",
         "//parser/opcode",
@@ -29,6 +30,7 @@ go_library(
 
 go_test(
     name = "parser_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "consistent_test.go",

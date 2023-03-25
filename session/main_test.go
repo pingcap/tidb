@@ -15,7 +15,6 @@
 package session
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"testing"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/atomic"
 	"go.uber.org/goleak"
 )
 
@@ -55,6 +53,7 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -65,6 +64,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -87,8 +87,6 @@ func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	return store, dom
 }
 
-var sessionKitIDGenerator atomic.Uint64
-
 func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
@@ -96,41 +94,29 @@ func createSessionAndSetID(t *testing.T, store kv.Storage) Session {
 	return se
 }
 
-func mustExec(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+func mustExec(t *testing.T, se Session, sql string, args ...interface{}) {
+	rs, err := exec(se, sql, args...)
+	require.NoError(t, err)
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+}
+
+func mustExecToRecodeSet(t *testing.T, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	require.NoError(t, err)
 	return rs
 }
 
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
-	if len(args) == 0 {
-		rs, err := se.Execute(ctx, sql)
-		if err == nil && len(rs) > 0 {
-			return rs[0], nil
-		}
-		return nil, err
-	}
-	stmtID, _, _, err := se.PrepareStmt(sql)
-	if err != nil {
-		return nil, err
-	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
-	if err != nil {
-		return nil, err
-	}
-	return rs, nil
-}
-
 func match(t *testing.T, row []types.Datum, expected ...interface{}) {
 	require.Len(t, row, len(expected))
 	for i := range row {
+		if _, ok := expected[i].(time.Time); ok {
+			// Since password_last_changed is set to default current_timestamp, we pass this check.
+			continue
+		}
 		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
-		require.Equal(t, need, got)
+		require.Equal(t, need, got, i)
 	}
 }

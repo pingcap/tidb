@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -371,7 +371,7 @@ func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalJSON(b.ctx, row)
 		if err != nil || !isNull {
@@ -1340,8 +1340,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) ||
-		(lhsFieldType.GetType() == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
 		// date[time] <cmp> date[time]
@@ -1430,8 +1429,9 @@ func isTemporalColumn(expr Expression) bool {
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+//
+//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1467,8 +1467,9 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
-// 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
-// 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+//
+//	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
+//	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
@@ -1555,6 +1556,47 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	return con, false
 }
 
+// Since the argument refining of cmp functions can bring some risks to the plan-cache, the optimizer
+// needs to decide to whether to skip the refining or skip plan-cache for safety.
+// For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
+// can be broken if the parameter changes to 1 after.
+func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (allowRefining bool) {
+	if !MaybeOverOptimized4PlanCache(ctx, args) {
+		return true // plan-cache disabled or no parameter in these args
+	}
+
+	// For these 2 cases below, we skip the refining:
+	// 1. year-expr <cmp> const
+	// 2. int-expr <cmp> string/float/double/decimal-const
+	for conIdx := 0; conIdx < 2; conIdx++ {
+		if _, isCon := args[conIdx].(*Constant); !isCon {
+			continue // not a constant
+		}
+
+		// case 1: year-expr <cmp> const
+		// refine `year < 12` to `year < 2012` to guarantee the correctness.
+		// see https://github.com/pingcap/tidb/issues/41626 for more details.
+		exprType := args[1-conIdx].GetType()
+		if exprType.GetType() == mysql.TypeYear {
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+
+		// case 2: int-expr <cmp> string/float/double/decimal-const
+		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
+		conType := args[conIdx].GetType().EvalType()
+		if exprType.EvalType() == types.ETInt &&
+			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+	}
+
+	return false
+}
+
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
@@ -1564,25 +1606,17 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
-	arg0IsString := arg0Type.EvalType() == types.ETString
-	arg1IsString := arg1Type.EvalType() == types.ETString
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
-	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-		// here and skip this refine operation in all other cases for safety.
-		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-			RemoveMutableConst(ctx, args)
-		} else {
-			return args
-		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
-		// We should remove the mutable constant for correctness, because its value may be changed.
-		RemoveMutableConst(ctx, args)
+
+	if !allowCmpArgsRefining4PlanCache(ctx, args) {
+		return args
 	}
+	// We should remove the mutable constant for correctness, because its value may be changed.
+	RemoveMutableConst(ctx, args)
+
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
@@ -2743,7 +2777,7 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		return res, false, nil
 	default:
-		cmpRes := json.CompareBinary(arg0, arg1)
+		cmpRes := types.CompareBinaryJSON(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -2991,5 +3025,5 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(json.CompareBinary(arg0, arg1)), false, nil
+	return int64(types.CompareBinaryJSON(arg0, arg1)), false, nil
 }

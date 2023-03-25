@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -50,8 +52,7 @@ import (
 )
 
 func TestTruncateAllPartitions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table partition_table (v int) partition by hash (v) partitions 10")
@@ -61,8 +62,7 @@ func TestTruncateAllPartitions(t *testing.T) {
 }
 
 func TestIssue23872(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -90,8 +90,7 @@ func TestIssue23872(t *testing.T) {
 }
 
 func TestChangeMaxIndexLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	defer config.RestoreFunc()()
@@ -103,18 +102,18 @@ func TestChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	err := tk.ExecToErr(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
-	require.EqualError(t, err, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
+	require.EqualError(t, err, "[ddl:1071]Specified key was too long (12289 bytes); max key length is 12288 bytes")
 }
 
 func TestCreateTableWithLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// for the same database
 	tk.MustExec("create database ctwl_db")
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table tt(id int primary key)")
 	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t set c2=1")
 	tk.MustExec("create table t1 like ctwl_db.t")
 	tk.MustExec("insert into t1 set c2=11")
@@ -225,8 +224,7 @@ func TestCreateTableWithLike(t *testing.T) {
 }
 
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	// Test create table like at temporary mode.
@@ -276,7 +274,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
-	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -301,11 +299,11 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int, index(b))")
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -386,10 +384,10 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
 	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
-	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table1 (a int, b int, index(b))")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
@@ -410,7 +408,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
-func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain, clean func()) {
+func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -420,17 +418,16 @@ func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domai
 	require.NoError(t, err)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
-	clean = func() {
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
+	})
 	return
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
 	defer func() {
@@ -449,7 +446,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -466,9 +463,72 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
 }
 
+func TestRecoverTableWithTTL(t *testing.T) {
+	store, _ := createMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	defer func(originGC bool) {
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	util.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, time.Now().Add(-time.Hour).Format(gcTimeFormat)))
+	getDDLJobID := func(table, tp string) int64 {
+		rs, err := tk.Exec("admin show ddl jobs")
+		require.NoError(t, err)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		for _, row := range rows {
+			if row.GetString(2) == table && row.GetString(3) == tp {
+				return row.GetInt64(0)
+			}
+		}
+		require.FailNowf(t, "can't find %s table of %s", tp, table)
+		return -1
+	}
+
+	// recover table
+	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover1")
+	tk.MustExec("recover table t_recover1")
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// recover table with job id
+	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover2")
+	jobID := getDDLJobID("t_recover2", "drop table")
+	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback table
+	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover3")
+	tk.MustExec("flashback table t_recover3")
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback database
+	tk.MustExec("create database if not exists test_recover2")
+	tk.MustExec("create table test_recover2.t1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop database test_recover2")
+	tk.MustExec("flashback database test_recover2")
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+}
+
 func TestRecoverTableByJobID(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -584,8 +644,7 @@ func TestRecoverTableByJobID(t *testing.T) {
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -626,7 +685,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
@@ -653,8 +712,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	store, dom, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -686,7 +744,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
@@ -713,8 +771,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store, _, clean := createMockStoreAndDomain(t)
-	defer clean()
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`))
 	defer func() {
@@ -734,8 +791,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 }
 
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
 	tk.MustExec("use test")
@@ -756,15 +812,14 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 }
 
 func TestCanceledJobTakeTime(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -790,8 +845,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 }
 
 func TestTableLocksEnable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
@@ -813,8 +867,7 @@ func TestTableLocksEnable(t *testing.T) {
 }
 
 func TestAutoRandomOnTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
@@ -825,8 +878,7 @@ func TestAutoRandomOnTemporaryTable(t *testing.T) {
 }
 
 func TestAutoRandom(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -838,8 +890,11 @@ func TestAutoRandom(t *testing.T) {
 		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
-	assertPKIsNotHandle := func(sql, errCol string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
+	assertNotFirstColPK := func(sql, errCol string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomMustFirstColumnInPK, errCol)
+	}
+	assertNoClusteredPK := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomNoClusteredPKErrMsg)
 	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
@@ -857,7 +912,7 @@ func TestAutoRandom(t *testing.T) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
 	}
 	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.AutoRandomShardBitsMax, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
 		tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
@@ -882,36 +937,36 @@ func TestAutoRandom(t *testing.T) {
 		tk.MustExec("drop table t")
 	}
 
-	// Only bigint column can set auto_random
+	// Only bigint column can set auto_random.
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
 	assertBigIntOnly("create table t (a varchar(255) primary key auto_random(3), b int)", "varchar")
 	assertBigIntOnly("create table t (a timestamp primary key auto_random(3), b int)", "timestamp")
+	assertBigIntOnly("create table t (a timestamp auto_random(3), b int, primary key (a, b) clustered)", "timestamp")
 
-	// PKIsHandle, but auto_random is defined on non-primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	// Clustered, but auto_random is defined on non-primary key.
+	assertNotFirstColPK("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	assertNotFirstColPK("create table t (a bigint auto_random, b bigint, primary key (b, a) clustered);", "a")
 
-	// PKIsNotHandle: no primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int)", "a")
-	// PKIsNotHandle: primary key is not a single column.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
+	// No primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3), b int)")
 
-	// PKIsNotHandle: nonclustered integer primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key nonclustered)", "b")
+	// No clustered primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3) primary key nonclustered, b int)")
+	assertNoClusteredPK("create table t (a int, b bigint auto_random(3) primary key nonclustered)")
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_increment primary key auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
+	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, b int, primary key (a, b) clustered)")
 
 	// Can not set auto_random along with default.
 	assertDefault("create table t (a bigint auto_random primary key default 3)")
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
+	assertDefault("create table t (a bigint auto_random(2) default 5, b int, primary key (a, b) clustered)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
 		assertDefault("alter table t alter column a set default 3")
@@ -920,12 +975,14 @@ func TestAutoRandom(t *testing.T) {
 	// Overflow data type max length.
 	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
 	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(16), b int, primary key (a, b) clustered)", "a", 16)
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
 		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
 		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
 	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
+	assertNonPositive("create table t (a bigint auto_random(0), b int, primary key (a, b) clustered)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
 		`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
 
@@ -935,9 +992,16 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b bigint, primary key (a, b) clustered)")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b int, c char, primary key (a, c) clustered)")
 
 	// Increase auto_random bits.
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(5), b char(255), primary key (a, b) clustered)", func() {
 		tk.MustExec("alter table t modify a bigint auto_random(8)")
 		tk.MustExec("alter table t modify a bigint auto_random(10)")
 		tk.MustExec("alter table t modify a bigint auto_random(12)")
@@ -947,14 +1011,18 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
 	mustExecAndDrop("create table t (a bigint, b bigint auto_random(3) primary key auto_random(2))")
 	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), b int, primary key (a, b) clustered)")
 
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
-		assertAlterValue("alter table t modify column a bigint auto_random(0)")
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
+		assertAlterValue("alter table t modify column c bigint")
+		assertAlterValue("alter table t change column c d bigint")
+	})
+	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c, a) clustered)", func() {
 		assertAlterValue("alter table t modify column c bigint")
 		assertAlterValue("alter table t change column c d bigint")
 	})
@@ -984,6 +1052,9 @@ func TestAutoRandom(t *testing.T) {
 	})
 	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
 		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10), b int, primary key (a, b) clustered)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
 	})
 
 	originStep := autoid.GetStep()
@@ -1044,9 +1115,34 @@ func TestAutoRandom(t *testing.T) {
 	})
 }
 
+func TestAutoRandomWithRangeBits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	// Test normal usages.
+	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint unsigned auto_random(5, 32) primary key, b int);")
+
+	// Test create auto_random table with invalid range bits.
+	expectErr := dbterror.ErrInvalidAutoRandom
+	tk.MustExec("drop table if exists t;")
+	err := tk.ExecToErr("create table t (a bigint auto_random(5, 31) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 31)).Error())
+	err = tk.ExecToErr("create table t (a bigint auto_random(5, 65) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 65)).Error())
+	err = tk.ExecToErr("create table t (a bigint auto_random(15, 32) primary key, b int);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall).Error())
+
+	// Alter table range bits is not supported.
+	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
+	err = tk.ExecToErr("alter table t modify column a bigint auto_random(5, 32);")
+	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits).Error())
+	tk.MustExec("alter table t modify column a bigint auto_random(15, 64);")
+}
+
 func TestAutoRandomWithPreSplitRegion(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -1065,11 +1161,25 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint auto_random(2, 32) primary key clustered, b int) pre_split_regions=2;")
+	rows = tk.MustQuery("show table t regions;").Rows()
+	tbl = external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
+	require.Equal(t, fmt.Sprintf("t_%d_r_536870912", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_1610612736", tbl.Meta().ID), rows[3][1])
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint unsigned auto_random(2, 32) primary key clustered, b int) pre_split_regions=2;")
+	rows = tk.MustQuery("show table t regions;").Rows()
+	tbl = external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
+	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[1][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_2147483648", tbl.Meta().ID), rows[2][1])
+	require.Equal(t, fmt.Sprintf("t_%d_r_3221225472", tbl.Meta().ID), rows[3][1])
 }
 
 func TestModifyingColumn4NewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database dct")
 	tk.MustExec("use dct")
@@ -1103,8 +1213,7 @@ func TestModifyingColumn4NewCollations(t *testing.T) {
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
@@ -1132,6 +1241,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(20))")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	//nolint:revive,all_revive
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
@@ -1140,8 +1250,7 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 }
 
 func TestCreateTableNoBlock(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
 	defer func() {
@@ -1159,8 +1268,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 }
 
 func TestCheckEnumLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
@@ -1186,12 +1294,11 @@ func TestCheckEnumLength(t *testing.T) {
 
 func TestGetReverseKey(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t,
+	store, dom := testkit.CreateMockStoreAndDomain(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster = c
 		}))
-	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database db_get")
 	tk.MustExec("use db_get")
@@ -1249,8 +1356,7 @@ func TestGetReverseKey(t *testing.T) {
 }
 
 func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")

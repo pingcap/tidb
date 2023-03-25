@@ -95,6 +95,7 @@ func (c *storeCollector) begin(ctx context.Context) {
 
 func (c *storeCollector) recvLoop(ctx context.Context) (err error) {
 	defer utils.PanicToErr(&err)
+	log.Debug("Begin recv loop", zap.Uint64("store", c.storeID))
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,6 +180,7 @@ func (c *storeCollector) spawn(ctx context.Context) func(context.Context) (Store
 
 func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	log.Debug("sending batch", zap.Int("size", len(c.currentRequest.Regions)), zap.Uint64("store", c.storeID))
+	defer log.Debug("sending batch done", zap.Uint64("store", c.storeID))
 	cli, err := c.service.GetLogBackupClient(ctx, c.storeID)
 	if err != nil {
 		return err
@@ -221,19 +223,21 @@ type runningStoreCollector struct {
 
 // clusterCollector is the controller for collecting region checkpoints for the cluster.
 // It creates multi store collectors.
-//                             ┌──────────────────────┐ Requesting   ┌────────────┐
-//                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
-//                          │  └──────────────────────┘              └────────────┘
-//                          │
-//                          │Owns
-// ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
-// │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
-// └──────────────────┘     │  └──────────────────────┘              └────────────┘
-//                          │
-//                          │
-//                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
-//                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
-//                             └──────────────────────┘              └────────────┘
+/*
+                             ┌──────────────────────┐ Requesting   ┌────────────┐
+                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
+                          │  └──────────────────────┘              └────────────┘
+                          │
+                          │Owns
+ ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
+ │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
+ └──────────────────┘     │  └──────────────────────┘              └────────────┘
+                          │
+                          │
+                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
+                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
+                             └──────────────────────┘              └────────────┘
+*/
 type clusterCollector struct {
 	mu         sync.Mutex
 	collectors map[uint64]runningStoreCollector
@@ -262,13 +266,13 @@ func NewClusterCollector(ctx context.Context, srv LogBackupService) *clusterColl
 	}
 }
 
-// setOnSuccessHook sets the hook when getting checkpoint of some region.
-func (c *clusterCollector) setOnSuccessHook(hook onSuccessHook) {
+// SetOnSuccessHook sets the hook when getting checkpoint of some region.
+func (c *clusterCollector) SetOnSuccessHook(hook onSuccessHook) {
 	c.onSuccess = hook
 }
 
-// collectRegion adds a region to the collector.
-func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
+// CollectRegion adds a region to the collector.
+func (c *clusterCollector) CollectRegion(r RegionWithLeader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.masterCtx.Err() != nil {

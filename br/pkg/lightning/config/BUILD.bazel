@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/version/build",
         "//config",
         "//parser/mysql",
+        "//util",
         "//util/table-filter",
         "//util/table-router",
         "@com_github_burntsushi_toml//:toml",
@@ -24,6 +25,8 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//keepalive",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -31,6 +34,7 @@ go_library(
 
 go_test(
     name = "config_test",
+    timeout = "short",
     srcs = [
         "bytesize_test.go",
         "config_test.go",
@@ -39,7 +43,7 @@ go_test(
     flaky = True,
     deps = [
         ":config",
-        "//parser/mysql",
+        "//br/pkg/lightning/common",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_stretchr_testify//require",
     ],

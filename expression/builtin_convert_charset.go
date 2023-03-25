@@ -277,7 +277,7 @@ var convertActionMap = map[funcProp][]string{
 		ast.ASCII, ast.BitLength, ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64,
 		/* encrypt functions */
 		ast.AesDecrypt, ast.Decode, ast.Encode, ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1,
-		ast.SHA2, ast.Compress, ast.AesEncrypt,
+		ast.SHA2, ast.SM3, ast.Compress, ast.AesEncrypt,
 	},
 	funcPropAuto: {
 		/* string functions */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.FindInSet,
@@ -287,9 +287,9 @@ var convertActionMap = map[funcProp][]string{
 		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
 		ast.Case, ast.Cast,
 		/* string comparing */
-		ast.Like, ast.Strcmp,
+		ast.Like, ast.Ilike, ast.Strcmp,
 		/* regex */
-		ast.Regexp,
+		ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace,
 		/* math */
 		ast.CRC32,
 	},

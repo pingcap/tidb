@@ -24,12 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/namespace"
 )
 
 // Node organizes the ectd query result as a Trie tree
 type Node struct {
-	Value  []byte
 	Childs map[string]*Node
+	Value  []byte
 }
 
 // OpType is operation's type in etcd
@@ -51,10 +52,9 @@ type Operation struct {
 	Tp         OpType
 	Key        string
 	Value      string
+	Opts       []clientv3.OpOption
 	TTL        int64
 	WithPrefix bool
-
-	Opts []clientv3.OpOption
 }
 
 // String implements Stringer interface.
@@ -333,4 +333,11 @@ func keyWithPrefix(prefix, key string) string {
 	}
 
 	return path.Join(prefix, key)
+}
+
+// SetEtcdCliByNamespace is used to add an etcd namespace prefix before etcd path.
+func SetEtcdCliByNamespace(cli *clientv3.Client, namespacePrefix string) {
+	cli.KV = namespace.NewKV(cli.KV, namespacePrefix)
+	cli.Watcher = namespace.NewWatcher(cli.Watcher, namespacePrefix)
+	cli.Lease = namespace.NewLease(cli.Lease, namespacePrefix)
 }

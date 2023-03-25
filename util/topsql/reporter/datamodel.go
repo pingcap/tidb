@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -67,9 +68,9 @@ const (
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
 type tsItem struct {
+	stmtStats stmtstats.StatementStatsItem
 	timestamp uint64
 	cpuTimeMs uint32
-	stmtStats stmtstats.StatementStatsItem
 }
 
 func zeroTsItem() tsItem {
@@ -140,13 +141,12 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
+	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
+	tsIndex        map[uint64]int
 	sqlDigest      []byte
 	planDigest     []byte
-	totalCPUTimeMs uint64
 	tsItems        tsItems
-
-	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
-	tsIndex map[uint64]int // timestamp => index of tsItems
+	totalCPUTimeMs uint64
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
@@ -618,7 +618,7 @@ func newNormalizedSQLMap() *normalizedSQLMap {
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		ignoreExceedSQLCounter.Inc()
+		reporter_metrics.IgnoreExceedSQLCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
@@ -682,7 +682,7 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		ignoreExceedPlanCounter.Inc()
+		reporter_metrics.IgnoreExceedPlanCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)

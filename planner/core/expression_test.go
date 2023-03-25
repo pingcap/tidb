@@ -122,12 +122,16 @@ func TestCast(t *testing.T) {
 
 	f.SetType(mysql.TypeString)
 	f.SetCharset(charset.CharsetBin)
+	f.SetFlen(-1)
+	f.SetDecimal(-1)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	f.SetType(mysql.TypeString)
 	f.SetCharset(charset.CharsetUTF8)
+	f.SetFlen(-1)
+	f.SetDecimal(-1)
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)

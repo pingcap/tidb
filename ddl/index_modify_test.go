@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -165,12 +166,20 @@ const (
 )
 
 func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	isTestShardRowID := (testShardRowID & tp) > 0
+	// we wrap type on store to implement WithDDLChecker, but shard row ID test will fail at checking the type of store
+	// sp, ok := d.store.(kv.SplittableStore)
+	// since hard row ID is not in the use case of SchemaTracker(WithDDLChecker) by design, we disable it
+	var opts []mockstore.MockTiKVStoreOption
+	if !isTestShardRowID {
+		opts = append(opts, mockstore.WithDDLChecker())
+	}
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, opts...)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	isTestPartition := (testPartition & tp) > 0
-	isTestShardRowID := (testShardRowID & tp) > 0
 	if isTestShardRowID {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 		tk.MustExec("set global tidb_scatter_region = 1")
@@ -321,8 +330,8 @@ LOOP:
 }
 
 func TestAddIndexForGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
@@ -365,7 +374,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 func TestAddPrimaryKeyRollback1(t *testing.T) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.PRIMARY'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 
@@ -380,13 +389,12 @@ func TestAddPrimaryKeyRollback2(t *testing.T) {
 func TestAddUniqueIndexRollback(t *testing.T) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 't1.c3_index'"
 	testAddIndexRollback(t, idxName, addIdxSQL, errMsg, false)
 }
 
 func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
@@ -408,7 +416,7 @@ func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNu
 	}
 
 	done := make(chan error, 1)
-	go backgroundExec(store, addIdxSQL, done)
+	go backgroundExec(store, "test", addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(indexModifyLease / 2)
@@ -465,8 +473,7 @@ func TestAddIndexWithShardRowID(t *testing.T) {
 }
 
 func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	hasAutoRandomField := len(splitTableSQL) > 0
@@ -564,8 +571,7 @@ LOOP:
 }
 
 func TestAddAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -625,8 +631,8 @@ func TestAddAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithPK(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -680,8 +686,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
@@ -762,7 +767,7 @@ func checkGlobalIndexRow(
 
 	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
-		tblColMap[col.ID] = &col.FieldType
+		tblColMap[col.ID] = &(col.FieldType)
 	}
 
 	// Check local index entry does not exist.
@@ -808,10 +813,10 @@ func checkGlobalIndexRow(
 }
 
 func TestDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	// drop multiple indexes
-	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2));"
 	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
 	idxNames := []string{"i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
@@ -821,7 +826,7 @@ func TestDropIndexes(t *testing.T) {
 	idxNames = []string{"primary", "i1"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
 
-	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid) nonclustered, unique key i1(c1), key i2(c2));"
 	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
 	idxNames = []string{"primary", "i1", "i2"}
 	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
@@ -922,8 +927,8 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 }
 
 func TestDropPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	idxName := "primary"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3) nonclustered)"
 	dropIdxSQL := "alter table test_drop_index drop primary key;"
@@ -931,8 +936,8 @@ func TestDropPrimaryKey(t *testing.T) {
 }
 
 func TestDropIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	idxName := "c3_index"
 	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), key c3_index(c3))"
 	dropIdxSQL := "alter table test_drop_index drop index c3_index;"
@@ -983,8 +988,7 @@ LOOP:
 }
 
 func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
 	tk.MustExec("create database test_add_multi_col_index_clustered;")
@@ -1005,8 +1009,7 @@ func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
 }
 
 func TestAddIndexWithDupCols(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1027,8 +1030,8 @@ func TestAddIndexWithDupCols(t *testing.T) {
 }
 
 func TestAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t")
@@ -1042,8 +1045,7 @@ func TestAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithDupIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1064,4 +1066,21 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 	indexInfo.State = model.StateNone
 	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
 	require.ErrorIs(t, err, errors.Cause(err2))
+}
+
+func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
+	ddl.ResultCounterForTest = &atomic.Int32{}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a bigint primary key clustered, b int);")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	for i := 1; i <= 12; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("insert into t values (0, 1);") // Insert a duplicate key.
+	tk.MustQuery("split table t by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12);").Check(testkit.Rows("13 1"))
+	tk.MustGetErrCode("alter table t add unique index idx (b);", errno.ErrDupEntry)
+	require.Less(t, int(ddl.ResultCounterForTest.Load()), 6)
+	ddl.ResultCounterForTest = nil
 }

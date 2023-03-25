@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -33,10 +32,10 @@ import (
 func TestBitCount(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
@@ -69,7 +68,7 @@ func TestBitCount(t *testing.T) {
 			continue
 		}
 		sc := new(stmtctx.StatementContext)
-		sc.IgnoreTruncate = true
+		sc.IgnoreTruncate.Store(true)
 		res, err := count.ToInt64(sc)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
@@ -111,7 +110,7 @@ func TestSetVar(t *testing.T) {
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			require.Equal(t, true, ok)
-			sessionVar, ok := ctx.GetSessionVars().Users[key]
+			sessionVar, ok := ctx.GetSessionVars().GetUserVarVal(key)
 			require.Equal(t, true, ok)
 			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
@@ -135,7 +134,7 @@ func TestGetVar(t *testing.T) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
+		ctx.GetSessionVars().SetUserVarVal(kv.key, types.NewDatum(kv.val))
 		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -143,7 +142,7 @@ func TestGetVar(t *testing.T) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		types.DefaultParamTypeForValue(kv.val, tp)
-		ctx.GetSessionVars().UserVarTypes[kv.key] = tp
+		ctx.GetSessionVars().SetUserVarType(kv.key, tp)
 	}
 
 	testCases := []struct {
@@ -160,7 +159,7 @@ func TestGetVar(t *testing.T) {
 		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
-		tp, ok := ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
+		tp, ok := ctx.GetSessionVars().GetUserVarType(tc.args[0].(string))
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
@@ -244,9 +243,7 @@ func TestSetVarFromColumn(t *testing.T) {
 
 	// Check whether the user variable changed.
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.UsersLock.RLock()
-	defer sessionVars.UsersLock.RUnlock()
-	sessionVar, ok := sessionVars.Users["a"]
+	sessionVar, ok := sessionVars.GetUserVarVal("a")
 	require.Equal(t, true, ok)
 	require.Equal(t, "a", sessionVar.GetString())
 }
@@ -266,10 +263,10 @@ func TestInFunc(t *testing.T) {
 	duration2 := types.Duration{Duration: 12*time.Hour + 1*time.Minute}
 	duration3 := types.Duration{Duration: 12*time.Hour + 1*time.Second}
 	duration4 := types.Duration{Duration: 12 * time.Hour}
-	json1 := json.CreateBinary("123")
-	json2 := json.CreateBinary("123.1")
-	json3 := json.CreateBinary("123.2")
-	json4 := json.CreateBinary("123.3")
+	json1 := types.CreateBinaryJSON("123")
+	json2 := types.CreateBinaryJSON("123.1")
+	json3 := types.CreateBinaryJSON("123.2")
+	json4 := types.CreateBinaryJSON("123.3")
 	testCases := []struct {
 		args []interface{}
 		res  interface{}

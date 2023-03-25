@@ -191,7 +191,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_7,TableScan_8]",
 				},
 			},
 		},
@@ -202,7 +202,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p1] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_5",
 				},
 			},
 		},
@@ -213,7 +213,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
@@ -224,7 +224,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p2] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_6",
 				},
 			},
 		},
@@ -246,7 +246,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_1,TableScan_1]",
+					assertAction: "DataSource_1 becomes PartitionUnion_7 with children[TableScan_8,TableScan_9]",
 				},
 			},
 		},
@@ -257,7 +257,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertReason: "DataSource_1 has one needed partition[p1] after pruning",
-					assertAction: "DataSource_1 becomes TableScan_1",
+					assertAction: "DataSource_1 becomes TableScan_6",
 				},
 			},
 		},
@@ -399,7 +399,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true

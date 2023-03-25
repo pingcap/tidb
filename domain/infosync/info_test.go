@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/util"
@@ -40,6 +41,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
@@ -49,7 +51,7 @@ func TestTopology(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -66,7 +68,7 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
@@ -151,7 +153,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -215,7 +217,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 
@@ -223,7 +225,7 @@ func TestTiFlashManager(t *testing.T) {
 
 	// SetTiFlashPlacementRule/GetTiFlashGroupRules
 	rule := MakeNewRule(1, 2, []string{"a"})
-	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	require.NoError(t, SetTiFlashPlacementRule(ctx, rule))
 	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(rules))

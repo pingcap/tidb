@@ -32,7 +32,7 @@ type RegisrerTestClient interface {
 }
 
 func TestUpdateNodeInfo(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
@@ -60,7 +60,7 @@ func TestUpdateNodeInfo(t *testing.T) {
 }
 
 func TestRegisterNode(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
@@ -81,17 +81,10 @@ func TestRegisterNode(t *testing.T) {
 	err = r.UpdateNode(context.Background(), nodePrefix, ns)
 	require.NoError(t, err)
 	mustEqualStatus(t, r, ns.NodeID, ns)
-
-	// TODO: now don't have function to delete node, maybe do it later
-	//err = r.UnregisterNode(context.Background(), nodePrefix, ns.NodeID)
-	//require.NoError(t, err)
-	//exist, err := r.checkNodeExists(context.Background(), nodePrefix, ns.NodeID)
-	//require.NoError(t, err)
-	//require.False(t, exist)
 }
 
 func TestRefreshNode(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
@@ -109,11 +102,6 @@ func TestRefreshNode(t *testing.T) {
 
 	ns.IsAlive = true
 	mustEqualStatus(t, r, ns.NodeID, ns)
-
-	// TODO: fix it later
-	//time.Sleep(2 * time.Second)
-	//ns.IsAlive = false
-	//mustEqualStatus(t, r, ns.NodeID, ns)
 }
 
 func mustEqualStatus(t *testing.T, r RegisrerTestClient, nodeID string, status *Status) {

@@ -24,8 +24,9 @@ go_library(
         "//table/tables",
         "//tablecodec",
         "//types",
+        "//util",
         "//util/logutil",
-        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
@@ -46,6 +47,7 @@ go_library(
 
 go_test(
     name = "txn_test",
+    timeout = "short",
     srcs = [
         "batch_getter_test.go",
         "driver_test.go",

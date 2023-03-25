@@ -62,7 +62,7 @@ func TestNestedLoopApply(t *testing.T) {
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
-		retTypes(outerExec), retTypes(innerExec), nil)
+		retTypes(outerExec), retTypes(innerExec), nil, false)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),

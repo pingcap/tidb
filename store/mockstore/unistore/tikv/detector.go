@@ -203,7 +203,6 @@ func (d *Detector) CleanUpWaitFor(txn, waitForTxn, keyHash uint64) {
 		}
 	}
 	d.lock.Unlock()
-
 }
 
 // activeExpire removes expired entries, should be called under d.lock protection

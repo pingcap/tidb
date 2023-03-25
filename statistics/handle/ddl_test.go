@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -26,8 +25,7 @@ import (
 )
 
 func TestDDLAfterLoad(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -60,8 +58,7 @@ func TestDDLAfterLoad(t *testing.T) {
 }
 
 func TestDDLTable(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -100,8 +97,7 @@ func TestDDLTable(t *testing.T) {
 }
 
 func TestDDLHistogram(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
 
@@ -121,6 +117,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[2].ID].IsStatsInitialized())
 	require.Equal(t, int64(2), statsTbl.Columns[tableInfo.Columns[2].ID].NullCount)
 	require.Equal(t, int64(0), statsTbl.Columns[tableInfo.Columns[2].ID].Histogram.NDV)
 
@@ -134,6 +131,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[3].ID].IsStatsInitialized())
 	sctx := mock.NewContext()
 	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
@@ -164,6 +162,7 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Columns[tableInfo.Columns[5].ID].IsStatsInitialized())
 	require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
@@ -188,10 +187,11 @@ func TestDDLHistogram(t *testing.T) {
 }
 
 func TestDDLPartition(t *testing.T) {
-	store, do, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testkit.WithPruneMode(testKit, variable.Static, func() {
+	for _, pruneMode := range []string{"static", "dynamic"} {
+		testKit.MustExec("set @@tidb_partition_prune_mode=`" + pruneMode + "`")
+		testKit.MustExec("set global tidb_partition_prune_mode=`" + pruneMode + "`")
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -262,5 +262,20 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.False(t, statsTbl.Pseudo)
 		}
-	})
+
+		reorganizePartition := "alter table t reorganize partition p0,p1 into (partition p0 values less than (11))"
+		testKit.MustExec(reorganizePartition)
+		is = do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tableInfo = tbl.Meta()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		require.NoError(t, err)
+		require.Nil(t, h.Update(is))
+		pi = tableInfo.GetPartitionInfo()
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			require.False(t, statsTbl.Pseudo)
+		}
+	}
 }

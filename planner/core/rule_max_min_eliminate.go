@@ -36,7 +36,7 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return a.eliminateMaxMin(p, opt), nil
 }
 
@@ -85,7 +85,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen, p.ctx.GetSessionVars().RangeMaxSize)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}

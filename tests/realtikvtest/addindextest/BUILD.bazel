@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "addindextest",
+    srcs = [
+        "common.go",
+        "compatibility.go",
+        "workload.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tests/realtikvtest/addindextest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//testkit",
+        "//util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "addindextest_test",
+    timeout = "long",
+    srcs = [
+        "add_index_test.go",
+        "concurrent_ddl_test.go",
+        "failpoints_test.go",
+        "integration_test.go",
+        "main_test.go",
+        "multi_schema_change_test.go",
+        "pitr_test.go",
+    ],
+    embed = [":addindextest"],
+    deps = [
+        "//br/pkg/lightning/backend/local",
+        "//config",
+        "//ddl",
+        "//ddl/ingest",
+        "//ddl/testutil",
+        "//domain",
+        "//errno",
+        "//parser/model",
+        "//sessionctx/variable",
+        "//testkit",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

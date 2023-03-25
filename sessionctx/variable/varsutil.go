@@ -15,7 +15,9 @@
 package variable
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"golang.org/x/exp/slices"
@@ -46,6 +49,17 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLFlashbackConcurrency(cnt int32) {
+	atomic.StoreInt32(&ddlFlashbackConcurrency, cnt)
+}
+
+// GetDDLFlashbackConcurrency gets ddlFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
+	return atomic.LoadInt32(&ddlFlashbackConcurrency)
+}
+
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
 // Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
@@ -59,12 +73,12 @@ func GetDDLReorgBatchSize() int32 {
 
 // SetDDLErrorCountLimit sets ddlErrorCountlimit size.
 func SetDDLErrorCountLimit(cnt int64) {
-	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
 }
 
 // GetDDLErrorCountLimit gets ddlErrorCountlimit size.
 func GetDDLErrorCountLimit() int64 {
-	return atomic.LoadInt64(&ddlErrorCountlimit)
+	return atomic.LoadInt64(&ddlErrorCountLimit)
 }
 
 // SetDDLReorgRowFormat sets ddlReorgRowFormat version.
@@ -159,97 +173,6 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 		vars.StmtCtx.AppendWarning(returnErr)
 	}
 	return normalizedValue, nil
-}
-
-// GetSessionOrGlobalSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if sv.HasNoneScope() {
-		return sv.Value, nil
-	}
-	if sv.HasSessionScope() {
-		// Populate the value to s.systems if it is not there already.
-		// in future should be already loaded on session init
-		if sv.GetSession != nil {
-			// shortcut to the getter, we won't use the value
-			return sv.GetSessionFromHook(s)
-		}
-		if _, ok := s.systems[sv.Name]; !ok {
-			if sv.HasGlobalScope() {
-				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
-					s.systems[sv.Name] = val
-				}
-			} else {
-				s.systems[sv.Name] = sv.Value // no global scope, use default
-			}
-		}
-		return sv.GetSessionFromHook(s)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// GetSessionStatesSystemVar gets the session variable value for session states.
-// It's only used for encoding session states when migrating a session.
-// The returned boolean indicates whether to keep this value in the session states.
-func GetSessionStatesSystemVar(s *SessionVars, name string) (string, bool, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	// Call GetStateValue first if it exists. Otherwise, call GetSession.
-	if sv.GetStateValue != nil {
-		return sv.GetStateValue(s)
-	}
-	if sv.GetSession != nil {
-		val, err := sv.GetSessionFromHook(s)
-		return val, err == nil, err
-	}
-	// Only get the cached value. No need to check the global or default value.
-	if val, ok := s.systems[sv.Name]; ok {
-		return val, true, nil
-	}
-	return "", false, nil
-}
-
-// GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	return sv.GetGlobalFromHook(s)
-}
-
-// SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetSystemVar(name, sVal)
-}
-
-// SetStmtVar sets system variable and updates SessionVars states.
-func SetStmtVar(vars *SessionVars, name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(vars, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return vars.SetStmtVar(name, sVal)
 }
 
 // Deprecated: Read the value from the mysql.tidb table.
@@ -409,6 +332,15 @@ func TidbOptInt64(opt string, defaultVal int64) int64 {
 	return val
 }
 
+// TidbOptUint64 converts a string to an uint64.
+func TidbOptUint64(opt string, defaultVal uint64) uint64 {
+	val, err := strconv.ParseUint(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	val, err := strconv.ParseFloat(opt, 64)
 	if err != nil {
@@ -453,6 +385,66 @@ func parseTimeZone(s string) (*time.Location, error) {
 	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }
 
+func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
+	defer func() {
+		if err == nil && byteSize > 0 && byteSize < (512<<20) {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
+			byteSize = 512 << 20
+			normalizedStr = "512MB"
+		}
+	}()
+
+	// 1. Try parse percentage format: x%
+	if total := memory.GetMemTotalIgnoreErr(); total != 0 {
+		perc, str := parsePercentage(normalizedValue)
+		if perc != 0 {
+			intVal := total / 100 * perc
+			return intVal, str, nil
+		}
+	}
+
+	// 2. Try parse byteSize format: xKB/MB/GB/TB or byte number
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
+	}
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue)
+}
+
+func parsePercentage(s string) (percentage uint64, normalizedStr string) {
+	defer func() {
+		if percentage == 0 || percentage >= 100 {
+			percentage, normalizedStr = 0, ""
+		}
+	}()
+	var endString string
+	if n, err := fmt.Sscanf(s, "%d%%%s", &percentage, &endString); n == 1 && err == io.EOF {
+		return percentage, fmt.Sprintf("%d%%", percentage)
+	}
+	return 0, ""
+}
+
+func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
+	var endString string
+	if n, err := fmt.Sscanf(s, "%d%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize, fmt.Sprintf("%d", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
+	}
+	return 0, ""
+}
+
 func setSnapshotTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
@@ -463,21 +455,25 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
 	}
 
-	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
-		s.SnapshotTS = tso
-		return nil
-	}
-
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
-	if err != nil {
-		return err
-	}
-
-	t1, err := t.GoTime(s.Location())
-	s.SnapshotTS = oracle.GoTimeToTS(t1)
+	tso, err := parseTSFromNumberOrTime(s, sVal)
+	s.SnapshotTS = tso
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.TxnReadTS = NewTxnReadTS(0)
 	return err
+}
+
+func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
+	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
+		return tso, nil
+	}
+
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	t1, err := t.GoTime(s.Location())
+	return oracle.GoTimeToTS(t1), err
 }
 
 func setTxnReadTS(s *SessionVars, sVal string) error {
@@ -486,7 +482,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}
@@ -517,6 +513,16 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	return nil
 }
 
+// switchDDL turns on/off DDL in an instance.
+func switchDDL(on bool) error {
+	if on && EnableDDL != nil {
+		return EnableDDL()
+	} else if !on && DisableDDL != nil {
+		return DisableDDL()
+	}
+	return nil
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
@@ -524,6 +530,15 @@ func collectAllowFuncName4ExpressionIndex() string {
 	}
 	slices.Sort(str)
 	return strings.Join(str, ", ")
+}
+
+func updatePasswordValidationLength(s *SessionVars, length int32) error {
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
+	if err != nil {
+		return err
+	}
+	PasswordValidationLength.Store(length)
+	return nil
 }
 
 // GAFunction4ExpressionIndex stores functions GA for expression index.
@@ -534,4 +549,28 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+	// JSON functions.
+	ast.JSONType:          {},
+	ast.JSONExtract:       {},
+	ast.JSONUnquote:       {},
+	ast.JSONArray:         {},
+	ast.JSONObject:        {},
+	ast.JSONSet:           {},
+	ast.JSONInsert:        {},
+	ast.JSONReplace:       {},
+	ast.JSONRemove:        {},
+	ast.JSONContains:      {},
+	ast.JSONContainsPath:  {},
+	ast.JSONValid:         {},
+	ast.JSONArrayAppend:   {},
+	ast.JSONArrayInsert:   {},
+	ast.JSONMergePatch:    {},
+	ast.JSONMergePreserve: {},
+	ast.JSONPretty:        {},
+	ast.JSONQuote:         {},
+	ast.JSONSearch:        {},
+	ast.JSONStorageSize:   {},
+	ast.JSONDepth:         {},
+	ast.JSONKeys:          {},
+	ast.JSONLength:        {},
 }

@@ -4,10 +4,10 @@ go_library(
     name = "mock",
     srcs = [
         "backend.go",
+        "encode.go",
         "glue.go",
         "glue_checkpoint.go",
         "importer.go",
-        "kv.go",
         "mock_cluster.go",
         "s3iface.go",
     ],
@@ -15,7 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
-        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/glue",
@@ -44,6 +44,7 @@ go_library(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@io_opencensus_go//stats/view",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
         "@org_uber_go_zap//:zap",
@@ -52,6 +53,7 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = ["mock_cluster_test.go"],
     flaky = True,
     deps = [

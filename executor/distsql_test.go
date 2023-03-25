@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -60,11 +61,10 @@ func checkGoroutineExists(keyword string) bool {
 func TestCopClientSend(t *testing.T) {
 	t.Skip("not stable")
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return
@@ -154,8 +154,7 @@ func TestGetLackHandles(t *testing.T) {
 }
 
 func TestBigIntPK(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -165,8 +164,7 @@ func TestBigIntPK(t *testing.T) {
 }
 
 func TestCorColToRanges(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -184,8 +182,7 @@ func TestCorColToRanges(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -213,8 +210,7 @@ func TestUniqueKeyNullValueSelect(t *testing.T) {
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
 func TestIssue10178(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -227,8 +223,7 @@ func TestIssue10178(t *testing.T) {
 }
 
 func TestInconsistentIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -279,8 +274,7 @@ func TestInconsistentIndex(t *testing.T) {
 }
 
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -297,8 +291,9 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -321,14 +316,12 @@ func TestPartitionTableIndexLookUpReader(t *testing.T) {
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a>=1 and a<15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a between 1 and 15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a between 1 and 15 limit 3 offset 1").Check(testkit.Rows("2 2", "11 11", "12 12"))
+	tk.MustQuery("select * from t where a between 1 and 15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+	tk.MustQuery("select * from t where a between 1 and 15 order by a limit 3 offset 1").Check(testkit.Rows("2 2", "11 11", "12 12"))
 }
 
 func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -365,22 +358,28 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
-		FetchHandleTotal: int64(5 * time.Second),
-		FetchHandle:      int64(2 * time.Second),
-		TaskWait:         int64(2 * time.Second),
-		TableRowScan:     int64(2 * time.Second),
-		TableTaskNum:     2,
-		Concurrency:      1,
+		FetchHandleTotal:         int64(5 * time.Second),
+		FetchHandle:              int64(2 * time.Second),
+		TaskWait:                 int64(2 * time.Second),
+		TableRowScan:             int64(2 * time.Second),
+		TableTaskNum:             2,
+		Concurrency:              1,
+		NextWaitIndexScan:        time.Second,
+		NextWaitTableLookUpBuild: 2 * time.Second,
+		NextWaitTableLookUpResp:  3 * time.Second,
 	}
-	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}"+
+		", table_task: {total_time: 2s, num: 2, concurrency: 1}"+
+		", next: {wait_index: 1s, wait_table_lookup_build: 2s, wait_table_lookup_resp: 3s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}"+
+		", table_task: {total_time: 4s, num: 4, concurrency: 1}"+
+		", next: {wait_index: 2s, wait_table_lookup_build: 4s, wait_table_lookup_resp: 6s}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -394,8 +393,7 @@ func TestIndexLookUpGetResultChunk(t *testing.T) {
 }
 
 func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -426,8 +424,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 }
 
 func TestCoprocessorPagingSize(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -439,6 +436,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
 	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
+
+	// Enable the coprocessor paging protocol.
+	tk.MustExec("set @@tidb_enable_paging = on")
 
 	// When the min paging size is small, we need more RPC roundtrip!
 	// Check 'rpc_num' in the execution information
@@ -482,8 +482,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -580,4 +579,122 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	// 2 IndexScan with cost 19/56, 2 TableReader with cost 32.5/65.
 	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 3, 1)
+}
+
+func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging"))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `UK_COLLATION19523` (" +
+		"`COL1` binary(1) DEFAULT NULL," +
+		"`COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL," +
+		"`COL4` datetime DEFAULT NULL," +
+		"`COL3` bigint(20) DEFAULT NULL," +
+		"`COL5` float DEFAULT NULL," +
+		"UNIQUE KEY `U_COL1` (`COL1`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+
+	tk.MustExec("prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ * FROM UK_COLLATION19523 t1 JOIN UK_COLLATION19523 t2 ON t1.col1 > t2.col1 WHERE t1.col1 IN (?, ?, ?) AND t2.col1 < ?;';")
+	tk.MustExec("set @a=0x4F, @b=0xF8, @c=NULL, @d=0xBF;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+	tk.MustExec("set @a=0x00, @b=0xD2, @c=9179987834981541375, @d=0xF8;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+
+	tk.MustExec("CREATE TABLE `IDT_COLLATION26873` (" +
+		"`COL1` varbinary(20) DEFAULT NULL," +
+		"`COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL," +
+		"`COL4` datetime DEFAULT NULL," +
+		"`COL3` bigint(20) DEFAULT NULL," +
+		"`COL5` float DEFAULT NULL," +
+		"KEY `U_COL1` (`COL1`))")
+	tk.MustExec("prepare stmt from 'SELECT/*+ INL_JOIN(t1, t2) */ t2.* FROM IDT_COLLATION26873 t1 LEFT JOIN IDT_COLLATION26873 t2 ON t1.col1 = t2.col1 WHERE t1.col1 < ? AND t1.col1 IN (?, ?, ?);';")
+	tk.MustExec("set @a=NULL, @b=NULL, @c=NULL, @d=NULL;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+	tk.MustExec("set @a=0xE3253A6AC72A3A168EAF0E34A4779A947872CCCD, @b=0xD67BB26504EE152C2C356D7F6CAD897F03462963, @c=NULL, @d=0xDE735FEB375A4CF33479A39CA925470BFB229DB4;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+	tk.MustExec("set @a=2606738829406840179, @b=1468233589368287363, @c=5174008984061521089, @d=7727946571160309462;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+	tk.MustExec("set @a=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @b=NULL, @c=6864108002939154648, @d=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+	tk.MustExec("set @a=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @b=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @c=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE, @d=0xFCABFE6198B6323EE8A46247EDD33830453B1BDE;")
+	tk.MustExec("execute stmt using @a,@b,@c,@d;")
+
+	tk.MustExec("CREATE TABLE `PK_SNPRE10114` (" +
+		"`COL1` varbinary(10) NOT NULL DEFAULT 'S'," +
+		"`COL2` varchar(20) DEFAULT NULL," +
+		"`COL4` datetime DEFAULT NULL," +
+		"`COL3` bigint(20) DEFAULT NULL," +
+		"`COL5` float DEFAULT NULL," +
+		"PRIMARY KEY (`COL1`) CLUSTERED)")
+	tk.MustExec(`prepare stmt from 'SELECT * FROM PK_SNPRE10114 WHERE col1 IN (?, ?, ?) AND (col2 IS NULL OR col2 IN (?, ?)) AND (col3 IS NULL OR col4 IS NULL);';`)
+	tk.MustExec(`set @a=0x0D5BDAEB79074756F203, @b=NULL, @c=0x6A911AAAC728F1ED3B4F, @d="鏖秿垙麜濇凗辯Ũ卮伄幖轒ƀ漭蝏雓轊恿磔徵", @e="訇廵纹髺釖寒近槩靏詗膦潳陒錃粓悧闒摔)乀";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=7775448739068993371, @b=5641728652098016210, @c=6774432238941172824, @d="HqpP5rN", @e="8Fy";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+	tk.MustExec(`set @a=0x61219F79C90D3541F70E, @b=5501707547099269248, @c=0xEC43EFD30131DEA2CB8B, @d="呣丼蒢咿卻鹻铴础湜僂頃ǆ縍套衞陀碵碼幓9", @e="鹹楞睕堚尛鉌翡佾搁紟精廬姆燵藝潐楻翇慸嵊";`)
+	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
+}
+
+func TestCoprocessorBatchByStore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(id int primary key, c1 int, c2 int, key i(c1))")
+	tk.MustExec(`create table t1(id int primary key, c1 int, c2 int, key i(c1)) partition by range(id) (
+    	partition p0 values less than(10000),
+    	partition p1 values less than (50000),
+    	partition p2 values less than (100000))`)
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
+		tk.MustExec("insert into t1 values(?, ?, ?)", i*10000, i*10000, i%2)
+	}
+	tk.MustQuery("split table t between (0) and (100000) regions 20").Check(testkit.Rows("20 1"))
+	tk.MustQuery("split table t1 between (0) and (100000) regions 20").Check(testkit.Rows("60 1"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
+	}()
+	ranges := []string{
+		"(c1 >= 0 and c1 < 5000)",
+		"(c1 >= 10000 and c1 < 15000)",
+		"(c1 >= 20000 and c1 < 25000)",
+		"(c1 >= 30000 and c1 < 35000)",
+		"(c1 >= 40000 and c1 < 45000)",
+		"(c1 >= 50000 and c1 < 55000)",
+		"(c1 >= 60000 and c1 < 65000)",
+		"(c1 >= 70000 and c1 < 75000)",
+		"(c1 >= 80000 and c1 < 85000)",
+		"(c1 >= 90000 and c1 < 95000)",
+	}
+	evenRows := testkit.Rows("0 0 0", "20000 20000 0", "40000 40000 0", "60000 60000 0", "80000 80000 0")
+	oddRows := testkit.Rows("10000 10000 1", "30000 30000 1", "50000 50000 1", "70000 70000 1", "90000 90000 1")
+	reverseOddRows := testkit.Rows("90000 90000 1", "70000 70000 1", "50000 50000 1", "30000 30000 1", "10000 10000 1")
+	for _, table := range []string{"t", "t1"} {
+		baseSQL := fmt.Sprintf("select * from %s force index(i) where id < 100000 and (%s)", table, strings.Join(ranges, " or "))
+		for _, paging := range []string{"on", "off"} {
+			tk.MustExec("set session tidb_enable_paging=?", paging)
+			for size := 0; size < 10; size++ {
+				tk.MustExec("set session tidb_store_batch_size=?", size)
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				// every batched task will get region error and fallback.
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+			}
+		}
+	}
 }

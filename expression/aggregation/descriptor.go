@@ -16,6 +16,7 @@ package aggregation
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -40,6 +42,8 @@ type AggFuncDesc struct {
 	HasDistinct bool
 	// OrderByItems represents the order by clause used in GROUP_CONCAT
 	OrderByItems []*util.ByItems
+	// GroupingID is used for distinguishing with not-set 0, starting from 1.
+	GroupingID int
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -228,7 +232,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		var s string
 		var err error
 		var maxLen uint64
-		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -330,4 +334,17 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
+}
+
+// MemoryUsage the memory usage of AggFuncDesc
+func (a *AggFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = a.baseFuncDesc.MemoryUsage() + size.SizeOfInt + size.SizeOfBool
+	for _, item := range a.OrderByItems {
+		sum += item.MemoryUsage()
+	}
+	return
 }

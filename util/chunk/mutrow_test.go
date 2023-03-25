@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +69,7 @@ func TestMutRow(t *testing.T) {
 	require.True(t, row.IsNull(0))
 	require.False(t, row.IsNull(1))
 
-	j, err := json.ParseBinaryFromString("true")
+	j, err := types.ParseBinaryJSONFromString("true")
 	time := types.NewTime(types.FromDate(2000, 1, 1, 1, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp)
 	require.NoError(t, err)
 	mutRow = MutRowFromValues(j, time)

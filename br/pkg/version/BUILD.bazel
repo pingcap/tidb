@@ -22,6 +22,7 @@ go_library(
 
 go_test(
     name = "version_test",
+    timeout = "short",
     srcs = ["version_test.go"],
     embed = [":version"],
     flaky = True,

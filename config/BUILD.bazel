@@ -12,8 +12,8 @@ go_library(
     deps = [
         "//br/pkg/streamhelper/config",
         "//parser/terror",
-        "//types/json",
         "//util/logutil",
+        "//util/tiflashcompute",
         "//util/tikvutil",
         "//util/versioninfo",
         "@com_github_burntsushi_toml//:toml",
@@ -28,6 +28,7 @@ go_library(
 
 go_test(
     name = "config_test",
+    timeout = "short",
     srcs = [
         "config_test.go",
         "config_util_test.go",
@@ -36,6 +37,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//testkit/testsetup",
         "//util/logutil",

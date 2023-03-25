@@ -18,7 +18,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 var (
@@ -48,21 +48,13 @@ var (
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // The return values:
-//     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
-//     2. err (error) : error in the update.
+//  1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
+//  2. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool, memTracker *memory.Tracker) (bool, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	txn, err := sctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	memUsageOfTxnState := txn.Size()
-	defer memTracker.Consume(int64(txn.Size() - memUsageOfTxnState))
+	onDup bool, memTracker *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) (bool, error) {
+	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
+	defer r.End()
+
 	sc := sctx.GetSessionVars().StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -76,7 +68,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc); err != nil {
+		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
 			return false, err
 		}
 	}
@@ -115,7 +107,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -145,28 +137,14 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-
-		physicalID := t.Meta().ID
-		if pt, ok := t.(table.PartitionedTable); ok {
-			p, err := pt.GetPartitionByRow(sctx, oldData)
-			if err != nil {
-				return false, err
-			}
-			physicalID = p.GetPhysicalID()
-		}
-
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx := sctx.GetSessionVars().TxnCtx
-		if txnCtx.IsPessimistic {
-			txnCtx.AddUnchangedRowKey(unchangedRowKey)
-		}
-		return false, nil
+		_, err := appendUnchangedRowForLock(sctx, t, h, oldData)
+		return false, err
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal()); err == nil {
+			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil); err == nil {
 				newData[i] = v
 				modified[i] = true
 			} else {
@@ -207,13 +185,24 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 				return false, nil
 			}
 			return false, err
 		}
-
+	}
+	for _, fkt := range fkChecks {
+		err := fkt.updateRowNeedToCheck(sc, oldData, newData)
+		if err != nil {
+			return false, err
+		}
+	}
+	for _, fkc := range fkCascades {
+		err := fkc.onUpdateRow(sc, oldData, newData)
+		if err != nil {
+			return false, err
+		}
 	}
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -223,6 +212,24 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
 
+	return true, nil
+}
+
+func appendUnchangedRowForLock(sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum) (bool, error) {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	if !txnCtx.IsPessimistic {
+		return false, nil
+	}
+	physicalID := t.Meta().ID
+	if pt, ok := t.(table.PartitionedTable); ok {
+		p, err := pt.GetPartitionByRow(sctx, row)
+		if err != nil {
+			return false, err
+		}
+		physicalID = p.GetPhysicalID()
+	}
+	unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+	txnCtx.AddUnchangedRowKey(unchangedRowKey)
 	return true, nil
 }
 
@@ -238,9 +245,9 @@ func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
-	recordID = recordID & (1<<layout.IncrementalBits - 1)
+	recordID = recordID & shardFmt.IncrementalMask()
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 

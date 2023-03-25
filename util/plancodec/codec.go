@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 const (
@@ -65,7 +67,13 @@ var decoderPool = sync.Pool{
 }
 
 // DecodePlan use to decode the string to plan tree.
-func DecodePlan(planString string) (string, error) {
+func DecodePlan(planString string) (res string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("DecodePlan panic", zap.Stack("stack"), zap.Any("recover", r))
+			err = errors.New("DecodePlan panicked")
+		}
+	}()
 	if len(planString) == 0 {
 		return "", nil
 	}

@@ -15,19 +15,22 @@
 package staleread
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
-	tsVal, err := expression.EvalAstExpr(sctx, asOfClause.TsExpr)
+func CalculateAsOfTsExpr(sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
 	if err != nil {
 		return 0, err
 	}
@@ -64,4 +67,18 @@ func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 // IsStmtStaleness indicates whether the current statement is staleness or not
 func IsStmtStaleness(sctx sessionctx.Context) bool {
 	return sctx.GetSessionVars().StmtCtx.IsStaleness
+}
+
+// GetExternalTimestamp returns the external timestamp in cache, or get and store it in cache
+func GetExternalTimestamp(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	// Try to get from the stmt cache to make sure this function is deterministic.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	externalTimestamp, err := stmtCtx.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (interface{}, error) {
+		return variable.GetExternalTimestamp(ctx)
+	})
+
+	if err != nil {
+		return 0, errAsOf.FastGenWithCause(err.Error())
+	}
+	return externalTimestamp.(uint64), nil
 }

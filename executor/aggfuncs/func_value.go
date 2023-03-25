@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -190,7 +189,7 @@ func (v *value4Duration) appendResult(chk *chunk.Chunk, colIdx int) {
 }
 
 type value4JSON struct {
-	val    json.BinaryJSON
+	val    types.BinaryJSON
 	isNull bool
 }
 

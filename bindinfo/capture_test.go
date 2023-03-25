@@ -22,16 +22,18 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 )
 
 func TestDMLCapturePlanBaseline(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -62,7 +64,7 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
@@ -89,8 +91,7 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 }
 
 func TestCapturePlanBaseline(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -110,7 +111,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -121,8 +122,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 }
 
 func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -143,7 +143,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -181,8 +181,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -192,7 +191,7 @@ func TestCaptureDBCaseSensitivity(t *testing.T) {
 	tk.MustExec("use SPM")
 	tk.MustExec("create table t(a int, b int, key(b))")
 	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("select /*+ use_index(t,b) */ * from t")
 	tk.MustExec("admin capture bindings")
@@ -205,8 +204,7 @@ func TestCaptureDBCaseSensitivity(t *testing.T) {
 }
 
 func TestCaptureBaselinesDefaultDB(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -219,7 +217,7 @@ func TestCaptureBaselinesDefaultDB(t *testing.T) {
 	tk.MustExec("drop database if exists spm")
 	tk.MustExec("create database spm")
 	tk.MustExec("create table spm.t(a int, index idx_a(a))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -241,13 +239,12 @@ func TestCapturePreparedStmt(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -274,8 +271,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 }
 
 func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -283,7 +279,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a), key(b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	// Create virtual tiflash replica info.
@@ -301,7 +297,7 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	}
 	// Here the plan is the TiFlash plan.
 	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, "cop[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
+	require.Equal(t, "mpp[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustExec("admin capture bindings")
@@ -319,8 +315,7 @@ func TestBindingSource(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -359,7 +354,7 @@ func TestBindingSource(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
@@ -374,13 +369,12 @@ func TestBindingSource(t *testing.T) {
 }
 
 func TestCapturedBindingCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("create table t(name varchar(25), index idx(name))")
 
@@ -398,15 +392,14 @@ func TestCapturedBindingCharset(t *testing.T) {
 }
 
 func TestConcurrentCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
 	// Simulate an existing binding generated by concurrent CREATE BINDING, which has not been synchronized to current tidb-server yet.
 	// Actually, it is more common to be generated by concurrent baseline capture, I use Manual just for simpler test verification.
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t`', '', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustQuery("select original_sql, source from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
 		"select * from `test` . `t` manual",
 	))
@@ -414,7 +407,7 @@ func TestConcurrentCapture(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
@@ -425,8 +418,7 @@ func TestConcurrentCapture(t *testing.T) {
 }
 
 func TestUpdateSubqueryCapture(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -435,15 +427,16 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b))")
 	tk.MustExec("create table t2(a int, b int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
-	tk.MustExec(bindSQL)
+	tk.MustExec(originSQL)
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
 }
 
@@ -454,8 +447,7 @@ func TestIssue20417(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -489,7 +481,7 @@ func TestIssue20417(t *testing.T) {
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("admin capture bindings")
@@ -526,8 +518,7 @@ func TestIssue20417(t *testing.T) {
 }
 
 func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -535,7 +526,7 @@ func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
@@ -547,8 +538,7 @@ func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
 }
 
 func TestIssue25505(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -562,7 +552,7 @@ func TestIssue25505(t *testing.T) {
 	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
 	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
 	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	spmMap := map[string]string{}
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` < ? ) select * from `cte`"] =
@@ -576,9 +566,9 @@ func TestIssue25505(t *testing.T) {
 	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` > ? ) select * from `cte`"] =
 		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ hash_agg(@`sel_1`), use_index(@`sel_3` `test`.`t1` `idx_b`)*/ * FROM `cte`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_ab`), use_index(@`sel_3` `test`.`t2` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
-		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
 
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
@@ -617,8 +607,7 @@ func TestIssue25505(t *testing.T) {
 }
 
 func TestCaptureUserFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -630,7 +619,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -653,7 +642,7 @@ func TestCaptureUserFilter(t *testing.T) {
 	tk.MustExec(`grant all on *.* to usr1 with grant option`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "usr1", Hostname: "%"}, nil, nil))
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("select * from t where a > 10")
 	tk2.MustExec("admin capture bindings")
@@ -673,6 +662,7 @@ func TestCaptureUserFilter(t *testing.T) {
 }
 
 func TestCaptureTableFilterValid(t *testing.T) {
+	defer view.Stop()
 	type matchCase struct {
 		table   string
 		matched bool
@@ -708,8 +698,7 @@ func TestCaptureTableFilterValid(t *testing.T) {
 }
 
 func TestCaptureWildcardFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -718,7 +707,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	dbs := []string{"db11", "db12", "db2"}
 	tbls := []string{"t11", "t12", "t2"}
 	for _, db := range dbs {
@@ -811,8 +800,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 }
 
 func TestCaptureFilter(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -825,7 +813,7 @@ func TestCaptureFilter(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
@@ -968,8 +956,7 @@ func TestCaptureFilter(t *testing.T) {
 }
 
 func TestCaptureHints(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
@@ -978,7 +965,7 @@ func TestCaptureHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 
 	captureCases := []struct {
 		query string
@@ -1027,5 +1014,11 @@ func TestCaptureHints(t *testing.T) {
 		res := tk.MustQuery(`show global bindings`).Rows()
 		require.Equal(t, len(res), 1)                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+		// test sql digest
+		parser4binding := parser.New()
+		originNode, err := parser4binding.ParseOneStmt(capCase.query, "utf8mb4", "utf8mb4_general_ci")
+		require.NoError(t, err)
+		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", capCase.query))
+		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }

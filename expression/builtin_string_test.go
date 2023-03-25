@@ -93,7 +93,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 	}
 	for _, lengthMethod := range lengthMethods {
 		for _, c := range tbl {
-			err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 			require.NoError(t, err)
 			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 			require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestASCII(t *testing.T) {
 	}
 
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 		require.NoError(t, err)
@@ -393,10 +393,10 @@ func TestConcatWSSig(t *testing.T) {
 func TestLeft(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -443,10 +443,10 @@ func TestLeft(t *testing.T) {
 func TestRight(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -639,7 +639,7 @@ func TestLower(t *testing.T) {
 		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ"},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 		require.NoError(t, err)
@@ -698,7 +698,7 @@ func TestUpper(t *testing.T) {
 		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ"},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 		require.NoError(t, err)
@@ -980,10 +980,10 @@ func TestSubstringIndex(t *testing.T) {
 func TestSpace(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	cases := []struct {
@@ -1308,7 +1308,7 @@ func TestHexFunc(t *testing.T) {
 		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
 	}
 	for _, c := range strCases {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
 		require.NoError(t, err)
@@ -1389,7 +1389,7 @@ func TestBitLength(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
@@ -1412,7 +1412,7 @@ func TestBitLength(t *testing.T) {
 
 func TestChar(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1533,10 +1533,10 @@ func TestFindInSet(t *testing.T) {
 func TestField(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
+	origin := stmtCtx.IgnoreTruncate.Load()
+	stmtCtx.IgnoreTruncate.Store(true)
 	defer func() {
-		stmtCtx.IgnoreTruncate = origin
+		stmtCtx.IgnoreTruncate.Store(origin)
 	}()
 
 	tbl := []struct {
@@ -2228,7 +2228,7 @@ func TestOrd(t *testing.T) {
 		{"数据库", 51965, "gbk", false, false},
 	}
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
@@ -2322,7 +2322,7 @@ func TestBin(t *testing.T) {
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for _, c := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
@@ -2444,7 +2444,7 @@ func TestToBase64(t *testing.T) {
 		{"一二三!", "", "5LiA5LqM5LiJIQ=="},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 		require.NoError(t, err)
@@ -2517,7 +2517,6 @@ func TestToBase64Sig(t *testing.T) {
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
 			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
-
 		} else {
 			require.False(t, isNull)
 		}

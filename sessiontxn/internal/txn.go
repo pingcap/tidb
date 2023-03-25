@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -62,14 +61,19 @@ func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error
 }
 
 // GetSnapshotWithTS returns a snapshot with ts.
-func GetSnapshotWithTS(s sessionctx.Context, ts uint64) kv.Snapshot {
+func GetSnapshotWithTS(s sessionctx.Context, ts uint64, interceptor kv.SnapshotInterceptor) kv.Snapshot {
 	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
-	snap.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(s))
+	if interceptor != nil {
+		snap.SetOption(kv.SnapInterceptor, interceptor)
+	}
 	if s.GetSessionVars().InRestrictedSQL {
 		snap.SetOption(kv.RequestSourceInternal, true)
 	}
 	if tp := s.GetSessionVars().RequestSourceType; tp != "" {
 		snap.SetOption(kv.RequestSourceType, tp)
+	}
+	if s.GetSessionVars().LoadBasedReplicaReadThreshold > 0 {
+		snap.SetOption(kv.LoadBasedReplicaReadThreshold, s.GetSessionVars().LoadBasedReplicaReadThreshold)
 	}
 	return snap
 }

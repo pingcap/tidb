@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -35,7 +36,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	session.DisableStats4Test()
@@ -44,21 +45,27 @@ func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreO
 
 	dom.SetStatsUpdating(true)
 
-	clean := func() {
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+
+	t.Cleanup(func() {
 		dom.Close()
 		require.NoError(t, store.Close())
-	}
-	return store, clean
+	})
+	return store
 }
 
 func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
 	tk1.MustExec("create table t (a int, b int)")
@@ -80,9 +87,11 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -104,9 +113,10 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -122,22 +132,14 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 	tk1.MustExec("delete from t")
 	tk1.MustExec("insert into t1 values (1)")
 	tk1.MustExec("commit")
-
-	// TODO remove this enable after fixing table delta map.
-	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
-	tk1.MustExec("begin pessimistic")
-	tk2.MustExec("alter table t add k int")
-	tk1.MustExec("select * from t for update")
-	tk1.MustExec("update t set i = -i")
-	tk1.MustExec("delete from t")
-	tk1.MustExec("insert into t1 values (1)")
-	tk1.MustExec("commit")
 }
 
 func TestRetrySchemaChange(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -177,9 +179,10 @@ func TestRetrySchemaChange(t *testing.T) {
 }
 
 func TestRetryMissingUnionScan(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -205,11 +208,10 @@ func TestTableReaderChunk(t *testing.T) {
 	// Since normally a single region mock tikv only returns one partial result we need to manually split the
 	// table to test multiple chunks.
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -253,8 +255,7 @@ func TestTableReaderChunk(t *testing.T) {
 }
 
 func TestInsertExecChunk(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -289,8 +290,7 @@ func TestInsertExecChunk(t *testing.T) {
 }
 
 func TestUpdateExecChunk(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -327,8 +327,7 @@ func TestUpdateExecChunk(t *testing.T) {
 }
 
 func TestDeleteExecChunk(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -358,8 +357,7 @@ func TestDeleteExecChunk(t *testing.T) {
 }
 
 func TestDeleteMultiTableExecChunk(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -414,11 +412,10 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 	// Since normally a single region mock tikv only returns one partial result we need to manually split the
 	// table to test multiple chunks.
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
-	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -474,8 +471,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 }
 
 func TestTxnSize(t *testing.T) {
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -500,8 +496,7 @@ func TestValidationRecursion(t *testing.T) {
 	}}
 	variable.RegisterSysVar(&sv)
 
-	store, clean := createMockStoreForSchemaTest(t)
-	defer clean()
+	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -514,8 +509,7 @@ func TestValidationRecursion(t *testing.T) {
 func TestGlobalAndLocalTxn(t *testing.T) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_local_txn = on;")

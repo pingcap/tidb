@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 )
 
+//revive:disable:defer
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
 	return b.args[0].VecEvalString(b.ctx, input, result)

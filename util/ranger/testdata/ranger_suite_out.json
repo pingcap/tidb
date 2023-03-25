@@ -9,12 +9,12 @@
           "└─Apply 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#26)",
           "  ├─TableReader(Build) 2.00 root  data:TableFullScan",
           "  │ └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#26",
-          "    └─HashJoin 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "      ├─TableReader(Build) 2.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
-          "      └─IndexReader(Probe) 2.00 root  index:IndexRangeScan",
-          "        └─IndexRangeScan 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
+          "  └─StreamAgg(Probe) 2.00 root  funcs:count(1)->Column#26",
+          "    └─HashJoin 4.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:idx(b, c, d) keep order:false",
+          "      └─IndexReader(Probe) 4.00 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 4.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
         ]
       },
       {
@@ -32,9 +32,9 @@
       {
         "SQL": "explain format = 'brief' select * from t0 where c0",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  test.t0.c0",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {
@@ -56,17 +56,17 @@
       {
         "SQL": "explain format = 'brief' select * from t0 where c0 is true",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  istrue(cast(test.t0.c0, double BINARY))",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  istrue(cast(test.t0.c0, double BINARY))",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t0 where c0 is false",
         "Result": [
-          "TableReader 0.80 root  data:Selection",
-          "└─Selection 0.80 cop[tikv]  isfalse(cast(test.t0.c0, double BINARY))",
-          "  └─TableFullScan 1.00 cop[tikv] table:t0 keep order:false"
+          "IndexReader 1.00 root  index:Selection",
+          "└─Selection 1.00 cop[tikv]  isfalse(cast(test.t0.c0, double BINARY))",
+          "  └─IndexFullScan 1.00 cop[tikv] table:t0, index:i0(c0) keep order:false"
         ]
       },
       {

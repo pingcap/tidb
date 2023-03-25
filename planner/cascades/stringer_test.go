@@ -48,7 +48,7 @@ func TestGroupStringer(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	stringerSuiteData.GetTestCases(t, &input, &output)
+	stringerSuiteData.LoadTestCases(t, &input, &output)
 
 	p := parser.New()
 	ctx := plannercore.MockContext()

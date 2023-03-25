@@ -21,13 +21,11 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIfNullEliminateColName(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -51,8 +49,7 @@ func TestIfNullEliminateColName(t *testing.T) {
 }
 
 func TestBinaryOpFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -63,8 +60,7 @@ func TestBinaryOpFunction(t *testing.T) {
 }
 
 func TestDefaultFunction(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -74,7 +70,8 @@ func TestDefaultFunction(t *testing.T) {
 		c int default '10',
 		d double default '3.14',
 		e datetime default '20180101',
-		f datetime default current_timestamp);`)
+		f datetime default current_timestamp,
+		g date default current_date);`)
 	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
 	tk.MustExec("set @@timestamp = 1321009871")
 	defer tk.MustExec("set @@timestamp = DEFAULT")
@@ -86,8 +83,9 @@ func TestDefaultFunction(t *testing.T) {
 		default(c) as defc,
 		default(d) as defd,
 		default(e) as defe,
-		default(f) as deff
-		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
+		default(f) as deff,
+		default(g) as defg
+		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11|2011-11-11"))
 	require.EqualError(t, tk.ExecToErr("select default(x) from t1"), "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
@@ -145,8 +143,7 @@ func TestDefaultFunction(t *testing.T) {
 }
 
 func TestCompareSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -243,8 +240,7 @@ func TestCompareSubquery(t *testing.T) {
 }
 
 func TestCheckFullGroupBy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -255,8 +251,7 @@ func TestCheckFullGroupBy(t *testing.T) {
 }
 
 func TestPatternLikeToExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select 0 like 'a string';").Check(testkit.Rows("0"))
 	tk.MustQuery("select 0.0 like 'a string';").Check(testkit.Rows("0"))
@@ -268,8 +263,7 @@ func TestPatternLikeToExpression(t *testing.T) {
 }
 
 func TestIssue20007(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -285,8 +279,7 @@ func TestIssue20007(t *testing.T) {
 }
 
 func TestIssue9869(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
@@ -297,8 +290,7 @@ func TestIssue9869(t *testing.T) {
 }
 
 func TestIssue17652(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -308,8 +300,7 @@ func TestIssue17652(t *testing.T) {
 }
 
 func TestCompareMultiFieldsInSubquery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2, t3, t4;")
@@ -336,8 +327,7 @@ func TestCompareMultiFieldsInSubquery(t *testing.T) {
 }
 
 func TestIssue22818(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -347,8 +337,7 @@ func TestIssue22818(t *testing.T) {
 }
 
 func TestIssue24705(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1,t2;")
@@ -359,8 +348,7 @@ func TestIssue24705(t *testing.T) {
 }
 
 func TestBetweenExprCollation(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -373,8 +361,7 @@ func TestBetweenExprCollation(t *testing.T) {
 }
 
 func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
@@ -391,58 +378,17 @@ func TestInsertOnDuplicateLazyMoreThan1Row(t *testing.T) {
 	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 }
 
-func TestMultiColInExpression(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+func TestConvertIfNullToCast(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("insert into t1 values(1,1),(2,null),(null,3),(4,4)")
-	tk.MustExec("analyze table t1")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t2 values(1,1),(2,null),(null,3),(5,4)")
-	tk.MustExec("analyze table t2")
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-
-	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-func TestBitFuncsReturnType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a timestamp, b varbinary(32))")
-	tk.MustExec("insert into t values ('2006-08-27 21:57:57', 0x373037343631313230)")
-	tk.MustExec("analyze table t")
-	var input []string
-	var output []struct {
-		Plan []string
-	}
-
-	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
-	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
+	tk.MustExec("DROP TABLE if exists t1;")
+	tk.MustExec("CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);")
+	tk.MustExec("INSERT INTO t1 VALUES(1, 1);")
+	tk.MustQuery("select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;").Check(testkit.Rows("<nil> <nil>"))
+	tk.MustQuery("explain format=\"brief\" select IFNULL(cnotnull, '1') from t1;").Check(testkit.Rows(
+		"Projection 10000.00 root  cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#4]\n" +
+			"[└─TableReader 10000.00 root  data:TableFullScan]\n" +
+			"[  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
 }

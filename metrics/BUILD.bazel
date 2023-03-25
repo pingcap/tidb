@@ -13,12 +13,15 @@ go_library(
         "meta.go",
         "metrics.go",
         "owner.go",
+        "resourcemanager.go",
         "server.go",
         "session.go",
         "sli.go",
         "stats.go",
         "telemetry.go",
         "topsql.go",
+        "ttl.go",
+        "wrapper.go",
     ],
     importpath = "github.com/pingcap/tidb/metrics",
     visibility = ["//visibility:public"],
@@ -37,6 +40,7 @@ go_library(
 
 go_test(
     name = "metrics_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "metrics_test.go",

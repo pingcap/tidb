@@ -17,6 +17,7 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/httputil",
         "//br/pkg/logutil",
+        "//br/pkg/restore/ingestrec",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
@@ -28,6 +29,7 @@ go_library(
         "//util/codec",
         "//util/table-filter",
         "@com_github_fatih_color//:color",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -41,6 +43,7 @@ go_library(
 
 go_test(
     name = "stream_test",
+    timeout = "short",
     srcs = [
         "decode_kv_test.go",
         "meta_kv_test.go",
@@ -51,10 +54,14 @@ go_test(
     embed = [":stream"],
     flaky = True,
     deps = [
+        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//meta",
+        "//parser/ast",
         "//parser/model",
+        "//parser/mysql",
         "//tablecodec",
+        "//types",
         "//util/codec",
         "//util/table-filter",
         "@com_github_pingcap_kvproto//pkg/brpb",

@@ -209,12 +209,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		colHist := coll.Columns[c.UniqueID]
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
-
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
@@ -336,7 +335,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				case ast.LogicOr:
 					notCoveredDNF[i] = x
 					continue
-				case ast.Like, ast.Regexp:
+				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -344,7 +343,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 					innerSF, ok := inner.(*expression.ScalarFunction)
 					if ok {
 						switch innerSF.FuncName.L {
-						case ast.Like, ast.Regexp:
+						case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 							notCoveredNegateStrMatch[i] = x
 							continue
 						}
@@ -443,7 +442,7 @@ OUTER:
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -455,7 +454,7 @@ OUTER:
 			delete(notCoveredStrMatch, i)
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -499,15 +498,15 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
-		ranges, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength)
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}
@@ -635,10 +634,12 @@ func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr express
 // It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
 // For example, you can write `eq`(a, 1), which is the same as a = 1.
 // We should have implemented this by first implementing a method to turn an expression to an AST
-//   then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
+//
+//	then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
 //
 // It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
-//   and it may not be general enough to handle all possible expressions. So we put it here for now.
+//
+//	and it may not be general enough to handle all possible expressions. So we put it here for now.
 func ExprToString(e expression.Expression) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:

@@ -78,8 +78,9 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 
 // WithRecovery wraps goroutine startup call with force recovery.
 // it will dump current goroutine stack into log if catch any recover result.
-//   exec:      execute logic function.
-//   recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
+//
+//	exec:      execute logic function.
+//	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
 func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	defer func() {
 		r := recover()
@@ -97,12 +98,14 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 
 // Recover includes operations such as recovering, clearing，and printing information.
 // It will dump current goroutine stack into log if catch any recover result.
-//   metricsLabel: The label of PanicCounter metrics.
-//   funcInfo:     Some information for the panic function.
-//   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
-//   quit:         If this value is true, the current program exits after recovery.
+//
+//	metricsLabel: The label of PanicCounter metrics.
+//	funcInfo:     Some information for the panic function.
+//	recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
+//	quit:         If this value is true, the current program exits after recovery.
 func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
-	r := recover() //nolint: revive
+	//nolint: revive
+	r := recover()
 	if r == nil {
 		return
 	}
@@ -391,10 +394,10 @@ func TLSCipher2String(n uint16) string {
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
-		col := ColumnToProto(c)
+		col := ColumnToProto(c, forIndex)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
 		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
@@ -408,7 +411,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 }
 
 // ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
 		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
@@ -417,7 +420,12 @@ func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
 	}
-	pc.Tp = int32(c.GetType())
+	if forIndex {
+		// Use array type for read the multi-valued index.
+		pc.Tp = int32(c.FieldType.ArrayType().GetType())
+	} else {
+		pc.Tp = int32(c.GetType())
+	}
 	return pc
 }
 
@@ -541,15 +549,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		CipherSuites: cipherSuites,
 	}
 	return
-}
-
-// IsTLSExpiredError checks error is caused by TLS expired.
-func IsTLSExpiredError(err error) bool {
-	err = errors.Cause(err)
-	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
-		return false
-	}
-	return true
 }
 
 var (

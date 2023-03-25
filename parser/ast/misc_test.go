@@ -75,7 +75,11 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.PrivElem{},
 		&ast.VariableAssignment{Value: valueExpr},
 		&ast.KillStmt{},
-		&ast.DropStatsStmt{Table: &ast.TableName{}},
+		&ast.DropStatsStmt{
+			Tables: []*ast.TableName{
+				{},
+			},
+		},
 		&ast.ShutdownStmt{},
 	}
 
@@ -224,6 +228,18 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"IGNORE_INDEX(@sel_1 t1 c1)", "IGNORE_INDEX(@`sel_1` `t1` `c1`)"},
 		{"IGNORE_INDEX(t1@sel_1 c1)", "IGNORE_INDEX(`t1`@`sel_1` `c1`)"},
 		{"IGNORE_INDEX(t1@sel_1 partition(p0, p1) c1)", "IGNORE_INDEX(`t1`@`sel_1` PARTITION(`p0`, `p1`) `c1`)"},
+		{"ORDER_INDEX(t1 c1)", "ORDER_INDEX(`t1` `c1`)"},
+		{"ORDER_INDEX(test.t1 c1)", "ORDER_INDEX(`test`.`t1` `c1`)"},
+		{"ORDER_INDEX(@sel_1 t1 c1)", "ORDER_INDEX(@`sel_1` `t1` `c1`)"},
+		{"ORDER_INDEX(t1@sel_1 c1)", "ORDER_INDEX(`t1`@`sel_1` `c1`)"},
+		{"ORDER_INDEX(test.t1@sel_1 c1)", "ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
+		{"ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"NO_ORDER_INDEX(t1 c1)", "NO_ORDER_INDEX(`t1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1 c1)", "NO_ORDER_INDEX(`test`.`t1` `c1`)"},
+		{"NO_ORDER_INDEX(@sel_1 t1 c1)", "NO_ORDER_INDEX(@`sel_1` `t1` `c1`)"},
+		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
+		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -241,7 +257,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_MERGE_JOIN(t1,t2)", "INL_MERGE_JOIN(`t1`, `t2`)"},
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
-		{"ORDERED_HASH_JOIN(t1,t2)", "ORDERED_HASH_JOIN(`t1`, `t2`)"},
+		{"HASH_JOIN_BUILD(t1)", "HASH_JOIN_BUILD(`t1`)"},
+		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
@@ -286,6 +303,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"READ_FROM_STORAGE(@sel TIFLASH[t1, t2])", "READ_FROM_STORAGE(@`sel` TIFLASH[`t1`, `t2`])"},
 		{"READ_FROM_STORAGE(@sel TIFLASH[t1 partition(p0)])", "READ_FROM_STORAGE(@`sel` TIFLASH[`t1` PARTITION(`p0`)])"},
 		{"TIME_RANGE('2020-02-02 10:10:10','2020-02-02 11:10:10')", "TIME_RANGE('2020-02-02 10:10:10', '2020-02-02 11:10:10')"},
+		{"RESOURCE_GROUP(rg1)", "RESOURCE_GROUP(`rg1`)"},
+		{"RESOURCE_GROUP(`default`)", "RESOURCE_GROUP(`default`)"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.SelectStmt).TableHints[0]
@@ -338,7 +357,6 @@ func TestBRIESecureText(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
-
 	}
 }
 

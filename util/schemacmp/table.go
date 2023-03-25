@@ -284,8 +284,8 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 }
 
 type kvPair struct {
-	key   string
 	value interface{}
+	key   string
 }
 
 func sortedMap(input map[string]interface{}) []kvPair {

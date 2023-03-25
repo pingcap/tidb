@@ -46,6 +46,10 @@ type LogCollector interface {
 
 	SetSuccessStatus(success bool)
 
+	NowDureTime() time.Duration
+
+	AdjustStartTimeToEarlierTime(t time.Duration)
+
 	Summary(name string)
 
 	Log(msg string, fields ...zap.Field)
@@ -161,6 +165,18 @@ func (tc *logCollector) SetSuccessStatus(success bool) {
 
 func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
+}
+
+func (tc *logCollector) NowDureTime() time.Duration {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return time.Since(tc.startTime)
+}
+
+func (tc *logCollector) AdjustStartTimeToEarlierTime(t time.Duration) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.startTime = tc.startTime.Add(-t)
 }
 
 func (tc *logCollector) Summary(name string) {

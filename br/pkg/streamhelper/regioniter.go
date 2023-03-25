@@ -28,19 +28,34 @@ type RegionWithLeader struct {
 	Leader *metapb.Peer
 }
 
-type RegionScanner interface {
+type TiKVClusterMeta interface {
 	// RegionScan gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
 	RegionScan(ctx context.Context, key, endKey []byte, limit int) ([]RegionWithLeader, error)
+
+	// Stores returns the store metadata from the cluster.
+	Stores(ctx context.Context) ([]Store, error)
+
+	// Updates the service GC safe point for the cluster.
+	// Returns the latest service GC safe point.
+	// If the arguments is `0`, this would remove the service safe point.
+	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
+	// For now, all tasks (exactly one task in fact) use the same checkpoint.
+	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
+}
+
+type Store struct {
+	ID     uint64
+	BootAt uint64
 }
 
 type RegionIter struct {
-	cli              RegionScanner
+	cli              TiKVClusterMeta
 	startKey, endKey []byte
 	currentStartKey  []byte
 	// When the endKey become "", we cannot check whether the scan is done by
 	// comparing currentStartKey and endKey (because "" has different meaning in start key and end key).
-	// So set this to `ture` when endKey == "" and the scan is done.
+	// So set this to `true` when endKey == "" and the scan is done.
 	infScanFinished bool
 
 	// The max slice size returned by `Next`.
@@ -57,7 +72,7 @@ func (r *RegionIter) String() string {
 }
 
 // IterateRegion creates an iterater over the region range.
-func IterateRegion(cli RegionScanner, startKey, endKey []byte) *RegionIter {
+func IterateRegion(cli TiKVClusterMeta, startKey, endKey []byte) *RegionIter {
 	return &RegionIter{
 		cli:             cli,
 		startKey:        startKey,

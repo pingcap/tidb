@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "owner_test",
+    timeout = "short",
     srcs = [
         "fail_test.go",
         "main_test.go",

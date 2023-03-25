@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -280,7 +279,7 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 
 func TestTypesNewRowCodec(t *testing.T) {
 	getJSONDatum := func(value string) types.Datum {
-		j, err := json.ParseBinaryFromString(value)
+		j, err := types.ParseBinaryJSONFromString(value)
 		require.NoError(t, err)
 		var d types.Datum
 		d.SetMysqlJSON(j)
@@ -292,7 +291,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 	getTime := func(value string) types.Time {
-		d, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, value, mysql.TypeTimestamp, 6)
+		d, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, value, mysql.TypeTimestamp, 6, nil)
 		require.NoError(t, err)
 		return d
 	}

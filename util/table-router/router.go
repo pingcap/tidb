@@ -26,34 +26,34 @@ import (
 // TableRule is a rule to route schema/table to target schema/table
 // pattern format refers 'pkg/table-rule-selector'
 type TableRule struct {
+	TableExtractor  *TableExtractor  `json:"extract-table,omitempty" toml:"extract-table,omitempty" yaml:"extract-table,omitempty"`
+	SchemaExtractor *SchemaExtractor `json:"extract-schema,omitempty" toml:"extract-schema,omitempty" yaml:"extract-schema,omitempty"`
+	SourceExtractor *SourceExtractor `json:"extract-source,omitempty" toml:"extract-source,omitempty" yaml:"extract-source,omitempty"`
 	SchemaPattern   string           `json:"schema-pattern" toml:"schema-pattern" yaml:"schema-pattern"`
 	TablePattern    string           `json:"table-pattern" toml:"table-pattern" yaml:"table-pattern"`
 	TargetSchema    string           `json:"target-schema" toml:"target-schema" yaml:"target-schema"`
 	TargetTable     string           `json:"target-table" toml:"target-table" yaml:"target-table"`
-	TableExtractor  *TableExtractor  `json:"extract-table,omitempty" toml:"extract-table,omitempty" yaml:"extract-table,omitempty"`
-	SchemaExtractor *SchemaExtractor `json:"extract-schema,omitempty" toml:"extract-schema,omitempty" yaml:"extract-schema,omitempty"`
-	SourceExtractor *SourceExtractor `json:"extract-source,omitempty" toml:"extract-source,omitempty" yaml:"extract-source,omitempty"`
 }
 
 // TableExtractor extracts table name to column
 type TableExtractor struct {
+	regexp       *regexp.Regexp
 	TargetColumn string `json:"target-column" toml:"target-column" yaml:"target-column"`
 	TableRegexp  string `json:"table-regexp" toml:"table-regexp" yaml:"table-regexp"`
-	regexp       *regexp.Regexp
 }
 
 // SchemaExtractor extracts schema name to column
 type SchemaExtractor struct {
+	regexp       *regexp.Regexp
 	TargetColumn string `json:"target-column" toml:"target-column" yaml:"target-column"`
 	SchemaRegexp string `json:"schema-regexp" toml:"schema-regexp" yaml:"schema-regexp"`
-	regexp       *regexp.Regexp
 }
 
 // SourceExtractor extracts source name to column
 type SourceExtractor struct {
+	regexp       *regexp.Regexp
 	TargetColumn string `json:"target-column" toml:"target-column" yaml:"target-column"`
 	SourceRegexp string `json:"source-regexp" toml:"source-regexp" yaml:"source-regexp"`
-	regexp       *regexp.Regexp
 }
 
 // Valid checks validity of rule

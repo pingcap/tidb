@@ -51,8 +51,7 @@ func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption 
 }
 
 func TestStoreErr(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -87,8 +86,7 @@ func TestStoreErr(t *testing.T) {
 }
 
 func TestStoreSwitchPeer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
-	defer clean()
+	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {

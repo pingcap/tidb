@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "mysql_test",
+    timeout = "short",
     srcs = [
         "const_test.go",
         "error_test.go",

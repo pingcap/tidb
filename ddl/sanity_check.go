@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"strings"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -97,25 +97,31 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(physicalTableIDs), 1), nil
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		return len(physicalTableIDs) + 1, nil
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+		model.ActionReorganizePartition:
 		var physicalTableIDs []int64
 		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		hasDelRange := job.State == model.JobStateRollbackDone
-		if !hasDelRange {
-			return 0, nil
-		}
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
+			var unique bool
+			if err := job.DecodeArgs(&unique); err == nil {
+				// The first argument is bool means nothing need to be added to delete-range table.
+				return 0, nil
+			}
 			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(partitionIDs), 1), nil
+		idxIDNumFactor := 1 // Add temporary index to del-range table.
+		if job.State == model.JobStateRollbackDone {
+			idxIDNumFactor = 2 // Add origin index to del-range table.
+		}
+		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
 		var ifNotExists bool
@@ -177,7 +183,7 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
 func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
+	if !intest.InTest {
 		return
 	}
 

@@ -163,6 +163,8 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 			clientv3.OpDelete(CheckPointsOf(taskName), clientv3.WithPrefix()),
 			clientv3.OpDelete(Pause(taskName)),
 			clientv3.OpDelete(LastErrorPrefixOf(taskName), clientv3.WithPrefix()),
+			clientv3.OpDelete(GlobalCheckpointOf(taskName)),
+			clientv3.OpDelete(StorageCheckpointOf(taskName), clientv3.WithPrefix()),
 		).
 		Commit()
 	if err != nil {
@@ -191,17 +193,6 @@ func (c *MetaDataClient) CleanLastErrorOfTask(ctx context.Context, taskName stri
 	_, err := c.KV.Delete(ctx, LastErrorPrefixOf(taskName), clientv3.WithPrefix())
 	if err != nil {
 		return errors.Annotatef(err, "failed to clean last error of task %s", taskName)
-	}
-	return nil
-}
-
-func (c *MetaDataClient) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
-	key := GlobalCheckpointOf(taskName)
-	value := string(encodeUint64(checkpoint))
-	_, err := c.KV.Put(ctx, key, value)
-
-	if err != nil {
-		return err
 	}
 	return nil
 }
@@ -383,28 +374,6 @@ func (t *Task) GetStorageCheckpoint(ctx context.Context) (uint64, error) {
 	return storageCheckpoint, nil
 }
 
-// MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
-func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
-	key := CheckPointOf(t.Info.Name, store)
-	resp, err := t.cli.KV.Get(ctx, key)
-	if err != nil {
-		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
-	}
-	if resp.Count != 1 {
-		return 0, nil
-	}
-	kv := resp.Kvs[0]
-	if len(kv.Value) != 8 {
-		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-			"the next backup ts of store %d isn't 64bits (it is %d bytes, value = %s)",
-			store,
-			len(kv.Value),
-			redact.Key(kv.Value))
-	}
-	nextBackupTS := binary.BigEndian.Uint64(kv.Value)
-	return nextBackupTS, nil
-}
-
 // GetGlobalCheckPointTS gets the global checkpoint timestamp according to log task.
 func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	checkPointMap, err := t.NextBackupTSList(ctx)
@@ -415,23 +384,22 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 	initialized := false
 	checkpoint := t.Info.StartTs
 	for _, cp := range checkPointMap {
-		if !initialized || cp.TS < checkpoint {
+		if cp.Type() == CheckpointTypeGlobal {
+			return cp.TS, nil
+		}
+
+		if cp.Type() == CheckpointTypeStore && (!initialized || cp.TS < checkpoint) {
 			initialized = true
 			checkpoint = cp.TS
 		}
 	}
 
-	return checkpoint, nil
-}
-
-// Step forwards the progress (next_backup_ts) of some region.
-// The task should be done by TiKV. This function should only be used for test cases.
-func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
-	_, err := t.cli.KV.Put(ctx, CheckPointOf(t.Info.Name, store), string(encodeUint64(ts)))
+	ts, err := t.GetStorageCheckpoint(ctx)
 	if err != nil {
-		return errors.Annotatef(err, "failed forward the progress of %s to %d", t.Info.Name, ts)
+		return 0, errors.Trace(err)
 	}
-	return nil
+
+	return mathutil.Max(checkpoint, ts), nil
 }
 
 func (t *Task) UploadGlobalCheckpoint(ctx context.Context, ts uint64) error {

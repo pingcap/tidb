@@ -3,6 +3,7 @@ package checkpoints_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +24,7 @@ type cpSQLSuite struct {
 	cpdb *checkpoints.MySQLCheckpointsDB
 }
 
-func newCPSQLSuite(t *testing.T) (*cpSQLSuite, func()) {
+func newCPSQLSuite(t *testing.T) *cpSQLSuite {
 	var s cpSQLSuite
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -50,20 +52,33 @@ func newCPSQLSuite(t *testing.T) (*cpSQLSuite, func()) {
 	require.NoError(t, err)
 	require.Nil(t, s.mock.ExpectationsWereMet())
 	s.cpdb = cpdb
-	return &s, func() {
+	t.Cleanup(func() {
 		s.mock.ExpectClose()
 		require.Nil(t, s.cpdb.Close())
 		require.Nil(t, s.mock.ExpectationsWereMet())
-	}
+	})
+	return &s
 }
 
 func TestNormalOperations(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
+
+	t1Info, err := json.Marshal(&model.TableInfo{
+		Name: model.NewCIStr("t1"),
+	})
+	require.NoError(t, err)
+	t2Info, err := json.Marshal(&model.TableInfo{
+		Name: model.NewCIStr("t2"),
+	})
+	require.NoError(t, err)
+	t3Info, err := json.Marshal(&model.TableInfo{
+		Name: model.NewCIStr("t3"),
+	})
+	require.NoError(t, err)
 
 	s.mock.ExpectBegin()
 	initializeStmt := s.mock.ExpectPrepare(
@@ -74,30 +89,48 @@ func TestNormalOperations(t *testing.T) {
 	initializeStmt = s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
 	initializeStmt.ExpectExec().
-		WithArgs(123, "`db1`.`t1`", sqlmock.AnyArg(), int64(1)).
+		WithArgs(123, "`db1`.`t1`", sqlmock.AnyArg(), int64(1), t1Info).
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2)).
+		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2), t2Info).
 		WillReturnResult(sqlmock.NewResult(8, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(123, "`db2`.`t3`", sqlmock.AnyArg(), int64(3)).
+		WithArgs(123, "`db2`.`t3`", sqlmock.AnyArg(), int64(3), t3Info).
 		WillReturnResult(sqlmock.NewResult(9, 1))
 	s.mock.ExpectCommit()
 
 	s.mock.MatchExpectationsInOrder(false)
 	cfg := newTestConfig()
-	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
-				"t1": {Name: "t1", ID: 1},
-				"t2": {Name: "t2", ID: 2},
+				"t1": {
+					Name: "t1",
+					ID:   1,
+					Desired: &model.TableInfo{
+						Name: model.NewCIStr("t1"),
+					},
+				},
+				"t2": {
+					Name: "t2",
+					ID:   2,
+					Desired: &model.TableInfo{
+						Name: model.NewCIStr("t2"),
+					},
+				},
 			},
 		},
 		"db2": {
 			Name: "db2",
 			Tables: map[string]*checkpoints.TidbTableInfo{
-				"t3": {Name: "t3", ID: 3},
+				"t3": {
+					Name: "t3",
+					ID:   3,
+					Desired: &model.TableInfo{
+						Name: model.NewCIStr("t3"),
+					},
+				},
 			},
 		},
 	})
@@ -255,8 +288,8 @@ func TestNormalOperations(t *testing.T) {
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "kv_bytes", "kv_kvs", "kv_checksum"}).
-				AddRow(60, 132861, int64(2), uint64(4492), uint64(686), uint64(486070148910)),
+			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).
+				AddRow(60, 132861, int64(2), t2Info, uint64(4492), uint64(686), uint64(486070148910)),
 		)
 	s.mock.ExpectCommit()
 
@@ -266,6 +299,9 @@ func TestNormalOperations(t *testing.T) {
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
 		TableID:   int64(2),
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("t2"),
+		},
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {
@@ -298,8 +334,7 @@ func TestNormalOperations(t *testing.T) {
 }
 
 func TestRemoveAllCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectExec("DROP SCHEMA `mock-schema`").WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -334,8 +369,7 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 }
 
 func TestRemoveOneCheckpoint_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -357,8 +391,7 @@ func TestRemoveOneCheckpoint_SQL(t *testing.T) {
 }
 
 func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -376,8 +409,7 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 }
 
 func TestIgnoreOneErrorCheckpoint(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -395,8 +427,7 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 }
 
 func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -430,8 +461,7 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 }
 
 func TestDestroyOneErrorCheckpoints(t *testing.T) {
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.ExpectBegin()
 	s.mock.
@@ -466,8 +496,7 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 
 func TestDump(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 	tm := time.Unix(1555555555, 0).UTC()
 
 	s.mock.
@@ -529,8 +558,7 @@ func TestDump(t *testing.T) {
 
 func TestMoveCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	s, clean := newCPSQLSuite(t)
-	defer clean()
+	s := newCPSQLSuite(t)
 
 	s.mock.
 		ExpectExec("CREATE SCHEMA IF NOT EXISTS `mock-schema\\.12345678\\.bak`").

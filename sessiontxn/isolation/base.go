@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -40,6 +40,7 @@ import (
 //   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
+//
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
 // For example, `getStmtReadTSFunc` and `getStmtForUpdateTSFunc` should be set, and they will be called when `GetStmtReadTS`
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
@@ -48,7 +49,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
+	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -58,6 +59,10 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	// constStartTS is only used by point get max ts optimization currently.
+	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
+	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
+	constStartTS uint64
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -114,7 +119,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
+	sessVars.TxnCtxMu.Unlock()
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -133,7 +143,17 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
 	}
+	if _, ok := p.infoSchema.(*infoschema.SessionExtendedInfoSchema); !ok {
+		p.infoSchema = &infoschema.SessionExtendedInfoSchema{
+			InfoSchema: p.infoSchema,
+		}
+		p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.infoSchema = is
 }
 
 // GetTxnScope returns the current txn scope
@@ -157,7 +177,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	return kv.GlobalReplicaScope
 }
 
-//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
@@ -187,14 +207,47 @@ func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode
 	return nil
 }
 
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// a pessimistic select-for-update statements.
+func (p *baseTxnContextProvider) OnPessimisticStmtStart(_ context.Context) error {
+	return nil
+}
+
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *baseTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool) error {
+	return nil
+}
+
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
 }
 
+// OnStmtCommit is the hook that should be called when a statement is executed successfully.
+func (p *baseTxnContextProvider) OnStmtCommit(_ context.Context) error {
+	return nil
+}
+
+// OnStmtRollback is the hook that should be called when a statement fails to execute.
+func (p *baseTxnContextProvider) OnStmtRollback(_ context.Context, _ bool) error {
+	return nil
+}
+
+// OnLocalTemporaryTableCreated is the hook that should be called when a local temporary table created.
+func (p *baseTxnContextProvider) OnLocalTemporaryTableCreated() {
+	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, p.infoSchema)
+	p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	if p.txn != nil && p.txn.Valid() {
+		if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+			p.txn.SetOption(kv.SnapInterceptor, interceptor)
+		}
+	}
+}
+
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
-func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+func (p *baseTxnContextProvider) OnStmtErrorForNextAction(ctx context.Context, point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		// for pessimistic lock error, return the error by default
@@ -222,6 +275,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	if p.constStartTS != 0 {
+		if err := p.replaceTxnTsFuture(sessiontxn.ConstantFuture(p.constStartTS)); err != nil {
+			return nil, err
+		}
+	}
+
 	txnFuture := p.sctx.GetPreparedTxnFuture()
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
@@ -230,6 +289,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	if sessVars.MemDBFootprint != nil {
+		sessVars.MemDBFootprint.Detach()
+	}
+	sessVars.MemDBFootprint = nil
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
@@ -241,7 +304,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if readReplicaType.IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
-	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
 
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
@@ -253,8 +319,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
-	if p.onTxnActive != nil {
-		p.onTxnActive(txn, p.enterNewTxnType)
+	if p.onTxnActiveFunc != nil {
+		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
 
 	if p.sctx.GetSessionVars().InRestrictedSQL {
@@ -263,6 +329,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
 		txn.SetOption(kv.RequestSourceType, tp)
+	}
+
+	if sessVars.LoadBasedReplicaReadThreshold > 0 {
+		txn.SetOption(kv.LoadBasedReplicaReadThreshold, sessVars.LoadBasedReplicaReadThreshold)
 	}
 
 	p.txn = txn
@@ -277,7 +347,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.prepareTxnWithTS(snapshotTS)
+		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -296,8 +366,13 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 	return p.replaceTxnTsFuture(future)
 }
 
-func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
-	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+func (p *baseTxnContextProvider) forcePrepareConstStartTS(ts uint64) error {
+	if p.txn != nil {
+		return errors.New("cannot force prepare const start ts because txn is active")
+	}
+	p.constStartTS = ts
+	p.isTxnPrepared = true
+	return nil
 }
 
 func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
@@ -332,7 +407,7 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
-	if p.isBeginStmtWithStaleRead() {
+	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
@@ -378,10 +453,16 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(p.sctx, snapshotTS)
+	snapshot := internal.GetSnapshotWithTS(
+		p.sctx,
+		snapshotTS,
+		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+	)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() &&
+		!sessVars.StmtCtx.RCCheckTS &&
+		!sessVars.RcWriteCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 
@@ -403,11 +484,8 @@ func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 
 // newOracleFuture creates new future according to the scope and the session context
 func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("isolation.newOracleFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "isolation.newOracleFuture")
+	defer r.End()
 
 	failpoint.Inject("requestTsoFromPD", func() {
 		sessiontxn.TsoRequestCountInc(sctx)
@@ -428,4 +506,65 @@ type funcFuture func() (uint64, error)
 // Wait returns a ts got from the func
 func (f funcFuture) Wait() (uint64, error) {
 	return f()
+}
+
+// basePessimisticTxnContextProvider extends baseTxnContextProvider with some functionalities that are commonly used in
+// pessimistic transactions.
+type basePessimisticTxnContextProvider struct {
+	baseTxnContextProvider
+}
+
+// OnPessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
+// a pessimistic select-for-update statements.
+func (p *basePessimisticTxnContextProvider) OnPessimisticStmtStart(ctx context.Context) error {
+	if err := p.baseTxnContextProvider.OnPessimisticStmtStart(ctx); err != nil {
+		return err
+	}
+	if p.sctx.GetSessionVars().PessimisticTransactionFairLocking &&
+		p.txn != nil &&
+		p.sctx.GetSessionVars().ConnectionID != 0 &&
+		!p.sctx.GetSessionVars().InRestrictedSQL {
+		if err := p.txn.StartFairLocking(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// OnPessimisticStmtEnd is the hook that should be called when finishes handling a pessimistic DML or
+// select-for-update statement.
+func (p *basePessimisticTxnContextProvider) OnPessimisticStmtEnd(ctx context.Context, isSuccessful bool) error {
+	if err := p.baseTxnContextProvider.OnPessimisticStmtEnd(ctx, isSuccessful); err != nil {
+		return err
+	}
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
+		if isSuccessful {
+			if err := p.txn.DoneFairLocking(ctx); err != nil {
+				return err
+			}
+		} else {
+			if err := p.txn.CancelFairLocking(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (p *basePessimisticTxnContextProvider) retryFairLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
+		if err := p.txn.RetryFairLocking(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *basePessimisticTxnContextProvider) cancelFairLockingIfNeeded(ctx context.Context) error {
+	if p.txn != nil && p.txn.IsInFairLockingMode() {
+		if err := p.txn.CancelFairLocking(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }

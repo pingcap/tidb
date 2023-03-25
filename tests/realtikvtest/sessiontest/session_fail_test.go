@@ -28,8 +28,7 @@ import (
 )
 
 func TestFailStatementCommitInRetry(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -51,8 +50,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 }
 
 func TestGetTSFailDirtyState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -83,8 +81,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -103,8 +100,7 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 func TestKillFlagInBackoff(t *testing.T) {
 	// This test checks the `killed` flag is passed down to the backoffer through
 	// session.KVVars.
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -124,8 +120,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 }
 
 func TestClusterTableSendError(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -138,8 +133,7 @@ func TestClusterTableSendError(t *testing.T) {
 }
 
 func TestAutoCommitNeedNotLinearizability(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -202,4 +196,31 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 		}()
 		tk.MustExec("COMMIT")
 	}()
+}
+
+func TestKill(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("kill connection_id();")
+}
+
+func TestIssue42426(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `sbtest1` (" +
+		"`id` bigint(20) NOT NULL AUTO_INCREMENT," +
+		"`k` int(11) NOT NULL DEFAULT '0'," +
+		"`c` char(120) NOT NULL DEFAULT ''," +
+		"`pad` char(60) NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */," +
+		"KEY `k_1` (`k`)" +
+		") PARTITION BY RANGE (`id`)" +
+		"(PARTITION `pnew` VALUES LESS THAN (10000000)," +
+		"PARTITION `p5` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "init", "val");`)
+	tk.MustExec(`BEGIN`)
+	tk.MustExec(`DELETE FROM sbtest1 WHERE id=502571;`)
+	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "abc", "def");`)
+	tk.MustExec(`COMMIT;`)
 }

@@ -11,8 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl",
-        "//ddl/util",
-        "//executor",
+        "//ddl/syncer",
         "//infoschema",
         "//kv",
         "//meta/autoid",
@@ -20,9 +19,12 @@ go_library(
         "//parser/ast",
         "//parser/charset",
         "//parser/model",
+        "//parser/mysql",
+        "//parser/types",
         "//sessionctx",
         "//sessionctx/variable",
         "//statistics/handle",
+        "//store/mockstore",
         "//table",
         "//table/tables",
         "//tidb-binlog/pump_client",
@@ -35,6 +37,7 @@ go_library(
 
 go_test(
     name = "schematracker_test",
+    timeout = "short",
     srcs = [
         "dm_tracker_test.go",
         "info_store_test.go",
@@ -42,11 +45,16 @@ go_test(
     embed = [":schematracker"],
     flaky = True,
     deps = [
+        "//executor",
         "//infoschema",
+        "//meta/autoid",
         "//parser",
         "//parser/ast",
         "//parser/model",
+        "//sessionctx",
+        "//util/chunk",
         "//util/mock",
+        "//util/sqlexec",
         "@com_github_stretchr_testify//require",
     ],
 )

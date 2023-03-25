@@ -139,8 +139,11 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
+	if len(hg.Buckets) == 0 && len(hg.scalars) == 0 && hg.Bounds.Capacity() == 0 {
+		return
+	}
 	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
-	return
+	return sum
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -383,19 +386,22 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 
 // locateBucket locates where a value falls in the range of the Histogram.
 // Return value:
-// 	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
-// 	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+//
+//	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
+//	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
 //		considered belong to this Bucket)
-// 	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+//	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
 //		this Bucket and the previous Bucket.
-// 	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//
 // Examples:
-// 	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
-// 	locateBucket(val0): false, 0, false, false
-// 	locateBucket(val1): false, 1, true, true
-// 	locateBucket(val2): false, 2, false, false
-// 	locateBucket(val3): false, 2, true, false
-// 	locateBucket(val4): true, 3, false, false
+//
+//	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+//	locateBucket(val0): false, 0, false, false
+//	locateBucket(val1): false, 1, true, true
+//	locateBucket(val2): false, 2, false, false
+//	locateBucket(val3): false, 2, true, false
+//	locateBucket(val4): true, 3, false, false
 func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
@@ -772,23 +778,24 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
-//
-//               /│             │\
-//             /  │             │  \
-//           /x│  │◄─histogram─►│    \
-//         / xx│  │    range    │      \
-//       / │xxx│  │             │        \
-//     /   │xxx│  │             │          \
-//────┴────┴───┴──┴─────────────┴───────────┴─────
-//    ▲    ▲   ▲  ▲             ▲           ▲
-//    │    │   │  │             │           │
-// boundL  │   │histL         histR       boundR
-//         │   │
-//    lDatum  rDatum
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+/*
+               /│             │\
+             /  │             │  \
+           /x│  │◄─histogram─►│    \
+         / xx│  │    range    │      \
+       / │xxx│  │             │        \
+     /   │xxx│  │             │          \
+────┴────┴───┴──┴─────────────┴───────────┴─────
+    ▲    ▲   ▲  ▲             ▲           ▲
+    │    │   │  │             │           │
+ boundL  │   │histL         histR       boundR
+         │   │
+    lDatum  rDatum
+*/
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -872,8 +879,14 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
@@ -942,7 +955,8 @@ type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float6
 
 // newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
 // TODO: Datum is not efficient, try to avoid using it here.
-//  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
+//
+//	Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sctx sessionctx.Context, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
 	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.TotalRowCount())))
 	var totCnt int64
@@ -989,7 +1003,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		Columns:       make(map[int64]*Column),
 		Indices:       make(map[int64]*Index),
 		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
+		ColID2IdxIDs:  coll.ColID2IdxIDs,
 		Count:         coll.Count,
 	}
 	for _, node := range statsNodes {
@@ -1295,10 +1309,12 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 
 // mergeParitionBuckets merges buckets[l...r) to one global bucket.
 // global bucket:
-//		upper = buckets[r-1].upper
-//		count = sum of buckets[l...r).count
-//		repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
-//		ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
+//	upper = buckets[r-1].upper
+//	count = sum of buckets[l...r).count
+//	repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
+//	ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
 // Notice: lower is not calculated here.
 func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) (*bucket4Merging, error) {
 	if len(buckets) == 0 {
@@ -1560,6 +1576,16 @@ func NewStatsFullLoadStatus() StatsLoadedStatus {
 	}
 }
 
+// NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
+// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// loaded when we really need column stats.
+func NewStatsAllEvictedStatus() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allEvicted,
+	}
+}
+
 // IsStatsInitialized indicates whether the column/index's statistics was loaded from storage before.
 // Note that `IsStatsInitialized` only can be set in initializing
 func (s StatsLoadedStatus) IsStatsInitialized() bool {
@@ -1589,6 +1615,11 @@ func (s StatsLoadedStatus) IsCMSEvicted() bool {
 // IsTopNEvicted indicates whether the topn got evicted now.
 func (s StatsLoadedStatus) IsTopNEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
+}
+
+// IsAllEvicted indicates whether all the stats got evicted or not.
+func (s StatsLoadedStatus) IsAllEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= allEvicted
 }
 
 // IsFullLoad indicates whether the stats are full loaded

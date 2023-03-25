@@ -121,9 +121,6 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
-			return true
-		}
 		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
@@ -139,11 +136,6 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
 	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
 	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
-}
-
-// IsHistNeeded checks if this column needs histogram to be loaded
-func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.IsLoadNeeded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -192,7 +184,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount int64, pkIsHandle bool) (float64, error) {
+func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var rowCount float64
 	for _, rg := range ranges {
@@ -221,7 +213,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
 				if pkIsHandle {
-					rowCount += 1
+					rowCount++
 					continue
 				}
 				var cnt float64
@@ -289,11 +281,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			increaseCount := realtimeRowCount - int64(c.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
+			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, modifyCount)
 		}
 
 		rowCount += cnt
@@ -344,6 +332,13 @@ func (c *Column) dropTopN() {
 	} else {
 		c.evictedStatus = onlyHistRemained
 	}
+}
+
+func (c *Column) dropHist() {
+	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	c.Histogram.Buckets = make([]Bucket, 0)
+	c.Histogram.scalars = make([]scalar, 0)
+	c.evictedStatus = allEvicted
 }
 
 // IsAllEvicted indicates whether all stats evicted
@@ -448,4 +443,22 @@ func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowE
 		return histBetweenCnt
 	}
 	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// StatusToString gets the string info of StatsLoadedStatus
+func (s StatsLoadedStatus) StatusToString() string {
+	if !s.statsInitialized {
+		return "unInitialized"
+	}
+	switch s.evictedStatus {
+	case allLoaded:
+		return "allLoaded"
+	case onlyCmsEvicted:
+		return "onlyCmsEvicted"
+	case onlyHistRemained:
+		return "onlyHistRemained"
+	case allEvicted:
+		return "allEvicted"
+	}
+	return "unknown"
 }

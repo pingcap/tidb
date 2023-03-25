@@ -131,9 +131,8 @@ func TestNewImportSSTBackofferWithSucess(t *testing.T) {
 		defer func() { counter++ }()
 		if counter == 15 {
 			return nil
-		} else {
-			return berrors.ErrKVDownloadFailed
 		}
+		return berrors.ErrKVDownloadFailed
 	}, backoffer)
 	require.Equal(t, 16, counter)
 	require.NoError(t, err)
@@ -146,10 +145,8 @@ func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
 		defer func() { counter++ }()
 		if counter == 3 {
 			return context.Canceled
-		} else {
-			return berrors.ErrKVIngestFailed
 		}
-
+		return berrors.ErrKVIngestFailed
 	}, backoffer)
 	require.Equal(t, 4, counter)
 	require.Equal(t, []error{

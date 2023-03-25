@@ -24,8 +24,7 @@ import (
 )
 
 func TestGCStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
@@ -58,8 +57,7 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
@@ -97,8 +95,7 @@ func TestGCPartition(t *testing.T) {
 }
 
 func TestGCExtendedStats(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
@@ -142,8 +139,7 @@ func TestGCExtendedStats(t *testing.T) {
 }
 
 func TestGCColumnStatsUsage(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
@@ -163,8 +159,7 @@ func TestGCColumnStatsUsage(t *testing.T) {
 }
 
 func TestDeleteAnalyzeJobs(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int)")

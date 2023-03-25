@@ -38,8 +38,7 @@ import (
 )
 
 func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -72,13 +71,13 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 }
 
 func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializePessimisticSerializableProvider(t, tk)
+	ctx := context.Background()
 
 	stmts, _, err := parser.New().Parse("select * from t for update", "", "")
 	require.NoError(t, err)
@@ -91,7 +90,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		nextAction, err := provider.OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
 	}
@@ -103,15 +102,14 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+		nextAction, err := provider.OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
 	}
 }
 
 func TestSerializableInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
@@ -178,8 +176,7 @@ func TestSerializableInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInSerialize(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -210,7 +207,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -222,7 +219,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	checkUseTxn := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)

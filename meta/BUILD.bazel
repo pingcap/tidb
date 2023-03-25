@@ -16,15 +16,14 @@ go_library(
         "//parser/mysql",
         "//structure",
         "//util/dbterror",
-        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
     name = "meta_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "meta_test.go",
@@ -32,12 +31,10 @@ go_test(
     embed = [":meta"],
     flaky = True,
     deps = [
-        "//ddl",
         "//kv",
         "//parser/model",
         "//store/mockstore",
         "//testkit/testsetup",
-        "//testkit/testutil",
         "//util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

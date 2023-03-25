@@ -21,17 +21,16 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTxnScopeConstraint(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -152,8 +151,7 @@ PARTITION BY RANGE (c) (
 }
 
 func TestCreateSchemaWithPlacement(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 	defer func() {
@@ -195,8 +193,7 @@ func TestCreateSchemaWithPlacement(t *testing.T) {
 }
 
 func TestAlterDBPlacement(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
@@ -282,8 +279,7 @@ func TestAlterDBPlacement(t *testing.T) {
 }
 
 func TestPlacementMode(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists db1")
@@ -580,12 +576,26 @@ func TestPlacementMode(t *testing.T) {
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+}
 
+func checkTiflashReplicaSet(t *testing.T, do *domain.Domain, db, tb string, cnt uint64) {
+	tbl, err := do.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	require.NoError(t, err)
+
+	tiflashReplica := tbl.Meta().TiFlashReplica
+	if cnt == 0 {
+		require.Nil(t, tiflashReplica)
+		return
+	}
+
+	r := infosync.MakeNewRule(tbl.Meta().ID, 1, nil)
+	infosync.GetMockTiFlash().CheckPlacementRule(r)
+	require.NotNil(t, tiflashReplica)
+	require.Equal(t, cnt, tiflashReplica.Count)
 }
 
 func TestPlacementTiflashCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -593,30 +603,53 @@ func TestPlacementTiflashCheck(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 	tk.MustExec("drop table if exists tp")
 
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
 	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r2' regions='r1,r2'")
+	defer tk.MustExec("drop placement policy if exists p2")
 
 	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
 	   PARTITION p0 VALUES LESS THAN (100),
 	   PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	defer tk.MustExec("drop table if exists tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 0)
 	tk.MustExec("alter table tp set tiflash replica 1")
 
-	err := tk.ExecToErr("alter table tp placement policy p1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
-	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	tk.MustExec("alter table tp placement policy p1")
+	checkExistTableBundlesInPD(t, do, "test", "tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("alter table tp partition p0 placement policy p2")
+	checkExistTableBundlesInPD(t, do, "test", "tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tk.MustExec("drop table tp")
@@ -624,8 +657,11 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p0 VALUES LESS THAN (100),
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
-	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	checkTiflashReplicaSet(t, do, "test", "tp", 0)
+
+	tk.MustExec("alter table tp set tiflash replica 1")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
+	checkExistTableBundlesInPD(t, do, "test", "tp")
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -639,8 +675,11 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p0 VALUES LESS THAN (100) placement policy p1 ,
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
-	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	checkTiflashReplicaSet(t, do, "test", "tp", 0)
+
+	tk.MustExec("alter table tp set tiflash replica 1")
+	checkExistTableBundlesInPD(t, do, "test", "tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -654,8 +693,11 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p0 VALUES LESS THAN (100),
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
-	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	checkTiflashReplicaSet(t, do, "test", "tp", 0)
+
+	tk.MustExec("alter table tp set tiflash replica 1")
+	checkExistTableBundlesInPD(t, do, "test", "tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -669,8 +711,11 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY p1,
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
-	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	checkTiflashReplicaSet(t, do, "test", "tp", 0)
+
+	tk.MustExec("alter table tp set tiflash replica 1")
+	checkExistTableBundlesInPD(t, do, "test", "tp")
+	checkTiflashReplicaSet(t, do, "test", "tp", 1)
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +

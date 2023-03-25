@@ -12,11 +12,13 @@ go_library(
         "//util/dbterror",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_pd_client//errs",
     ],
 )
 
 go_test(
     name = "error_test",
+    timeout = "short",
     srcs = ["error_test.go"],
     embed = [":error"],
     flaky = True,

@@ -17,14 +17,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -39,17 +35,14 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -68,8 +61,7 @@ func TestAdminCheckIndexRange(t *testing.T) {
 }
 
 func TestAdminCheckIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -97,17 +89,16 @@ func TestAdminCheckIndex(t *testing.T) {
 }
 
 func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_admin_test;")
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	_, err := tk.Exec("admin check table temporary_admin_test;")
+	err := tk.ExecToErr("admin check table temporary_admin_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
-	_, err = tk.Exec("admin check index temporary_admin_test c1;")
+	err = tk.ExecToErr("admin check index temporary_admin_test c1;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
@@ -121,23 +112,22 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
-	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_with_index_test;")
+	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_with_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
+	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_without_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
 }
 
 func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists local_temporary_admin_test;")
 	tk.MustExec("create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2))")
 	tk.MustExec("insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);")
-	_, err := tk.Exec("admin check table local_temporary_admin_test;")
+	err := tk.ExecToErr("admin check table local_temporary_admin_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
@@ -145,16 +135,15 @@ func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_without_index_test;")
 	tk.MustExec("create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
 	tk.MustExec("create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id))")
-	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
+	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
+	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
 	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
 
 func TestAdminCheckIndexInCacheTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -194,8 +183,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 }
 
 func TestAdminRecoverIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -216,7 +204,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key(c2))")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
 	// pk is handle, no additional unique index, no way to recover
-	_, err := tk.Exec("admin recover index admin_test c1")
+	err := tk.ExecToErr("admin recover index admin_test c1")
 	// err:index is not found
 	require.Error(t, err)
 
@@ -308,11 +296,135 @@ func TestAdminRecoverIndex(t *testing.T) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key i1((c2+1)))")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
+	r = tk.MustQuery("admin recover index admin_test i1")
+	r.Check(testkit.Rows("0 5"))
+	tk.MustExec("admin check table admin_test")
+	ctx = mock.NewContext()
+	ctx.Store = store
+	is = domain.InfoSchema()
+	dbName = model.NewCIStr("test")
+	tblName = model.NewCIStr("admin_test")
+	tbl, err = is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+
+	tblInfo = tbl.Meta()
+	idxInfo = tblInfo.FindIndexByName("i1")
+	indexOpr = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc = ctx.GetSessionVars().StmtCtx
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), kv.IntHandle(1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(i1)")
+	r.Check(testkit.Rows("4"))
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	r = tk.MustQuery("admin recover index admin_test i1")
+	r.Check(testkit.Rows("1 5"))
+	tk.MustExec("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key i1(c1, c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20);")
+	tk.MustExec("admin recover index admin_test i1;")
+}
+
+func TestAdminRecoverMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
+	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (1, '[1,2,3]')")
+	tk.MustExec("insert into t values (2, '[2,3,4]')")
+	tk.MustExec("insert into t values (3, '[3,4,5]')")
+	tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("admin check table t")
+
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	cpIdx := idxInfo.Clone()
+	cpIdx.MVIndex = false
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(2), kv.IntHandle(1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+	r := tk.MustQuery("admin recover index t idx")
+	r.Check(testkit.Rows("1 5"))
+	tk.MustExec("admin check table t")
+}
+
+func TestAdminCleanupMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
+	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (1, '[1,2,3]')")
+	tk.MustExec("insert into t values (2, '[2,3,4]')")
+	tk.MustExec("insert into t values (3, '[3,4,5]')")
+	tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("admin check table t")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	cpIdx := idxInfo.Clone()
+	cpIdx.MVIndex = false
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+
+	r := tk.MustQuery("admin cleanup index t idx")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("admin check table t")
 }
 
 func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
@@ -357,8 +469,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 }
 
 func TestAdminRecoverPartitionTableIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -430,8 +541,7 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 }
 
 func TestAdminRecoverIndex1(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := mock.NewContext()
@@ -486,8 +596,7 @@ func TestAdminRecoverIndex1(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/32915.
 func TestAdminRecoverIndexEdge(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -497,8 +606,7 @@ func TestAdminRecoverIndexEdge(t *testing.T) {
 }
 
 func TestAdminCleanupIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -508,7 +616,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("insert admin_test (c1, c3) values (7, 100), (9, 100), (11, NULL)")
 
 	// pk is handle, no need to cleanup
-	_, err := tk.Exec("admin cleanup index admin_test `primary`")
+	err := tk.ExecToErr("admin cleanup index admin_test `primary`")
 	require.Error(t, err)
 	r := tk.MustQuery("admin cleanup index admin_test c2")
 	r.Check(testkit.Rows("0"))
@@ -579,8 +687,7 @@ func TestAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -662,8 +769,7 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 }
 
 func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -714,8 +820,7 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 }
 
 func TestAdminCleanupIndexMore(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -780,8 +885,7 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 }
 
 func TestClusteredAdminCleanupIndex(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -858,9 +962,67 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
+	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (1, '[1,2,3]')")
+	tk.MustExec("insert into t values (2, '[2,3,4]')")
+	tk.MustExec("insert into t values (3, '[3,4,5]')")
+	tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("admin check table t")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	sc := ctx.GetSessionVars().StmtCtx
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	cpIdx := idxInfo.Clone()
+	cpIdx.MVIndex = false
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), kv.IntHandle(0))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(0), kv.IntHandle(0), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	tk.MustExec("admin check table t")
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+}
+
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1013,93 +1175,8 @@ func (tk *inconsistencyTestKit) rebuild() {
 	tk.plainIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
 }
 
-type logEntry struct {
-	entry  zapcore.Entry
-	fields []zapcore.Field
-}
-
-func (l *logEntry) checkMsg(t *testing.T, msg string) {
-	require.Equal(t, msg, l.entry.Message)
-}
-
-func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
-	for _, rf := range requireFields {
-		var f *zapcore.Field
-		for i, field := range l.fields {
-			if field.Equals(rf) {
-				f = &l.fields[i]
-				break
-			}
-		}
-		require.NotNilf(t, f, "matched log fields %s:%s not found in log", rf.Key, rf)
-	}
-
-}
-
-func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {
-	var f *zapcore.Field
-	for i, field := range l.fields {
-		if field.Key == fieldName {
-			f = &l.fields[i]
-			break
-		}
-	}
-	require.NotNilf(t, f, "log field %s not found in log", fieldName)
-	require.NotEmpty(t, f.String)
-}
-
-type logHook struct {
-	zapcore.Core
-	logs          []logEntry
-	enc           zapcore.Encoder
-	messageFilter string
-}
-
-func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	h.logs = append(h.logs, logEntry{entry: entry, fields: fields})
-	return nil
-}
-
-func (h *logHook) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if len(h.messageFilter) > 0 && !strings.Contains(entry.Message, h.messageFilter) {
-		return nil
-	}
-	return ce.AddCore(entry, h)
-}
-
-func (h *logHook) encode(entry *logEntry) (string, error) {
-	buffer, err := h.enc.EncodeEntry(entry.entry, entry.fields)
-	if err != nil {
-		return "", err
-	}
-	return buffer.String(), nil
-}
-
-func (h *logHook) checkLogCount(t *testing.T, expected int) {
-	logsStr := make([]string, len(h.logs))
-	for i, item := range h.logs {
-		var err error
-		logsStr[i], err = h.encode(&item)
-		require.NoError(t, err)
-	}
-	// Check the length of strings, so that in case the test fails, the error message will be printed.
-	require.Len(t, logsStr, expected)
-}
-
-func withLogHook(ctx context.Context, t *testing.T, msgFilter string) (newCtx context.Context, hook *logHook) {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	enc, err := log.NewTextEncoder(&config.GetGlobalConfig().Log.ToLogConfig().Config)
-	require.NoError(t, err)
-	hook = &logHook{r.Core, nil, enc, msgFilter}
-	logger := zap.New(hook)
-	newCtx = context.WithValue(ctx, logutil.CtxLogKey, logger)
-	return
-}
-
 func TestCheckFailReport(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := newInconsistencyKit(t, testkit.NewAsyncTestKit(t, store), newDefaultOpt())
 
 	// row more than unique index
@@ -1112,18 +1189,16 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, tk.uniqueIndex.Delete(tk.sctx, txn, types.MakeDatums(1), kv.IntHandle(1)))
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
-		hook.checkLogCount(t, 1)
-		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
-		hook.logs[0].checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test", "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"")
+		hook.CheckLogCount(t, 1)
+		hook.Logs[0].CheckMsg(t, "admin check found data inconsistency")
+		hook.Logs[0].CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 		)
-		hook.logs[0].checkFieldNotEmpty(t, "row_mvcc")
+		hook.Logs[0].CheckFieldNotEmpty(t, "row_mvcc")
 	}()
 
 	// row more than plain index
@@ -1136,18 +1211,16 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, tk.plainIndex.Delete(tk.sctx, txn, []types.Datum{types.NewStringDatum("10")}, kv.IntHandle(1)))
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"", err.Error())
-		hook.checkLogCount(t, 1)
-		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
-		hook.logs[0].checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test", "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"")
+		hook.CheckLogCount(t, 1)
+		hook.Logs[0].CheckMsg(t, "admin check found data inconsistency")
+		hook.Logs[0].CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "k2"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 		)
-		hook.logs[0].checkFieldNotEmpty(t, "row_mvcc")
+		hook.Logs[0].CheckFieldNotEmpty(t, "row_mvcc")
 	}()
 
 	// row is missed for plain key
@@ -1160,39 +1233,38 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"", err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry := hook.logs[0]
-		logEntry.checkMsg(t, "admin check found data inconsistency")
-		logEntry.checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"")
+		hook.CheckLogCount(t, 1)
+		logEntry := hook.Logs[0]
+		logEntry.CheckMsg(t, "admin check found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "k2"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc")
-		logEntry.checkFieldNotEmpty(t, "index_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 
 		// test inconsistency check in index lookup
-		ctx, hook = withLogHook(tk.ctx, t, "")
+		ctx, hook = testutil.WithLogHook(tk.ctx, t, "")
 		rs, err := tk.Exec(ctx, "select * from admin_test use index(k2) where c3 = '100'")
 		require.NoError(t, err)
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
 		require.Error(t, err)
 		require.Equal(t, "[executor:8133]data inconsistency in table: admin_test, index: k2, index-count:1 != record-count:0", err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry = hook.logs[0]
-		logEntry.checkMsg(t, "indexLookup found data inconsistency")
-		logEntry.checkField(t,
+		hook.CheckLogCount(t, 1)
+		logEntry = hook.Logs[0]
+		logEntry.CheckMsg(t, "indexLookup found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "k2"),
 			zap.Int64("table_cnt", 0),
 			zap.Int64("index_cnt", 1),
 			zap.String("missing_handles", `[1]`),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc_0")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc_0")
 	}()
 
 	// row is missed for unique key
@@ -1205,38 +1277,37 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"", err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry := hook.logs[0]
-		logEntry.checkMsg(t, "admin check found data inconsistency")
-		logEntry.checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"")
+		hook.CheckLogCount(t, 1)
+		logEntry := hook.Logs[0]
+		logEntry.CheckMsg(t, "admin check found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc")
-		logEntry.checkFieldNotEmpty(t, "index_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 
 		// test inconsistency check in point-get
-		ctx, hook = withLogHook(tk.ctx, t, "")
+		ctx, hook = testutil.WithLogHook(tk.ctx, t, "")
 		rs, err := tk.Exec(ctx, "select * from admin_test use index(uk1) where c2 = 10")
 		require.NoError(t, err)
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
 		require.Error(t, err)
-		hook.checkLogCount(t, 1)
-		logEntry = hook.logs[0]
-		logEntry.checkMsg(t, "indexLookup found data inconsistency")
-		logEntry.checkField(t,
+		hook.CheckLogCount(t, 1)
+		logEntry = hook.Logs[0]
+		logEntry.CheckMsg(t, "indexLookup found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Int64("table_cnt", 0),
 			zap.Int64("index_cnt", 1),
 			zap.String("missing_handles", `[1]`),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc_0")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc_0")
 	}()
 
 	// handle match but value is different for uk
@@ -1250,21 +1321,20 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.uniqueIndex.Create(mock.NewContext(), txn, []types.Datum{types.NewIntDatum(20)}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>", err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry := hook.logs[0]
-		logEntry.checkMsg(t, "admin check found data inconsistency")
-		logEntry.checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>")
+		hook.CheckLogCount(t, 1)
+		logEntry := hook.Logs[0]
+		logEntry.CheckMsg(t, "admin check found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 			zap.String("col", "c2"),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc")
-		logEntry.checkFieldNotEmpty(t, "index_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 	}()
 
 	// handle match but value is different for plain key
@@ -1278,21 +1348,20 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.plainIndex.Create(mock.NewContext(), txn, []types.Datum{types.NewStringDatum("200")}, kv.IntHandle(1), nil)
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>", err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry := hook.logs[0]
-		logEntry.checkMsg(t, "admin check found data inconsistency")
-		logEntry.checkField(t,
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>")
+		hook.CheckLogCount(t, 1)
+		logEntry := hook.Logs[0]
+		logEntry.CheckMsg(t, "admin check found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "k2"),
 			zap.Stringer("row_id", kv.IntHandle(1)),
 			zap.String("col", "c3"),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc")
-		logEntry.checkFieldNotEmpty(t, "index_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 	}()
 
 	// test binary column.
@@ -1315,33 +1384,30 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 
-		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
+		ctx, hook := testutil.WithLogHook(tk.ctx, t, "inconsistency")
 
 		// TODO(tiancaiamao): admin check doesn't support the chunk protocol.
 		// Remove this after https://github.com/pingcap/tidb/issues/35156
-		_, err = tk.Exec(ctx, "set @@tidb_enable_chunk_rpc = off")
-		require.NoError(t, err)
+		tk.MustExec(ctx, "set @@tidb_enable_chunk_rpc = off")
 
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, `[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`, err.Error())
-		hook.checkLogCount(t, 1)
-		logEntry := hook.logs[0]
-		logEntry.checkMsg(t, "admin check found data inconsistency")
-		logEntry.checkField(t,
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			`[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`)
+		hook.CheckLogCount(t, 1)
+		logEntry := hook.Logs[0]
+		logEntry.CheckMsg(t, "admin check found data inconsistency")
+		logEntry.CheckField(t,
 			zap.String("table_name", "admin_test"),
 			zap.String("index_name", "uk1"),
 			zap.Stringer("row_id", kv.IntHandle(282574488403969)),
 		)
-		logEntry.checkFieldNotEmpty(t, "row_mvcc")
-		logEntry.checkFieldNotEmpty(t, "index_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
+		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 	}()
 }
 
 func TestAdminCheckTable(t *testing.T) {
 	// test NULL value.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_null (
@@ -1458,8 +1524,7 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckPrimaryIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1469,8 +1534,7 @@ func TestAdminCheckPrimaryIndex(t *testing.T) {
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1531,8 +1595,7 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 }
 
 func TestAdminCheckTableFailed(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

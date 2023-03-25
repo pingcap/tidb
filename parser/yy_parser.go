@@ -52,6 +52,8 @@ var (
 	ErrUnknownAlterAlgorithm = terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)
 	// ErrWrongValue returns for wrong value
 	ErrWrongValue = terror.ClassParser.NewStd(mysql.ErrWrongValue)
+	// ErrWarnDeprecatedSyntax return when the syntax was deprecated
+	ErrWarnDeprecatedSyntax = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntax)
 	// ErrWarnDeprecatedSyntaxNoReplacement return when the syntax was deprecated and there is no replacement.
 	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
 	// ErrWarnDeprecatedIntegerDisplayWidth share the same code 1681, and it will be returned when length is specified in integer.

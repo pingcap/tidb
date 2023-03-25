@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -154,7 +153,7 @@ func TestEval(t *testing.T) {
 				toPBFieldType(newIntFieldType()),
 				jsonDatumExpr(t, `[{"a":{"a":1},"b":2}]`),
 			),
-			types.NewIntDatum(25),
+			types.NewIntDatum(82),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
@@ -874,9 +873,11 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 	switch d.Kind() {
 	case types.KindInt64:
 		expr.Tp = tipb.ExprType_Int64
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeLonglong))
 		expr.Val = codec.EncodeInt(nil, d.GetInt64())
 	case types.KindUint64:
 		expr.Tp = tipb.ExprType_Uint64
+		expr.FieldType = toPBFieldType(types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP())
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
 		expr.Tp = tipb.ExprType_String
@@ -918,7 +919,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 }
 
 func newJSONDatum(t *testing.T, s string) (d types.Datum) {
-	j, err := json.ParseBinaryFromString(s)
+	j, err := types.ParseBinaryJSONFromString(s)
 	require.NoError(t, err)
 	d.SetMysqlJSON(j)
 	return d

@@ -12,11 +12,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
@@ -33,7 +38,7 @@ func assertDecode(t *testing.T, key []byte) []byte {
 	return decoded
 }
 
-func assertRegions(t *testing.T, regions []*restore.RegionInfo, keys ...string) {
+func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	require.Equal(t, len(regions)+1, len(keys), "%+v\nvs\n%+v", regions, keys)
 	last := keys[0]
 	for i, r := range regions {
@@ -48,38 +53,38 @@ func assertRegions(t *testing.T, regions []*restore.RegionInfo, keys ...string) 
 
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctx := context.Background()
 
 	// make exclusive to inclusive.
 	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
-	collectedRegions := []*restore.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	collectedRegions := []*split.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 
 	ctl = restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
-	collectedRegions = []*restore.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	collectedRegions = []*split.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
 	ctl = restore.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
-	collectedRegions = []*restore.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	collectedRegions = []*split.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
 	ctl = restore.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
-	collectedRegions = []*restore.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	collectedRegions = []*split.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
@@ -88,7 +93,7 @@ func TestScanSuccess(t *testing.T) {
 
 func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -101,10 +106,10 @@ func TestNotLeader(t *testing.T) {
 		},
 	}
 	// record the regions we didn't touch.
-	meetRegions := []*restore.RegionInfo{}
+	meetRegions := []*split.RegionInfo{}
 	// record all regions we meet with id == 2.
-	idEqualsTo2Regions := []*restore.RegionInfo{}
-	err := ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	idEqualsTo2Regions := []*split.RegionInfo{}
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		if r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 		}
@@ -126,7 +131,84 @@ func TestNotLeader(t *testing.T) {
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
 }
 
-func printRegion(name string, infos []*restore.RegionInfo) {
+func TestServerIsBusy(t *testing.T) {
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient(false)
+	rs := utils.InitialRetryState(2, 0, 0)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctx := context.Background()
+
+	serverIsBusy := errorpb.Error{
+		Message: "server is busy",
+		ServerIsBusy: &errorpb.ServerIsBusy{
+			Reason: "memory is out",
+		},
+	}
+	// record the regions we didn't touch.
+	meetRegions := []*split.RegionInfo{}
+	// record all regions we meet with id == 2.
+	idEqualsTo2Regions := []*split.RegionInfo{}
+	theFirstRun := true
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+		if theFirstRun && r.Region.Id == 2 {
+			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
+			theFirstRun = false
+			return restore.RPCResult{
+				StoreError: &serverIsBusy,
+			}
+		}
+		meetRegions = append(meetRegions, r)
+		return restore.RPCResultOK()
+	})
+
+	require.NoError(t, err)
+	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
+	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
+	require.Equal(t, rs.RetryTimes(), 1)
+}
+
+func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited", "return(true)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/hint-memory-is-limited")
+	}()
+
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient(false)
+	rs := utils.InitialRetryState(2, 0, 0)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctx := context.Background()
+
+	serverIsBusy := errorpb.Error{
+		Message: "memory is limited",
+		ServerIsBusy: &errorpb.ServerIsBusy{
+			Reason: "",
+		},
+	}
+	// record the regions we didn't touch.
+	meetRegions := []*split.RegionInfo{}
+	// record all regions we meet with id == 2.
+	idEqualsTo2Regions := []*split.RegionInfo{}
+	theFirstRun := true
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+		if theFirstRun && r.Region.Id == 2 {
+			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
+			theFirstRun = false
+			return restore.RPCResult{
+				StoreError: &serverIsBusy,
+			}
+		}
+		meetRegions = append(meetRegions, r)
+		return restore.RPCResultOK()
+	})
+
+	require.NoError(t, err)
+	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
+	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
+	require.Equal(t, rs.RetryTimes(), 0)
+}
+
+func printRegion(name string, infos []*split.RegionInfo) {
 	fmt.Printf(">>>>> %s <<<<<\n", name)
 	for _, info := range infos {
 		fmt.Printf("[%04d] %s ~ %s\n", info.Region.Id, hex.EncodeToString(info.Region.StartKey), hex.EncodeToString(info.Region.EndKey))
@@ -144,17 +226,17 @@ func printPDRegion(name string, infos []*pdtypes.Region) {
 
 func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left, right := regions[0], regions[1]
-	info := restore.RegionInfo{
+	info := split.RegionInfo{
 		Region: &metapb.Region{
 			StartKey: left.Region.StartKey,
 			EndKey:   right.Region.EndKey,
@@ -177,10 +259,10 @@ func TestEpochNotMatch(t *testing.T) {
 				CurrentRegions: []*metapb.Region{info.Region},
 			},
 		}}
-	firstRunRegions := []*restore.RegionInfo{}
-	secondRunRegions := []*restore.RegionInfo{}
+	firstRunRegions := []*split.RegionInfo{}
+	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			mergeRegion()
 			isSecondRun = true
@@ -203,18 +285,18 @@ func TestEpochNotMatch(t *testing.T) {
 
 func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
 	require.NoError(t, err)
 	require.Len(t, regions, 1)
 	target := regions[0]
 
-	newRegions := []*restore.RegionInfo{
+	newRegions := []*split.RegionInfo{
 		{
 			Region: &metapb.Region{
 				Id:       42,
@@ -253,10 +335,10 @@ func TestRegionSplit(t *testing.T) {
 				},
 			},
 		}}
-	firstRunRegions := []*restore.RegionInfo{}
-	secondRunRegions := []*restore.RegionInfo{}
+	firstRunRegions := []*split.RegionInfo{}
+	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		if !isSecondRun && r.Region.Id == target.Region.Id {
 			splitRegion()
 			isSecondRun = true
@@ -279,13 +361,13 @@ func TestRegionSplit(t *testing.T) {
 
 func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
-	regions, err := restore.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
+	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
 	left := regions[0]
@@ -298,7 +380,7 @@ func TestRetryBackoff(t *testing.T) {
 			},
 		}}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			isSecondRun = true
 			return restore.RPCResultFromPBError(epochNotLeader)
@@ -330,17 +412,180 @@ func envInt(name string, def int) int {
 
 func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()
 
 	cli.InjectErr = true
 	cli.InjectTimes = int32(envInt("PAGINATE_SCAN_LEADER_FAILURE_COUNT", 2))
-	collectedRegions := []*restore.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+	collectedRegions := []*split.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
+}
+
+func TestImportKVFiles(t *testing.T) {
+	var (
+		importer            = restore.FileImporter{}
+		ctx                 = context.Background()
+		shiftStartTS uint64 = 100
+		startTS      uint64 = 200
+		restoreTS    uint64 = 300
+	)
+
+	err := importer.ImportKVFiles(
+		ctx,
+		[]*backuppb.DataFileInfo{
+			{
+				Path: "log3",
+			},
+			{
+				Path: "log1",
+			},
+		},
+		nil,
+		shiftStartTS,
+		startTS,
+		restoreTS,
+		false,
+	)
+	require.True(t, berrors.ErrInvalidArgument.Equal(err))
+}
+
+func TestFilterFilesByRegion(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path: "log1",
+		},
+		{
+			Path: "log2",
+		},
+	}
+	ranges := []kv.KeyRange{
+		{
+			StartKey: []byte("1111"),
+			EndKey:   []byte("2222"),
+		}, {
+			StartKey: []byte("3333"),
+			EndKey:   []byte("4444"),
+		},
+	}
+
+	testCases := []struct {
+		r        split.RegionInfo
+		subfiles []*backuppb.DataFileInfo
+		err      error
+	}{
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("1110"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{},
+			err:      nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("1111"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("2222"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("2222"),
+					EndKey:   []byte("3332"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("2223"),
+					EndKey:   []byte("3332"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{},
+			err:      nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("3332"),
+					EndKey:   []byte("3333"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("4444"),
+					EndKey:   []byte("5555"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("4444"),
+					EndKey:   nil,
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   nil,
+				},
+			},
+			subfiles: files,
+			err:      nil,
+		},
+	}
+
+	for _, c := range testCases {
+		subfile, err := restore.FilterFilesByRegion(files, ranges, &c.r)
+		require.Equal(t, err, c.err)
+		require.Equal(t, subfile, c.subfiles)
+	}
 }

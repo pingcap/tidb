@@ -28,12 +28,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/distsql"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -211,7 +212,7 @@ func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
 }
 
 // tableHandleKeyRanges returns all key ranges associated with the tableInfo.
-func tableHandleKeyRanges(tableInfo *model.TableInfo) ([]tidbkv.KeyRange, error) {
+func tableHandleKeyRanges(tableInfo *model.TableInfo) (*tidbkv.KeyRanges, error) {
 	ranges := ranger.FullIntRange(false)
 	if tableInfo.IsCommonHandle {
 		ranges = ranger.FullRange()
@@ -221,18 +222,9 @@ func tableHandleKeyRanges(tableInfo *model.TableInfo) ([]tidbkv.KeyRange, error)
 }
 
 // tableIndexKeyRanges returns all key ranges associated with the tableInfo and indexInfo.
-func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]tidbkv.KeyRange, error) {
+func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) (*tidbkv.KeyRanges, error) {
 	tableIDs := physicalTableIDs(tableInfo)
-	//nolint: prealloc
-	var keyRanges []tidbkv.KeyRange
-	for _, tid := range tableIDs {
-		partitionKeysRanges, err := distsql.IndexRangesToKVRanges(nil, tid, indexInfo.ID, ranger.FullRange(), nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		keyRanges = append(keyRanges, partitionKeysRanges...)
-	}
-	return keyRanges, nil
+	return distsql.IndexRangesToKVRangesForTables(nil, tableIDs, indexInfo.ID, ranger.FullRange(), nil)
 }
 
 // DupKVStream is a streaming interface for collecting duplicate key-value pairs.
@@ -246,6 +238,7 @@ type DupKVStream interface {
 
 // LocalDupKVStream implements the interface of DupKVStream.
 // It collects duplicate key-value pairs from a pebble.DB.
+//
 //goland:noinspection GoNameStartsWithPackageName
 type LocalDupKVStream struct {
 	iter Iter
@@ -299,7 +292,7 @@ type RemoteDupKVStream struct {
 
 func getDupDetectClient(
 	ctx context.Context,
-	region *restore.RegionInfo,
+	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
 	importClientFactory ImportClientFactory,
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
@@ -331,7 +324,7 @@ func getDupDetectClient(
 // NewRemoteDupKVStream creates a new RemoteDupKVStream.
 func NewRemoteDupKVStream(
 	ctx context.Context,
-	region *restore.RegionInfo,
+	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
 	importClientFactory ImportClientFactory,
 ) (*RemoteDupKVStream, error) {
@@ -393,23 +386,26 @@ func (s *RemoteDupKVStream) Close() error {
 type DuplicateManager struct {
 	tbl         table.Table
 	tableName   string
-	splitCli    restore.SplitClient
+	splitCli    split.SplitClient
 	tikvCli     *tikv.KVStore
+	tikvCodec   tikv.Codec
 	errorMgr    *errormanager.ErrorManager
 	decoder     *kv.TableKVDecoder
 	logger      log.Logger
 	concurrency int
 	hasDupe     *atomic.Bool
+	indexID     int64
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
 func NewDuplicateManager(
 	tbl table.Table,
 	tableName string,
-	splitCli restore.SplitClient,
+	splitCli split.SplitClient,
 	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
-	sessOpts *kv.SessionOptions,
+	sessOpts *encode.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,
@@ -424,11 +420,13 @@ func NewDuplicateManager(
 		tableName:   tableName,
 		splitCli:    splitCli,
 		tikvCli:     tikvCli,
+		tikvCodec:   tikvCodec,
 		errorMgr:    errMgr,
 		decoder:     decoder,
 		logger:      logger,
 		concurrency: concurrency,
 		hasDupe:     hasDupe,
+		indexID:     sessOpts.IndexID,
 	}, nil
 }
 
@@ -442,6 +440,10 @@ func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream D
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		key, err = m.tikvCodec.DecodeKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -510,6 +512,10 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		key, err = m.tikvCodec.DecodeKey(key)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		m.hasDupe.Store(true)
 
 		h, err := m.decoder.DecodeHandleFromIndex(indexInfo, key, val)
@@ -539,6 +545,11 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 	return nil
 }
 
+// BuildDuplicateTaskForTest is only used for test.
+var BuildDuplicateTaskForTest = func(m *DuplicateManager) ([]dupTask, error) {
+	return m.buildDupTasks()
+}
+
 type dupTask struct {
 	tidbkv.KeyRange
 	tableID   int64
@@ -546,18 +557,30 @@ type dupTask struct {
 }
 
 func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
+	if m.indexID != 0 {
+		return m.buildIndexDupTasks()
+	}
 	keyRanges, err := tableHandleKeyRanges(m.tbl.Meta())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tasks := make([]dupTask, 0, len(keyRanges))
-	for _, kr := range keyRanges {
-		tableID := tablecodec.DecodeTableID(kr.StartKey)
-		tasks = append(tasks, dupTask{
-			KeyRange: kr,
-			tableID:  tableID,
-		})
+	tasks := make([]dupTask, 0, keyRanges.TotalRangeNum()*(1+len(m.tbl.Meta().Indices)))
+	putToTaskFunc := func(ranges []tidbkv.KeyRange, indexInfo *model.IndexInfo) {
+		if len(ranges) == 0 {
+			return
+		}
+		tid := tablecodec.DecodeTableID(ranges[0].StartKey)
+		for _, r := range ranges {
+			tasks = append(tasks, dupTask{
+				KeyRange:  r,
+				tableID:   tid,
+				indexInfo: indexInfo,
+			})
+		}
 	}
+	keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+		putToTaskFunc(ranges, nil)
+	})
 	for _, indexInfo := range m.tbl.Meta().Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
@@ -566,16 +589,43 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for _, kr := range keyRanges {
-			tableID := tablecodec.DecodeTableID(kr.StartKey)
-			tasks = append(tasks, dupTask{
-				KeyRange:  kr,
-				tableID:   tableID,
-				indexInfo: indexInfo,
-			})
-		}
+		keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+			putToTaskFunc(ranges, indexInfo)
+		})
+	}
+
+	// Encode all the tasks
+	for i := range tasks {
+		tasks[i].StartKey, tasks[i].EndKey = m.tikvCodec.EncodeRange(tasks[i].StartKey, tasks[i].EndKey)
 	}
 	return tasks, nil
+}
+
+func (m *DuplicateManager) buildIndexDupTasks() ([]dupTask, error) {
+	for _, indexInfo := range m.tbl.Meta().Indices {
+		if m.indexID != indexInfo.ID {
+			continue
+		}
+		keyRanges, err := tableIndexKeyRanges(m.tbl.Meta(), indexInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tasks := make([]dupTask, 0, keyRanges.TotalRangeNum())
+		keyRanges.ForEachPartition(func(ranges []tidbkv.KeyRange) {
+			if len(ranges) == 0 {
+				return
+			}
+			tid := tablecodec.DecodeTableID(ranges[0].StartKey)
+			for _, r := range ranges {
+				tasks = append(tasks, dupTask{
+					KeyRange: r,
+					tableID:  tid,
+				})
+			}
+		})
+		return tasks, nil
+	}
+	return nil, nil
 }
 
 func (m *DuplicateManager) splitLocalDupTaskByKeys(
@@ -650,8 +700,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})
@@ -661,14 +711,14 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 
 func (m *DuplicateManager) splitKeyRangeByRegions(
 	ctx context.Context, keyRange tidbkv.KeyRange,
-) ([]*restore.RegionInfo, []tidbkv.KeyRange, error) {
+) ([]*split.RegionInfo, []tidbkv.KeyRange, error) {
 	rawStartKey := codec.EncodeBytes(nil, keyRange.StartKey)
 	rawEndKey := codec.EncodeBytes(nil, keyRange.EndKey)
-	allRegions, err := restore.PaginateScanRegion(ctx, m.splitCli, rawStartKey, rawEndKey, 1024)
+	allRegions, err := split.PaginateScanRegion(ctx, m.splitCli, rawStartKey, rawEndKey, 1024)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	regions := make([]*restore.RegionInfo, 0, len(allRegions))
+	regions := make([]*split.RegionInfo, 0, len(allRegions))
 	keyRanges := make([]tidbkv.KeyRange, 0, len(allRegions))
 	for _, region := range allRegions {
 		startKey := keyRange.StartKey
@@ -711,7 +761,7 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 	remainKeyRanges *pendingKeyRanges,
 ) (madeProgress bool, err error) {
 	//nolint: prealloc
-	var regions []*restore.RegionInfo
+	var regions []*split.RegionInfo
 	//nolint: prealloc
 	var keyRanges []tidbkv.KeyRange
 

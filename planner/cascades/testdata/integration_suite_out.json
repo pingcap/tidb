@@ -197,7 +197,7 @@
           "  └─Sort_29 6400.00 root  test.t.b",
           "    └─Selection_28 6400.00 root  gt(Column#4, 1)",
           "      └─HashAgg_19 8000.00 root  group by:test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
-          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#11, cast(test.t.a, decimal(10,0) BINARY)->Column#12, test.t.b, test.t.b",
+          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(10,0) BINARY)->Column#11, cast(test.t.a, decimal(10,0) BINARY)->Column#12, test.t.b, test.t.b",
           "          └─TableReader_21 10000.00 root  data:TableFullScan_22",
           "            └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -393,7 +393,7 @@
         "Plan": [
           "HashAgg_18 1.00 root  funcs:sum(Column#4)->Column#3",
           "└─TableReader_19 1.00 root  data:HashAgg_20",
-          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b, decimal(33,1) BINARY))->Column#4",
+          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b, decimal(10,0) BINARY))->Column#4",
           "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -468,7 +468,7 @@
         "Plan": [
           "Sort_15 8000.00 root  test.t.a",
           "└─HashAgg_11 8000.00 root  group by:Column#9, test.t.a, funcs:group_concat(Column#6, Column#7 separator \",\")->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─Projection_12 10000.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
+          "  └─Projection_12 10000.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(10,0) BINARY), cast(test.t.b, decimal(10,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
           "    └─TableReader_13 10000.00 root  data:TableFullScan_14",
           "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -501,7 +501,7 @@
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_16 1.00 root  funcs:avg(distinct Column#7)->Column#5",
-          "└─Projection_17 8000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#7",
+          "└─Projection_17 8000.00 root  cast(test.t.a, decimal(10,0) BINARY)->Column#7",
           "  └─TableReader_18 8000.00 root  data:HashAgg_19",
           "    └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.a, ",
           "      └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -611,7 +611,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_8 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
+          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(10,0) BINARY)->Column#6",
           "  └─TableReader_10 10000.00 root  data:TableFullScan_11",
           "    └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -636,7 +636,7 @@
         "Plan": [
           "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg_9 8000.00 root  group by:test.t.c, funcs:avg(Column#10)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#11)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#11, test.t.c, test.t.c",
+          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(10,0) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#11, test.t.c, test.t.c",
           "    └─TableReader_11 10000.00 root  data:TableFullScan_12",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1093,11 +1093,12 @@
     "Name": "TestMemTableScan",
     "Cases": [
       {
-        "SQL": "select * from information_schema.processlist",
+        "SQL": "select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist",
         "Plan": [
-          "MemTableScan_3 10000.00 root table:PROCESSLIST "
+          "Projection_3 10000.00 root  Column#2, Column#3, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─MemTableScan_4 10000.00 root table:PROCESSLIST "
         ],
-        "Result": null
+        "Result": ["  test Sleep 0 autocommit select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist 7284ef6cf62f14bccb9fa24aff861b419e9cf59b2c098d3069c7c10bc35d0c14"]
       }
     ]
   },
@@ -1197,17 +1198,18 @@
     "Name": "TestCascadePlannerHashedPartTable",
     "Cases": [
       {
-        "SQL": "select * from pt1",
+        "SQL": "select * from pt1 order by a",
         "Plan": [
-          "TableReader_5 10000.00 root partition:all data:TableFullScan_6",
-          "└─TableFullScan_6 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
+          "Sort_11 10000.00 root  test.pt1.a",
+          "└─TableReader_9 10000.00 root partition:all data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
         ],
         "Result": [
-          "4 40",
           "1 10",
-          "5 50",
           "2 20",
-          "3 30"
+          "3 30",
+          "4 40",
+          "5 50"
         ]
       }
     ]

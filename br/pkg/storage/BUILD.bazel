@@ -29,14 +29,18 @@ go_library(
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/client",
         "@com_github_aws_aws_sdk_go//aws/credentials",
+        "@com_github_aws_aws_sdk_go//aws/credentials/stscreds",
         "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_aws_aws_sdk_go//aws/session",
         "@com_github_aws_aws_sdk_go//service/s3",
         "@com_github_aws_aws_sdk_go//service/s3/s3iface",
         "@com_github_aws_aws_sdk_go//service/s3/s3manager",
+        "@com_github_azure_azure_sdk_for_go_sdk_azcore//policy",
         "@com_github_azure_azure_sdk_for_go_sdk_azidentity//:azidentity",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
+        "@com_github_golang_snappy//:snappy",
         "@com_github_google_uuid//:uuid",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
@@ -52,6 +56,7 @@ go_library(
 
 go_test(
     name = "storage_test",
+    timeout = "short",
     srcs = [
         "azblob_test.go",
         "compress_test.go",
@@ -64,6 +69,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
+    shard_count = 41,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",

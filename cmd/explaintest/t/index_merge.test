@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 --echo ///// SUBQUERY
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));

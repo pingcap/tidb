@@ -30,7 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+// UpdateColsNull2NotNull changes the null option of columns of an index.
+func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	nullCols, err := getNullColInfos(tblInfo, indexInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -174,8 +175,8 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
+func rollingbackDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, colInfo, idxInfos, _, err := checkDropColumn(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -206,8 +207,8 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, indexInfo, _, err := checkDropIndex(t, job)
+func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, indexInfo, _, err := checkDropIndex(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -354,6 +355,21 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
+func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -364,10 +380,12 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddIndex(w, d, t, job, true)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(d, t, job)
+	case model.ActionReorganizePartition:
+		ver, err = rollingbackReorganizePartition(d, t, job)
 	case model.ActionDropColumn:
-		ver, err = rollingbackDropColumn(t, job)
+		ver, err = rollingbackDropColumn(d, t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = rollingbackDropIndex(t, job)
+		ver, err = rollingbackDropIndex(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
@@ -387,7 +405,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
+		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
+		model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)

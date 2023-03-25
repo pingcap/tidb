@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/sysutil"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/pdapi"
 	pmodel "github.com/prometheus/common/model"
@@ -37,8 +38,7 @@ import (
 )
 
 func TestMetricTableData(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
 	require.NoError(t, failpoint.Enable(fpName, "return"))
@@ -52,12 +52,12 @@ func TestMetricTableData(t *testing.T) {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
 	require.NoError(t, err)
 	v1 := pmodel.SamplePair{
-		Timestamp: pmodel.Time(tt.UnixNano() / int64(time.Millisecond)),
+		Timestamp: pmodel.Time(tt.UnixMilli()),
 		Value:     pmodel.SampleValue(0.1),
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsPromData", matrix)
+	ctx := context.WithValue(context.Background(), executor.MockMetricsPromDataKey{}, matrix)
 	ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 		return fpname == fpName
 	})
@@ -99,8 +99,7 @@ func TestMetricTableData(t *testing.T) {
 }
 
 func TestTiDBClusterConfig(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	// mock PD http server
 	router := mux.NewRouter()
@@ -859,8 +858,7 @@ func TestTiDBClusterLog(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	for _, cas := range cases {
 		sql := "select * from information_schema.cluster_log"
@@ -886,8 +884,7 @@ func TestTiDBClusterLog(t *testing.T) {
 }
 
 func TestTiDBClusterLogError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
 	require.NoError(t, failpoint.Enable(fpName, `return("")`))

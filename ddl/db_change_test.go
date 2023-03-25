@@ -19,13 +19,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -44,13 +43,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func TestShowCreateTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -78,9 +75,9 @@ func TestShowCreateTable(t *testing.T) {
 			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,\n  `c` varchar(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
 	}
 	prevState := model.StateNone
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	currTestCaseOffset := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -115,6 +112,7 @@ func TestShowCreateTable(t *testing.T) {
 			terror.Log(result.Close())
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -127,8 +125,7 @@ func TestShowCreateTable(t *testing.T) {
 
 // TestDropNotNullColumn is used to test issue #8654.
 func TestDropNotNullColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -147,9 +144,9 @@ func TestDropNotNullColumn(t *testing.T) {
 	var checkErr error
 	d := dom.DDL()
 	originalCallback := d.GetHook()
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	sqlNum := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -168,7 +165,7 @@ func TestDropNotNullColumn(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
 	require.NoError(t, checkErr)
@@ -186,8 +183,7 @@ func TestDropNotNullColumn(t *testing.T) {
 }
 
 func TestTwoStates(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -227,13 +223,13 @@ func TestTwoStates(t *testing.T) {
 		key(c1, c2))`)
 	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -281,6 +277,7 @@ func TestTwoStates(t *testing.T) {
 			}
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -419,8 +416,7 @@ type expectQuery struct {
 }
 
 func TestAppendEnum(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -447,8 +443,7 @@ func TestAppendEnum(t *testing.T) {
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
 func TestWriteOnlyWriteNULL(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
@@ -459,8 +454,7 @@ func TestWriteOnlyWriteNULL(t *testing.T) {
 }
 
 func TestWriteOnlyOnDupUpdate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
@@ -473,8 +467,7 @@ func TestWriteOnlyOnDupUpdate(t *testing.T) {
 }
 
 func TestWriteOnlyOnDupUpdateForAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
@@ -487,8 +480,7 @@ func TestWriteOnlyOnDupUpdateForAddColumns(t *testing.T) {
 }
 
 func TestWriteReorgForModifyColumnTimestampToInt(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -525,8 +517,7 @@ func TestWriteReorgForModifyColumnWithUniqIdx(t *testing.T) {
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func TestWriteReorgForModifyColumnWithPKIsHandle(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 
@@ -580,8 +571,7 @@ func TestDeleteOnlyForModifyColumnWithoutDefaultVal(t *testing.T) {
 }
 
 func testModifyColumn(t *testing.T, state model.SchemaState, modifyColumnSQL string, idx idxType) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -628,8 +618,7 @@ func testModifyColumn(t *testing.T, state model.SchemaState, modifyColumnSQL str
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func TestWriteOnly(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
@@ -642,8 +631,7 @@ func TestWriteOnly(t *testing.T) {
 
 // TestWriteOnlyForAddColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func TestWriteOnlyForAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
@@ -656,8 +644,7 @@ func TestWriteOnlyForAddColumns(t *testing.T) {
 
 // TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func TestDeleteOnly(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -666,7 +653,7 @@ func TestDeleteOnly(t *testing.T) {
 
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("Can't find column c1")}
+		errors.Errorf("[ddl:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[2] = sqlWithErr{"delete from t where c1='a'",
@@ -682,8 +669,7 @@ func TestDeleteOnly(t *testing.T) {
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when a middle-state column with indexes in it.
 func TestSchemaChangeForDropColumnWithIndexes(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -710,8 +696,7 @@ func TestSchemaChangeForDropColumnWithIndexes(t *testing.T) {
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when some middle-state columns with indexes in it.
 func TestSchemaChangeForDropColumnsWithIndexes(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -738,8 +723,7 @@ func TestSchemaChangeForDropColumnsWithIndexes(t *testing.T) {
 
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func TestDeleteOnlyForDropExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -756,20 +740,18 @@ func TestDeleteOnlyForDropExpressionIndex(t *testing.T) {
 
 // TestDeleteOnlyForDropColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func TestDeleteOnlyForDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("Can't find column c1")}
+		errors.Errorf("[ddl:1054]Unknown column 'c1' in 'field list'")}
 	dropColumnsSQL := "alter table t drop column c1, drop column c3"
 	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
 
 func TestWriteOnlyForDropColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -788,8 +770,7 @@ func TestWriteOnlyForDropColumn(t *testing.T) {
 }
 
 func TestWriteOnlyForDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -829,7 +810,7 @@ func runTestInSchemaState(
 	// Make sure these SQLs use the plan of index scan.
 	tk.MustExec("drop stats t")
 
-	callback := &ddl.TestDDLCallback{Do: dom}
+	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	se, err := session.CreateSession(store)
@@ -853,7 +834,7 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported = cbFunc
+		callback.OnJobUpdatedExported.Store(&cbFunc)
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
@@ -886,18 +867,17 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 }
 
 func TestShowIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -916,7 +896,7 @@ func TestShowIndex(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
@@ -967,8 +947,7 @@ func TestShowIndex(t *testing.T) {
 }
 
 func TestParallelAlterModifyColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
@@ -981,8 +960,7 @@ func TestParallelAlterModifyColumn(t *testing.T) {
 }
 
 func TestParallelAlterModifyColumnWithData(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 
@@ -1055,8 +1033,7 @@ func TestParallelAlterModifyColumnWithData(t *testing.T) {
 }
 
 func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 
@@ -1112,8 +1089,7 @@ func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
 }
 
 func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1130,8 +1106,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 }
 
 func TestParallelAlterModifyColumnAndAddPK(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
@@ -1147,8 +1122,7 @@ func TestParallelAlterModifyColumnAndAddPK(t *testing.T) {
 // TODO: This test is not a test that performs two DDLs in parallel.
 // So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
 // func TestParallelColumnModifyingDefinition(t *testing.T) {
-//	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-//	defer clean()
+//	store, dom := testkit.CreateMockStoreAndDomain(t)
 //	tk := testkit.NewTestKit(t, store)
 //	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 // 	sql1 := "insert into t(b) values (null);"
@@ -1163,8 +1137,7 @@ func TestParallelAlterModifyColumnAndAddPK(t *testing.T) {
 // }
 
 func TestParallelAddColumAndSetDefaultValue(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1186,8 +1159,7 @@ func TestParallelAddColumAndSetDefaultValue(t *testing.T) {
 }
 
 func TestParallelChangeColumnName(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
@@ -1208,8 +1180,7 @@ func TestParallelChangeColumnName(t *testing.T) {
 }
 
 func TestParallelAlterAddIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t add index index_b(b);"
@@ -1222,8 +1193,7 @@ func TestParallelAlterAddIndex(t *testing.T) {
 }
 
 func TestParallelAlterAddExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 
@@ -1237,8 +1207,7 @@ func TestParallelAlterAddExpressionIndex(t *testing.T) {
 }
 
 func TestParallelAddPrimaryKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t add primary key index_b(b);"
@@ -1251,8 +1220,7 @@ func TestParallelAddPrimaryKey(t *testing.T) {
 }
 
 func TestParallelAlterAddPartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := `alter table t_part add partition (
@@ -1269,8 +1237,7 @@ func TestParallelAlterAddPartition(t *testing.T) {
 }
 
 func TestParallelDropColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN c ;"
@@ -1282,8 +1249,7 @@ func TestParallelDropColumn(t *testing.T) {
 }
 
 func TestParallelDropColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
@@ -1295,8 +1261,7 @@ func TestParallelDropColumns(t *testing.T) {
 }
 
 func TestParallelDropIfExistsColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN if exists b, drop COLUMN if exists c;"
@@ -1308,22 +1273,20 @@ func TestParallelDropIfExistsColumns(t *testing.T) {
 }
 
 func TestParallelDropIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "alter table t drop index idx1 ;"
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		require.NoError(t, err2)
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
 func TestParallelDropPrimaryKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "alter table t drop primary key;"
@@ -1336,8 +1299,7 @@ func TestParallelDropPrimaryKey(t *testing.T) {
 }
 
 func TestParallelCreateAndRename(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "create table t_exists(c int);"
@@ -1350,8 +1312,7 @@ func TestParallelCreateAndRename(t *testing.T) {
 }
 
 func TestParallelAlterAndDropSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("create database db_drop_db")
@@ -1365,7 +1326,7 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 }
 
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
@@ -1473,15 +1434,15 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 	var err2, err3 error
 	var wg util.WaitGroupWrapper
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -1499,8 +1460,7 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func TestCreateTableIfNotExists(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	dbChangeTestParallelExecSQL(t, store, dom, "create table if not exists test_not_exists(a int)")
@@ -1508,8 +1468,7 @@ func TestCreateTableIfNotExists(t *testing.T) {
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func TestCreateDBIfNotExists(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	dbChangeTestParallelExecSQL(t, store, dom, "create database if not exists test_not_exists")
@@ -1517,8 +1476,7 @@ func TestCreateDBIfNotExists(t *testing.T) {
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
 func TestDDLIfNotExists(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1535,8 +1493,7 @@ func TestDDLIfNotExists(t *testing.T) {
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
 func TestDDLIfExists(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1561,9 +1518,8 @@ func TestDDLIfExists(t *testing.T) {
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
-func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1576,39 +1532,26 @@ func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
-	intercept := &ddl.TestInterceptor{}
-	firstConnID := uint64(1)
-	finishedCnt := int32(0)
-	interval := 5 * time.Millisecond
-	var sessionCnt int32 // sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
+	intercept := &callback.TestInterceptor{}
+
+	var sessionToStart sync.WaitGroup // sessionToStart is a waitgroup to wait for two session to get the same information schema
+	sessionToStart.Add(2)
+	firstDDLFinished := make(chan struct{})
+
 	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
 		var info infoschema.InfoSchema
-		atomic.AddInt32(&sessionCnt, 1)
-		for {
-			// Make sure there are two sessions running here.
-			if atomic.LoadInt32(&sessionCnt) == 2 {
-				info = is
-				break
-			}
-			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
-			time.Sleep(interval)
-		}
+		sessionToStart.Done()
+		sessionToStart.Wait()
+		info = is
 
+		// Make sure the two session have got the same information schema. And the first session can continue to go on,
+		// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
 		currID := ctx.GetSessionVars().ConnectionID
-		for {
-			seCnt := atomic.LoadInt32(&sessionCnt)
-			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
-			if currID == firstConnID || seCnt == finishedCnt {
-				break
-			}
-			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
-			time.Sleep(interval)
+		if currID != 1 {
+			<-firstDDLFinished
 		}
 
 		return info
@@ -1619,12 +1562,11 @@ func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
 	var wg util.WaitGroupWrapper
+
 	wg.Run(func() {
-		tk1.Session().SetConnectionID(firstConnID)
+		tk1.Session().SetConnectionID(1)
 		tk1.MustExec("alter table test_table drop column c2")
-		// Sleep a while to make sure the connection 2 break out the first for loop in OnGetInfoSchemaExported, otherwise atomic.LoadInt32(&sessionCnt) == 2 will be false forever.
-		time.Sleep(100 * time.Millisecond)
-		atomic.StoreInt32(&sessionCnt, finishedCnt)
+		firstDDLFinished <- struct{}{}
 	})
 	wg.Run(func() {
 		tk2.Session().SetConnectionID(2)
@@ -1633,13 +1575,12 @@ func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
 
 	wg.Wait()
 
-	intercept = &ddl.TestInterceptor{}
+	intercept = &callback.TestInterceptor{}
 	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER SCHEMA test_db_state CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
@@ -1657,8 +1598,7 @@ func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
 
 // TestParallelTruncateTableAndAddColumn tests add column when truncate table.
 func TestParallelTruncateTableAndAddColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "truncate table t"
@@ -1672,8 +1612,7 @@ func TestParallelTruncateTableAndAddColumn(t *testing.T) {
 
 // TestParallelTruncateTableAndAddColumns tests add columns when truncate table.
 func TestParallelTruncateTableAndAddColumns(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "truncate table t"
@@ -1686,8 +1625,7 @@ func TestParallelTruncateTableAndAddColumns(t *testing.T) {
 }
 
 func TestWriteReorgForColumnTypeChange(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1708,8 +1646,7 @@ func TestWriteReorgForColumnTypeChange(t *testing.T) {
 }
 
 func TestCreateExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1730,8 +1667,8 @@ func TestCreateExpressionIndex(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1770,16 +1707,24 @@ func TestCreateExpressionIndex(t *testing.T) {
 		}
 	}
 
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+
+	// https://github.com/pingcap/tidb/issues/39784
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(name varchar(20))")
+	tk.MustExec("insert into t values ('Abc'), ('Bcd'), ('abc')")
+	tk.MustExec("create index idx on test.t((lower(test.t.name)))")
+	tk.MustExec("admin check table t")
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1797,13 +1742,11 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1882,7 +1825,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	require.NoError(t, checkErr)
@@ -1891,8 +1834,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 }
 
 func TestDropExpressionIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1909,8 +1851,8 @@ func TestDropExpressionIndex(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1943,7 +1885,7 @@ func TestDropExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
 	require.NoError(t, checkErr)
@@ -1952,8 +1894,7 @@ func TestDropExpressionIndex(t *testing.T) {
 }
 
 func TestExpressionIndexDDLError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
@@ -1962,8 +1903,7 @@ func TestExpressionIndexDDLError(t *testing.T) {
 }
 
 func TestParallelRenameTable(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database test2")
@@ -1983,7 +1923,7 @@ func TestParallelRenameTable(t *testing.T) {
 	d2 := dom.DDL()
 	originalCallback := d2.GetHook()
 	defer d2.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{Do: dom}
+	callback := &callback.TestDDLCallback{Do: dom}
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
@@ -2020,9 +1960,9 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
-	tk.MustExec("rename table t1 to t")
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	checkErr = nil
+	tk.MustExec("rename table t1 to t")
 
 	// rename then add column, but rename to other database
 	concurrentDDLQuery = "alter table t add column g int"
@@ -2030,8 +1970,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -2042,8 +1981,7 @@ func TestParallelRenameTable(t *testing.T) {
 	concurrentDDLQueryPre = "create table t(a int)"
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	concurrentDDLQueryPre = ""
 	checkErr = nil
@@ -2054,7 +1992,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table t1 to t")
 	checkErr = nil
 
@@ -2064,7 +2002,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -2076,13 +2014,12 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to tt, t2 to tt2, t3 to tt3")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
 }
 
 func TestConcurrentSetDefaultValue(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2101,7 +2038,7 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{Do: dom}
+	callback := &callback.TestDDLCallback{Do: dom}
 	skip := false
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {

@@ -28,7 +28,7 @@ fi
 
 # restore empty.
 echo "restore empty cluster start..."
-run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_cluster" --pd $PD_ADDR --ratelimit 1024
+run_br restore full -s "local://$TEST_DIR/empty_cluster" --pd $PD_ADDR --ratelimit 1024
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
     exit 1
@@ -55,7 +55,7 @@ done
 
 # restore empty.
 echo "restore empty db start..."
-run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
+run_br restore full -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
     exit 1
@@ -67,6 +67,7 @@ run_sql "CREATE TABLE ${DB}1.usertable1 ( \
   PRIMARY KEY (YCSB_KEY) \
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
+# backup empty table
 echo "backup empty table start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_table"
 
@@ -75,8 +76,9 @@ while [ $i -le $DB_COUNT ]; do
     i=$(($i+1))
 done
 
+# restore empty table.
 echo "restore empty table start..."
-run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_table"
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/empty_table"
 
 # insert one row to make sure table is restored.
 run_sql "INSERT INTO ${DB}1.usertable1 VALUES (\"a\", \"b\");"
@@ -85,3 +87,15 @@ while [ $i -le $DB_COUNT ]; do
     run_sql "DROP DATABASE $DB$i;"
     i=$(($i+1))
 done
+
+
+# backup, skip temporary system database(__TiDB_BR_Temporary_mysql) when backup
+run_sql "CREATE DATABASE __TiDB_BR_Temporary_mysql";
+run_sql "CREATE TABLE __TiDB_BR_Temporary_mysql.tables_priv(id int);";
+echo "backup and skip __TiDB_BR_Temporary_mysql start..."
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/skip_temporary_mysql"
+
+# restore successfully without panic.
+run_sql "DROP DATABASE __TiDB_BR_Temporary_mysql";
+echo "restore the data start..."
+run_br restore full -s "local://$TEST_DIR/skip_temporary_mysql" --pd $PD_ADDR --ratelimit 1024

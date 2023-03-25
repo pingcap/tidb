@@ -54,6 +54,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
@@ -61,6 +62,7 @@ go_library(
 
 go_test(
     name = "tikv_test",
+    timeout = "short",
     srcs = [
         "detector_test.go",
         "main_test.go",

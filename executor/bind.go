@@ -38,6 +38,9 @@ type SQLBindExec struct {
 	isGlobal     bool
 	bindAst      ast.StmtNode
 	newStatus    string
+	source       string // by manual or from history, only in create stmt
+	sqlDigest    string
+	planDigest   string
 }
 
 // Next implements the Executor Next interface.
@@ -48,6 +51,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.createSQLBind()
 	case plannercore.OpSQLBindDrop:
 		return e.dropSQLBind()
+	case plannercore.OpSQLBindDropByDigest:
+		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
 	case plannercore.OpCaptureBindings:
@@ -58,6 +63,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
+	case plannercore.OpSetBindingStatusByDigest:
+		return e.setBindingStatusByDigest()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -75,9 +82,26 @@ func (e *SQLBindExec) dropSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		err := handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		return err
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
+}
+
+func (e *SQLBindExec) dropSQLBindByDigest() error {
+	if e.sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
+	if !e.isGlobal {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		err := handle.DropBindRecordByDigest(e.sqlDigest)
+		return err
+	}
+	affectedRows, err := domain.GetDomain(e.ctx).BindHandle().DropBindRecordByDigest(e.sqlDigest)
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+	return err
 }
 
 func (e *SQLBindExec) setBindingStatus() error {
@@ -97,6 +121,15 @@ func (e *SQLBindExec) setBindingStatus() error {
 	return err
 }
 
+func (e *SQLBindExec) setBindingStatusByDigest() error {
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatusByDigest(e.newStatus, e.sqlDigest)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
+	}
+	return err
+}
+
 func (e *SQLBindExec) createSQLBind() error {
 	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
 	// is necessary to avoid 'create binding' been recorded as 'explain'.
@@ -106,11 +139,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}()
 
 	bindInfo := bindinfo.Binding{
-		BindSQL:   e.bindSQL,
-		Charset:   e.charset,
-		Collation: e.collation,
-		Status:    bindinfo.Enabled,
-		Source:    bindinfo.Manual,
+		BindSQL:    e.bindSQL,
+		Charset:    e.charset,
+		Collation:  e.collation,
+		Status:     bindinfo.Enabled,
+		Source:     e.source,
+		SQLDigest:  e.sqlDigest,
+		PlanDigest: e.planDigest,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

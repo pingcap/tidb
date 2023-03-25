@@ -56,16 +56,13 @@ func (s *mockStoreWithMultiPD) Describe() string             { return "" }
 
 type hotRegionsHistoryTableSuite struct {
 	store       kv.Storage
-	clean       func()
 	httpServers []*httptest.Server
 	startTime   time.Time
 }
 
 func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuite {
-	var clean func()
-
 	s := new(hotRegionsHistoryTableSuite)
-	s.store, clean = testkit.CreateMockStore(t)
+	s.store = testkit.CreateMockStore(t)
 	store := &mockStoreWithMultiPD{
 		s.store.(helper.Storage),
 		make([]string, 3),
@@ -79,12 +76,13 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	}
 	s.store = store
 	s.startTime = time.Now()
-	s.clean = func() {
+	t.Cleanup(func() {
 		for _, server := range s.httpServers {
-			server.Close()
+			if server != nil {
+				server.Close()
+			}
 		}
-		clean()
-	}
+	})
 	return s
 }
 
@@ -160,12 +158,11 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 
 func TestTiDBHotRegionsHistory(t *testing.T) {
 	s := createHotRegionsHistoryTableSuite(t)
-	defer s.clean()
 
 	var unixTimeMs = func(v string) int64 {
 		tt, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
 		require.NoError(t, err)
-		return tt.UnixNano() / int64(time.Millisecond)
+		return tt.UnixMilli()
 	}
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -509,7 +506,6 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 
 func TestTiDBHotRegionsHistoryError(t *testing.T) {
 	s := createHotRegionsHistoryTableSuite(t)
-	defer s.clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 

@@ -46,8 +46,7 @@ func newDeadLockError(isRetryable bool) error {
 }
 
 func TestPessimisticRRErrorHandle(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 	se := tk.Session()
@@ -57,7 +56,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 
 	compareTS := getOracleTS(t, se)
 	lockErr = kv.ErrWriteConflict
-	nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err := provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
@@ -73,7 +72,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = kv.ErrWriteConflict
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtStart(context.TODO(), nil)
@@ -87,14 +86,14 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	require.Greater(t, ts, compareTS2)
 
 	lockErr = newDeadLockError(false)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
 
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = newDeadLockError(true)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtRetry(context.TODO())
@@ -110,7 +109,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// Update compareTS for the next comparison
 	compareTS = getOracleTS(t, se)
 	lockErr = newDeadLockError(true)
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	err = provider.OnStmtStart(context.TODO(), nil)
@@ -125,20 +124,19 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 
 	// StmtErrAfterLock: other errors should only update forUpdateTS but not retry
 	lockErr = errors.New("other error")
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.Equal(t, lockErr, err)
 	require.Equal(t, sessiontxn.StmtActionError, nextAction)
 
 	// StmtErrAfterQuery: always not retry and not update forUpdateTS
 	lockErr = kv.ErrWriteConflict
-	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
+	nextAction, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.Nil(t, err)
 }
 
 func TestRepeatableReadProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
 	se := tk.Session()
@@ -192,8 +190,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 }
 
 func TestRepeatableReadProviderInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		clearScopeSettings := forkScopeSettings(t, store)
@@ -259,8 +256,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 }
 
 func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -290,7 +286,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	checkUseSnapshot := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
@@ -302,7 +298,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	checkUseTxn := func() {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
-		require.IsType(t, &infoschema.TemporaryTableAttachedInfoSchema{}, is)
+		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
 		readTS, err := provider.GetStmtReadTS()
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
@@ -347,8 +343,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 }
 
 func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, v int)")
@@ -426,7 +421,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 
 		// retry
 		if c.shouldOptimize {
-			action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+			action, err = provider.OnStmtErrorForNextAction(context.Background(), sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
 			require.NoError(t, err)
 			require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 			err = provider.OnStmtRetry(context.TODO())
@@ -477,8 +472,7 @@ var errorsInInsert = []string{
 
 func TestConflictErrorInInsertInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -507,8 +501,7 @@ func TestConflictErrorInInsertInRR(t *testing.T) {
 
 func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -547,8 +540,7 @@ func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 // Delete should get the latest ts and thus does not incur write conflict
 func TestConflictErrorInDeleteInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -587,8 +579,7 @@ func TestConflictErrorInDeleteInRR(t *testing.T) {
 
 func TestConflictErrorInUpdateInRR(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -625,8 +616,7 @@ func TestConflictErrorInUpdateInRR(t *testing.T) {
 
 func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
@@ -687,4 +677,36 @@ func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active 
 	assert := inactivePessimisticRRAssert(tk.Session())
 	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
 	return assert.CheckAndGetProvider(t)
+}
+
+func TestRRWaitTSTimeInSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	waitTS1 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("update t set v = v + 10 where id = 1")
+	waitTS2 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("delete from t")
+	waitTS3 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("commit")
+	require.NotEqual(t, waitTS1, waitTS2)
+	require.NotEqual(t, waitTS1, waitTS3)
+	require.NotEqual(t, waitTS2, waitTS3)
+}
+
+func TestIssue41194(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("analyze table t")
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -71,8 +72,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 			zone:        "",
 		},
 	}
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
@@ -95,8 +95,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 }
 
 func TestSelectAsOf(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -250,8 +249,7 @@ func TestSelectAsOf(t *testing.T) {
 }
 
 func TestStaleReadKVRequest(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
@@ -345,8 +343,7 @@ func TestStaleReadKVRequest(t *testing.T) {
 }
 
 func TestStalenessAndHistoryRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -429,8 +426,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 }
 
 func TestTimeBoundedStalenessTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -495,8 +491,7 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 }
 
 func TestStalenessTransactionSchemaVer(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -513,22 +508,21 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 
 	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// schema changed back to the newest
 	tk.MustExec("commit")
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 
 	// select does not affect the infoschema
 	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 }
 
 func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 	t1, err := time.Parse(types.TimeFormat, "2016-09-21 09:53:04")
 	require.NoError(t, err)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -729,8 +723,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			errMsg:     errMsg1,
 		},
 	}
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -771,8 +764,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 }
 
 func TestSpecialSQLInStalenessTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testcases := []struct {
@@ -826,8 +818,7 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 }
 
 func TestAsOfTimestampCompatibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -883,8 +874,7 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 }
 
 func TestSetTransactionInfoSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -899,33 +889,32 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer1 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
 	tk.MustExec("alter table t add c int")
 
 	// confirm schema changed
-	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer2 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	time2 := time.Now()
 	require.Less(t, schemaVer1, schemaVer2)
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
 	tk.MustExec("select * from t;")
 	tk.MustExec("alter table t add d int")
-	schemaVer3 := tk.Session().GetInfoSchema().SchemaMetaVersion()
+	schemaVer3 := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	tk.MustExec("begin;")
-	require.Equal(t, schemaVer1, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer1, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 	tk.MustExec("commit")
 	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
 	tk.MustExec("begin;")
-	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer2, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 	tk.MustExec("commit")
-	require.Equal(t, schemaVer3, tk.Session().GetInfoSchema().SchemaMetaVersion())
+	require.Equal(t, schemaVer3, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 }
 
 func TestStaleSelect(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -987,29 +976,27 @@ func TestStaleSelect(t *testing.T) {
 }
 
 func TestStaleReadFutureTime(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("start transaction read only as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 	// Transaction should not be started and read ts should not be set if check fails
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 
-	_, err = tk.Exec("set transaction read only as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("set transaction read only as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 
-	_, err = tk.Exec("select * from t as of timestamp '2038-01-18 03:14:07'")
-	require.Regexp(t, "cannot set read timestamp to a future time", err.Error())
+	tk.MustMatchErrMsg("select * from t as of timestamp '2038-01-18 03:14:07'",
+		"cannot set read timestamp to a future time")
 }
 
 func TestStaleReadPrepare(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1043,13 +1030,13 @@ func TestStaleReadPrepare(t *testing.T) {
 
 	// test prepared stale select in stale txn
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	_, err := tk.Exec("execute p1")
+	err := tk.ExecToErr("execute p1")
 	require.Error(t, err)
 	tk.MustExec("commit")
 
 	// assert execute prepared statement should be error after set transaction read only as of
 	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
-	_, err = tk.Exec("execute p1")
+	err = tk.ExecToErr("execute p1")
 	require.Error(t, err)
 	tk.MustExec("execute p2")
 
@@ -1064,8 +1051,7 @@ func TestStaleReadPrepare(t *testing.T) {
 }
 
 func TestStmtCtxStaleFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1159,8 +1145,7 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 }
 
 func TestStaleSessionQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -1199,8 +1184,7 @@ func TestStaleSessionQuery(t *testing.T) {
 }
 
 func TestStaleReadCompatibility(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1245,8 +1229,7 @@ func TestStaleReadCompatibility(t *testing.T) {
 }
 
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -1294,8 +1277,7 @@ func TestStaleReadNoExtraTSORequest(t *testing.T) {
 }
 
 func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1331,8 +1313,7 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 }
 
 func TestIssue30872(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1349,8 +1330,7 @@ func TestIssue30872(t *testing.T) {
 }
 
 func TestIssue33728(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1365,8 +1345,7 @@ func TestIssue33728(t *testing.T) {
 }
 
 func TestIssue31954(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1385,8 +1364,7 @@ func TestIssue31954(t *testing.T) {
 }
 
 func TestIssue35686(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	// This query should not panic

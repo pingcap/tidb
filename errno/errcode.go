@@ -551,7 +551,7 @@ const (
 	ErrEventCompile                                          = 1550
 	ErrEventSameName                                         = 1551
 	ErrEventDataTooLong                                      = 1552
-	ErrDropIndexFk                                           = 1553
+	ErrDropIndexNeededInForeignKey                           = 1553
 	ErrWarnDeprecatedSyntaxWithVer                           = 1554
 	ErrCantWriteLockLogTable                                 = 1555
 	ErrCantLockLogTable                                      = 1556
@@ -682,7 +682,7 @@ const (
 	ErrAccessDeniedNoPassword                                = 1698
 	ErrSetPasswordAuthPlugin                                 = 1699
 	ErrGrantPluginUserExists                                 = 1700
-	ErrTruncateIllegalFk                                     = 1701
+	ErrTruncateIllegalForeignKey                             = 1701
 	ErrPluginIsPermanent                                     = 1702
 	ErrStmtCacheFull                                         = 1705
 	ErrMultiUpdateKeyConflict                                = 1706
@@ -781,18 +781,18 @@ const (
 	ErrNotValidPassword                                      = 1819
 	ErrMustChangePassword                                    = 1820
 	ErrFkNoIndexChild                                        = 1821
-	ErrFkNoIndexParent                                       = 1822
+	ErrForeignKeyNoIndexInParent                             = 1822
 	ErrFkFailAddSystem                                       = 1823
-	ErrFkCannotOpenParent                                    = 1824
+	ErrForeignKeyCannotOpenParent                            = 1824
 	ErrFkIncorrectOption                                     = 1825
 	ErrFkDupName                                             = 1826
 	ErrPasswordFormat                                        = 1827
 	ErrFkColumnCannotDrop                                    = 1828
 	ErrFkColumnCannotDropChild                               = 1829
-	ErrFkColumnNotNull                                       = 1830
+	ErrForeignKeyColumnNotNull                               = 1830
 	ErrDupIndex                                              = 1831
-	ErrFkColumnCannotChange                                  = 1832
-	ErrFkColumnCannotChangeChild                             = 1833
+	ErrForeignKeyColumnCannotChange                          = 1832
+	ErrForeignKeyColumnCannotChangeChild                     = 1833
 	ErrFkCannotDeleteParent                                  = 1834
 	ErrMalformedPacket                                       = 1835
 	ErrReadOnlyMode                                          = 1836
@@ -823,7 +823,9 @@ const (
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
 	ErrMaxExecTimeExceeded                                   = 1907
+	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
@@ -840,15 +842,17 @@ const (
 	ErrGeneratedColumnNonPrior                               = 3107
 	ErrDependentByGeneratedColumn                            = 3108
 	ErrGeneratedColumnRefAutoInc                             = 3109
+	ErrAccountHasBeenLocked                                  = 3118
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
-	ErrInvalidJSONPathWildcard                               = 3149
+	ErrInvalidJSONPathMultipleSelection                      = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrSecureTransportRequired                               = 3159
 	ErrBadUser                                               = 3162
@@ -889,6 +893,10 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrExistsInHistoryPassword                               = 3638
+	ErrForeignKeyCannotDropParent                            = 3730
+	ErrForeignKeyCannotUseVirtualColumn                      = 3733
+	ErrForeignKeyNoColumnInParent                            = 3734
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction               = 3753
@@ -907,11 +915,15 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
+	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
+	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -1026,6 +1038,29 @@ const (
 	ErrSettingNoopVariable                 = 8144
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
+	ErrLazyUniquenessCheckFailure          = 8147
+	ErrUnsupportedColumnInTTLConfig        = 8148
+	ErrTTLColumnCannotDrop                 = 8149
+	ErrSetTTLOptionForNonTTLTable          = 8150
+	ErrTempTableNotAllowedWithTTL          = 8151
+	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
+	ErrLoadDataFromServerDisk              = 8154
+	ErrLoadParquetFromLocal                = 8155
+	ErrLoadDataEmptyPath                   = 8156
+	ErrLoadDataUnsupportedFormat           = 8157
+	ErrLoadDataInvalidURI                  = 8158
+	ErrLoadDataCantAccess                  = 8159
+	ErrLoadDataCantRead                    = 8160
+	ErrLoadDataPhysicalImportTableNotEmpty = 8161
+	ErrLoadDataWrongFormatConfig           = 8162
+	ErrUnknownOption                       = 8163
+	ErrInvalidOptionVal                    = 8164
+	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataJobNotFound                 = 8170
+	ErrLoadDataInvalidOperation            = 8171
+	ErrLoadDataCantDetachWithLocal         = 8172
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1073,6 +1108,15 @@ const (
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
+	ErrDDLSetting                         = 8246
+	ErrIngestFailed                       = 8247
+	// Resource group errors.
+	ErrResourceGroupExists            = 8248
+	ErrResourceGroupNotExists         = 8249
+	ErrResourceGroupSupportDisabled   = 8250
+	ErrResourceGroupConfigUnavailable = 8251
+	ErrResourceGroupThrottled         = 8252
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

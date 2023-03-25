@@ -54,6 +54,8 @@ STATICHECK_ANALYZERS = [
     "S1038",
     "S1039",
     "S1040",
+    "SA1019",
+    "SA1029",
     "SA2000",
     "SA2001",
     "SA2003",
@@ -75,6 +77,7 @@ STATICHECK_ANALYZERS = [
     "SA6000",
     "SA6001",
     "SA6005",
+    "U1000",
 ]
 
 nogo(
@@ -82,15 +85,12 @@ nogo(
     config = ":nogo_config.json",
     visibility = ["//visibility:public"],  # must have public visibility
     deps = [
-               # https://github.com/golang/go/issues/48525
-               # "@com_github_timakin_bodyclose//passes/bodyclose:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/asmdecl:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/assign:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/atomic:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/atomicalign:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/bools:go_default_library",
-               # https://github.com/golang/go/issues/48525
-               # "@org_golang_x_tools//go/analysis/passes/buildssa:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/buildssa:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/buildtag:go_default_library",
                # https://github.com/bazelbuild/rules_go/issues/2396
                # "@org_golang_x_tools//go/analysis/passes/cgocall:go_default_library",
@@ -99,6 +99,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/ctrlflow:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/deepequalerrors:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/errorsas:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/fieldalignment:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/findcall:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/httpresponse:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/ifaceassert:go_default_library",
@@ -106,7 +107,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/loopclosure:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/lostcancel:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/nilfunc:go_default_library",
-               #"@org_golang_x_tools//go/analysis/passes/nilness:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/nilness:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/pkgfact:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/printf:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/shift:go_default_library",
@@ -116,24 +117,32 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/structtag:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/testinggoroutine:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/tests:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/timeformat:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unmarshal:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
                "//build/linter/asciicheck:asciicheck",
+               "//build/linter/bodyclose:bodyclose",
                "//build/linter/durationcheck:durationcheck",
                "//build/linter/exportloopref:exportloopref",
+               "//build/linter/forcetypeassert:forcetypeassert",
                "//build/linter/gofmt:gofmt",
                "//build/linter/gci:gci",
                "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
+               "//build/linter/makezero:makezero",
                "//build/linter/misspell:misspell",
+               "//build/linter/noloopclosure:noloopclosure",
                "//build/linter/prealloc:prealloc",
                "//build/linter/predeclared:predeclared",
                "//build/linter/unconvert:unconvert",
+               "//build/linter/rowserrcheck:rowserrcheck",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
+                   "//build/linter/filepermission:filepermission",
+                   "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
                    "//build/linter/revive:revive",
                ],

@@ -34,7 +34,7 @@ go_library(
         "//util/memory",
         "//util/parser",
         "//util/sqlexec",
-        "//util/stmtsummary",
+        "//util/stmtsummary/v2:stmtsummary",
         "//util/table-filter",
         "//util/timeutil",
         "@org_golang_x_exp//maps",
@@ -44,6 +44,7 @@ go_library(
 
 go_test(
     name = "bindinfo_test",
+    timeout = "moderate",
     srcs = [
         "bind_cache_test.go",
         "bind_test.go",
@@ -56,6 +57,8 @@ go_test(
     ],
     embed = [":bindinfo"],
     flaky = True,
+    race = "on",
+    shard_count = 50,
     deps = [
         "//config",
         "//domain",
@@ -65,8 +68,7 @@ go_test(
         "//parser/auth",
         "//parser/model",
         "//parser/terror",
-        "//planner/core",
-        "//session/txninfo",
+        "//server",
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
@@ -77,6 +79,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

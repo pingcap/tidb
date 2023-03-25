@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "ddltest_test",
+    timeout = "short",
     srcs = [
         "column_test.go",
         "ddl_test.go",
@@ -10,8 +11,9 @@ go_test(
         "random_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
-        "//ddl",
+        "//config",
         "//domain",
         "//kv",
         "//parser/model",

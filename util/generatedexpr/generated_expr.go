@@ -39,7 +39,7 @@ func (*nameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	//nolint:revive
+	//nolint: revive,all_revive
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, col := range nr.tableInfo.Columns {

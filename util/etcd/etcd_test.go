@@ -32,7 +32,7 @@ var (
 )
 
 func TestCreate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	etcdClient := etcdMockCluster.RandClient()
@@ -54,7 +54,7 @@ func TestCreate(t *testing.T) {
 }
 
 func TestCreateWithTTL(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binlogttl/ttlkey"
@@ -73,7 +73,7 @@ func TestCreateWithTTL(t *testing.T) {
 }
 
 func TestCreateWithKeyExist(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj := "existtest"
@@ -88,7 +88,7 @@ func TestCreateWithKeyExist(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj1 := "updatetest"
@@ -107,8 +107,6 @@ func TestUpdate(t *testing.T) {
 	require.Equal(t, obj1, string(res))
 	require.Equal(t, revision1, revision0)
 
-	time.Sleep(time.Second)
-
 	err = etcdCli.Update(ctx, key, obj2, 3)
 	require.NoError(t, err)
 
@@ -126,7 +124,7 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestUpdateOrCreate(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	obj := "updatetest"
@@ -136,7 +134,7 @@ func TestUpdateOrCreate(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binloglist/testkey"
@@ -175,7 +173,7 @@ func TestList(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	key := "binlogdelete/testkey"
@@ -205,7 +203,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDoTxn(t *testing.T) {
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
 	// case1: create two keys in one transaction
@@ -394,4 +392,31 @@ func testSetup(t *testing.T) (context.Context, *Client, *integration.ClusterV3) 
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	etcd := NewClient(cluster.RandClient(), "binlog")
 	return context.Background(), etcd, cluster
+}
+
+func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.ClusterV3) {
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	return context.Background(), cluster.RandClient(), cluster
+}
+
+func TestSetEtcdCliByNamespace(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, origEtcdCli, etcdMockCluster := testSetupOriginal(t)
+	defer etcdMockCluster.Terminate(t)
+
+	namespacePrefix := "testNamespace/"
+	key := "testkey"
+	obj := "test"
+
+	unprefixedKV := origEtcdCli.KV
+	cliNamespace := origEtcdCli
+	SetEtcdCliByNamespace(cliNamespace, namespacePrefix)
+
+	_, err := cliNamespace.Put(ctx, key, obj)
+	require.NoError(t, err)
+
+	// verify that kv pair is empty before set
+	getResp, err := unprefixedKV.Get(ctx, namespacePrefix+key)
+	require.NoError(t, err)
+	require.Len(t, getResp.Kvs, 1)
 }

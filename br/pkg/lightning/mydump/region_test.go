@@ -36,7 +36,7 @@ import (
 // }
 
 /*
-	TODO : test with specified 'regionBlockSize' ...
+TODO : test with specified 'regionBlockSize' ...
 */
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
@@ -164,6 +164,119 @@ func TestAllocateEngineIDs(t *testing.T) {
 	})
 }
 
+func TestMakeSourceFileRegion(t *testing.T) {
+	meta := &MDTableMeta{
+		DB:   "csv",
+		Name: "large_csv_file",
+	}
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			MaxRegionSize: 1,
+			CSV: config.CSVConfig{
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
+			},
+			StrictFormat: true,
+			Filter:       []string{"*.*"},
+		},
+	}
+	filePath := "./csv/split_large_file.csv"
+	dataFileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	fileSize := dataFileInfo.Size()
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
+	colCnt := 3
+	columns := []string{"a", "b", "c"}
+
+	ctx := context.Background()
+	ioWorkers := worker.NewPool(ctx, 4, "io")
+	store, err := storage.NewLocalStorage(".")
+	assert.NoError(t, err)
+
+	fileInfo.FileMeta.Compression = CompressionNone
+	regions, _, err := MakeSourceFileRegion(ctx, meta, fileInfo, colCnt, cfg, ioWorkers, store)
+	assert.NoError(t, err)
+	offsets := [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}
+	assert.Len(t, regions, len(offsets))
+	for i := range offsets {
+		assert.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		assert.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
+		assert.Equal(t, columns, regions[i].Chunk.Columns)
+	}
+
+	// test - gzip compression
+	fileInfo.FileMeta.Compression = CompressionGZ
+	regions, _, err = MakeSourceFileRegion(ctx, meta, fileInfo, colCnt, cfg, ioWorkers, store)
+	assert.NoError(t, err)
+	assert.Len(t, regions, 1)
+	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
+	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
+	assert.Len(t, regions[0].Chunk.Columns, 0)
+}
+
+func TestCompressedMakeSourceFileRegion(t *testing.T) {
+	meta := &MDTableMeta{
+		DB:   "csv",
+		Name: "large_csv_file",
+	}
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			MaxRegionSize: 1,
+			CSV: config.CSVConfig{
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
+			},
+			StrictFormat: true,
+			Filter:       []string{"*.*"},
+		},
+	}
+	filePath := "./csv/split_large_file.csv.zst"
+	dataFileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	fileSize := dataFileInfo.Size()
+
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{
+		Path:        filePath,
+		Type:        SourceTypeCSV,
+		Compression: CompressionZStd,
+		FileSize:    fileSize,
+	}}
+	colCnt := 3
+
+	ctx := context.Background()
+	ioWorkers := worker.NewPool(ctx, 4, "io")
+	store, err := storage.NewLocalStorage(".")
+	assert.NoError(t, err)
+	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
+	require.NoError(t, err)
+	fileInfo.FileMeta.RealSize = int64(compressRatio * float64(fileInfo.FileMeta.FileSize))
+
+	regions, sizes, err := MakeSourceFileRegion(ctx, meta, fileInfo, colCnt, cfg, ioWorkers, store)
+	assert.NoError(t, err)
+	assert.Len(t, regions, 1)
+	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
+	assert.Equal(t, int64(0), regions[0].Chunk.RealOffset)
+	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
+	rowIDMax := fileInfo.FileMeta.RealSize * CompressSizeFactor / int64(colCnt)
+	assert.Equal(t, rowIDMax, regions[0].Chunk.RowIDMax)
+	assert.Len(t, regions[0].Chunk.Columns, 0)
+	assert.Equal(t, fileInfo.FileMeta.RealSize, int64(sizes[0]))
+}
+
 func TestSplitLargeFile(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
@@ -173,13 +286,14 @@ func TestSplitLargeFile(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
 			},
 			StrictFormat: true,
 			Filter:       []string{"*.*"},
@@ -205,13 +319,12 @@ func TestSplitLargeFile(t *testing.T) {
 		{19, [][]int64{{6, 30}}},
 	} {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
-		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 		store, err := storage.NewLocalStorage(".")
 		assert.NoError(t, err)
 
-		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+		regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 		assert.NoError(t, err)
 		assert.Len(t, regions, len(tc.offsets))
 		for i := range tc.offsets {
@@ -231,13 +344,14 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -260,7 +374,6 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
 	columns := []string{"a", "b"}
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -268,7 +381,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 
 	offsets := [][]int64{{4, 13}, {13, 21}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -310,7 +423,6 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(3)
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -318,7 +430,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 
 	offsets := [][]int64{{0, 23}, {23, 38}, {38, 47}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -336,13 +448,14 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              []string{"NULL"},
+				EscapedBy:         `\`,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -365,7 +478,6 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(2)
 	columns := []string{"field1", "field2"}
-	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -373,7 +485,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 
 	offsets := [][]int64{{14, 24}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, ioWorker, store)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {

@@ -53,7 +53,7 @@ test_full_rawkv() {
     checksum_full=$(checksum $check_range_start $check_range_end)
     # backup current state of key-values
     # raw backup is not working with range [nil, nil]. TODO: fix it.
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --end $check_range_end --format hex
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
 
     clean $check_range_start $check_range_end
     # Ensure the data is deleted
@@ -63,7 +63,7 @@ test_full_rawkv() {
         fail_and_exit
     fi
 
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --end $check_range_end --format hex
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_FULL" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" --start $check_range_start --format hex
     checksum_new=$(checksum $check_range_start $check_range_end)
     if [ "$checksum_new" != "$checksum_full" ];then
         echo "failed to restore"

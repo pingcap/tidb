@@ -44,8 +44,7 @@ func utilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
 }
 
 func TestBindingCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -69,8 +68,7 @@ func TestBindingCache(t *testing.T) {
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -100,8 +98,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 }
 
 func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -110,7 +107,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -125,8 +122,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 }
 
 func TestBindParse(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -141,8 +137,9 @@ func TestBindParse(t *testing.T) {
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	source := bindinfo.Manual
-	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s')`,
-		originSQL, bindSQL, defaultDb, status, charset, collation, source)
+	mockDigest := "0f644e22c38ecc71d4592c52df127df7f86b6ca7f7c0ee899113b794578f9396"
+	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
+		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewBindHandle(tk.Session())
 	err := bindHandle.Update(true)
@@ -215,8 +212,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -226,7 +222,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
 	// Manufacture a rejected binding by hacking mysql.bind_info.
 	tk.MustExec("insert into mysql.bind_info values('select * from test . t where a > ?', 'SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info where source != 'builtin'").Sort().Check(testkit.Rows(
 		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 enabled",
 		"SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10 rejected",
@@ -247,11 +243,12 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
+	_, sqlDigestWithDB := parser.NormalizeDigest("select * from test.t where a > 10") // test sqlDigest if exists after add columns to mysql.bind_info
+	require.Equal(t, rows[0][9], sqlDigestWithDB.String())
 }
 
 func TestSetBindingStatus(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -313,8 +310,7 @@ func TestSetBindingStatus(t *testing.T) {
 }
 
 func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -326,9 +322,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -341,9 +337,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
+		bindinfo.Manual + "', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -474,8 +470,7 @@ var testSQLs = []struct {
 }
 
 func TestGlobalBinding(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -555,6 +550,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, bind.UpdateTime)
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
+		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
 		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
@@ -588,8 +584,7 @@ func TestGlobalBinding(t *testing.T) {
 }
 
 func TestOutdatedInfoSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -603,8 +598,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 }
 
 func TestReloadBindings(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 

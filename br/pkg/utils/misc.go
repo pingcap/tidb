@@ -14,8 +14,16 @@
 package utils
 
 import (
+	"context"
+	"crypto/tls"
+	"time"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -74,4 +82,24 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	}
 	return src.GetCharset() == target.GetCharset() &&
 		src.GetCollate() == target.GetCollate()
+}
+
+func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	secureOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
+	if tlsConf != nil {
+		secureOpt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConf))
+	}
+	opts = append(opts,
+		secureOpt,
+		grpc.WithBlock(),
+		grpc.FailOnNonTempDialError(true),
+	)
+
+	gctx, cancel := context.WithTimeout(ctx, time.Second*5)
+	connection, err := grpc.DialContext(gctx, storeAddr, opts...)
+	cancel()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return connection, nil
 }

@@ -41,10 +41,10 @@ func (k Key) Next() Key {
 //
 // Assume there are keys like:
 //
-//   rowkey1
-//   rowkey1_column1
-//   rowkey1_column2
-//   rowKey2
+//	rowkey1
+//	rowkey1_column1
+//	rowkey1_column2
+//	rowKey2
 //
 // If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
@@ -89,9 +89,17 @@ func (k Key) String() string {
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
+// Hack: make the layout exactly the same with github.com/pingcap/kvproto/pkg/coprocessor.KeyRange
+// So we can avoid allocation of converting kv.KeyRange to coprocessor.KeyRange
+// Not defined as "type KeyRange = coprocessor.KeyRange" because their field name are different.
+// kv.KeyRange use StartKey,EndKey while coprocessor.KeyRange use Start,End
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+
+	XXXNoUnkeyedLiteral struct{}
+	XXXunrecognized     []byte
+	XXXsizecache        int32
 }
 
 // IsPoint checks if the key range represents a point.
@@ -141,6 +149,7 @@ type Handle interface {
 	// IntValue returns the int64 value if IsInt is true, it panics if IsInt returns false.
 	IntValue() int64
 	// Next returns the minimum handle that is greater than this handle.
+	// The returned handle is not guaranteed to be able to decode.
 	Next() Handle
 	// Equal returns if the handle equals to another handle, it panics if the types are different.
 	Equal(h Handle) bool
@@ -291,6 +300,7 @@ func (*CommonHandle) IntValue() int64 {
 }
 
 // Next implements the Handle interface.
+// Note that the returned encoded field is not guaranteed to be able to decode.
 func (ch *CommonHandle) Next() Handle {
 	return &CommonHandle{
 		encoded:       Key(ch.encoded).PrefixNext(),
@@ -496,7 +506,7 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 }
 
 // Range iterates the MemAwareHandleMap with fn, the fn returns true to continue, returns false to stop.
-func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val interface{}) bool) {
+func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 	for h, val := range m.ints.M {
 		if !fn(IntHandle(h), val) {
 			return

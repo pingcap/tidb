@@ -27,14 +27,17 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
@@ -177,7 +180,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if err != nil {
 				log.FromContext(ctx).Warn("fetch table region size statistics failed",
 					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats = make(map[uint64]int64)
+				tableRegionStats, err = make(map[uint64]int64), nil
 			}
 		}
 
@@ -261,21 +264,21 @@ func (local *local) SplitAndScatterRegionByRanges(
 								err = multierr.Append(err, err1)
 								syncLock.Unlock()
 								break
-							} else {
-								log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
-									zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
-									zap.Binary("end", keys[endIdx-1]))
-								slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-									return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
-								})
-								syncLock.Lock()
-								scatterRegions = append(scatterRegions, newRegions...)
-								syncLock.Unlock()
-								// the region with the max start key is the region need to be further split.
-								if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-									splitRegion = newRegions[len(newRegions)-1]
-								}
 							}
+							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
+								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
+								zap.Binary("end", keys[endIdx-1]))
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							})
+							syncLock.Lock()
+							scatterRegions = append(scatterRegions, newRegions...)
+							syncLock.Unlock()
+							// the region with the max start key is the region need to be further split.
+							if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
+								splitRegion = newRegions[len(newRegions)-1]
+							}
+
 							batchKeySize = 0
 							startIdx = endIdx
 						}
@@ -319,13 +322,12 @@ func (local *local) SplitAndScatterRegionByRanges(
 
 		if len(retryKeys) == 0 {
 			break
-		} else {
-			slices.SortFunc(retryKeys, func(i, j []byte) bool {
-				return bytes.Compare(i, j) < 0
-			})
-			minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
-			maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 		}
+		slices.SortFunc(retryKeys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
+		})
+		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
+		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -349,6 +351,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 }
 
 func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (map[uint64]int64, error) {
+	if db == nil {
+		return nil, errors.Errorf("db is nil")
+	}
 	exec := &common.SQLWithRetry{
 		DB:     db,
 		Logger: log.FromContext(ctx),
@@ -377,7 +382,14 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 	return stats, errors.Trace(err)
 }
 
-func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
+func (local *local) BatchSplitRegions(
+	ctx context.Context,
+	region *split.RegionInfo,
+	keys [][]byte,
+) (*split.RegionInfo, []*split.RegionInfo, error) {
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, nil, errors.New("retryable error"))
+	})
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
 	if err != nil {
 		return nil, nil, errors.Annotatef(err, "batch split regions failed")
@@ -665,4 +677,54 @@ func (noopStoreWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) e
 
 func (noopStoreWriteLimiter) Limit() int {
 	return math.MaxInt
+}
+
+const (
+	CompactionLowerThreshold = 512 * units.MiB
+	CompactionUpperThreshold = 32 * units.GiB
+)
+
+// EstimateCompactionThreshold estimate SST files compression threshold by total row file size
+// with a higher compression threshold, the compression time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
+// we set the upper bound to 32GB to avoid too long compression time.
+// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
+func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	fileSizeMap := make(map[string]int64, len(files))
+	for _, file := range files {
+		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+	}
+
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size, ok := fileSizeMap[chunk.FileMeta.Path]
+			if !ok {
+				size = chunk.FileMeta.FileSize
+			}
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// parquet file is compressed, thus estimates with a factor of 2
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	// try restrict the total file number within 512
+	threshold := totalRawFileSize / 512
+	threshold = utils.NextPowerOfTwo(threshold)
+	if threshold < CompactionLowerThreshold {
+		// too may small SST files will cause inaccuracy of region range estimation,
+		threshold = CompactionLowerThreshold
+	} else if threshold > CompactionUpperThreshold {
+		threshold = CompactionUpperThreshold
+	}
+
+	return threshold
 }

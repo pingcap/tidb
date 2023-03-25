@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -68,15 +69,34 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "TestKey", s3.SseKmsKeyId)
 
 	// special character in access keys
-	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`, nil)
+	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=******&secret-access-key=******+&session-token=******`, nil)
 	require.NoError(t, err)
 	s3 = s.GetS3()
 	require.NotNil(t, s3)
 	require.Equal(t, "bucket4", s3.Bucket)
 	require.Equal(t, "prefix/path", s3.Prefix)
-	require.Equal(t, "NXN7IPIOSAAKDEEOLMAF", s3.AccessKey)
-	require.Equal(t, "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", s3.SecretAccessKey)
+	require.Equal(t, "******", s3.AccessKey)
+	require.Equal(t, "******+", s3.SecretAccessKey)
+	require.Equal(t, "******", s3.SessionToken)
 	require.True(t, s3.ForcePathStyle)
+
+	// parse role ARN and external ID
+	testRoleARN := "arn:aws:iam::888888888888:role/my-role"
+	testExternalID := "abcd1234"
+	s, err = ParseBackend(
+		fmt.Sprintf(
+			"s3://bucket5/prefix/path?role-arn=%s&external-id=%s",
+			url.QueryEscape(testRoleARN),
+			url.QueryEscape(testExternalID),
+		), nil,
+	)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket5", s3.Bucket)
+	require.Equal(t, "prefix/path", s3.Prefix)
+	require.Equal(t, testRoleARN, s3.RoleArn)
+	require.Equal(t, testExternalID, s3.ExternalId)
 
 	gcsOpt := &BackendOptions{
 		GCS: GCSBackendOptions{
@@ -193,4 +213,50 @@ func TestFormatBackendURL(t *testing.T) {
 		},
 	})
 	require.Equal(t, "azure://bucket/some%20prefix/", backendURL.String())
+}
+
+func TestParseRawURL(t *testing.T) {
+	cases := []struct {
+		url             string
+		schema          string
+		host            string
+		path            string
+		accessKey       string
+		secretAccessKey string
+	}{
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                    // fake ak/sk
+			secretAccessKey: "nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // w/o "+"
+		},
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                     // fake ak/sk
+			secretAccessKey: "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // with "+"
+		},
+	}
+
+	for _, c := range cases {
+		storageRawURL := c.url
+		storageURL, err := ParseRawURL(storageRawURL)
+		require.NoError(t, err)
+
+		require.Equal(t, c.schema, storageURL.Scheme)
+		require.Equal(t, c.host, storageURL.Host)
+		require.Equal(t, c.path, storageURL.Path)
+
+		require.Equal(t, 1, len(storageURL.Query()["access-key"]))
+		accessKey := storageURL.Query()["access-key"][0]
+		require.Equal(t, c.accessKey, accessKey)
+
+		require.Equal(t, 1, len(storageURL.Query()["secret-access-key"]))
+		secretAccessKey := storageURL.Query()["secret-access-key"][0]
+		require.Equal(t, c.secretAccessKey, secretAccessKey)
+	}
 }

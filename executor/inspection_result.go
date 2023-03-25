@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/exp/slices"
 )
@@ -425,23 +426,17 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 }
 
 func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, error) {
-	const KB = uint64(1024)
-	const MB = KB * 1024
-	const GB = MB * 1024
-	const TB = GB * 1024
-	const PB = TB * 1024
-
 	rate := uint64(1)
 	if strings.HasSuffix(sizeStr, "KiB") {
-		rate = KB
+		rate = size.KB
 	} else if strings.HasSuffix(sizeStr, "MiB") {
-		rate = MB
+		rate = size.MB
 	} else if strings.HasSuffix(sizeStr, "GiB") {
-		rate = GB
+		rate = size.GB
 	} else if strings.HasSuffix(sizeStr, "TiB") {
-		rate = TB
+		rate = size.TB
 	} else if strings.HasSuffix(sizeStr, "PiB") {
-		rate = PB
+		rate = size.PB
 	}
 	if rate != 1 && len(sizeStr) > 3 {
 		sizeStr = sizeStr[:len(sizeStr)-3]

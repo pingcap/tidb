@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -27,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -141,11 +144,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, int(ndv))
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -182,11 +185,11 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
+	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.statsInfo())
+	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, NDV)
+	concurrency = mathutil.Min(concurrency, int(ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -194,7 +197,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		Tails:        []PhysicalPlan{tail},
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -274,6 +277,12 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
+	// deriveTopN derives an implicit TopN from a filter on row_number window function..
+	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
+
+	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
+	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
@@ -328,8 +337,11 @@ type LogicalPlan interface {
 type PhysicalPlan interface {
 	Plan
 
-	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
-	GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error)
+	// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
+	getPlanCostVer1(taskType property.TaskType, option *PlanCostOption) (float64, error)
+
+	// getPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
+	getPlanCostVer2(taskType property.TaskType, option *PlanCostOption) (costVer2, error)
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -338,7 +350,7 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
 
-	// getChildReqProps gets the required property by child index.
+	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
@@ -347,7 +359,7 @@ type PhysicalPlan interface {
 	// ExtractCorrelatedCols extracts correlated columns inside the PhysicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
-	// Get all the children.
+	// Children get all the children.
 	Children() []PhysicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -362,13 +374,8 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
-	// Cost returns the estimated cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	Cost() float64
-
-	// SetCost set the cost of the subplan.
-	// Deprecated: use the new method GetPlanCost
-	SetCost(cost float64)
+	// SetStats sets basePlan.stats inside the basePhysicalPlan.
+	SetStats(s *property.StatsInfo)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
@@ -379,6 +386,58 @@ type PhysicalPlan interface {
 	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
 	appendChildCandidate(op *physicalOptimizeOp)
+
+	// MemoryUsage return the memory usage of PhysicalPlan
+	MemoryUsage() int64
+
+	// Below three methods help to handle the inconsistency between row count in the statsInfo and the recorded
+	// actual row count.
+	// For the children in the inner side (probe side) of Index Join and Apply, the row count in the statsInfo
+	// means the estimated row count for a single "probe", but the recorded actual row count is the total row
+	// count for all "probes".
+	// To handle this inconsistency without breaking anything else, we added a field `probeParents` of
+	// type `[]PhysicalPlan` into all PhysicalPlan to record all operators that are (indirect or direct) parents
+	// of this PhysicalPlan and will cause this inconsistency.
+	// Using this information, we can convert the row count between the "single probe" row count and "all probes"
+	// row count freely.
+
+	// setProbeParents sets the above stated `probeParents` field.
+	setProbeParents([]PhysicalPlan)
+	// getEstRowCountForDisplay uses the "single probe" row count in statsInfo and the probeParents to calculate
+	// the "all probe" row count.
+	// All places that display the row count for a PhysicalPlan are expected to use this method.
+	getEstRowCountForDisplay() float64
+	// getEstRowCountForDisplay uses the runtime stats and the probeParents to calculate the actual "probe" count.
+	getActualProbeCnt(*execdetails.RuntimeStatsColl) int64
+}
+
+// NewDefaultPlanCostOption returns PlanCostOption
+func NewDefaultPlanCostOption() *PlanCostOption {
+	return &PlanCostOption{}
+}
+
+// PlanCostOption indicates option during GetPlanCost
+type PlanCostOption struct {
+	CostFlag uint64
+	tracer   *physicalOptimizeOp
+}
+
+// WithCostFlag set costflag
+func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.CostFlag = flag
+	return op
+}
+
+// WithOptimizeTracer set tracer
+func (op *PlanCostOption) WithOptimizeTracer(tracer *physicalOptimizeOp) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.tracer = tracer
+	return op
 }
 
 type baseLogicalPlan struct {
@@ -416,8 +475,44 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *baseLogicalPlan) ExplainInfo() string {
+func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
+}
+
+func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
+	res := float64(1)
+	for _, pp := range probeParents {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outer := pp.Children()[1-join.getInnerChildIdx()]
+				res *= outer.statsInfo().RowCount
+			}
+		}
+	}
+	return res
+}
+
+func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
+	res := int64(1)
+	for _, pp := range pps {
+		switch pp.(type) {
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
+				outerChildID := pp.Children()[1-join.getInnerChildIdx()].ID()
+				actRows := int64(1)
+				if statsColl.ExistsRootStats(outerChildID) {
+					actRows = statsColl.GetRootStats(outerChildID).GetActRows()
+				}
+				if statsColl.ExistsCopStats(outerChildID) {
+					actRows = statsColl.GetCopStats(outerChildID).GetActRows()
+				}
+				// TODO: For PhysicalApply, we need to consider cache hit ratio in JoinRuntimeStats and use actRows/(1-ratio) here.
+				res *= actRows
+			}
+		}
+	}
+	return res
 }
 
 type basePhysicalPlan struct {
@@ -426,11 +521,15 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
-	cost             float64
 
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -438,21 +537,12 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-// Cost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) Cost() float64 {
-	return p.cost
-}
-
-// SetCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) SetCost(cost float64) {
-	p.cost = cost
-}
-
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		basePlan:                             p.basePlan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		probeParents:                         p.probeParents,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
@@ -476,12 +566,12 @@ func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalPlan) ExplainInfo() string {
+func (*basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
 // ExplainNormalizedInfo implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
+func (*basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
 
@@ -490,26 +580,63 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
+}
+
+// MemoryUsage return the memory usage of basePhysicalPlan
+func (p *basePhysicalPlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.childrenReqProps))*size.SizeOfPointer +
+		size.SizeOfSlice + int64(cap(p.children)+1)*size.SizeOfInterface + size.SizeOfFloat64 +
+		size.SizeOfUint64 + size.SizeOfBool
+
+	for _, prop := range p.childrenReqProps {
+		sum += prop.MemoryUsage()
+	}
+	for _, plan := range p.children {
+		sum += plan.MemoryUsage()
+	}
+	return
+}
+
+func (p *basePhysicalPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *basePhysicalPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *basePhysicalPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
 func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
-	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
+	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS++
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
-func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
+func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 	if !p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
 		// Rollback all the logs with TimeStamp TS.
-		N := len(p.taskMapBak)
-		for i := 0; i < N; i++ {
+		n := len(p.taskMapBak)
+		for i := 0; i < n; i++ {
 			cur := p.taskMapBak[i]
-			if p.taskMapBakTS[i] < TS {
+			if p.taskMapBakTS[i] < ts {
 				continue
 			}
 
@@ -517,14 +644,14 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
 			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
 			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
 			i--
-			N--
+			n--
 
 			// Roll back taskMap.
 			p.taskMap[cur] = nil
 		}
 	}
 	for _, child := range p.children {
-		child.rollBackTaskMap(TS)
+		child.rollBackTaskMap(ts)
 	}
 }
 
@@ -537,8 +664,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetLogicalTS4TaskMap()
-		p.taskMapBakTS = append(p.taskMapBakTS, TS)
+		ts := p.GetLogicalTS4TaskMap()
+		p.taskMapBakTS = append(p.taskMapBakTS, ts)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
 	p.taskMap[string(key)] = task
@@ -570,7 +697,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
@@ -601,11 +728,10 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
-	ctx.GetSessionVars().PlanID++
-	id := ctx.GetSessionVars().PlanID
+	id := ctx.GetSessionVars().PlanID.Add(1)
 	return basePlan{
 		tp:          tp,
-		id:          id,
+		id:          int(id),
 		ctx:         ctx,
 		blockOffset: offset,
 	}
@@ -628,7 +754,7 @@ func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, o
 	}
 }
 
-func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
@@ -651,15 +777,13 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() types.NameSlice {
+func (*basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(names types.NameSlice) {
-}
+func (*basePlan) SetOutputNames(_ types.NameSlice) {}
 
-func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
-}
+func (*basePlan) replaceExprColumns(_ map[string]*expression.Column) {}
 
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
@@ -672,7 +796,7 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePlan) ExplainInfo() string {
+func (*basePlan) ExplainInfo() string {
 	return "N/A"
 }
 
@@ -697,6 +821,24 @@ func (p *basePlan) SelectBlockOffset() int {
 // Stats implements Plan Stats interface.
 func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
+}
+
+// SetStats sets basePlan.stats
+func (p *basePlan) SetStats(s *property.StatsInfo) {
+	p.stats = s
+}
+
+// basePlanSize is the size of basePlan.
+const basePlanSize = int64(unsafe.Sizeof(basePlan{}))
+
+// MemoryUsage return the memory usage of basePlan
+func (p *basePlan) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = basePlanSize + int64(len(p.tp))
+	return sum
 }
 
 // Schema implements Plan Schema interface.
@@ -754,7 +896,7 @@ func (p *basePlan) SCtx() sessionctx.Context {
 
 // buildPlanTrace implements Plan
 func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.self.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
 	}
@@ -784,11 +926,11 @@ func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
 	for _, child := range p.Children() {
 		childCandidate := &tracing.CandidatePlanTrace{
 			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
-				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+				ExplainInfo: child.ExplainInfo()},
 		}
 		op.tracer.AppendCandidate(childCandidate)
 		child.appendChildCandidate(op)
 		childrenID = append(childrenID, child.ID())
 	}
-	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
+	op.tracer.Candidates[p.ID()].PlanTrace.AppendChildrenID(childrenID...)
 }

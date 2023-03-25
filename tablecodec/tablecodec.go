@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -209,6 +211,15 @@ func EncodeMetaKey(key []byte, field []byte) kv.Key {
 	return ek
 }
 
+// EncodeMetaKeyPrefix encodes the key prefix into meta key
+func EncodeMetaKeyPrefix(key []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8)
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	return ek
+}
+
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64
@@ -268,7 +279,16 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
 	if !key.HasPrefix(tablePrefix) {
-		return 0
+		// If the key is in API V2, then ignore the prefix
+		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return 0
+		}
+		key = k
+		if !key.HasPrefix(tablePrefix) {
+			return 0
+		}
 	}
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
@@ -896,8 +916,9 @@ func getIndexVersion(value []byte) int {
 }
 
 // DecodeIndexKV uses to decode index key values.
-//   `colsLen` is expected to be index columns count.
-//   `columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
+//
+//	`colsLen` is expected to be index columns count.
+//	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
@@ -1037,6 +1058,9 @@ func IsUntouchedIndexKValue(k, v []byte) bool {
 		return false
 	}
 	vLen := len(v)
+	if IsTempIndexKey(k) {
+		return vLen > 0 && v[vLen-1] == kv.UnCommitIndexKVFlag
+	}
 	if vLen <= MaxOldEncodeValueLen {
 		return (vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag
 	}
@@ -1124,55 +1148,284 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
+// TempIndexPrefix used to generate temporary index ID from index ID.
+const TempIndexPrefix = 0x7fff000000000000
+
+// IndexIDMask used to get index id from index ID/temp index ID.
+const IndexIDMask = 0xffffffffffff
+
+// IndexKey2TempIndexKey generates a temporary index key.
+func IndexKey2TempIndexKey(key []byte) {
+	idxIDBytes := key[prefixLen : prefixLen+idLen]
+	idxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(idxIDBytes))
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | idxID)
+	binary.BigEndian.PutUint64(key[prefixLen:], eid)
+}
+
+// TempIndexKey2IndexKey generates an index key from temporary index key.
+func TempIndexKey2IndexKey(tempIdxKey []byte) {
+	tmpIdxIDBytes := tempIdxKey[prefixLen : prefixLen+idLen]
+	tempIdxID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(tmpIdxIDBytes))
+	eid := codec.EncodeIntToCmpUint(tempIdxID & IndexIDMask)
+	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
+}
+
+// IsTempIndexKey checks whether the input key is for a temp index.
+func IsTempIndexKey(indexKey []byte) (isTemp bool) {
+	indexIDKey := indexKey[prefixLen : prefixLen+8]
+	indexID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
+	tempIndexID := int64(TempIndexPrefix) | indexID
+	return tempIndexID == indexID
+}
+
+// TempIndexValueFlag is the flag of temporary index value.
+type TempIndexValueFlag byte
+
+const (
+	// TempIndexValueFlagNormal means the following value is a distinct the normal index value.
+	TempIndexValueFlagNormal TempIndexValueFlag = iota
+	// TempIndexValueFlagNonDistinctNormal means the following value is the non-distinct normal index value.
+	TempIndexValueFlagNonDistinctNormal
+	// TempIndexValueFlagDeleted means the following value is the distinct and deleted index value.
+	TempIndexValueFlagDeleted
+	// TempIndexValueFlagNonDistinctDeleted means the following value is the non-distinct deleted index value.
+	TempIndexValueFlagNonDistinctDeleted
+)
+
+// TempIndexValue is the value of temporary index.
+// It contains one or more element, each element represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+//
+// The temp index value is encoded as:
+//   - [element 1][element 2]...[element n] {for distinct values}
+//   - [element 1]                          {for non-distinct values}
+type TempIndexValue []*TempIndexValueElem
+
+// IsEmpty checks whether the value is empty.
+func (v TempIndexValue) IsEmpty() bool {
+	return len(v) == 0
+}
+
+// Current returns the current latest temp index value.
+func (v TempIndexValue) Current() *TempIndexValueElem {
+	return v[len(v)-1]
+}
+
+// FilterOverwritten is used by the temp index merge process to remove the overwritten index operations.
+// For example, the value {temp_idx_key -> [h2, h2d, h3, h1d]} recorded four operations on the original index.
+// Since 'h2d' overwrites 'h2', we can remove 'h2' from the value.
+func (v TempIndexValue) FilterOverwritten() TempIndexValue {
+	if len(v) <= 1 || !v[0].Distinct {
+		return v
+	}
+	occurred := kv.NewHandleMap()
+	for i := len(v) - 1; i >= 0; i-- {
+		if _, ok := occurred.Get(v[i].Handle); !ok {
+			occurred.Set(v[i].Handle, struct{}{})
+		} else {
+			v[i] = nil
+		}
+	}
+	ret := v[:0]
+	for _, elem := range v {
+		if elem != nil {
+			ret = append(ret, elem)
+		}
+	}
+	return ret
+}
+
+// TempIndexValueElem represents a history index operations on the original index.
+// A temp index value element is encoded as one of:
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
+type TempIndexValueElem struct {
+	Value    []byte
+	Handle   kv.Handle
+	KeyVer   byte
+	Delete   bool
+	Distinct bool
+}
+
+// Encode encodes the temp index value.
+func (v *TempIndexValueElem) Encode(buf []byte) []byte {
+	if v.Delete {
+		if v.Distinct {
+			handle := v.Handle
+			var hEncoded []byte
+			var hLen uint16
+			if handle.IsInt() {
+				hEncoded = codec.EncodeUint(hEncoded, uint64(handle.IntValue()))
+				hLen = 8
+			} else {
+				hEncoded = handle.Encoded()
+				hLen = uint16(len(hEncoded))
+			}
+			// flag + handle length + handle + temp key version
+			if buf == nil {
+				buf = make([]byte, 0, hLen+4)
+			}
+			buf = append(buf, byte(TempIndexValueFlagDeleted))
+			buf = append(buf, byte(hLen>>8), byte(hLen))
+			buf = append(buf, hEncoded...)
+			buf = append(buf, v.KeyVer)
+			return buf
+		}
+		// flag + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, 2)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNonDistinctDeleted))
+		buf = append(buf, v.KeyVer)
+		return buf
+	}
+	if v.Distinct {
+		// flag + value length + value + temp key version
+		if buf == nil {
+			buf = make([]byte, 0, len(v.Value)+4)
+		}
+		buf = append(buf, byte(TempIndexValueFlagNormal))
+		vLen := uint16(len(v.Value))
+		buf = append(buf, byte(vLen>>8), byte(vLen))
+		buf = append(buf, v.Value...)
+		buf = append(buf, v.KeyVer)
+		return buf
+	}
+	// flag + value + temp key version
+	if buf == nil {
+		buf = make([]byte, 0, len(v.Value)+2)
+	}
+	buf = append(buf, byte(TempIndexValueFlagNonDistinctNormal))
+	buf = append(buf, v.Value...)
+	buf = append(buf, v.KeyVer)
+	return buf
+}
+
+// DecodeTempIndexValue decodes the temp index value.
+func DecodeTempIndexValue(value []byte) (TempIndexValue, error) {
+	var (
+		values []*TempIndexValueElem
+		err    error
+	)
+	for len(value) > 0 {
+		v := &TempIndexValueElem{}
+		value, err = v.DecodeOne(value)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// DecodeOne decodes one temp index value element.
+func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
+	flag := TempIndexValueFlag(b[0])
+	b = b[1:]
+	switch flag {
+	case TempIndexValueFlagNormal:
+		vLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		v.Value = b[:vLen]
+		b = b[vLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		return b, err
+	case TempIndexValueFlagNonDistinctNormal:
+		v.Value = b[:len(b)-1]
+		v.KeyVer = b[len(b)-1]
+		return nil, nil
+	case TempIndexValueFlagDeleted:
+		hLen := (uint16(b[0]) << 8) + uint16(b[1])
+		b = b[2:]
+		if hLen == idLen {
+			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
+		} else {
+			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
+		}
+		b = b[hLen:]
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Distinct = true
+		v.Delete = true
+		return b, nil
+	case TempIndexValueFlagNonDistinctDeleted:
+		v.KeyVer = b[0]
+		b = b[1:]
+		v.Delete = true
+		return b, nil
+	default:
+		return nil, errors.New("invalid temp index value")
+	}
+}
+
+// TempIndexValueIsUntouched returns true if the value is untouched.
+// All the temp index value has the suffix of temp key version.
+// All the temp key versions differ from the uncommitted KV flag.
+func TempIndexValueIsUntouched(b []byte) bool {
+	if len(b) > 0 && b[len(b)-1] == kv.UnCommitIndexKVFlag {
+		return true
+	}
+	return false
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
-//		+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
-//		|
-//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
-//		|  Length:   1     | len(options) | len(padding) |    8        |     1
-//		|
-//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
-//		|  IntHandle:     Only exists when table use int handles and index is unique.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		+-- Old Encoding (without restore data, integer handle, local)
-//		|
-//		|  Layout: [Handle] | [UntouchedFlag]
-//		|  Length:   8      |     1
-//		|
-//		|  Handle:        Only exists in unique index.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		|  Length of value <= 9, use to distinguish from the new encoding.
-// 		|
-//		+-- IndexValueForClusteredIndexVersion1
-//		|
-//		|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
-//		|  Length:   1     |        1        |      1         |  len(options) |         1
-//		|
-//		|  TailLen:       len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  Layout of Options:
-//		|
-//		|     Segment:             Common Handle                 |     Global Index      |   New Collation
-// 		|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
-//		|
-//		|     Common Handle Segment: Exists when unique index used common handles.
-//		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
-//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
-//		|     The restored data contains both the values of a and b.
-//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
-//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
-//		|     and the restored data together to restore original data.
+//
+//	+-- IndexValueVersion0  (with restore data, or common handle, or index is global)
+//	|
+//	|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//	|  Length:   1     | len(options) | len(padding) |    8        |     1
+//	|
+//	|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//	|  IntHandle:     Only exists when table use int handles and index is unique.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	+-- Old Encoding (without restore data, integer handle, local)
+//	|
+//	|  Layout: [Handle] | [UntouchedFlag]
+//	|  Length:   8      |     1
+//	|
+//	|  Handle:        Only exists in unique index.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//	|  Length of value <= 9, use to distinguish from the new encoding.
+//	|
+//	+-- IndexValueForClusteredIndexVersion1
+//	|
+//	|  Layout: TailLen |    VersionFlag  |    Version     ｜ Options      |   [UntouchedFlag]
+//	|  Length:   1     |        1        |      1         |  len(options) |         1
+//	|
+//	|  TailLen:       len(UntouchedFlag)
+//	|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//	|                 See below for more information.
+//	|  UntouchedFlag: Only exists when index is untouched.
+//	|
+//	|  Layout of Options:
+//	|
+//	|     Segment:             Common Handle                 |     Global Index      |   New Collation
+//	|     Layout:  CHandle flag | CHandle Len | CHandle      | PidFlag | PartitionID |    restoreData
+//	|     Length:     1         | 2           | len(CHandle) |    1    |    8        |   len(restoreData)
+//	|
+//	|     Common Handle Segment: Exists when unique index used common handles.
+//	|     Global Index Segment:  Exists when index is global.
+//	|     New Collation Segment: Exists when new collation is used and index or handle contains non-binary string.
+//	|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
+//	|     The restored data contains both the values of a and b.
+//	|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
+//	|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
+//	|     and the restored data together to restore original data.
 func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
@@ -1579,4 +1832,44 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		resultValues = append(resultValues, pidBytes)
 	}
 	return resultValues, nil
+}
+
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouched flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
+}
+
+// VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.
+func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
+	tids := make([]int64, 0, keyRanges.PartitionNum())
+	collectFunc := func(ranges []kv.KeyRange, _ []int) error {
+		if len(ranges) == 0 {
+			return nil
+		}
+		tid := DecodeTableID(ranges[0].StartKey)
+		if tid <= 0 {
+			return errors.New("Incorrect keyRange is constrcuted")
+		}
+		tids = append(tids, tid)
+		for i := 1; i < len(ranges); i++ {
+			tmpTID := DecodeTableID(ranges[i].StartKey)
+			if tmpTID <= 0 {
+				return errors.New("Incorrect keyRange is constrcuted")
+			}
+			if tid != tmpTID {
+				return errors.Errorf("Using multi partition's ranges as single table's")
+			}
+		}
+		return nil
+	}
+	err := keyRanges.ForEachPartitionWithErr(collectFunc)
+	return tids, err
 }

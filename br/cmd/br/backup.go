@@ -11,8 +11,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -25,12 +26,25 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+		return errors.Trace(err)
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.IgnoreStats {
 		// Do not run stat worker in BR.
 		session.DisableStats4Test()
@@ -78,7 +92,7 @@ func NewBackupCommand() *cobra.Command {
 			task.LogArguments(c)
 
 			// Do not run ddl worker in BR.
-			ddl.RunWorker = false
+			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
 
 			summary.SetUnit(summary.BackupUnit)
 			return nil
@@ -109,6 +123,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
 

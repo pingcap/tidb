@@ -72,8 +72,8 @@ type GlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
-	s = new(GlobalKillSuite)
+func createGloabalKillSuite(t *testing.T) *GlobalKillSuite {
+	s := new(GlobalKillSuite)
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
@@ -81,14 +81,14 @@ func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
 	err = s.startCluster()
 	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
-	clean = func() {
+	t.Cleanup(func() {
 		if s.pdCli != nil {
 			require.NoError(t, err)
 		}
 		require.NoError(t, s.cleanCluster())
-	}
+	})
 
-	return
+	return s
 }
 
 func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
@@ -366,7 +366,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 	startTS := time.Now()
 	sql := fmt.Sprintf("SELECT SLEEP(%d);", sleepTime)
 	if connID > 0 {
-		log.Info("exec sql", zap.String("sql", sql), zap.String("connID", "0x"+strconv.FormatUint(connID, 16)))
+		log.Info("exec sql", zap.String("sql", sql), zap.String("conn", "0x"+strconv.FormatUint(connID, 16)))
 	} else {
 		log.Info("exec sql", zap.String("sql", sql))
 	}
@@ -429,8 +429,7 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -456,8 +455,7 @@ func TestWithoutPD(t *testing.T) {
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -485,8 +483,7 @@ func TestOneTiDB(t *testing.T) {
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
@@ -532,8 +529,7 @@ func TestMultipleTiDB(t *testing.T) {
 }
 
 func TestLostConnection(t *testing.T) {
-	s, clean := createGloabalKillSuite(t)
-	defer clean()
+	s := createGloabalKillSuite(t)
 	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1

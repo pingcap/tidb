@@ -26,22 +26,10 @@ import (
 
 var (
 	// PanicCounter measures the count of panics.
-	PanicCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "panic_total",
-			Help:      "Counter of panic.",
-		}, []string{LblType})
+	PanicCounter *prometheus.CounterVec
 
 	// MemoryUsage measures the usage gauge of memory.
-	MemoryUsage = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "memory_usage",
-			Help:      "Memory Usage",
-		}, []string{LblModule, LblType})
+	MemoryUsage *prometheus.GaugeVec
 )
 
 // metrics labels.
@@ -51,6 +39,7 @@ const (
 	LabelDDLOwner  = "ddl-owner"
 	LabelDDL       = "ddl"
 	LabelDDLWorker = "ddl-worker"
+	LabelDistReorg = "dist-reorg"
 	LabelDDLSyncer = "ddl-syncer"
 	LabelGCWorker  = "gcworker"
 	LabelAnalyze   = "analyze"
@@ -76,6 +65,47 @@ func RetLabel(err error) string {
 		return opSucc
 	}
 	return opFailed
+}
+
+func init() {
+	InitMetrics()
+}
+
+// InitMetrics is used to initialize metrics.
+func InitMetrics() {
+	InitBindInfoMetrics()
+	InitDDLMetrics()
+	InitDistSQLMetrics()
+	InitDomainMetrics()
+	InitExecutorMetrics()
+	InitGCWorkerMetrics()
+	InitLogBackupMetrics()
+	InitMetaMetrics()
+	InitOwnerMetrics()
+	InitResourceManagerMetrics()
+	InitServerMetrics()
+	InitSessionMetrics()
+	InitSliMetrics()
+	InitStatsMetrics()
+	InitTelemetryMetrics()
+	InitTopSQLMetrics()
+	InitTTLMetrics()
+
+	PanicCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	MemoryUsage = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
+		}, []string{LblModule, LblType})
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
@@ -114,6 +144,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
+	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(SignificantFeedbackCounter)
@@ -123,7 +154,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SyncLoadHistogram)
 	prometheus.MustRegister(ReadStatsHistogram)
 	prometheus.MustRegister(JobsGauge)
-	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
 	prometheus.MustRegister(InfoCacheCounters)
 	prometheus.MustRegister(LoadSchemaCounter)
@@ -134,10 +164,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PlanCacheMissCounter)
+	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
+	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
 	prometheus.MustRegister(SessionExecuteCompileDuration)
@@ -178,6 +211,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(TiFlashFailedMPPStoreState)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
@@ -189,7 +223,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
-	prometheus.MustRegister(NonTransactionalDeleteCount)
+	prometheus.MustRegister(NonTransactionalDMLCount)
+	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -202,6 +238,25 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GetCheckpointBatchSize)
 	prometheus.MustRegister(RegionCheckpointRequest)
 	prometheus.MustRegister(RegionCheckpointFailure)
+	prometheus.MustRegister(AutoIDReqDuration)
+	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
+	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
+	prometheus.MustRegister(FairLockingUsageCount)
+
+	prometheus.MustRegister(TTLQueryDuration)
+	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
+	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLTaskStatus)
+	prometheus.MustRegister(TTLPhaseTime)
+	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
+
+	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
+
+	prometheus.MustRegister(HistoricalStatsCounter)
+	prometheus.MustRegister(PlanReplayerTaskCounter)
+	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
@@ -224,8 +279,9 @@ func ToggleSimplifiedMode(simplified bool) {
 		InfoCacheCounters,
 		ReadFromTableCacheCounter,
 		TiFlashQueryTotalCounter,
+		TiFlashFailedMPPStoreState,
 		CampaignOwnerCounter,
-		NonTransactionalDeleteCount,
+		NonTransactionalDMLCount,
 		MemoryUsage,
 		TokenGauge,
 		tikvmetrics.TiKVRawkvSizeHistogram,

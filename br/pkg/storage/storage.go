@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -32,8 +33,9 @@ const (
 type WalkOption struct {
 	// walk on SubDir of specify directory
 	SubDir string
-	// ObjPrefix used fo prefix search in storage.
-	// it can save lots of time when we want find specify prefix objects in storage.
+	// ObjPrefix used fo prefix search in storage. Note that only part of storage
+	// support it.
+	// It can save lots of time when we want find specify prefix objects in storage.
 	// For example. we have 10000 <Hash>.sst files and 10 backupmeta.(\d+) files.
 	// we can use ObjPrefix = "backupmeta" to retrieve all meta files quickly.
 	ObjPrefix string
@@ -135,6 +137,14 @@ type ExternalStorageOptions struct {
 	// CheckPermissions check the given permission in New() function.
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
+
+	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// defaultS3Retryer() will be used.
+	S3Retryer request.Retryer
+
+	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
+	// if enabled. it will send the options to tikv.
+	CheckS3ObjectLockOptions bool
 }
 
 // Create creates ExternalStorage.
@@ -149,6 +159,9 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // New creates an ExternalStorage with options.
 func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalStorageOptions) (ExternalStorage, error) {
+	if opts == nil {
+		opts = &ExternalStorageOptions{}
+	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
 		if backend.Local == nil {
@@ -164,14 +177,14 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		return newS3Storage(backend.S3, opts)
+		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
-		return newGCSStorage(ctx, backend.Gcs, opts)
+		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:

@@ -22,7 +22,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -47,7 +46,7 @@ func (c *Column) appendNameValue(name string, val uint64) {
 }
 
 // AppendJSON appends a BinaryJSON value into this Column.
-func (c *Column) AppendJSON(j json.BinaryJSON) {
+func (c *Column) AppendJSON(j types.BinaryJSON) {
 	c.data = append(c.data, j.TypeCode)
 	c.data = append(c.data, j.Value...)
 	c.finishAppendVar()
@@ -333,12 +332,23 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal byte
+		var nullVal, lastByte byte
 		if !isNull {
 			nullVal = 0xFF
 		}
+
+		// Fill the null bitmap
 		for i := range c.nullBitmap {
 			c.nullBitmap[i] = nullVal
+		}
+		// Revise the last byte if necessary, when it's not divided by 8.
+		if x := (n % 8); x != 0 {
+			if !isNull {
+				lastByte = byte((1 << x) - 1)
+				if len(c.nullBitmap) > 0 {
+					c.nullBitmap[len(c.nullBitmap)-1] = lastByte
+				}
+			}
 		}
 	}
 
@@ -568,9 +578,9 @@ func (c *Column) GetString(rowID int) string {
 }
 
 // GetJSON returns the JSON in the specific row.
-func (c *Column) GetJSON(rowID int) json.BinaryJSON {
+func (c *Column) GetJSON(rowID int) types.BinaryJSON {
 	start := c.offsets[rowID]
-	return json.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
+	return types.BinaryJSON{TypeCode: c.data[start], Value: c.data[start+1 : c.offsets[rowID+1]]}
 }
 
 // GetBytes returns the byte slice in the specific row.

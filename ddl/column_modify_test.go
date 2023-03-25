@@ -24,17 +24,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -47,8 +46,7 @@ import (
 const columnModifyLease = 600 * time.Millisecond
 
 func TestAddAndDropColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -258,8 +256,7 @@ DropLoop:
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consisted with Table.Col(), then the server will panic.
 func TestDropColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -292,13 +289,11 @@ func TestDropColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	err := tk.ExecToErr("alter table t1 drop column a")
-	// TODO: refine the error message to compatible with MySQL
-	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'expression'")
+	require.EqualError(t, err, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestChangeColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -383,8 +378,7 @@ func TestChangeColumn(t *testing.T) {
 }
 
 func TestRenameColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -408,15 +402,6 @@ func TestRenameColumn(t *testing.T) {
 
 	// Test renaming to an exist column.
 	tk.MustGetErrCode("alter table test_rename_column rename column col2 to id", errno.ErrDupFieldName)
-
-	// Test renaming the column with foreign key.
-	tk.MustExec("drop table test_rename_column")
-	tk.MustExec("create table test_rename_column_base (base int)")
-	tk.MustExec("create table test_rename_column (col int, foreign key (col) references test_rename_column_base(base))")
-
-	tk.MustGetErrCode("alter table test_rename_column rename column col to col1", errno.ErrFKIncompatibleColumns)
-
-	tk.MustExec("drop table test_rename_column_base")
 
 	// Test renaming generated columns.
 	tk.MustExec("drop table test_rename_column")
@@ -446,12 +431,11 @@ func TestRenameColumn(t *testing.T) {
 }
 
 func TestVirtualColumnDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
@@ -475,7 +459,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 
 	// for local temporary table
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
-	is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
 	require.NoError(t, err)
 	for i, column := range tbl.Meta().Columns {
@@ -492,8 +476,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 }
 
 func TestGeneratedColumnDDL(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -619,8 +602,7 @@ func TestGeneratedColumnDDL(t *testing.T) {
 }
 
 func TestColumnModifyingDefinition(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
@@ -644,8 +626,7 @@ func TestColumnModifyingDefinition(t *testing.T) {
 }
 
 func TestColumnModifyingDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -668,8 +649,7 @@ func TestColumnModifyingDefaultValue(t *testing.T) {
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -684,7 +664,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 		},
 	}
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -708,7 +688,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
@@ -716,7 +696,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExec(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "test", "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
@@ -724,8 +704,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 }
 
 func TestColumnCheck(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists column_check")
@@ -736,8 +715,7 @@ func TestColumnCheck(t *testing.T) {
 }
 
 func TestModifyGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
@@ -797,8 +775,7 @@ func TestModifyGeneratedColumn(t *testing.T) {
 }
 
 func TestCheckColumnDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists text_default_text;")
@@ -849,8 +826,7 @@ func TestCheckColumnDefaultValue(t *testing.T) {
 }
 
 func TestCheckConvertToCharacter(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(10) charset binary);")
@@ -864,8 +840,7 @@ func TestCheckConvertToCharacter(t *testing.T) {
 }
 
 func TestAddMultiColumnsIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists tidb;")
 	tk.MustExec("create database tidb;")
@@ -886,8 +861,7 @@ func TestAddMultiColumnsIndex(t *testing.T) {
 
 // For issue #31735.
 func TestAddGeneratedColumnAndInsert(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -898,12 +872,12 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 	tk1.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
 	var checkErr error
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -928,6 +902,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column gc int as ((a+1))")
@@ -936,17 +911,16 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 }
 
 func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
 	assertChangingIdxName := "_idx$_idx_0"
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				newCol                *model.ColumnInfo
@@ -969,6 +943,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	d.SetHook(hook)
 
@@ -1001,7 +976,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
 	query1 := "alter table t modify column _col$_c1 tinyint"
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				newCol                *model.ColumnInfo
@@ -1025,6 +1000,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(hook)
 
 	tk.MustExec("drop table if exists t")
@@ -1052,77 +1028,4 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")
-}
-
-func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
-	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
-
-	d := dom.DDL()
-	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
-		tk.MustExec("insert into t1 values (20, 20, 20);")
-
-		var checkErr error
-		tk1 := testkit.NewTestKit(t, store)
-		defer func() {
-			if tk1.Session() != nil {
-				tk1.Session().Close()
-			}
-		}()
-		hook := &ddl.TestDDLCallback{Do: dom}
-		times := 0
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != startColState {
-				return
-			}
-
-			tk1.MustExec("use test")
-			tk1.MustExec("begin pessimistic;")
-			tk1.MustExec("insert into t1 values(101, 102, 103)")
-		}
-		hook.OnJobUpdatedExported = func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
-				return
-			}
-			if times == 0 {
-				_, checkErr = tk1.Exec("commit;")
-			}
-			times++
-		}
-		d.SetHook(hook)
-
-		tk.MustExec(sql)
-		if retErr == nil {
-			require.NoError(t, checkErr)
-		} else {
-			require.Error(t, checkErr)
-			require.Contains(t, checkErr.Error(), retErr.Error())
-		}
-		tk.MustQuery("select * from t1").Check(testkit.Rows(retStrs...))
-		tk.MustExec("admin check table t1")
-	}
-
-	// Testing it needs reorg data.
-	ddlStatement := "alter table t1 change column c2 cc smallint;"
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-
-	// Testing it needs not reorg data. This case only have two states: none, public.
-	ddlStatement = "alter table t1 change column c2 cc bigint;"
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20", "101 102 103"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, nil)
 }

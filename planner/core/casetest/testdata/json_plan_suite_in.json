@@ -1,0 +1,12 @@
+[
+  {
+    "name": "TestJSONPlanInExplain",
+    "cases": [
+      "explain format = tidb_json update t2 set id = 1 where id =2",
+      "explain format = tidb_json insert into t1 values(1)",
+      "explain format = tidb_json select count(*) from t1",
+      "explain format = tidb_json select * from t1",
+      "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id"
+    ]
+  }
+]

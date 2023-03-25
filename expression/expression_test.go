@@ -75,8 +75,9 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
-	_, isScalarFunc := res.(*ScalarFunction)
-	require.True(t, isScalarFunc) // the expression with parameters is not evaluated
+	_, isConst := res.(*Constant)
+	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
@@ -276,4 +277,16 @@ func TestEvalExpr(t *testing.T) {
 			require.Equal(t, string(colBuf2.GetRaw(j)), string(colBuf.GetRaw(j)))
 		}
 	}
+}
+
+func TestExpressionMemeoryUsage(t *testing.T) {
+	c1 := &Column{OrigName: "Origin"}
+	c2 := Column{OrigName: "OriginName"}
+	require.Greater(t, c2.MemoryUsage(), c1.MemoryUsage())
+	c1 = nil
+	require.Equal(t, c1.MemoryUsage(), int64(0))
+
+	c3 := Constant{Value: types.NewIntDatum(1)}
+	c4 := Constant{Value: types.NewStringDatum("11")}
+	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
 }

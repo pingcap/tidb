@@ -16,13 +16,13 @@ package expression
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -48,6 +48,18 @@ func NewZero() *Constant {
 	retT.SetDecimal(0)
 	return &Constant{
 		Value:   types.NewDatum(0),
+		RetType: retT,
+	}
+}
+
+// NewUInt64Const stands for constant of a given number.
+func NewUInt64Const(num int) *Constant {
+	retT := types.NewFieldType(mysql.TypeLonglong)
+	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
+	retT.SetFlen(mysql.MaxIntWidth)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(num),
 		RetType: retT,
 	}
 }
@@ -331,16 +343,16 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val type
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
 	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
-		return json.BinaryJSON{}, false, err
+		return types.BinaryJSON{}, false, err
 	}
 	if !lazy {
 		dt = c.Value
 	}
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
 }
@@ -422,6 +434,11 @@ func (c *Constant) resolveIndicesByVirtualExpr(_ *Schema) bool {
 	return true
 }
 
+// RemapColumn remaps columns with provided mapping and returns new expression
+func (c *Constant) RemapColumn(_ map[int64]*Column) (Expression, error) {
+	return c, nil
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (c *Constant) Vectorized() bool {
 	if c.DeferredExpr != nil {
@@ -449,4 +466,19 @@ func (c *Constant) Coercibility() Coercibility {
 		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
 	return c.collationInfo.Coercibility()
+}
+
+const emptyConstantSize = int64(unsafe.Sizeof(Constant{}))
+
+// MemoryUsage return the memory usage of Constant
+func (c *Constant) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
+
+	sum = emptyConstantSize + c.Value.MemUsage() + int64(cap(c.hashcode))
+	if c.RetType != nil {
+		sum += c.RetType.MemoryUsage()
+	}
+	return
 }

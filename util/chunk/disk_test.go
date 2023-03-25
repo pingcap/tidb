@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +54,7 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 			chk.AppendNull(2)
 			chk.AppendInt64(3, data)
 			if chkIdx%2 == 0 {
-				chk.AppendJSON(4, json.CreateBinary(fmt.Sprint(data)))
+				chk.AppendJSON(4, types.CreateBinaryJSON(fmt.Sprint(data)))
 			} else {
 				chk.AppendNull(4)
 			}
@@ -80,7 +79,7 @@ func TestListInDisk(t *testing.T) {
 		err := l.Add(chk)
 		assert.NoError(t, err)
 	}
-	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "oom-use-tmp-storage")))
+	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
@@ -179,6 +178,9 @@ func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk
 
 func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flushForTest()
+	if err != nil {
+		return
+	}
 	off, err := l.getOffset(ptr.ChkIdx, ptr.RowIdx)
 	if err != nil {
 		return
@@ -257,6 +259,21 @@ func testListInDisk(t *testing.T, concurrency int) {
 		}()
 	}
 	wg.Wait()
+}
+
+func BenchmarkListInDisk_GetChunk(b *testing.B) {
+	numChk, numRow := 10, 1000
+	chks, fields := initChunks(numChk, numRow)
+	l := NewListInDisk(fields)
+	defer l.Close()
+	for _, chk := range chks {
+		_ = l.Add(chk)
+	}
+
+	for i := 0; i < b.N; i++ {
+		v := i % numChk
+		_, _ = l.GetChunk(v)
+	}
 }
 
 func TestListInDiskWithChecksum1(t *testing.T) {
@@ -343,15 +360,16 @@ func TestListInDiskWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
 // 4 B: checksum of this segment.
 // 8 B: all columns' length, in the following example, we will only have one column.
 // 1012 B: data in file. because max length of each segment is 1024, so we only have 1020B for user payload.
-//
-//           Data in File                                    Data in mem cache
-// +------+------------------------------------------+ +-----------------------------+
-// |      |    1020B payload                         | |                             |
-// |4Bytes| +---------+----------------------------+ | |                             |
-// |checksum|8B collen| 1012B user data            | | |  12B remained user data     |
-// |      | +---------+----------------------------+ | |                             |
-// |      |                                          | |                             |
-// +------+------------------------------------------+ +-----------------------------+
+/*
+           Data in File                                    Data in mem cache
+ +------+------------------------------------------+ +-----------------------------+
+ |      |    1020B payload                         | |                             |
+ |4Bytes| +---------+----------------------------+ | |                             |
+ |checksum|8B collen| 1012B user data            | | |  12B remained user data     |
+ |      | +---------+----------------------------+ | |                             |
+ |      |                                          | |                             |
+ +------+------------------------------------------+ +-----------------------------+
+*/
 func testReaderWithCache(t *testing.T) {
 	testData := "0123456789"
 	buf := bytes.NewBuffer(nil)

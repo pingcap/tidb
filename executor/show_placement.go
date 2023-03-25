@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/exp/slices"
@@ -39,7 +39,7 @@ type showPlacementLabelsResultBuilder struct {
 	labelKey2values map[string]interface{}
 }
 
-func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON) error {
+func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON) error {
 	if b.labelKey2values == nil {
 		b.labelKey2values = make(map[string]interface{})
 	}
@@ -53,7 +53,7 @@ func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON)
 		return nil
 	}
 
-	if bj.TypeCode != json.TypeCodeArray {
+	if bj.TypeCode != types.JSONTypeCodeArray {
 		return errors.New("only array or null type is allowed")
 	}
 
@@ -83,7 +83,7 @@ func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 			return nil, errors.Trace(err)
 		}
 
-		valuesJSON := json.BinaryJSON{}
+		valuesJSON := types.BinaryJSON{}
 		err = valuesJSON.UnmarshalJSON(d)
 		if err != nil {
 			return nil, errors.Trace(err)

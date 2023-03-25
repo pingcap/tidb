@@ -24,7 +24,6 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//types",
-        "//types/json",
         "//util/checksum",
         "//util/disk",
         "//util/encrypt",
@@ -34,6 +33,7 @@ go_library(
         "//util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_sys//cpu",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -64,7 +64,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util/collate",
         "//util/mathutil",
         "//util/memory",

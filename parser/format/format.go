@@ -56,21 +56,28 @@ var replace = map[rune]string{
 // nest. The Formatter writes to io.Writer 'w' and inserts one 'indent'
 // string per current indent level value.
 // Behaviour of commands reaching negative indent levels is undefined.
-//  IndentFormatter(os.Stdout, "\t").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
+//	IndentFormatter(os.Stdout, "\t").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
 // output:
-//  abc3%e
-//      x
-//      y
-//  z
+//
+//	abc3%e
+//	    x
+//	    y
+//	z
+//
 // The Go quoted string literal form of the above is:
-//  "abc%%e\n\tx\n\tx\nz\n"
+//
+//	"abc%%e\n\tx\n\tx\nz\n"
+//
 // The commands can be scattered between separate invocations of Format(),
 // i.e. the formatter keeps track of the indent level and knows if it is
 // positioned on start of a line and should emit indentation(s).
 // The same output as above can be produced by e.g.:
-//  f := IndentFormatter(os.Stdout, " ")
-//  f.Format("abc%d%%e%i\nx\n", 3)
-//  f.Format("y\n%uz\n")
+//
+//	f := IndentFormatter(os.Stdout, " ")
+//	f.Format("abc%d%%e%i\nx\n", 3)
+//	f.Format("y\n%uz\n")
 func IndentFormatter(w io.Writer, indent string) Formatter {
 	return &indentFormatter{w, []byte(indent), 0, stBOL}
 }
@@ -169,9 +176,12 @@ type flatFormatter indentFormatter
 //
 // The FlatFormatter is intended for flattening of normally nested structure textual representation to
 // a one top level structure per line form.
-//  FlatFormatter(os.Stdout, " ").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
+//	FlatFormatter(os.Stdout, " ").Format("abc%d%%e%i\nx\ny\n%uz\n", 3)
+//
 // output in the form of a Go quoted string literal:
-//  "abc3%%e x y z\n"
+//
+//	"abc3%%e x y z\n"
 func FlatFormatter(w io.Writer) Formatter {
 	return (*flatFormatter)(IndentFormatter(w, "").(*indentFormatter))
 }
@@ -225,6 +235,9 @@ const (
 
 	RestoreTiDBSpecialComment
 	SkipPlacementRuleForRestore
+	RestoreWithTTLEnableOff
+	RestoreWithoutSchemaName
+	RestoreWithoutTableName
 )
 
 const (
@@ -234,6 +247,16 @@ const (
 
 func (rf RestoreFlags) has(flag RestoreFlags) bool {
 	return rf&flag != 0
+}
+
+// HasWithoutSchemaNameFlag returns a boolean indicating when `rf` has `RestoreWithoutSchemaName` flag.
+func (rf RestoreFlags) HasWithoutSchemaNameFlag() bool {
+	return rf.has(RestoreWithoutSchemaName)
+}
+
+// HasWithoutTableNameFlag returns a boolean indicating when `rf` has `RestoreWithoutTableName` flag.
+func (rf RestoreFlags) HasWithoutTableNameFlag() bool {
+	return rf.has(RestoreWithoutTableName)
 }
 
 // HasStringSingleQuotesFlag returns a boolean indicating when `rf` has `RestoreStringSingleQuotes` flag.
@@ -309,6 +332,11 @@ func (rf RestoreFlags) HasTiDBSpecialCommentFlag() bool {
 // HasSkipPlacementRuleForRestoreFlag returns a boolean indicating whether `rf` has `SkipPlacementRuleForRestore` flag.
 func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
 	return rf.has(SkipPlacementRuleForRestore)
+}
+
+// HasRestoreWithTTLEnableOff returns a boolean indicating whether to force set TTL_ENABLE='OFF' when restoring a TTL table
+func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
+	return rf.has(RestoreWithTTLEnableOff)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.

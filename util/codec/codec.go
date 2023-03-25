@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
@@ -157,7 +156,12 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 	case types.KindString, types.KindBytes:
 		l = valueSizeOfBytes(val.GetBytes())
 	case types.KindMysqlDecimal:
-		l = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac()) + 1
+		var err error
+		l, err = valueSizeOfDecimal(val.GetMysqlDecimal(), val.Length(), val.Frac())
+		if err != nil {
+			return 0, err
+		}
+		l = l + 1
 	case types.KindMysqlEnum:
 		l = valueSizeOfUnsignedInt(val.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
@@ -316,7 +320,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if f == 0 {
 			f = 0
 		}
-		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
 	case mysql.TypeDouble:
 		flag = floatFlag
 		f := row.GetFloat64(idx)
@@ -325,7 +329,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if f == 0 {
 			f = 0
 		}
-		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
@@ -339,7 +343,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if err != nil {
 			return
 		}
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v))
 	case mysql.TypeDuration:
 		flag = durationFlag
 		// duration may have negative value, so we cannot use String to encode directly.
@@ -356,7 +360,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 			flag = uvarintFlag
 			v := row.GetEnum(idx).Value
-			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+			b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 		} else {
 			flag = compactBytesFlag
 			v := row.GetEnum(idx).Value
@@ -379,10 +383,11 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		flag = uvarintFlag
 		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
 		terror.Log(errors.Trace(err1))
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v))
 	case mysql.TypeJSON:
 		flag = jsonFlag
-		b = row.GetBytes(idx)
+		json := row.GetJSON(idx)
+		b = json.HashValue(b)
 	default:
 		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetType())
 	}
@@ -441,7 +446,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if d == 0 {
 					d = 0
 				}
-				b = (*[sizeFloat64]byte)(unsafe.Pointer(&d))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&d)), sizeFloat64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -466,7 +471,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if f == 0 {
 					f = 0
 				}
-				b = (*[sizeFloat64]byte)(unsafe.Pointer(&f))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -510,7 +515,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				if err != nil {
 					return
 				}
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -571,7 +576,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 				buf[0] = uvarintFlag
 				v := column.GetEnum(i).Value
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			} else {
 				buf[0] = compactBytesFlag
 				v := column.GetEnum(i).Value
@@ -623,7 +628,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0] = uvarintFlag
 				v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt(sc)
 				terror.Log(errors.Trace(err1))
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				b = unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -641,7 +646,9 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = jsonFlag
-				b = column.GetBytes(i)
+				json := column.GetJSON(i)
+				b = b[:0]
+				b = json.HashValue(b)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error..
@@ -848,11 +855,11 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		}
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return b, d, err
 		}
-		j := json.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
+		j := types.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
 		d.SetMysqlJSON(j)
 		b = b[size:]
 	case NilFlag:
@@ -913,6 +920,9 @@ func DecodeAsFloat32(b []byte, tp byte) (remain []byte, d types.Datum, err error
 	}
 	var v float64
 	b, v, err = DecodeFloat(b)
+	if err != nil {
+		return nil, d, err
+	}
 	d.SetFloat32FromF64(v)
 	return b, d, nil
 }
@@ -977,7 +987,7 @@ func peek(b []byte) (length int, err error) {
 	case uvarintFlag:
 		l, err = peekUvarint(b)
 	case jsonFlag:
-		l, err = json.PeekBytesAsJSON(b)
+		l, err = types.PeekBytesAsJSON(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
@@ -1144,11 +1154,11 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
-		size, err = json.PeekBytesAsJSON(b)
+		size, err = types.PeekBytesAsJSON(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
+		chk.AppendJSON(colIdx, types.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
 	case NilFlag:
 		chk.AppendNull(colIdx)
@@ -1318,8 +1328,7 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 }
 
 // HashCode encodes a Datum into a unique byte slice.
-// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
-// 	to make the encoding lossless.
+// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order to make the encoding lossless.
 func HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:

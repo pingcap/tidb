@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
@@ -166,7 +165,7 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 		return cmpNull(lNull, rNull)
 	}
 	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
-	return json.CompareBinary(lJ, rJ)
+	return types.CompareBinaryJSON(lJ, rJ)
 }
 
 // Compare compares the value with ad.
@@ -211,7 +210,7 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		return types.CompareUint64(l, r)
 	case types.KindMysqlJSON:
 		l, r := row.GetJSON(colIdx), ad.GetMysqlJSON()
-		return json.CompareBinary(l, r)
+		return types.CompareBinaryJSON(l, r)
 	case types.KindMysqlTime:
 		l, r := row.GetTime(colIdx), ad.GetMysqlTime()
 		return l.Compare(r)

@@ -7,6 +7,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -104,8 +105,16 @@ func TestChecksum(t *testing.T) {
 			first = false
 			ranges, err := backup.BuildTableRanges(tableInfo3)
 			require.NoError(t, err)
-			require.Equalf(t, ranges[:1], req.KeyRanges, "%v", req.KeyRanges)
+			require.Equalf(t, ranges[:1], req.KeyRanges.FirstPartitionRange(), "%v", req.KeyRanges.FirstPartitionRange())
 		}
 		return nil
 	}))
+
+	exe4, err := checksum.NewExecutorBuilder(tableInfo3, math.MaxUint64).Build()
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr", `1*return(true)`))
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr")
+	resp4, err := exe4.Execute(context.TODO(), mock.Storage.GetClient(), func() {})
+	require.NoError(t, err)
+	require.NotNil(t, resp4)
 }

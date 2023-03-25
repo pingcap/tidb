@@ -4,6 +4,7 @@ go_library(
     name = "util",
     srcs = [
         "byitem.go",
+        "misc.go",
         "path.go",
     ],
     importpath = "github.com/pingcap/tidb/planner/util",
@@ -17,6 +18,8 @@ go_library(
         "//types",
         "//util/collate",
         "//util/ranger",
+        "//util/size",
+        "@org_golang_x_exp//slices",
     ],
 )
 

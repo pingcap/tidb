@@ -6,12 +6,14 @@ go_library(
         "ddl.go",
         "flags.go",
         "model.go",
+        "reorg.go",
     ],
     importpath = "github.com/pingcap/tidb/parser/model",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/auth",
         "//parser/charset",
+        "//parser/duration",
         "//parser/mysql",
         "//parser/terror",
         "//parser/types",
@@ -21,12 +23,17 @@ go_library(
 
 go_test(
     name = "model_test",
-    srcs = ["model_test.go"],
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "model_test.go",
+    ],
     embed = [":model"],
     flaky = True,
     deps = [
         "//parser/charset",
         "//parser/mysql",
+        "//parser/terror",
         "//parser/types",
         "@com_github_stretchr_testify//require",
     ],

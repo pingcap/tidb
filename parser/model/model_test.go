@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -443,6 +442,19 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// test ActionFlashbackCluster with other ddl jobs are dependent.
+	job15 := &Job{
+		ID:         16,
+		Type:       ActionFlashbackCluster,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{0, map[string]interface{}{}, "ON", true},
+	}
+	job15.RawArgs, err = json.Marshal(job15.Args)
+	require.NoError(t, err)
+	isDependent, err = job.IsDependentOn(job15)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)
@@ -681,9 +693,9 @@ func TestPlacementSettingsString(t *testing.T) {
 		Voters:      3,
 		Followers:   2,
 		Learners:    1,
-		Constraints: "{+us-east-1:1,+us-east-2:1}",
+		Constraints: "{\"+us-east-1\":1,+us-east-2:1}",
 	}
-	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
+	require.Equal(t, "CONSTRAINTS=\"{\\\"+us-east-1\\\":1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
 
 func TestPlacementSettingsClone(t *testing.T) {
@@ -746,11 +758,63 @@ func TestLocation(t *testing.T) {
 	require.Equal(t, nLoc, location)
 }
 
-func TestDDLJobSize(t *testing.T) {
-	msg := `Please make sure that the following methods work as expected:
-- SubJob.FromProxyJob()
-- SubJob.ToProxyJob()
-`
-	job := Job{}
-	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
+func TestIsIndexPrefixCovered(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+	c2 := newColumnForTest(2, 2)
+	c3 := newColumnForTest(3, 3)
+	c4 := newColumnForTest(4, 4)
+
+	i0 := newIndexForTest(0, c0, c1, c2)
+	i1 := newIndexForTest(1, c4, c2)
+
+	tbl := &TableInfo{
+		ID:      1,
+		Name:    NewCIStr("t"),
+		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
+		Indices: []*IndexInfo{i0, i1},
+	}
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0"), NewCIStr("c_1"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_1")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_1"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_0"), NewCIStr("c_2")))
+
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4")))
+	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4"), NewCIStr("c_2")))
+	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_2")))
+}
+
+func TestTTLInfoClone(t *testing.T) {
+	ttlInfo := &TTLInfo{
+		ColumnName:       NewCIStr("test"),
+		IntervalExprStr:  "test_expr",
+		IntervalTimeUnit: 5,
+		Enable:           true,
+	}
+
+	clonedTTLInfo := ttlInfo.Clone()
+	clonedTTLInfo.ColumnName = NewCIStr("test_2")
+	clonedTTLInfo.IntervalExprStr = "test_expr_2"
+	clonedTTLInfo.IntervalTimeUnit = 9
+	clonedTTLInfo.Enable = false
+
+	require.Equal(t, "test", ttlInfo.ColumnName.O)
+	require.Equal(t, "test_expr", ttlInfo.IntervalExprStr)
+	require.Equal(t, 5, ttlInfo.IntervalTimeUnit)
+	require.Equal(t, true, ttlInfo.Enable)
+}
+
+func TestTTLJobInterval(t *testing.T) {
+	ttlInfo := &TTLInfo{}
+
+	interval, err := ttlInfo.GetJobInterval()
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, interval)
+
+	ttlInfo = &TTLInfo{JobInterval: "200h"}
+	interval, err = ttlInfo.GetJobInterval()
+	require.NoError(t, err)
+	require.Equal(t, time.Hour*200, interval)
 }

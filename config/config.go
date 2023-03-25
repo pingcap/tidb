@@ -34,8 +34,8 @@ import (
 	zaplog "github.com/pingcap/log"
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
-	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -47,10 +47,13 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
+	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit        = 100 * 1024 * 1024
+	SuperLargeTxnSize    uint64 = 100 * 1024 * 1024 * 1024 * 1024 // 100T, we expect a txn can never be this large
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
@@ -85,6 +88,12 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefTempDir is the default temporary directory path for TiDB.
+	DefTempDir = "/tmp/tidb"
+	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
+	DefAuthTokenRefreshInterval = time.Hour
+	// EnvVarKeyspaceName is the system env name for keyspace name.
+	EnvVarKeyspaceName = "KEYSPACE_NAME"
 )
 
 // Valid config maps
@@ -119,6 +128,7 @@ var (
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
 				"max-server-connections":        "max_connections",
+				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
 		{
@@ -166,12 +176,11 @@ type Config struct {
 	Path             string `toml:"path" json:"path"`
 	Socket           string `toml:"socket" json:"socket"`
 	Lease            string `toml:"lease" json:"lease"`
-	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool   `toml:"split-table" json:"split-table"`
 	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
@@ -179,6 +188,7 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -212,8 +222,6 @@ type Config struct {
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
-	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
-	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 	// NewCollationsEnabledOnFirstBootstrap indicates if the new collations are enabled, it effects only when a TiDB cluster bootstrapped on the first time.
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
@@ -259,6 +267,9 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// InitializeSQLFile is a file that will be executed after first bootstrap only.
+	// It can be used to set GLOBAL system variable values
+	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -268,10 +279,30 @@ type Config struct {
 	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	OOMAction      string `toml:"oom-action" json:"oom-action"`
 
-	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
+	// OOMUseTmpStorage unused since bootstrap v93
+	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+
+	// These items are deprecated because they are turned into instance system variables.
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
+	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
+	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
+
+	// These configs are related to disaggregated-tiflash mode.
+	DisaggregatedTiFlash         bool   `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
+	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
+	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
+	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
+	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
+
+	// TiDBMaxReuseChunk indicates max cached chunk num
+	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
+	// TiDBMaxReuseColumn indicates max cached column num
+	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
+	// TiDBEnableExitCheck indicates whether exit-checking in domain for background process
+	TiDBEnableExitCheck bool `toml:"tidb-enable-exit-check" json:"tidb-enable-exit-check"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -443,8 +474,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
+	// ExpensiveThreshold is deprecated.
+	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -455,6 +487,9 @@ type Log struct {
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+
+	// Make tidb panic if write log operation hang in `Timeout` seconds
+	Timeout int `toml:"timeout" json:"timeout"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -469,6 +504,20 @@ type Instance struct {
 	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
+	// StmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	StmtSummaryEnablePersistent bool `toml:"tidb_stmt_summary_enable_persistent" json:"tidb_stmt_summary_enable_persistent"`
+	// StmtSummaryFilename indicates the file name written by stmtsummary
+	// when StmtSummaryEnablePersistent is true.
+	StmtSummaryFilename string `toml:"tidb_stmt_summary_filename" json:"tidb_stmt_summary_filename"`
+	// StmtSummaryFileMaxDays indicates how many days the files written by
+	// stmtsummary will be kept when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxDays int `toml:"tidb_stmt_summary_file_max_days" json:"tidb_stmt_summary_file_max_days"`
+	// StmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file
+	// written by stmtsummary when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxSize int `toml:"tidb_stmt_summary_file_max_size" json:"tidb_stmt_summary_file_max_size"`
+	// StmtSummaryFileMaxBackups indicates the maximum number of files written
+	// by stmtsummary when StmtSummaryEnablePersistent is true.
+	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -480,10 +529,13 @@ type Instance struct {
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
 	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
-	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
-	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
-	MaxConnections             uint32 `toml:"max_connections" json:"max_connections"`
+	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	// MaxConnections is the maximum permitted number of simultaneous client connections.
+	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -526,6 +578,9 @@ type Security struct {
 	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// Used for auth plugin `tidb_session_token`.
+	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
+	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
@@ -535,6 +590,12 @@ type Security struct {
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
 	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
 	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
+	// The path of the JWKS for tidb_auth_token authentication
+	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
+	// The refresh time interval of JWKS
+	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
+	// Disconnect directly when the password is expired
+	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -598,6 +659,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	RecordDBLabel   bool   `toml:"record-db-label" json:"record-db-label"`
 	// After a duration of this time in seconds if the server doesn't see any activity it pings
 	// the client to see if the transport is still alive.
 	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
@@ -632,14 +694,17 @@ type Performance struct {
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
 	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval       string `toml:"-" json:"-"`
-	IndexUsageSyncLease      string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease      string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                     int    `toml:"gogc" json:"gogc"`
-	EnforceMPP               bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency     uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize       uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	EnableStatsCacheMemQuota bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	MemProfileInterval string `toml:"-" json:"-"`
+
+	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                              int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
+	EnableStatsCacheMemQuota          bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -703,6 +768,9 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+	// PROXY protocol header process fallback-able.
+	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
+	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
 // Binlog is the config for binlog.
@@ -728,6 +796,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
+	// ConstraintCheckInPlacePessimistic is the default value for the session variable `tidb_constraint_check_in_place_pessimistic`
+	ConstraintCheckInPlacePessimistic bool `toml:"constraint-check-in-place-pessimistic" json:"constraint-check-in-place-pessimistic"`
 }
 
 // TrxSummary is the config for transaction summary collecting.
@@ -749,10 +819,11 @@ func (config *TrxSummary) Valid() error {
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:                   256,
-		DeadlockHistoryCapacity:         10,
-		DeadlockHistoryCollectRetryable: false,
-		PessimisticAutoCommit:           *NewAtomicBool(false),
+		MaxRetryCount:                     256,
+		DeadlockHistoryCapacity:           10,
+		DeadlockHistoryCollectRetryable:   false,
+		PessimisticAutoCommit:             *NewAtomicBool(false),
+		ConstraintCheckInPlacePessimistic: true,
 	}
 }
 
@@ -806,6 +877,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	MemQuotaQuery:                1 << 30,
@@ -835,7 +907,7 @@ var defaultConf = Config{
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
 		SlowQueryFile:       "tidb-slow.log",
 		SlowThreshold:       logutil.DefaultSlowThreshold,
-		ExpensiveThreshold:  10000,
+		ExpensiveThreshold:  10000, // ExpensiveThreshold is deprecated.
 		DisableErrorStack:   nbUnset,
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
@@ -849,16 +921,23 @@ var defaultConf = Config{
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		StmtSummaryEnablePersistent: false,
+		StmtSummaryFilename:         "tidb-statements.log",
+		StmtSummaryFileMaxDays:      3,
+		StmtSummaryFileMaxSize:      64,
+		StmtSummaryFileMaxBackups:   0,
 		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 		SlowThreshold:               logutil.DefaultSlowThreshold,
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
 		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
-		EnableCollectExecutionInfo:  true,
+		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
 		MaxConnections:              0,
+		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBRCReadCheckTS:           false,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -866,6 +945,7 @@ var defaultConf = Config{
 		StatusPort:            DefStatusPort,
 		MetricsInterval:       15,
 		RecordQPSbyDB:         false,
+		RecordDBLabel:         false,
 		GRPCKeepAliveTime:     10,
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
@@ -891,19 +971,22 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:      "0s",
-		GOGC:                     100,
-		EnforceMPP:               false,
-		PlanReplayerGCLease:      "10m",
-		StatsLoadConcurrency:     5,
-		StatsLoadQueueSize:       1000,
-		EnableStatsCacheMemQuota: false,
-		RunAutoAnalyze:           true,
-		EnableLoadFMSketch:       false,
+		IndexUsageSyncLease:               "0s",
+		GOGC:                              100,
+		EnforceMPP:                        false,
+		PlanReplayerGCLease:               "10m",
+		StatsLoadConcurrency:              5,
+		StatsLoadQueueSize:                1000,
+		AnalyzePartitionConcurrencyQuota:  16,
+		PlanReplayerDumpWorkerConcurrency: 1,
+		EnableStatsCacheMemQuota:          false,
+		RunAutoAnalyze:                    true,
+		EnableLoadFMSketch:                false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
+		Fallbackable:  false,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -934,7 +1017,7 @@ var defaultConf = Config{
 	},
 	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
@@ -942,6 +1025,9 @@ var defaultConf = Config{
 		EnableSEM:                   false,
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
+		AuthTokenJWKS:               "",
+		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword: true,
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
@@ -950,6 +1036,15 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	DisaggregatedTiFlash:                 false,
+	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
+	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	IsTiFlashComputeFixedPool:            false,
+	AutoScalerClusterID:                  "",
+	UseAutoScaler:                        false,
+	TiDBMaxReuseChunk:                    64,
+	TiDBMaxReuseColumn:                   256,
+	TiDBEnableExitCheck:                  false,
 }
 
 var (
@@ -1009,7 +1104,7 @@ var removedConfig = map[string]struct{}{
 	"log.query-log-max-len":              {},
 	"performance.committer-concurrency":  {},
 	"experimental.enable-global-kill":    {},
-	"performance.run-auto-analyze":       {}, //use tidb_enable_auto_analyze
+	"performance.run-auto-analyze":       {}, // use tidb_enable_auto_analyze
 	// use tidb_enable_prepared_plan_cache, tidb_prepared_plan_cache_size and tidb_prepared_plan_cache_memory_guard_ratio
 	"prepared-plan-cache.enabled":            {},
 	"prepared-plan-cache.capacity":           {},
@@ -1020,12 +1115,17 @@ var removedConfig = map[string]struct{}{
 	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
 	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
 	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"log.expensive-threshold":                {},
 	"performance.force-priority":             {}, // use tidb_force_priority
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
 	"plugin.dir":                             {}, // use plugin_dir
 	"performance.feedback-probability":       {}, // This feature is deprecated
 	"performance.query-feedback-limit":       {},
+	"oom-use-tmp-storage":                    {}, // use tidb_enable_tmp_storage_on_oom
+	"max-server-connections":                 {}, // use sysvar max_connections
+	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
+	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1194,7 +1294,7 @@ func (c *Config) Valid() error {
 		}
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
 	}
-	if c.Store == "mocktikv" && !c.RunDDL {
+	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
@@ -1257,6 +1357,17 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
+	// Check tiflash_compute topo fetch is valid.
+	if c.DisaggregatedTiFlash && c.UseAutoScaler {
+		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
+			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
+				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+		}
+		if c.TiFlashComputeAutoScalerAddr == "" {
+			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
+		}
+	}
+
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
@@ -1294,7 +1405,10 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+	)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
@@ -1338,12 +1452,6 @@ var hideConfig = []string{
 	"performance.index-usage-sync-lease",
 }
 
-// jsonifyPath converts the item to json path, so it can be extracted.
-func jsonifyPath(str string) string {
-	s := strings.Split(str, ".")
-	return fmt.Sprintf("$.\"%s\"", strings.Join(s, "\".\""))
-}
-
 // GetJSONConfig returns the config as JSON with hidden items removed
 // It replaces the earlier HideConfig() which used strings.Split() in
 // an way that didn't work for similarly named items (like enable).
@@ -1352,46 +1460,45 @@ func GetJSONConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	jsonValue, err := typejson.ParseBinaryFromString(string(j))
-	if err != nil {
-		return "", err
-	}
-	// Approximately length of removed items + hidden items.
-	pathExprs := make([]typejson.PathExpression, 0, len(removedConfig)+len(hideConfig))
-	var pathExpr typejson.PathExpression
 
-	// Patch out removed items.
+	jsonValue := make(map[string]interface{})
+	err = json.Unmarshal(j, &jsonValue)
+	if err != nil {
+		return "", err
+	}
+
+	removedPaths := make([]string, 0, len(removedConfig)+len(hideConfig))
 	for removedItem := range removedConfig {
-		s := jsonifyPath(removedItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
-		}
-		pathExprs = append(pathExprs, pathExpr)
+		removedPaths = append(removedPaths, removedItem)
 	}
-	// Patch out hidden items
-	for _, hiddenItem := range hideConfig {
-		s := jsonifyPath(hiddenItem)
-		pathExpr, err = typejson.ParseJSONPathExpr(s)
-		if err != nil {
-			// Should not be reachable, but not worth bailing for.
-			// It just means we can't patch out this line.
-			continue
+	removedPaths = append(removedPaths, hideConfig...)
+
+	for _, path := range removedPaths {
+		s := strings.Split(path, ".")
+		curValue := jsonValue
+		for i, key := range s {
+			if i == len(s)-1 {
+				delete(curValue, key)
+			}
+
+			if curValue[key] != nil {
+				mapValue, ok := curValue[key].(map[string]interface{})
+				if !ok {
+					break
+				}
+
+				curValue = mapValue
+			} else {
+				break
+			}
 		}
-		pathExprs = append(pathExprs, pathExpr)
 	}
-	newJSONValue, err := jsonValue.Remove(pathExprs)
+
+	buf, err := json.Marshal(jsonValue)
 	if err != nil {
 		return "", err
 	}
-	// Convert back to GoJSON so it can be pretty formatted.
-	// This is expected for compatibility with previous versions.
-	buf, err := newJSONValue.MarshalJSON()
-	if err != nil {
-		return "", err
-	}
+
 	var resBuf bytes.Buffer
 	if err = json.Indent(&resBuf, buf, "", "\t"); err != nil {
 		return "", err
@@ -1413,4 +1520,10 @@ func ContainHiddenConfig(s string) bool {
 		}
 	}
 	return false
+}
+
+// GetGlobalKeyspaceName is used to get global keyspace name
+// from config file or command line.
+func GetGlobalKeyspaceName() string {
+	return GetGlobalConfig().KeyspaceName
 }

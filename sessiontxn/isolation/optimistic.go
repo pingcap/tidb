@@ -27,27 +27,27 @@ import (
 	"go.uber.org/zap"
 )
 
+var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
+
 // OptimisticTxnContextProvider provides txn context for optimistic transaction
 type OptimisticTxnContextProvider struct {
 	baseTxnContextProvider
+	optimizeWithMaxTS bool
 }
 
-// NewOptimisticTxnContextProvider returns a new OptimisticTxnContextProvider
-func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *OptimisticTxnContextProvider {
-	provider := &OptimisticTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onTxnActive: func(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
-				sessVars := sctx.GetSessionVars()
-				sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
-			},
-		},
-	}
+// ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
+func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, causalConsistencyOnly bool) {
+	*p = emptyOptimisticTxnContextProvider
+	p.sctx = sctx
+	p.causalConsistencyOnly = causalConsistencyOnly
+	p.onTxnActiveFunc = p.onTxnActive
+	p.getStmtReadTSFunc = p.getTxnStartTS
+	p.getStmtForUpdateTSFunc = p.getTxnStartTS
+}
 
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
-	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
-	return provider
+func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
+	sessVars := p.sctx.GetSessionVars()
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
@@ -89,10 +89,34 @@ func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.Ente
 	return false
 }
 
+// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	// If `math.MaxUint64` is used for point get optimization, it is not necessary to activate the txn.
+	// Just return `math.MaxUint64` to save the performance.
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtReadTS()
+}
+
+// GetStmtForUpdateTS returns the read timestamp used by select statement (not for select ... for update)
+func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if p.optimizeWithMaxTS {
+		return math.MaxUint64, nil
+	}
+	return p.baseTxnContextProvider.GetStmtForUpdateTS()
+}
+
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
-	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		return nil
+	}
+
+	if p.txn != nil {
+		// `p.txn != nil` means the txn has already been activated, we should not optimize the startTS because the startTS
+		// has already been used.
 		return nil
 	}
 
@@ -116,10 +140,17 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
 		)
-		if err = p.prepareTxnWithTS(math.MaxUint64); err != nil {
+
+		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
+			logutil.BgLogger().Error("failed init txnStartTS with MaxUint64",
+				zap.Error(err),
+				zap.Uint64("conn", sessVars.ConnectionID),
+				zap.String("text", sessVars.StmtCtx.OriginalSQL),
+			)
 			return err
 		}
 
+		p.optimizeWithMaxTS = true
 		if sessVars.StmtCtx.Priority == mysql.NoPriority {
 			sessVars.StmtCtx.Priority = kv.PriorityHigh
 		}

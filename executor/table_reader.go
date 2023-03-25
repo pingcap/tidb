@@ -15,17 +15,22 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -34,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
 )
@@ -56,7 +62,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -100,6 +106,8 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
+	// byItems only for partition table with orderBy + pushedLimit
+	byItems   []*util.ByItems
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
@@ -130,17 +138,18 @@ func (e *TableReaderExecutor) setDummy() {
 
 // Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "TableReaderExecutor.Open")
+	defer r.End()
 	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
 		ms := v.(int)
 		time.Sleep(time.Millisecond * time.Duration(ms))
 	})
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.id, -1)
+	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
@@ -179,6 +188,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
+
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
@@ -200,13 +210,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		if len(secondPartRanges) != 0 {
 			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
 				return err
 			}
-			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
 		return nil
 	}
@@ -251,7 +261,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, req)
 	if err != nil {
 		return err
 	}
@@ -305,11 +315,31 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return result, nil
 	}
 
+	// use sortedSelectResults here when pushDown limit for partition table.
+	if e.kvRangeBuilder != nil && e.byItems != nil {
+		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		var results []distsql.SelectResult
+		for _, kvReq := range kvReqs {
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+		}
+		return distsql.NewSortedSelectResults(results, e.byItems, e.memTracker), nil
+	}
+
 	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {
 		return nil, err
 	}
-	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	})
+	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
@@ -345,6 +375,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+			SetConnID(e.ctx.GetSessionVars().ConnectionID).
 			Build()
 		if err != nil {
 			return nil, err
@@ -386,6 +417,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID).
 		Build()
 	if err != nil {
 		return nil, err
@@ -401,9 +433,24 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		if err != nil {
 			return nil, err
 		}
-		reqBuilder = builder.SetKeyRanges(kvRange)
+		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	if e.table != nil && e.table.Type().IsClusterTable() {
+		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
+		if copDestination == infoschema.DDLOwner {
+			ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
+			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			serverInfo, err := infosync.GetServerInfoByID(ctx, ddlOwnerID)
+			if err != nil {
+				return nil, err
+			}
+			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
+		}
 	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
@@ -414,12 +461,13 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetFromInfoSchema(sessiontxn.GetTxnManager(e.ctx).GetTxnInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
-		SetPaging(e.paging)
+		SetPaging(e.paging).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID)
 	return reqBuilder.Build()
 }
 
@@ -439,13 +487,19 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *TableReaderExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
-	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
-		for i, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+	e.virtualColumnIndex, e.virtualColumnRetFieldTypes = buildVirtualColumnInfo(e.Schema(), e.columns)
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func buildVirtualColumnInfo(schema *expression.Schema, columns []*model.ColumnInfo) (colIndexs []int, retTypes []*types.FieldType) {
+	colIndexs = buildVirtualColumnIndex(schema, columns)
+	if len(colIndexs) > 0 {
+		retTypes = make([]*types.FieldType, len(colIndexs))
+		for i, idx := range colIndexs {
+			retTypes[i] = schema.Columns[idx].RetType
 		}
 	}
+	return colIndexs, retTypes
 }
 
 type tableResultHandler struct {
