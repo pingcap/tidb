@@ -1210,7 +1210,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				sql := sqlForLog(st.GetTextToLog())
+				sql := sqlForLog(st.GetTextToLog(false))
 				if !sessVars.EnableRedactLog {
 					sql += sessVars.PreparedParams.String()
 				}
@@ -3828,7 +3828,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if isPrepared {
 			query = execStmt.OriginText()
 		} else {
-			query = execStmt.GetTextToLog()
+			query = execStmt.GetTextToLog(false)
 		}
 
 		query = executor.QueryReplacer.Replace(query)
