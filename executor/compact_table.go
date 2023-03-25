@@ -214,14 +214,18 @@ func (task *storeCompactTask) logProgressOptionally() {
 //
 // There are two kind of errors may be returned:
 // A. Error only cancel tasks related with this store, e.g. this store is down even after retry.
-// 		The remaining partitions in this store should be cancelled.
+//
+//	The remaining partitions in this store should be cancelled.
+//
 // B. Error that should cancel tasks of other stores, e.g. CompactErrorCompactInProgress.
-//		The remaining partitions in this store should be cancelled, and tasks of other stores should also be cancelled.
+//
+//	The remaining partitions in this store should be cancelled, and tasks of other stores should also be cancelled.
 //
 // During this function, some "problems" will cause it to early return, e.g. physical table not exist in this
 // store any more (maybe caused by DDL). No errors will be produced so that remaining partitions will continue
 // being compacted.
-// 																	Returns: (stopAllTasks, err)
+//
+//	Returns: (stopAllTasks, err)
 func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (bool, error) {
 	var startKey []byte = nil
 	for { // This loop is to compact incrementally for all data. Each RPC request will only compact a partial of data.

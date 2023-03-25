@@ -319,8 +319,9 @@ func TestScatterFinishInTime(t *testing.T) {
 // range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
 // rewrite rules: aa -> xx,  cc -> bb
 // expected regions after split:
-//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+//
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
 	t.Run("BatchScatter", func(t *testing.T) {
 		client := initTestClient()
@@ -448,8 +449,9 @@ func initRewriteRules() *restore.RewriteRules {
 }
 
 // expected regions after split:
-//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+//
+//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func validateRegions(regions map[uint64]*restore.RegionInfo) bool {
 	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
 	if len(regions) != len(keys)-1 {
