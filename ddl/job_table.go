@@ -374,7 +374,7 @@ func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.D
 }
 
 func (d *ddl) loadBackfillJobAndRun() {
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	isDistReorg := variable.EnableDistTask.Load()
 	if !isDistReorg {
 		return
 	}

@@ -185,7 +185,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
-	if variable.DDLEnableDistributeReorg.Load() {
+	if variable.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)

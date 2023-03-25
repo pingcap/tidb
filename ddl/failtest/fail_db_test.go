@@ -222,7 +222,7 @@ func TestAddIndexFailed(t *testing.T) {
 }
 
 func TestAddIndexCanceledInDistReorg(t *testing.T) {
-	if !variable.DDLEnableDistributeReorg.Load() {
+	if !variable.EnableDistTask.Load() {
 		// Non-dist-reorg hasn't this fail-point.
 		return
 	}
@@ -371,7 +371,7 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 }
 
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
-	if variable.DDLEnableDistributeReorg.Load() {
+	if variable.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
 	}
 
