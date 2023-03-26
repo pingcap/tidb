@@ -124,8 +124,8 @@ type Handle struct {
 
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
-	// serverIDGetter is used to get server ID for generating auto analyze ID.
-	serverIDGetter func() uint64
+	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
+	autoAnalyzeProcIDGetter func() uint64
 	// tableLocked used to store locked tables
 	tableLocked []int64
 }
@@ -474,15 +474,15 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
-		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
-		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
-		pool:             pool,
-		sysProcTracker:   tracker,
-		serverIDGetter:   serverIDGetter,
+		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
+		listHead:                &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		pool:                    pool,
+		sysProcTracker:          tracker,
+		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)

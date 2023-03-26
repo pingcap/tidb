@@ -123,11 +123,6 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive | mysql.ClientDeprecateEOF
 
-const (
-	reservedLocalConns  = 200
-	reservedConnAnalyze = 1
-)
-
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -140,9 +135,8 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
-	capability      uint32
-	dom             *domain.Domain
-	connIDAllocator util.ConnIDAllocator
+	capability uint32
+	dom        *domain.Domain
 
 	statusAddr     string
 	statusListener net.Listener
@@ -183,7 +177,6 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
-	s.connIDAllocator.SetServerIDGetter(dom.ServerID)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -214,14 +207,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
 	}
-
-	if config.GetGlobalConfig().EnableGlobalKill {
-		s.connIDAllocator = &util.GlobalConnIDAllocator{}
-	} else {
-		s.connIDAllocator = &util.SimpleConnIDAllocator{}
-	}
-	s.connIDAllocator.Init()
-
 	s.capability = defaultCapability
 	setTxnScope()
 	setSystemTimeZoneVariable()
@@ -926,10 +911,9 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
-// GetAutoAnalyzeProcID returns processID for auto analyze
-// TODO: support IDs for concurrent auto-analyze
+// GetAutoAnalyzeProcID implements SessionManager interface.
 func (s *Server) GetAutoAnalyzeProcID() uint64 {
-	return s.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+	return s.dom.GetAutoAnalyzeProcID()
 }
 
 // StoreInternalSession implements SessionManager interface.

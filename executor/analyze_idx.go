@@ -194,7 +194,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	for {
 		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
 			dom := domain.GetDomain(e.ctx)
-			dom.SysProcTracker().KillSysProcess(e.ctx.GetSessionManager().GetAutoAnalyzeProcID())
+			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, errors.Trace(exeerrors.ErrQueryInterrupted)

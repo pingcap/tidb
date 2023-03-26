@@ -152,8 +152,10 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	onClose              func()
-	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+	connIDAllocator      util.ConnIDAllocator
+
+	onClose            func()
+	sysExecutorFactory func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
 
@@ -1091,6 +1093,8 @@ func (do *Domain) Init(
 	}
 
 	if config.GetGlobalConfig().EnableGlobalKill {
+		do.connIDAllocator = util.NewGlobalConnIDAllocator(do.ServerID)
+
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -1106,6 +1110,8 @@ func (do *Domain) Init(
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
+	} else {
+		do.connIDAllocator = util.NewSimpleConnIDAllocator()
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
@@ -1368,6 +1374,7 @@ func (p *sessionPool) Put(resource pools.Resource) {
 		resource.Close()
 	}
 }
+
 func (p *sessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
@@ -1910,7 +1917,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
@@ -1986,7 +1993,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
@@ -2359,12 +2366,31 @@ func (do *Domain) IsLostConnectionToPD() bool {
 	return do.isLostConnectionToPD.Load() != 0
 }
 
+// NextConnID return next connection ID.
+func (do *Domain) NextConnID() uint64 {
+	return do.connIDAllocator.NextID()
+}
+
+// ReleaseConnID releases connection ID.
+func (do *Domain) ReleaseConnID(connID uint64) {
+	do.connIDAllocator.Release(connID)
+}
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO: support IDs for concurrent auto-analyze
+func (do *Domain) GetAutoAnalyzeProcID() uint64 {
+	return do.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
+}
+
 const (
 	serverIDEtcdPath               = "/tidb/server_id"
 	refreshServerIDRetryCnt        = 3
 	acquireServerIDRetryInterval   = 300 * time.Millisecond
 	acquireServerIDTimeout         = 10 * time.Second
 	retrieveServerIDSessionTimeout = 10 * time.Second
+
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
 )
 
 var (

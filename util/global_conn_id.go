@@ -49,10 +49,6 @@ type serverIDGetterFn func() uint64
 
 // ConnIDAllocator allocates connection IDs.
 type ConnIDAllocator interface {
-	// Init initiates the allocator.
-	Init()
-	// SetServerIDGetter set serverIDGetter to allocator.
-	SetServerIDGetter(serverIDGetter serverIDGetterFn)
 	// NextID returns next connection ID.
 	NextID() uint64
 	// Release releases connection ID to allocator.
@@ -71,14 +67,11 @@ type SimpleConnIDAllocator struct {
 	pool AutoIncPool
 }
 
-// Init implements ConnIDAllocator interface.
-func (a *SimpleConnIDAllocator) Init() {
+// NewSimpleConnIDAllocator creates a new SimpleConnIDAllocator.
+func NewSimpleConnIDAllocator() *SimpleConnIDAllocator {
+	a := &SimpleConnIDAllocator{}
 	a.pool.Init(64)
-}
-
-// SetServerIDGetter implements ConnIDAllocator interface.
-func (*SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
-	// do nothing
+	return a
 }
 
 // NextID implements ConnIDAllocator interface.
@@ -207,17 +200,16 @@ func (g *GlobalConnIDAllocator) UpgradeTo64() {
 // LocalConnIDAllocator64TryCount is the try count of 64bits local connID allocation.
 const LocalConnIDAllocator64TryCount = 10
 
-// Init initiate members.
-func (g *GlobalConnIDAllocator) Init() {
+// NewGlobalConnIDAllocator creates a GlobalConnIDAllocator.
+func NewGlobalConnIDAllocator(serverIDGetter serverIDGetterFn) *GlobalConnIDAllocator {
+	g := &GlobalConnIDAllocator{
+		serverIDGetter: serverIDGetter,
+	}
 	g.local32.InitExt(LocalConnIDBits32, math.MaxUint32)
 	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
-}
-
-// SetServerIDGetter set serverIDGetter member.
-func (g *GlobalConnIDAllocator) SetServerIDGetter(serverIDGetter serverIDGetterFn) {
-	g.serverIDGetter = serverIDGetter
+	return g
 }
 
 // NextID returns next connection ID.
@@ -303,8 +295,10 @@ type IDPool interface {
 	Get() (val uint64, ok bool)
 }
 
-var _ IDPool = (*AutoIncPool)(nil)
-var _ IDPool = (*LockFreeCircularPool)(nil)
+var (
+	_ IDPool = (*AutoIncPool)(nil)
+	_ IDPool = (*LockFreeCircularPool)(nil)
+)
 
 // AutoIncPool simply do auto-increment to allocate ID. Wrapping will happen.
 type AutoIncPool struct {
