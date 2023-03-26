@@ -228,8 +228,7 @@ type commitTask struct {
 	cnt  uint64
 	rows [][]types.Datum
 
-	loadedRowCnt    uint64
-	scannedFileSize int64
+	fileSize int64
 }
 
 type loadRemoteInfo struct {
@@ -248,9 +247,8 @@ type LoadDataWorker struct {
 
 	controller *importer.LoadDataController
 
-	table table.Table
-	// TODO: no need to be atomic
-	progress        atomic.Pointer[asyncloaddata.Progress]
+	table           table.Table
+	progress        *asyncloaddata.Progress
 	getSysSessionFn func() (sessionctx.Context, error)
 	putSysSessionFn func(context.Context, sessionctx.Context)
 }
@@ -294,17 +292,19 @@ func NewLoadDataWorker(
 		killed:       &userSctx.GetSessionVars().Killed,
 	}
 	encode.resetBatch()
+	progress := &asyncloaddata.Progress{}
 	commit := &commitWorker{
 		InsertValues: commitCore,
 		controller:   controller,
-		// TODO: progress
+		progress:     progress,
 	}
 	loadDataWorker := &LoadDataWorker{
+		UserSctx:        userSctx,
 		encodeWorker:    encode,
 		commitWorker:    commit,
 		table:           tbl,
 		controller:      controller,
-		UserSctx:        userSctx,
+		progress:        progress,
 		getSysSessionFn: getSysSessionFn,
 		putSysSessionFn: putSysSessionFn,
 	}
@@ -435,7 +435,7 @@ func (e *LoadDataWorker) doLoad(
 		e.putSysSessionFn(ctx2, e.commitWorker.ctx)
 	}()
 
-	// get a session for UpdateJobProgress. e.UserSctx is exclusively used by processStream.
+	// get a session for UpdateJobProgress.
 	s, err := e.getSysSessionFn()
 	if err != nil {
 		return err
@@ -472,12 +472,6 @@ func (e *LoadDataWorker) doLoad(
 
 	failpoint.Inject("AfterCreateLoadDataJob", nil)
 
-	progress := asyncloaddata.Progress{
-		SourceFileSize: -1,
-		LoadedFileSize: 0,
-		LoadedRowCnt:   0,
-	}
-
 	totalFilesize := int64(0)
 	hasErr := false
 	for _, readerInfo := range readerInfos {
@@ -489,9 +483,8 @@ func (e *LoadDataWorker) doLoad(
 		totalFilesize += readerInfo.Remote.size
 	}
 	if !hasErr {
-		progress.SourceFileSize = totalFilesize
+		e.progress.SourceFileSize = totalFilesize
 	}
-	e.progress.Store(&progress)
 
 	err = asyncloaddata.StartJob(ctx, sqlExec, jobID)
 	if err != nil {
@@ -551,9 +544,8 @@ func (e *LoadDataWorker) doLoad(
 		for {
 			select {
 			case <-done:
-				// try to update progress to set 100% progress
-				p := e.progress.Load()
-				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, p.String())
+				// When done, try to update progress to reach 100%
+				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, e.progress.String())
 				if !ok || err2 != nil {
 					logutil.Logger(ctx).Warn("failed to update job progress when finished",
 						zap.Bool("ok", ok), zap.Error(err2))
@@ -562,8 +554,7 @@ func (e *LoadDataWorker) doLoad(
 			case <-groupCtx.Done():
 				return nil
 			case <-ticker.C:
-				p := e.progress.Load()
-				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, p.String())
+				ok, err2 := asyncloaddata.UpdateJobProgress(ctx, sqlExec, jobID, e.progress.String())
 				if err2 != nil {
 					return err2
 				}
@@ -582,10 +573,9 @@ func (e *LoadDataWorker) doLoad(
 // encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
 type encodeWorker struct {
 	*InsertValues
-	controller   *importer.LoadDataController
-	killed       *uint32
-	finishedSize int64
-	rows         [][]types.Datum
+	controller *importer.LoadDataController
+	killed     *uint32
+	rows       [][]types.Datum
 }
 
 func (w *encodeWorker) buildParser(
@@ -676,7 +666,7 @@ func (w *encodeWorker) processStream(
 
 	var (
 		loggedError     = false
-		currScannedSize = int64(0)
+		lastScannedSize = int64(0)
 	)
 	for {
 		// prepare batch and enqueue task
@@ -684,12 +674,11 @@ func (w *encodeWorker) processStream(
 			return
 		}
 		if w.curBatchCnt == 0 {
-			w.finishedSize += currScannedSize
 			return
 		}
 
 	TrySendTask:
-		currScannedSize, err = seeker.Seek(0, io.SeekCurrent)
+		scannedSize, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil && !loggedError {
 			loggedError = true
 			logutil.Logger(ctx).Error(" LOAD DATA failed to read current file offset by seek",
@@ -707,12 +696,12 @@ func (w *encodeWorker) processStream(
 			}
 			goto TrySendTask
 		case outCh <- commitTask{
-			cnt:             w.curBatchCnt,
-			rows:            w.rows,
-			loadedRowCnt:    w.rowCount,
-			scannedFileSize: w.finishedSize + currScannedSize,
+			cnt:      w.curBatchCnt,
+			rows:     w.rows,
+			fileSize: scannedSize - lastScannedSize,
 		}:
 		}
+		lastScannedSize = scannedSize
 		// reset rows buffer, will reallocate buffer but NOT reuse
 		w.resetBatch()
 	}
@@ -845,8 +834,7 @@ func (w *encodeWorker) parserData2TableData(
 type commitWorker struct {
 	*InsertValues
 	controller *importer.LoadDataController
-	// TODO: no need to use atomic here
-	progress atomic.Pointer[asyncloaddata.Progress]
+	progress   *asyncloaddata.Progress
 }
 
 // commitWork commit batch sequentially. When returns nil, it means the job is
@@ -863,10 +851,8 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 	}()
 
 	var (
-		tasks               uint64
-		lastScannedFileSize int64
-		currScannedFileSize int64
-		backgroundCtx       = context.Background()
+		taskCnt       uint64
+		backgroundCtx = context.Background()
 	)
 	err = sessiontxn.NewTxn(ctx, w.ctx)
 	if err != nil {
@@ -880,41 +866,19 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			return ctx.Err()
 		case task, ok := <-inCh:
 			if !ok {
-				p := w.progress.Load()
-				newP := &asyncloaddata.Progress{
-					SourceFileSize: p.SourceFileSize,
-					LoadedFileSize: currScannedFileSize,
-					LoadedRowCnt:   p.LoadedRowCnt,
-				}
-				w.progress.Store(newP)
 				return nil
 			}
 			start := time.Now()
 			if err = w.commitOneTask(ctx, task); err != nil {
 				return err
 			}
-			// we want to report "loaded" progress, not "scanned" progress, the
-			// difference of these two is the latest block we read is still in
-			// processing. So when "scanned" progress get forward we know the
-			// last block is processed.
-			// The corner case is when a record is larger than the block size,
-			// but that should be rare.
-			if task.scannedFileSize != currScannedFileSize {
-				lastScannedFileSize = currScannedFileSize
-				currScannedFileSize = task.scannedFileSize
-			}
-			p := w.progress.Load()
-			newP := &asyncloaddata.Progress{
-				SourceFileSize: p.SourceFileSize,
-				LoadedFileSize: lastScannedFileSize,
-				LoadedRowCnt:   task.loadedRowCnt,
-			}
-			w.progress.Store(newP)
-			tasks++
-			logutil.Logger(ctx).Info("commit one task success",
+			w.progress.LoadedRowCntSetter.Add(task.cnt)
+			w.progress.LoadedFileSizeSetter.Add(task.fileSize)
+			taskCnt++
+			logutil.Logger(ctx).Debug("commit one task success",
 				zap.Duration("commit time usage", time.Since(start)),
 				zap.Uint64("keys processed", task.cnt),
-				zap.Uint64("tasks processed", tasks),
+				zap.Uint64("taskCnt processed", taskCnt),
 			)
 			failpoint.Inject("AfterCommitOneTask", nil)
 		}
@@ -1070,7 +1034,7 @@ func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
 	}
 	e.encodeWorker.resetBatch()
 	e.commitWorker.ctx.StmtCommit(ctx)
-	err = e.commitWorker.ctx.RefreshTxnCtx(ctx)
+	err = e.commitWorker.ctx.CommitTxn(ctx)
 	if err != nil {
 		return err
 	}

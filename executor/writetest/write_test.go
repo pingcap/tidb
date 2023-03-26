@@ -1507,7 +1507,6 @@ func TestLoadDataMissingColumn(t *testing.T) {
 		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-	// TODO: why it's stuck?
 }
 
 func TestIssue18681(t *testing.T) {

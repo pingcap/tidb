@@ -14,9 +14,12 @@
 
 package asyncloaddata
 
-import "encoding/json"
+import (
+	"encoding/json"
 
-// TODO: make some fields atomic to support concurrent commit.
+	"go.uber.org/atomic"
+)
+
 // Progress is the progress of the LOAD DATA task.
 type Progress struct {
 	// SourceFileSize is the size of the source file in bytes. When we can't get
@@ -25,14 +28,25 @@ type Progress struct {
 	// SimpleSeekerOnReadCloser on MySQL client connection which doesn't support
 	// it.
 	SourceFileSize int64
-	// LoadedFileSize is the size of the data that has been loaded in bytes.
+	// LoadedFileSizeSetter is used by multiple workers to record the progress,
+	// its value is loaded into LoadedFileSize when String().
+	LoadedFileSizeSetter atomic.Int64 `json:"-"`
+	// LoadedRowCntSetter is used by multiple workers to record the progress,
+	// its value is loaded into LoadedRowCnt when String().
+	LoadedRowCntSetter atomic.Uint64 `json:"-"`
+	// LoadedFileSize is the size of the data that will be loaded in bytes. It's
+	// larger than the actual loaded data size, but due to the fact that reading
+	// is once a block and a block may generate multiple tasks that are
+	// concurrently executed, we can't know the actual loaded data size easily.
 	LoadedFileSize int64
 	// LoadedRowCnt is the number of rows that has been loaded.
 	LoadedRowCnt uint64
 }
 
 // String implements the fmt.Stringer interface.
-func (p Progress) String() string {
+func (p *Progress) String() string {
+	p.LoadedFileSize = p.LoadedFileSizeSetter.Load()
+	p.LoadedRowCnt = p.LoadedRowCntSetter.Load()
 	bs, _ := json.Marshal(p)
 	return string(bs)
 }
