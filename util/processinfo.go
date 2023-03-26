@@ -187,7 +187,6 @@ type SessionManager interface {
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
 	// GetAutoAnalyzeProcID returns processID for auto analyze
-	// TODO support IDs for concurrent auto-analyze
 	GetAutoAnalyzeProcID() uint64
 	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
 	StoreInternalSession(se interface{})

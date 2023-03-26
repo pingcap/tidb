@@ -926,6 +926,8 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO: support IDs for concurrent auto-analyze
 func (s *Server) GetAutoAnalyzeProcID() uint64 {
 	return s.connIDAllocator.GetReservedConnID(reservedConnAnalyze)
 }
