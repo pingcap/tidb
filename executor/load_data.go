@@ -985,7 +985,11 @@ func (e *LoadDataWorker) mergeAndSetMessage() string {
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	if !e.controller.Detached {
-		e.UserSctx.GetSessionVars().StmtCtx.SetMessage(msg)
+		userStmtCtx := e.UserSctx.GetSessionVars().StmtCtx
+		userStmtCtx.SetMessage(msg)
+		warns := e.encodeWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		warns = append(warns, e.commitWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()...)
+		userStmtCtx.SetWarnings(warns)
 	}
 	return msg
 }
