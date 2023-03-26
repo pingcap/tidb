@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -253,6 +254,14 @@ type LoadDataWorker struct {
 	putSysSessionFn func(context.Context, sessionctx.Context)
 }
 
+func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
+	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
+	// meaning of this flag is not clear. I can only reuse it here.
+	stmtCtx.DupKeyAsWarning = true
+	stmtCtx.TruncateAsWarning = true
+	stmtCtx.BadNullAsWarning = true
+}
+
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
 func NewLoadDataWorker(
 	userSctx sessionctx.Context,
@@ -267,11 +276,7 @@ func NewLoadDataWorker(
 	}
 
 	if !controller.Restrictive {
-		// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
-		// meaning of this flag is not clear. I can only reuse it here.
-		userSctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-		userSctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
-		userSctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		setNonRestrictiveFlags(userSctx.GetSessionVars().StmtCtx)
 	}
 
 	// TODO: create N InsertValues where N is threadCnt
@@ -338,6 +343,9 @@ func createInsertValues(
 	toVars.User = fromVars.User
 	toVars.CurrentDB = fromVars.CurrentDB
 	toVars.SQLMode = fromVars.SQLMode
+	if !controller.Restrictive {
+		setNonRestrictiveFlags(toVars.StmtCtx)
+	}
 
 	insertColumns := controller.GetInsertColumns()
 	hasExtraHandle := false
