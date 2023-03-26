@@ -2,14 +2,26 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "loaddata",
-    srcs = ["proto.go"],
+    srcs = [
+        "dispatcher.go",
+        "proto.go",
+        "wrapper.go",
+    ],
     importpath = "github.com/pingcap/tidb/disttask/loaddata",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",
+        "//br/pkg/storage",
+        "//disttask/framework/dispatcher",
+        "//disttask/framework/proto",
+        "//executor/importer",
         "//parser/model",
         "//parser/mysql",
+        "//util/intest",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )

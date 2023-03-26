@@ -246,7 +246,7 @@ func (d *dispatcher) updateTaskRevertInfo(gTask *proto.Task) {
 
 func (d *dispatcher) processErrFlow(gTask *proto.Task, receiveErr string) error {
 	// TODO: Maybe it gets GetTaskFlowHandle fails when rolling upgrades.
-	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d, gTask, receiveErr)
+	meta, err := GetTaskFlowHandle(gTask.Type).ProcessErrFlow(d.ctx, d, gTask, receiveErr)
 	if err != nil {
 		logutil.BgLogger().Warn("handle error failed", zap.Error(err))
 		return err
@@ -292,7 +292,7 @@ func (d *dispatcher) processNormalFlow(gTask *proto.Task) (err error) {
 		d.updateTaskRevertInfo(gTask)
 		return errors.Errorf("%s type handle doesn't register", gTask.Type)
 	}
-	metas, err := handle.ProcessNormalFlow(d, gTask)
+	metas, err := handle.ProcessNormalFlow(d.ctx, d, gTask)
 	if err != nil {
 		logutil.BgLogger().Warn("gen dist-plan failed", zap.Error(err))
 		return err
