@@ -72,7 +72,7 @@ func buildCloseSessionOnErr(
 	putBackFn func(context.Context, sessionctx.Context),
 ) func() {
 	return func() {
-		if err != nil {
+		if err != nil && *err != nil {
 			ctx := context.Background()
 			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
 			putBackFn(ctx, sctx)
