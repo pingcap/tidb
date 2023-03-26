@@ -18,9 +18,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-
-	//"os"
-	//"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
