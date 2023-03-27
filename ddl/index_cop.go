@@ -60,19 +60,17 @@ func copReadChunkPoolSize() int {
 }
 
 func (c *copReqSenderPool) fetchChunk() (*chunk.Chunk, error) {
-	select {
-	case rs, ok := <-c.resultsCh:
-		if !ok {
-			return nil, nil
-		}
-		if rs.err != nil {
-			logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
-				zap.Int("id", rs.id), zap.Error(rs.err))
-		} else if rs.done {
-			logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
-		}
-		return rs.chunk, rs.err
+	rs, ok := <-c.resultsCh
+	if !ok {
+		return nil, nil
 	}
+	if rs.err != nil {
+		logutil.BgLogger().Error("[ddl-ingest] finish a cop-request task with error",
+			zap.Int("id", rs.id), zap.Error(rs.err))
+	} else if rs.done {
+		logutil.BgLogger().Info("[ddl-ingest] finish a cop-request task", zap.Int("id", rs.id))
+	}
+	return rs.chunk, rs.err
 }
 
 type copReqSenderPool struct {
