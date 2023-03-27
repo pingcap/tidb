@@ -422,7 +422,7 @@ func NewImportControllerWithPauser(
 		pauser:        p.Pauser,
 		backend:       backend,
 		tidbGlue:      p.Glue,
-		sysVars:       defaultImportantVariables,
+		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 

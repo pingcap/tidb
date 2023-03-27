@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -159,10 +160,30 @@ type LoadDataController struct {
 	maxRecordedErrors int64 // -1 means record all error
 	Detached          bool
 
-	logger    *zap.Logger
-	sqlMode   mysql.SQLMode
-	dataStore storage.ExternalStorage
-	dataFiles []mydump.SourceFileMeta
+	logger           *zap.Logger
+	sqlMode          mysql.SQLMode
+	importantSysVars map[string]string
+	dataStore        storage.ExternalStorage
+	dataFiles        []mydump.SourceFileMeta
+}
+
+func getImportantSysVars(sctx sessionctx.Context) map[string]string {
+	res := map[string]string{}
+	for k, defVal := range common.DefaultImportantVariables {
+		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
+			res[k] = val
+		} else {
+			res[k] = defVal
+		}
+	}
+	for k, defVal := range common.DefaultImportVariablesTiDB {
+		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
+			res[k] = val
+		} else {
+			res[k] = defVal
+		}
+	}
+	return res
 }
 
 // NewLoadDataController create new controller.
@@ -186,8 +207,9 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 
-		logger:  log.L().With(zap.String("table", fullTableName)),
-		sqlMode: sctx.GetSessionVars().SQLMode,
+		logger:           log.L().With(zap.String("table", fullTableName)),
+		sqlMode:          sctx.GetSessionVars().SQLMode,
+		importantSysVars: getImportantSysVars(sctx),
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err

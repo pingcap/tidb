@@ -104,7 +104,7 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (b *encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSession(&config.SessionOptions, log.FromContext(ctx))
+	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
 	if config.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
 		se.GetSessionVars().SkipASCIICheck = false
