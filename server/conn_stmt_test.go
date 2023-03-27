@@ -275,7 +275,7 @@ func TestCursorExistsFlag(t *testing.T) {
 
 	getLastStatus := func() uint16 {
 		raw := out.Bytes()
-		return binary.LittleEndian.Uint16(raw[len(raw)-2 : len(raw)])
+		return binary.LittleEndian.Uint16(raw[len(raw)-2:])
 	}
 
 	stmt, _, _, err := c.Context().Prepare("select * from t")
