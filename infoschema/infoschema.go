@@ -625,6 +625,16 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	return true
 }
 
+// Copy is to copy a new SessionTables object
+func (is *SessionTables) Copy() *SessionTables {
+	newSchemaMap := make(map[string]*schemaTables, len(is.schemaMap))
+	newIdx2table := make(map[int64]table.Table, len(is.idx2table))
+	return &SessionTables{
+		schemaMap: newSchemaMap,
+		idx2table: newIdx2table,
+	}
+}
+
 // Count gets the count of the temporary tables.
 func (is *SessionTables) Count() int {
 	return len(is.idx2table)
@@ -751,15 +761,11 @@ func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
 }
 
-// AttachMDLTableInfoSchema attach MDL related table information schema to is
-func AttachMDLTableInfoSchema(is InfoSchema) InfoSchema {
-	mdlTables := NewSessionTables()
-	if iss, ok := is.(*SessionExtendedInfoSchema); ok {
-		iss.MdlTables = mdlTables
-		return iss
-	}
-	return &SessionExtendedInfoSchema{
-		InfoSchema: is,
-		MdlTables:  mdlTables,
+// Copy is to copy a new SessionExtendedInfoSchema
+func (ts *SessionExtendedInfoSchema) Copy() SessionExtendedInfoSchema {
+	return SessionExtendedInfoSchema{
+		InfoSchema:           ts.InfoSchema,
+		LocalTemporaryTables: ts.LocalTemporaryTables.Copy(),
+		MdlTables:            ts.MdlTables.Copy(),
 	}
 }
