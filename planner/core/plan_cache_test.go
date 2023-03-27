@@ -916,8 +916,8 @@ func TestPlanCacheExprBlacklistCompatibility(t *testing.T) {
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('mod')")
 	tk.MustExec(`admin reload expr_pushdown_blacklist`)
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is udpated
+	tk.MustExec("execute st") // no `mod can not be pushed-down` error
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is updated
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

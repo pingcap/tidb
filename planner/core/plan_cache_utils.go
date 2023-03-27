@@ -197,7 +197,7 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
-	ExprBlacklistVer         uint32 // the version of the current expression push-down blacklist
+	ExprBlacklistVer         uint32 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
