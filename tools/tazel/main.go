@@ -60,6 +60,6 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		log.Fatal("error")
+		log.Fatal("walk", zap.Error(err))
 	}
 }
