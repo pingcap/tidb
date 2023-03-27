@@ -274,11 +274,11 @@ func NewLoadDataWorker(
 	// debug
 	getSysSessionFn := func() (sessionctx.Context, error) {
 		a, b := getSysSessionFn2()
-		println("lance test ", a, b)
+		println("lance test get", a, b)
 		return a, b
 	}
 	putSysSessionFn := func(ctx context.Context, sctx sessionctx.Context) {
-		println("lance test ", ctx, sctx)
+		println("lance test put", ctx, sctx)
 		putSysSessionFn2(ctx, sctx)
 	}
 
@@ -1038,10 +1038,12 @@ func (e *LoadDataWorker) TestLoad(parser mydump.Parser) error {
 	if err != nil {
 		return err
 	}
+	setNonRestrictiveFlags(e.encodeWorker.ctx.GetSessionVars().StmtCtx)
 	err = ResetContextOfStmt(e.commitWorker.ctx, &ast.LoadDataStmt{})
 	if err != nil {
 		return err
 	}
+	setNonRestrictiveFlags(e.commitWorker.ctx.GetSessionVars().StmtCtx)
 
 	ctx := context.Background()
 	for i := uint64(0); i < e.controller.IgnoreLines; i++ {
