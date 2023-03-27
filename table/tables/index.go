@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/tracing"
 )
@@ -346,6 +348,14 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			}
 			continue
 		}
+		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
+			val := idxVal
+			err = txn.GetMemBuffer().Set(key, val)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
 			value = tempIdxVal.Current().Value
@@ -399,6 +409,23 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		}
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
+
+		// If index is global, decode the pid from value (if exists) and compare with c.physicalID.
+		// Only when pid in value equals to c.physicalID, the key can be deleted.
+		if c.idxInfo.Global {
+			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
+				segs := tablecodec.SplitIndexValue(val)
+				if len(segs.PartitionID) != 0 {
+					_, pid, err := codec.DecodeInt(segs.PartitionID)
+					if err != nil {
+						return err
+					}
+					if pid != c.phyTblID {
+						continue
+					}
+				}
+			}
+		}
 
 		if distinct {
 			if len(key) > 0 {

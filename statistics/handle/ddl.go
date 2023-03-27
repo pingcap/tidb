@@ -68,14 +68,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-		// Update global stats, even though it should not have changed,
-		// the updated statistics from the newly reorganized partitions may be better
-		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.Dynamic && t.PartInfo != nil {
-			if err := h.updateGlobalStats(t.TableInfo); err != nil {
-				return err
-			}
-		}
+		// Do not update global stats, since the data have not changed!
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}

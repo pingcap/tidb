@@ -34,7 +34,7 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -120,9 +120,8 @@ const (
 )
 
 var (
-	minTiKVVersionForDuplicateResolution     = *semver.New("5.2.0")
-	maxTiKVVersionForDuplicateResolution     = version.NextMajorVersion()
-	minTiDBVersionForAutoEnableAddIndexBySql = *semver.New("7.0.0")
+	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
+	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -357,26 +356,8 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		if cfg.TikvImporter.AddIndexBySQL == nil {
-			versionStr, err := version.FetchVersion(ctx, db)
-			if err != nil {
-				return nil, err
-			}
-			if err := version.CheckTiDBVersion(versionStr, minTiDBVersionForAutoEnableAddIndexBySql, version.NextMajorVersion()); err != nil {
-				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					falseVal := false
-					cfg.TikvImporter.AddIndexBySQL = &falseVal
-				} else {
-					return nil, err
-				}
-			} else {
-				trueVal := true
-				cfg.TikvImporter.AddIndexBySQL = &trueVal
-				log.FromContext(ctx).Info("auto enable add-index-by-sql", zap.String("tidb_version", versionStr))
-			}
-		}
-
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
+		encodingBuilder := local.NewEncodingBuilder(ctx)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -1568,8 +1549,14 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
+		undo, err := rc.registerTaskToPD(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer undo()
+
 		// Drop all secondary indexes before restore.
-		if rc.cfg.TikvImporter.AddIndexBySQL != nil && *rc.cfg.TikvImporter.AddIndexBySQL {
+		if rc.cfg.TikvImporter.AddIndexBySQL {
 			if err := rc.dropAllIndexes(ctx); err != nil {
 				return err
 			}
@@ -1756,6 +1743,32 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	}
 
 	return nil
+}
+
+func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	register := utils.NewTaskRegister(etcdCli, utils.RegisterLightning, fmt.Sprintf("lightning-%s", uuid.New()))
+
+	undo = func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := register.Close(closeCtx); err != nil {
+			log.L().Warn("failed to unregister task", zap.Error(err))
+		}
+		if err := etcdCli.Close(); err != nil {
+			log.L().Warn("failed to close etcd client", zap.Error(err))
+		}
+	}
+	if err := register.RegisterTask(ctx); err != nil {
+		undo()
+		return nil, errors.Trace(err)
+	}
+	return undo, nil
 }
 
 func (rc *Controller) dropAllIndexes(ctx context.Context) error {
@@ -2239,7 +2252,7 @@ var (
 )
 
 type deliveredKVs struct {
-	kvs     kv.Row // if kvs is nil, this indicated we've got the last message.
+	kvs     encode.Row // if kvs is nil, this indicated we've got the last message.
 	columns []string
 	offset  int64
 	rowID   int64
@@ -2327,21 +2340,4 @@ func filterColumns(columnNames []string, extendData mydump.ExtendColumnData, ign
 		extendValueDatums = append(extendValueDatums, types.NewStringDatum(extendVal))
 	}
 	return filteredColumns, extendValueDatums
-}
-
-func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
-	reader storage.ReadSeekCloser, err error) {
-	switch {
-	case fileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
-	case fileMeta.Compression != mydump.CompressionNone:
-		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
-		if err2 != nil {
-			return nil, err2
-		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
-	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
-	}
-	return
 }
