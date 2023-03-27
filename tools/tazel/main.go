@@ -60,6 +60,6 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		log.Fatal("walk", zap.Error(err))
+		log.Fatal("fail to filepath.Walk", zap.Error(err))
 	}
 }
