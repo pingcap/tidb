@@ -29,20 +29,17 @@ func (ticker timeTicker) Ch() <-chan time.Time {
 	return ticker.C
 }
 
-type nonTicker struct {
-	C chan time.Time
+type manualTicker struct{}
+
+func (ticker manualTicker) Ch() <-chan time.Time {
+	return nil
 }
 
-func (ticker nonTicker) Ch() <-chan time.Time {
-	return ticker.C
-}
-
-func (ticker nonTicker) Stop() {
-}
+func (ticker manualTicker) Stop() {}
 
 func dispatcherTicker(d time.Duration) TimeTicker {
 	if d > 0 {
 		return timeTicker{time.NewTicker(d)}
 	}
-	return nonTicker{C: make(chan time.Time)}
+	return manualTicker{}
 }

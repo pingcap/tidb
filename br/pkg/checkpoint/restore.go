@@ -25,7 +25,7 @@ import (
 )
 
 type RestoreKeyType = int64
-type CheckpointRestoreRunner = CheckpointRunner[RestoreKeyType]
+type RestoreRunner = CheckpointRunner[RestoreKeyType]
 
 const (
 	CheckpointDataDirForRestoreFormat     = CheckpointDir + "/restore-%s/data"
@@ -52,7 +52,15 @@ func flushPositionForRestore(taskName string) flushPosition {
 	}
 }
 
-func StartCheckpointRunnerForRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*CheckpointRestoreRunner, error) {
+// only for test
+func StartCheckpointRestoreRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, taskName string) (*RestoreRunner, error) {
+	runner := newCheckpointRunner[RestoreKeyType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+
+	runner.startCheckpointMainLoop(ctx, tick, 0)
+	return runner, nil
+}
+
+func StartCheckpointRunnerForRestore(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, taskName string) (*RestoreRunner, error) {
 	runner := newCheckpointRunner[RestoreKeyType](ctx, storage, cipher, nil, flushPositionForRestore(taskName))
 
 	// for restore, no need to set lock

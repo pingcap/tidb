@@ -176,7 +176,7 @@ type Client struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information
-	checkpointRunner   *checkpoint.CheckpointRestoreRunner
+	checkpointRunner   *checkpoint.RestoreRunner
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
@@ -322,7 +322,7 @@ func (rc *Client) WaitForFinishCheckpoint(ctx context.Context) {
 	}
 }
 
-func (rc *Client) GetCheckpointRunner() *checkpoint.CheckpointRestoreRunner {
+func (rc *Client) GetCheckpointRunner() *checkpoint.RestoreRunner {
 	return rc.checkpointRunner
 }
 

@@ -25,7 +25,7 @@ import (
 )
 
 type BackupKeyType = string
-type CheckpointBackupRunner = CheckpointRunner[BackupKeyType]
+type BackupRunner = CheckpointRunner[BackupKeyType]
 
 const (
 	CheckpointMetaPath             = "checkpoint.meta"
@@ -42,7 +42,19 @@ func flushPositionForBackup() flushPosition {
 	}
 }
 
-func StartCheckpointRunnerForBackup(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*CheckpointBackupRunner, error) {
+// only for test
+func StartCheckpointBackupRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*BackupRunner, error) {
+	runner := newCheckpointRunner[BackupKeyType](ctx, storage, cipher, timer, flushPositionForBackup())
+
+	err := runner.initialLock(ctx)
+	if err != nil {
+		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
+	}
+	runner.startCheckpointMainLoop(ctx, tick, tick)
+	return runner, nil
+}
+
+func StartCheckpointRunnerForBackup(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, timer GlobalTimer) (*BackupRunner, error) {
 	runner := newCheckpointRunner[BackupKeyType](ctx, storage, cipher, timer, flushPositionForBackup())
 
 	err := runner.initialLock(ctx)

@@ -659,14 +659,24 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
 
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	gcSafePointKeeperRemovable := false
 	defer func() {
-		// don't reset the gc-safe-point if checkpoint mode is used and restored is not finished
+		// don't reset the gc-safe-point and pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
-			log.Info("skip removing gc-safepoint keeper for next retry", zap.String("gc-id", sp.ID))
+			log.Info("skip removing gc-safepoint keeper and pd schehduler for next retry", zap.String("gc-id", sp.ID))
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx)
 			return
 		}
+		log.Info("start to remove the pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restorePostWork(ctx, client, restoreSchedulers)
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
@@ -677,16 +687,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				zap.Error(err),
 			)
 		}
-		log.Info("finish removing gc-safepoint keeper")
+		log.Info("finish removing gc-safepoint keeper and pd scheduler")
 	}()
-	if cfg.UseCheckpoint {
-		defer func() {
-			if !gcSafePointKeeperRemovable {
-				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint(ctx)
-			}
-		}()
-	}
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
@@ -808,14 +810,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
-
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Always run the post-work even on error, so we don't stuck in the import
-	// mode or emptied schedulers
-	defer restorePostWork(ctx, client, restoreSchedulers)
 
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.

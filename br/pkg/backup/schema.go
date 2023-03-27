@@ -82,7 +82,7 @@ func (ss *Schemas) AddSchema(
 func (ss *Schemas) BackupSchemas(
 	ctx context.Context,
 	metaWriter *metautil.MetaWriter,
-	checkpointRunner *checkpoint.CheckpointBackupRunner,
+	checkpointRunner *checkpoint.BackupRunner,
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,

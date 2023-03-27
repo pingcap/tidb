@@ -268,18 +268,6 @@ func newCheckpointRunner[K KeyType](ctx context.Context, storage storage.Externa
 	}
 }
 
-// only for test
-func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalStorage, cipher *backuppb.CipherInfo, tick time.Duration, timer GlobalTimer) (*CheckpointBackupRunner, error) {
-	runner := newCheckpointRunner[BackupKeyType](ctx, storage, cipher, timer, flushPositionForBackup())
-
-	err := runner.initialLock(ctx)
-	if err != nil {
-		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
-	}
-	runner.startCheckpointMainLoop(ctx, tick, tick)
-	return runner, nil
-}
-
 func (r *CheckpointRunner[K]) FlushChecksum(ctx context.Context, tableID int64, crc64xor uint64, totalKvs uint64, totalBytes uint64, timeCost float64) error {
 	checksumItem := &ChecksumItem{
 		TableID:    tableID,
