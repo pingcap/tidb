@@ -550,11 +550,12 @@ func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAd
 				zap.Int64("total added count", *totalAddedCount),
 				zap.String("start key", hex.EncodeToString(start)),
 				zap.String("task failed error", err.Error()))
+		} else {
+			logutil.BgLogger().Info("[ddl] backfill workers successfully processed",
+				zap.Stringer("element", reorgInfo.currElement),
+				zap.Int64("total added count", *totalAddedCount),
+				zap.String("start key", hex.EncodeToString(start)))
 		}
-		logutil.BgLogger().Info("[ddl] backfill workers successfully processed",
-			zap.Stringer("element", reorgInfo.currElement),
-			zap.Int64("total added count", *totalAddedCount),
-			zap.String("start key", hex.EncodeToString(start)))
 		s.wg.Done()
 	}()
 }
@@ -900,7 +901,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		scheduler.copReqSenderPool.gracefulClose()
 	}
 	consumer.gracefulClose()
-	return nil
+	return consumer.getErr()
 }
 
 func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
