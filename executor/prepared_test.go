@@ -282,16 +282,14 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 
 	tk.MustExec("execute stmt;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt;")
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	// The expressions can still be pushed down to tikv.
-	require.Equal(t, 3, len(res.Rows()))
-	require.Contains(t, res.Rows()[1][0], "Selection")
-	require.Equal(t, "gt(test.t.a, 2), lt(test.t.a, 2)", res.Rows()[1][4])
+	// The expressions can not be pushed down to tikv.
+	require.Equal(t, 4, len(res.Rows()))
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	require.Equal(t, 4, len(res.Rows()))

@@ -206,7 +206,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL)
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 		if err != nil {
 			return err
 		}
