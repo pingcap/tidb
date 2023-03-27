@@ -179,16 +179,6 @@ func (ts *TiDBStatement) Close() error {
 	return nil
 }
 
-// GetCursorActive implements PreparedStatement GetCursorActive method.
-func (ts *TiDBStatement) GetCursorActive() bool {
-	return ts.hasActiveCursor
-}
-
-// SetCursorActive implements PreparedStatement SetCursorActive method.
-func (ts *TiDBStatement) SetCursorActive(fetchEnd bool) {
-	ts.hasActiveCursor = fetchEnd
-}
-
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)

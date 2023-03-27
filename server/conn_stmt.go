@@ -291,8 +291,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			return false, err
 		}
 
-		stmt.SetCursorActive(true)
-
 		// explicitly flush columnInfo to client.
 		return false, cc.flush(ctx)
 	}
@@ -339,18 +337,9 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	sendingEOF := false
-	// if the `fetchedRows` are empty before writing result, we could say the `FETCH` command will send EOF
-	if len(rs.GetFetchedRows()) == 0 {
-		sendingEOF = true
-	}
-
 	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
-	}
-	if sendingEOF {
-		stmt.SetCursorActive(false)
 	}
 
 	return nil

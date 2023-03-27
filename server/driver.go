@@ -62,12 +62,6 @@ type PreparedStatement interface {
 
 	// Close closes the statement.
 	Close() error
-
-	// GetCursorActive returns whether the statement has active cursor
-	GetCursorActive() bool
-
-	// SetCursorActive sets whether the statement has active cursor
-	SetCursorActive(active bool)
 }
 
 // ResultSet is the result set of an query.
