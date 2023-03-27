@@ -342,9 +342,6 @@ func TestNonPreparedPlanCacheReason(t *testing.T) {
 	tk.MustExec(`explain format = 'plan_cache' select * from t where a=1`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(`explain format = 'plan_cache' select * from t where a+1=1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: query has some unsupported binary operation`))
-
 	tk.MustExec(`explain format = 'plan_cache' select * from t t1, t t2`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip non-prepared plan-cache: queries that access multiple tables are not supported`))
 
@@ -838,17 +835,17 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIgnoreInsertStmt(t *testing.T) {
+func TestInsertStmtHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 
-	// do not cache native insert-stmt
+	// without hint
 	tk.MustExec("prepare st from 'insert into t values (1)'")
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// ignore-hint in insert-stmt can work
 	tk.MustExec("prepare st from 'insert into t select * from t'")
@@ -859,6 +856,24 @@ func TestIgnoreInsertStmt(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestLongInsertStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec(`prepare inert200 from 'insert into t values (1)` + strings.Repeat(", (1)", 199) + "'")
+	tk.MustExec(`execute inert200`)
+	tk.MustExec(`execute inert200`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare inert201 from 'insert into t values (1)` + strings.Repeat(", (1)", 200) + "'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: too many values (more than 200) in the insert statement"))
+	tk.MustExec(`execute inert201`)
+	tk.MustExec(`execute inert201`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestIssue38710(t *testing.T) {
@@ -1474,6 +1489,9 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where a in (1, 2) and b < 15",
 		"select * from t where a between 1 and 10",
 		"select * from t where a between 1 and 10 and b < 15",
+		"select * from t where a+b=13",
+		"select * from t where mod(a, 3)=1",
+		"select * from t where d>now()",
 	}
 
 	unsupported := []string{
@@ -1492,9 +1510,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t1 for update",                                                      // lock
 		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from t1 where a in (select a from t where a > t1.a)",                     // correlated sub-query
-		"select * from t where a+b=13",                                                     // '+'
-		"select * from t where mod(a, 3)=1",                                                // mod
-		"select * from t where d>now()",                                                    // now
 		"select * from t where j < 1",                                                      // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e < '1'", // enum
@@ -1532,9 +1547,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, aggregation, window-function, order-by, limit and lock are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
 		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
-		"skip non-prepared plan-cache: query has some unsupported binary operation",
-		"skip non-prepared plan-cache: query has some unsupported binary operation",
-		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1638,5 +1650,53 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
+	}
+}
+
+func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`create table t (a int, b varchar(32), c datetime, key(a))`)
+
+	// normal builtin functions can be supported
+	supportedCases := []string{
+		`select * from t where mod(a, 5) < 2`,
+		`select * from t where c < now()`,
+		`select date_format(c, '%Y-%m-%d') from t where a < 10`,
+		`select str_to_date(b, '%Y-%m-%d') from t where a < 10`,
+		`select * from t where a-2 < 20`,
+		`select * from t where a+b > 100`,
+	}
+	for _, sql := range supportedCases {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	}
+
+	// unsupported cases
+	unsupportedCases := []string{
+		`select * from t where -a > 10`,                  // '-' cannot support
+		`select * from t where a < 1 and b like '%abc%'`, // LIKE
+		`select database() from t`,
+	}
+	for _, sql := range unsupportedCases {
+		tk.MustExec(sql)
+		tk.MustExec(sql)
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	}
+}
+
+func BenchmarkPlanCacheInsert(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("prepare st from 'insert into t values (1)'")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("execute st")
 	}
 }

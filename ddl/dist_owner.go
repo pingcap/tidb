@@ -50,7 +50,7 @@ const (
 )
 
 func initDistReorg(reorgMeta *model.DDLReorgMeta) {
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	isDistReorg := variable.EnableDistTask.Load()
 	reorgMeta.IsDistReorg = isDistReorg
 	if isDistReorg {
 		metrics.TelemetryDistReorgCnt.Inc()
