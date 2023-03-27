@@ -239,17 +239,20 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		// We don't support the join for the non-prepared plan cache now.
 		return false, "queries that access multiple tables are not supported"
 	}
+
+	var tableNode *ast.TableName
 	switch x := tableRefs.Left.(type) {
 	case *ast.TableSource:
-		_, isTableName := x.Source.(*ast.TableName)
+		tbl, isTableName := x.Source.(*ast.TableName)
 		if !isTableName {
 			return false, "queries that have sub-queries are not supported"
 		}
+		tableNode = tbl
 	}
 
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
-	checker.reset(sctx, is)
+	checker.reset(sctx, is, tableNode)
 
 	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -273,12 +276,12 @@ type nonPreparedPlanCacheableChecker struct {
 	filterCnt int // the number of filters in the current node
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNode *ast.TableName) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
 	checker.reason = ""
-	checker.tableNode = nil
+	checker.tableNode = tableNode
 	checker.constCnt = 0
 	checker.filterCnt = 0
 }
@@ -327,7 +330,6 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
-		checker.tableNode = node
 		if filter.IsSystemSchema(node.Schema.O) {
 			checker.cacheable = false
 			checker.reason = "access tables in system schema"
