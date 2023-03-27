@@ -903,6 +903,25 @@ func TestIssue38710(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // can not use the cache because the types for @a and @b are not equal to the cached plan
 }
 
+func TestPlanCacheExprBlacklistCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("prepare st from 'select * from t where mod(a, 2)=1'")
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('mod')")
+	tk.MustExec(`admin reload expr_pushdown_blacklist`)
+	tk.MustExec("execute st")                                              // no `mod can not be pushed-down` error
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is updated
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheDiagInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

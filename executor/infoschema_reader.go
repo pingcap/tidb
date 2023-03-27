@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -3357,6 +3358,11 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		//mode := ""
 		burstable := "NO"
 		priority := model.PriorityValueToName(uint64(group.Priority))
+		fillrate := "UNLIMITED"
+		isDefaultInReservedSetting := group.Name == "default" && group.RUSettings.RU.Settings.FillRate == math.MaxInt32
+		if !isDefaultInReservedSetting {
+			fillrate = strconv.FormatUint(group.RUSettings.RU.Settings.FillRate, 10)
+		}
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
@@ -3364,7 +3370,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			row := types.MakeDatums(
 				group.Name,
-				group.RUSettings.RU.Settings.FillRate,
+				fillrate,
 				priority,
 				burstable,
 			)
