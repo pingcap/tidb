@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -361,10 +360,7 @@ func createInsertValues(
 	if !controller.Restrictive {
 		setNonRestrictiveFlags(toVars.StmtCtx)
 	}
-	sysSession.GetSessionVars().StmtCtx.InitSQLDigest(
-		"LOAD DATA internal session",
-		parser.NewDigest([]byte("LOAD DATA internal session")),
-	)
+	toVars.StmtCtx.InitSQLDigest(fromVars.StmtCtx.SQLDigest())
 
 	insertColumns := controller.GetInsertColumns()
 	hasExtraHandle := false

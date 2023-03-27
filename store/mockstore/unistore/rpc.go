@@ -102,7 +102,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if CheckResourceTagForTopSQLInGoTest {
 		err = checkResourceTagForTopSQL(req)
 		if err != nil {
-			panic(err)
 			return nil, err
 		}
 	}
