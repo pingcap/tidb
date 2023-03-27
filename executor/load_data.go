@@ -84,12 +84,6 @@ func buildCloseSessionOnErr(
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	// in happy path the detached worker will release the system session in
-	// e.loadDataWorker.doLoad, and it must have no error after e.loadDataWorker.doLoad.
-	// Here we handle the case that error occurred before e.loadDataWorker.doLoad
-	defer buildCloseSessionOnErr(&err, e.loadDataWorker.encodeWorker.ctx, e.loadDataWorker.putSysSessionFn)()
-	defer buildCloseSessionOnErr(&err, e.loadDataWorker.commitWorker.ctx, e.loadDataWorker.putSysSessionFn)()
-
 	req.GrowAndReset(e.maxChunkSize)
 	if e.detachHandled {
 		// need to return an empty req to indicate all results have been written
@@ -99,23 +93,11 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	switch e.FileLocRef {
 	case ast.FileLocServerOrRemote:
-		u, err2 := storage.ParseRawURL(e.loadDataWorker.GetInfilePath())
+		b, path, err2 := e.loadDataWorker.resolveRemoteStorage()
 		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
-		}
-		path := strings.Trim(u.Path, "/")
-		u.Path = ""
-		b, err2 := storage.ParseBackendFromURL(u, nil)
-		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err2))
-		}
-		if b.GetLocal() != nil {
-			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.loadDataWorker.GetInfilePath())
-		}
-		// try to find pattern error in advance
-		_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
-		if err2 != nil {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+			e.loadDataWorker.putSysSessionFn(ctx, e.loadDataWorker.encodeWorker.ctx)
+			e.loadDataWorker.putSysSessionFn(ctx, e.loadDataWorker.commitWorker.ctx)
+			return err2
 		}
 		jobID, err2 := e.loadFromRemote(ctx, b, path)
 		if err2 != nil {
@@ -140,6 +122,28 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
 	}
 	return nil
+}
+
+func (e *LoadDataWorker) resolveRemoteStorage() (*backup.StorageBackend, string, error) {
+	u, err := storage.ParseRawURL(e.GetInfilePath())
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+	}
+	path := strings.Trim(u.Path, "/")
+	u.Path = ""
+	b, err := storage.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(getMsgFromBRError(err))
+	}
+	if b.GetLocal() != nil {
+		return nil, "", exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.GetInfilePath())
+	}
+	// try to find pattern error in advance
+	_, err = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err.Error())
+	}
+	return b, path, nil
 }
 
 func (e *LoadDataExec) loadFromRemote(
