@@ -15,20 +15,34 @@
 package importer
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"math"
+	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -94,11 +108,20 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
+// LoadDataReaderInfo provides information for a data reader of LOAD DATA.
+type LoadDataReaderInfo struct {
+	// Opener can be called at needed to get a io.ReadSeekCloser. It will only
+	// be called once.
+	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
+	// Remote is not nil only if load from cloud storage.
+	Remote *mydump.SourceFileMeta
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
-	Path string
-
+	FileLocRef         ast.FileLocRefTp
+	Path               string
 	Format             string
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	ColumnAssignments  []*ast.Assignment
@@ -135,6 +158,11 @@ type LoadDataController struct {
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
 	Detached          bool
+
+	logger    *zap.Logger
+	sqlMode   mysql.SQLMode
+	dataStore storage.ExternalStorage
+	dataFiles []mydump.SourceFileMeta
 }
 
 // NewLoadDataController create new controller.
@@ -146,7 +174,9 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		// without FORMAT 'xxx' clause, default to DELIMITED DATA
 		format = LoadDataFormatDelimitedData
 	}
+	fullTableName := dbutil.TableName(plan.Table.Schema.L, plan.Table.Name.L)
 	c := &LoadDataController{
+		FileLocRef:         plan.FileLocRef,
 		Path:               plan.Path,
 		Format:             format,
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
@@ -155,6 +185,9 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		SchemaName:         plan.Table.Schema.O,
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
+
+		logger:  log.L().With(zap.String("table", fullTableName)),
+		sqlMode: sctx.GetSessionVars().SQLMode,
 	}
 	if err := c.initFieldParams(plan); err != nil {
 		return nil, err
@@ -176,6 +209,11 @@ func (e *LoadDataController) initFieldParams(plan *plannercore.LoadData) error {
 	}
 	if e.Format != LoadDataFormatDelimitedData && e.Format != LoadDataFormatParquet && e.Format != LoadDataFormatSQLDump {
 		return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
+	}
+
+	if e.FileLocRef == ast.FileLocClient && e.Format == LoadDataFormatParquet {
+		// parquet parser need seek around, it's not supported for client local file
+		return exeerrors.ErrLoadParquetFromLocal
 	}
 
 	if e.Format != LoadDataFormatDelimitedData {
@@ -539,4 +577,186 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 		QuotedNullIsText: !e.NullValueOptEnclosed,
 		UnescapedQuote:   true,
 	}
+}
+
+func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+	}
+	path := strings.Trim(u.Path, "/")
+	u.Path = ""
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+	}
+	if b.GetLocal() != nil {
+		return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
+	}
+	// try to find pattern error in advance
+	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(path), "")
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	}
+
+	dataFiles := []mydump.SourceFileMeta{}
+	idx := strings.IndexByte(path, '*')
+	// simple path when the INFILE represent one file
+	if idx == -1 {
+		fileReader, err2 := s.Open(ctx, path)
+		if err2 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+		}
+		defer func() {
+			terror.Log(fileReader.Close())
+		}()
+		size, err3 := fileReader.Seek(0, io.SeekEnd)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek in LOAD DATA")
+		}
+		dataFiles = append(dataFiles, mydump.SourceFileMeta{
+			Path:     path,
+			FileSize: size,
+		})
+	} else {
+		commonPrefix := path[:idx]
+		// we only support '*', in order to reuse glob library manually escape the path
+		escapedPath := stringutil.EscapeGlobExceptAsterisk(path)
+		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix},
+			func(remotePath string, size int64) error {
+				// we have checked in LoadDataExec.Next
+				//nolint: errcheck
+				match, _ := filepath.Match(escapedPath, remotePath)
+				if !match {
+					return nil
+				}
+				dataFiles = append(dataFiles, mydump.SourceFileMeta{
+					Path:     remotePath,
+					FileSize: size,
+				})
+				return nil
+			})
+		if err != nil {
+			return err
+		}
+	}
+
+	e.dataStore = s
+	e.dataFiles = dataFiles
+	return nil
+}
+
+func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
+	result := make([]LoadDataReaderInfo, 0, len(e.dataFiles))
+	for i := range e.dataFiles {
+		f := &e.dataFiles[i]
+		result = append(result, LoadDataReaderInfo{
+			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
+				fileReader, err2 := e.dataStore.Open(ctx, f.Path)
+				if err2 != nil {
+					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
+				}
+				return fileReader, nil
+			},
+			Remote: f,
+		})
+	}
+	return result
+}
+
+func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo *LoadDataReaderInfo) (
+	parser mydump.Parser, err error) {
+	reader, err2 := dataFileInfo.Opener(ctx)
+	if err2 != nil {
+		return nil, err2
+	}
+	defer func() {
+		if err != nil {
+			if err3 := reader.Close(); err3 != nil {
+				e.logger.Warn("failed to close reader", zap.Error(err3))
+			}
+		}
+	}()
+	switch e.Format {
+	case LoadDataFormatDelimitedData:
+		// CSV-like
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			e.GenerateCSVConfig(),
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+			false,
+			// TODO: support charset conversion
+			nil)
+	case LoadDataFormatSQLDump:
+		parser = mydump.NewChunkParser(
+			ctx,
+			e.sqlMode,
+			reader,
+			LoadDataReadBlockSize,
+			nil,
+		)
+	case LoadDataFormatParquet:
+		parser, err = mydump.NewParquetParser(
+			ctx,
+			e.dataStore,
+			reader,
+			dataFileInfo.Remote.Path,
+		)
+	}
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
+	}
+	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
+
+	// handle IGNORE N LINES
+	ignoreOneLineFn := parser.ReadRow
+	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+		ignoreOneLineFn = func() error {
+			_, _, err3 := csvParser.ReadUntilTerminator()
+			return err3
+		}
+	}
+
+	ignoreLineCnt := e.IgnoreLines
+	for ignoreLineCnt > 0 {
+		err = ignoreOneLineFn()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return parser, nil
+			}
+			return nil, err
+		}
+
+		ignoreLineCnt--
+	}
+	return parser, nil
+}
+
+// GetMsgFromBRError get msg from BR error.
+// TODO: add GetMsg() to errors package to replace this function.
+// see TestGetMsgFromBRError for more details.
+func GetMsgFromBRError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if berr, ok := err.(*errors.Error); ok {
+		return berr.GetMsg()
+	}
+	raw := err.Error()
+	berrMsg := errors.Cause(err).Error()
+	if len(raw) <= len(berrMsg)+len(": ") {
+		return raw
+	}
+	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }

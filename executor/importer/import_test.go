@@ -20,6 +20,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
@@ -181,4 +183,13 @@ func TestAdjustOptions(t *testing.T) {
 	require.Equal(t, minDiskQuota, e.diskQuota)
 	require.Equal(t, int64(runtime.NumCPU()), e.threadCnt)
 	require.Equal(t, minWriteSpeed, e.maxWriteSpeed)
+}
+
+func TestGetMsgFromBRError(t *testing.T) {
+	var berr error = berrors.ErrStorageInvalidConfig
+	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "invalid external storage config", GetMsgFromBRError(berr))
+	berr = errors.Annotatef(berr, "some message about error reason")
+	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
+	require.Equal(t, "some message about error reason", GetMsgFromBRError(berr))
 }
