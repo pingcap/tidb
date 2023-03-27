@@ -38,22 +38,27 @@ func main() {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			log.Fatal("error", zap.Error(err))
+			log.Fatal("fail to read file", zap.Error(err), zap.String("path", path))
 		}
 		buildfile, err := build.ParseBuild(d.Name(), data)
 		if err != nil {
-			log.Fatal("error", zap.Error(err))
+			log.Fatal("fail to parser BUILD.bazel", zap.Error(err), zap.String("path", path))
 		}
 		gotest := buildfile.Rules("go_test")
+		toWrite := false
 		if len(gotest) != 0 {
 			if gotest[0].AttrString("timeout") == "" {
 				gotest[0].SetAttr("timeout", &build.StringExpr{Value: "short"})
+				toWrite = true
 			}
 			if !SkipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
 				gotest[0].SetAttr("flaky", &build.LiteralExpr{Token: "True"})
+				toWrite = true
 			}
 		}
-		write(path, buildfile)
+		if toWrite {
+			write(path, buildfile)
+		}
 		return nil
 	})
 	if err != nil {
