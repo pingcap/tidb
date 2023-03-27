@@ -17,6 +17,12 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"go.uber.org/zap"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,11 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 // These are byte flags used for `HashCode()`.
