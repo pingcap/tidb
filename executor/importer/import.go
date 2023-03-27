@@ -405,7 +405,7 @@ func (e *LoadDataController) adjustOptions() {
 // Returns a slice of same ordered column names without user defined variable names.
 func (e *LoadDataController) initFieldMappings() []string {
 	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.Table.Cols()
+	tableCols := e.Table.VisibleCols()
 
 	if len(e.ColumnsAndUserVars) == 0 {
 		for _, v := range tableCols {
@@ -444,7 +444,7 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
-	tableCols := e.Table.Cols()
+	tableCols := e.Table.VisibleCols()
 
 	if len(columnNames) != len(tableCols) {
 		for _, v := range e.ColumnAssignments {

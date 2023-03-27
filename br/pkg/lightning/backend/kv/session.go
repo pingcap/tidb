@@ -24,13 +24,13 @@ import (
 	"sync"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -256,23 +256,12 @@ type session struct {
 	values map[fmt.Stringer]interface{}
 }
 
-// SessionOptions is the initial configuration of the session.
-type SessionOptions struct {
-	SQLMode   mysql.SQLMode
-	Timestamp int64
-	SysVars   map[string]string
-	// a seed used for tableKvEncoder's auto random bits value
-	AutoRandomSeed int64
-	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
-	IndexID int64
-}
-
 // NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
+func NewSession(options *encode.SessionOptions, logger log.Logger) sessionctx.Context {
 	return newSession(options, logger)
 }
 
-func newSession(options *SessionOptions, logger log.Logger) *session {
+func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	s := &session{
 		values: make(map[fmt.Stringer]interface{}, 1),
 	}

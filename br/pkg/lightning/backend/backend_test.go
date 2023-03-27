@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -325,10 +325,12 @@ func TestNewEncoder(t *testing.T) {
 	defer s.tearDownTest()
 
 	encoder := mock.NewMockEncoder(s.controller)
-	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890}
-	s.mockBackend.EXPECT().NewEncoder(nil, nil, options).Return(encoder, nil)
+	options := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890},
+	}
+	s.mockBackend.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
 
-	realEncoder, err := s.mockBackend.NewEncoder(nil, nil, options)
+	realEncoder, err := s.mockBackend.NewEncoder(nil, options)
 	require.Equal(t, realEncoder, encoder)
 	require.NoError(t, err)
 }

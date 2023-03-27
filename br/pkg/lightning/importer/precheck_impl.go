@@ -27,6 +27,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -1268,7 +1269,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSession(&kv.SessionOptions{
+	se := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
