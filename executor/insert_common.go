@@ -585,8 +585,13 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 }
 
 // fillColValue fills the column value if it is not set in the insert statement.
-func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
-	error) {
+func (e *InsertValues) fillColValue(
+	ctx context.Context,
+	datum types.Datum,
+	idx int,
+	column *table.Column,
+	hasValue bool,
+) (types.Datum, error) {
 	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.ctx.GetSessionVars()
