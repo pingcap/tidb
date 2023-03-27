@@ -55,8 +55,8 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch n := in.(type) {
 	case *driver.ValueExpr:
 		pr.params = append(pr.params, n)
-		// offset is used as order in non-prepared plan cache.
-		param := ast.NewParamMarkerExpr(len(pr.params) - 1)
+		param := ast.NewParamMarkerExpr(len(pr.params) - 1) // offset is used as order in non-prepared plan cache.
+		param.(*driver.ParamMarkerExpr).Datum = n.Datum     // init the ParamMakerExpr's Datum
 		return param, true
 	}
 	return in, false
