@@ -22,7 +22,6 @@ set -euo pipefail
 
 before_checksum=`find . -type f \( -name *.bazel -o -name *.bzl \) -exec md5sum {} \;| sort -k 2`
 make bazel_prepare
-make tazel
 after_checksum=`find . -type f \( -name *.bazel -o -name *.bzl \) -exec md5sum {} \;| sort -k 2`
 if [ "$before_checksum" != "$after_checksum" ]
 then

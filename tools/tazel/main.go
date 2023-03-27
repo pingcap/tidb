@@ -30,10 +30,7 @@ func main() {
 		log.Fatal("It should run from the project root")
 	}
 	err := filepath.Walk(".", func(path string, d fs.FileInfo, _ error) error {
-		if d.IsDir() {
-			return nil
-		}
-		if d.Name() != "BUILD.bazel" {
+		if d.IsDir() || d.Name() != "BUILD.bazel" || skipTazel(path) {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -51,12 +48,13 @@ func main() {
 				gotest[0].SetAttr("timeout", &build.StringExpr{Value: "short"})
 				toWrite = true
 			}
-			if !SkipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
+			if !skipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
 				gotest[0].SetAttr("flaky", &build.LiteralExpr{Token: "True"})
 				toWrite = true
 			}
 		}
 		if toWrite {
+			log.Info("write file", zap.String("path", path))
 			write(path, buildfile)
 		}
 		return nil

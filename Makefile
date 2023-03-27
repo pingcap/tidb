@@ -402,6 +402,9 @@ bazel_ci_prepare:
 bazel_prepare: tazel
 	bazel run //:gazelle
 	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
+	bazel run \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
 
 check-bazel-prepare:
 	@echo "make bazel_prepare"
@@ -484,8 +487,3 @@ docker:
 
 docker-test:
 	docker buildx build --platform linux/amd64,linux/arm64 --push -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
-
-tazel:
-	bazel run \
-		--run_under="cd $(CURDIR) && " \
-		 //tools/tazel:tazel
