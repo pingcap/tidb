@@ -17,11 +17,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -41,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -1346,14 +1345,14 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
 var DefaultExprPushDownBlacklist *atomic.Value
 
-// ExprPushDownBlackListVer indicates the version of the expression blacklist.
+// ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
-var ExprPushDownBlackListVer *atomic.Uint32
+var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
 
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
-	ExprPushDownBlackListVer = new(atomic.Uint32)
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -70,7 +71,7 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	if isSameExprPushDownBlackList(newBlocklist, expression.DefaultExprPushDownBlacklist.Load().(map[string]uint32)) {
 		return nil
 	}
-	expression.ExprPushDownBlackListVer.Add(1)
+	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
 	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
 	return nil
 }
