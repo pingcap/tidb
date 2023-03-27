@@ -60,7 +60,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	// test default resource group.
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000000 MEDIUM YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES"))
 	tk.MustExec("alter resource group `default` RU_PER_SEC=1000 PRIORITY=LOW")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW NO"))
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")

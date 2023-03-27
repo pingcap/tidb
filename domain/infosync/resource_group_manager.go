@@ -17,6 +17,7 @@ package infosync
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -39,7 +40,7 @@ func NewMockResourceGroupManager() pd.ResourceManagerClient {
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate:   1000000,
+					FillRate:   math.MaxInt32,
 					BurstLimit: -1,
 				},
 			},
