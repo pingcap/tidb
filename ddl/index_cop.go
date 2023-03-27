@@ -187,40 +187,21 @@ func (c *copReqSenderPool) adjustSize(n int) {
 	}
 }
 
-func (c *copReqSenderPool) close() {
+func (c *copReqSenderPool) close(force bool) {
 	if c.closed {
 		return
 	}
 	logutil.BgLogger().Info("[ddl-ingest] close cop-request sender pool")
 	close(c.tasksCh)
-	for _, w := range c.senders {
-		w.cancel()
+	if force {
+		for _, w := range c.senders {
+			w.cancel()
+		}
 	}
-	cleanupWg := util.WaitGroupWrapper{}
-	cleanupWg.Run(c.drainResults)
 	// Wait for all cop-req senders to exit.
 	c.wg.Wait()
 	close(c.resultsCh)
-	cleanupWg.Wait()
-	close(c.srcChkPool)
 	c.closed = true
-}
-
-func (c *copReqSenderPool) gracefulClose() {
-	if c.closed {
-		return
-	}
-	close(c.tasksCh)
-	c.wg.Wait()
-	close(c.resultsCh)
-	c.closed = true
-}
-
-func (c *copReqSenderPool) drainResults() {
-	// Consume the rest results because the writers are inactive anymore.
-	for rs := range c.resultsCh {
-		c.recycleChunk(rs.chunk)
-	}
 }
 
 func (c *copReqSenderPool) getChunk() *chunk.Chunk {

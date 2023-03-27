@@ -243,6 +243,7 @@ type backfillWorker struct {
 	resultCh chan *backfillResult
 	ctx      context.Context
 	cancel   func()
+	wg       *sync.WaitGroup
 }
 
 func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
@@ -448,6 +449,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", func() {
 		w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}
 	}, false)
+	defer w.wg.Done()
 	for {
 		if util.HasCancelled(w.ctx) {
 			logutil.BgLogger().Info("[ddl] backfill worker exit on context done", zap.Stringer("worker", w))
@@ -521,21 +523,17 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 }
 
 type resultConsumer struct {
-	dc      *ddlCtx
-	wg      *sync.WaitGroup
-	taskCnt *atomic.Int64
-	doneCh  chan struct{}
-	err     *atomic.Pointer[error]
-	closed  bool
+	dc       *ddlCtx
+	wg       *sync.WaitGroup
+	err      error
+	hasError *atomic.Bool
 }
 
 func newResultConsumer(dc *ddlCtx) *resultConsumer {
 	return &resultConsumer{
-		dc:      dc,
-		wg:      &sync.WaitGroup{},
-		taskCnt: &atomic.Int64{},
-		doneCh:  make(chan struct{}),
-		err:     &atomic.Pointer[error]{},
+		dc:       dc,
+		wg:       &sync.WaitGroup{},
+		hasError: &atomic.Bool{},
 	}
 }
 
@@ -543,13 +541,13 @@ func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAd
 	s.wg.Add(1)
 	go func() {
 		reorgInfo := scheduler.reorgInfo
-		consumeResults(scheduler, s, start, totalAddedCount)
-		err := s.getErr()
+		err := consumeResults(scheduler, s, start, totalAddedCount)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] backfill worker handle tasks failed",
 				zap.Int64("total added count", *totalAddedCount),
 				zap.String("start key", hex.EncodeToString(start)),
 				zap.String("task failed error", err.Error()))
+			s.err = err
 		} else {
 			logutil.BgLogger().Info("[ddl] backfill workers successfully processed",
 				zap.Stringer("element", reorgInfo.currElement),
@@ -560,74 +558,49 @@ func (s *resultConsumer) run(scheduler *backfillScheduler, start kv.Key, totalAd
 	}()
 }
 
-func (s *resultConsumer) close() {
-	if s.closed {
-		return
-	}
-	s.doneCh <- struct{}{}
-	s.closed = true
-}
-
-func (s *resultConsumer) gracefulClose() {
-	if s.closed {
-		return
-	}
-	s.doneCh <- struct{}{}
+func (s *resultConsumer) getResult() error {
 	s.wg.Wait()
-	s.closed = true
+	return s.err
 }
 
-func (s *resultConsumer) getErr() error {
-	v := s.err.Load()
-	if v == nil {
-		return nil
-	}
-	return *v
+func (s *resultConsumer) shouldAbort() bool {
+	return s.hasError.Load()
 }
 
-func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) {
+func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) error {
 	keeper := newDoneTaskKeeper(start)
 	handledTaskCnt := 0
-	for {
-		select {
-		case result := <-scheduler.resultCh:
-			handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
-			handledTaskCnt++
-		case <-consumer.doneCh:
-			for i := int64(0); i < consumer.taskCnt.Load(); i++ {
-				result := <-scheduler.resultCh
-				handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
-				handledTaskCnt++
-			}
-			return
+	var firstErr error
+	for result := range scheduler.resultCh {
+		err := handleOneResult(result, scheduler, consumer, keeper, totalAddedCount, handledTaskCnt)
+		handledTaskCnt++
+		if err != nil && firstErr == nil {
+			consumer.hasError.Store(true)
+			firstErr = err
 		}
 	}
+	return firstErr
 }
 
 func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consumer *resultConsumer,
-	keeper *doneTaskKeeper, totalAddedCount *int64, taskSeq int) {
+	keeper *doneTaskKeeper, totalAddedCount *int64, taskSeq int) error {
 	reorgInfo := scheduler.reorgInfo
 	if result.err != nil {
-		// Only stores the first error.
-		consumer.err.CompareAndSwap(nil, &result.err)
 		logutil.BgLogger().Warn("[ddl] backfill worker failed",
 			zap.Int64("job ID", reorgInfo.ID),
 			zap.String("result next key", hex.EncodeToString(result.nextKey)),
 			zap.Error(result.err))
-		cnt := drainTasks(scheduler.taskCh)
-		consumer.taskCnt.Add(int64(-cnt))
-		return
+		drainTasks(scheduler.taskCh)
+		return result.err
 	}
 	*totalAddedCount += int64(result.addedCount)
 	keeper.updateNextKey(result.taskID, result.nextKey)
 	if taskSeq%scheduler.workerSize()*4 == 0 {
 		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
 		if err != nil {
-			consumer.err.CompareAndSwap(nil, &err)
 			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
-			cnt := drainTasks(scheduler.taskCh)
-			consumer.taskCnt.Add(int64(-cnt))
-			return
+			drainTasks(scheduler.taskCh)
+			return err
 		}
 		failpoint.Inject("MockGetIndexRecordErr", func() {
 			// Make sure this job didn't failed because by the "Write conflict" error.
@@ -648,6 +621,7 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 				zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
 		}
 	}
+	return nil
 }
 
 func drainTasks(taskCh chan *reorgBackfillTask) int {
@@ -717,15 +691,13 @@ func sendTasks(scheduler *backfillScheduler, consumer *resultConsumer, t table.P
 	}
 
 	for _, task := range batchTasks {
+		if consumer.shouldAbort() {
+			return nil, nil
+		}
 		if scheduler.copReqSenderPool != nil {
 			scheduler.copReqSenderPool.sendTask(task)
 		}
 		scheduler.taskCh <- task
-		consumer.taskCnt.Add(1)
-		err := consumer.getErr()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 
 	if len(batchTasks) < len(kvRanges) {
@@ -839,7 +811,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 	jc := dc.jobContext(job.ID)
 	scheduler := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, decodeColMap, jc)
-	defer scheduler.close()
+	defer scheduler.close(true)
 
 	var ingestBeCtx *ingest.BackendContext
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -853,7 +825,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 
 	consumer := newResultConsumer(dc)
 	consumer.run(scheduler, startKey, &totalAddedCount)
-	defer consumer.close()
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
@@ -886,6 +857,9 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if consumer.shouldAbort() {
+			break
+		}
 		if len(remains) > 0 {
 			startKey = remains[0].StartKey
 		} else {
@@ -896,11 +870,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 			break
 		}
 	}
-	if scheduler.copReqSenderPool != nil {
-		scheduler.copReqSenderPool.gracefulClose()
-	}
-	consumer.gracefulClose()
-	return consumer.getErr()
+	scheduler.close(false)
+	return consumer.getResult()
 }
 
 func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
