@@ -1346,9 +1346,14 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
 var DefaultExprPushDownBlacklist *atomic.Value
 
+// ExprPushDownBlackListVer indicates the version of the expression blacklist.
+// This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
+var ExprPushDownBlackListVer *atomic.Uint32
+
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+	ExprPushDownBlackListVer = new(atomic.Uint32)
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {

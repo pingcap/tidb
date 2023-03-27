@@ -197,6 +197,7 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
+	ExprBlacklistVer         uint32 // the version of the current expression push-down blacklist
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -233,6 +234,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
+		key.hash = codec.EncodeUint(key.hash, uint64(key.ExprBlacklistVer))
 	}
 	return key.hash
 }
@@ -274,7 +276,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistVer uint32) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -302,6 +304,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
+		ExprBlacklistVer:         exprBlacklistVer,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v

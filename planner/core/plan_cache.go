@@ -166,7 +166,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListVer.Load()); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -306,7 +306,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL); err != nil {
+				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListVer.Load()); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
