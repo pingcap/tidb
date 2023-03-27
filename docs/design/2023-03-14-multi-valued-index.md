@@ -154,7 +154,7 @@ IndexMerge(OR)
         TableRowIDScan
 ```
 
-Each `IndexRangeScan` is a `PointGet` like operator, it will fetch the row record by the index record, since the different index could match the same primary key, we need to use `IndexMerge` to filter the duplicated row records, for `JSON_CONTAINS` we should use `AND` type of `IndexMerge`, only the primary key that contained in all the `IndexRangeScan` can be filtered, for `JSON_OVERLAPS` we should use `OR` to filter the row records.
+Each `IndexRangeScan` is a `PointGet` like operator. It will fetch the row record by the index record. Since different indexes could match the same primary key, we need to use `IndexMerge` to filter the duplicated row records. For `JSON_CONTAINS` we should use `AND` type of `IndexMerge`, because only the primary key that contained in all the `IndexRangeScan` can be filtered. For `JSON_OVERLAPS` we should use `OR` to filter the row records.
 
 If the multi-valued index is unique, it can be further optimized to `PointGet`.
 
