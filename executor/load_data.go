@@ -433,8 +433,6 @@ func (e *LoadDataWorker) doLoad(
 		e.encodeWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.encodeWorker.id, e.encodeWorker.stats)
 		e.commitWorker.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.commitWorker.id, e.commitWorker.stats)
 
-		ctx2 := context.Background()
-		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
 		CloseSession(e.encodeWorker.ctx)
 		CloseSession(e.commitWorker.ctx)
 	}()
