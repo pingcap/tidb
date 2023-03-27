@@ -525,7 +525,7 @@ type resultConsumer struct {
 	wg      *sync.WaitGroup
 	taskCnt *atomic.Int64
 	doneCh  chan struct{}
-	err     *atomic.Value
+	err     *atomic.Pointer[error]
 	closed  bool
 }
 
@@ -535,7 +535,7 @@ func newResultConsumer(dc *ddlCtx) *resultConsumer {
 		wg:      &sync.WaitGroup{},
 		taskCnt: &atomic.Int64{},
 		doneCh:  make(chan struct{}),
-		err:     &atomic.Value{},
+		err:     &atomic.Pointer[error]{},
 	}
 }
 
@@ -582,8 +582,7 @@ func (s *resultConsumer) getErr() error {
 	if v == nil {
 		return nil
 	}
-	//nolint:forcetypeassert
-	return v.(error)
+	return *v
 }
 
 func consumeResults(scheduler *backfillScheduler, consumer *resultConsumer, start kv.Key, totalAddedCount *int64) {
@@ -610,7 +609,7 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 	reorgInfo := scheduler.reorgInfo
 	if result.err != nil {
 		// Only stores the first error.
-		consumer.err.CompareAndSwap(nil, result.err)
+		consumer.err.CompareAndSwap(nil, &result.err)
 		logutil.BgLogger().Warn("[ddl] backfill worker failed",
 			zap.Int64("job ID", reorgInfo.ID),
 			zap.String("result next key", hex.EncodeToString(result.nextKey)),
@@ -624,7 +623,7 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 	if taskSeq%scheduler.workerSize()*4 == 0 {
 		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
 		if err != nil {
-			consumer.err.CompareAndSwap(nil, err)
+			consumer.err.CompareAndSwap(nil, &err)
 			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
 			cnt := drainTasks(scheduler.taskCh)
 			consumer.taskCnt.Add(int64(-cnt))

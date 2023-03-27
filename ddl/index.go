@@ -1762,12 +1762,9 @@ func (*addIndexIngestWorker) String() string {
 // BackfillData will ingest index records through lightning engine.
 func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error) {
 	taskCtx.nextKey = handleRange.startKey
-	oprStartTime := time.Now()
-	defer func() {
-		logSlowOperations(time.Since(oprStartTime), "writeIndexKVsToLocal", 3000)
-	}()
 	var total int
 	for {
+		oprStartTime := time.Now()
 		copChunk, err := w.copReqSenderPool.fetchChunk()
 		if err != nil {
 			return taskCtx, err
@@ -1786,6 +1783,7 @@ func (w *addIndexIngestWorker) BackfillData(handleRange reorgBackfillTask) (task
 		total += cnt
 		w.copReqSenderPool.recycleChunk(copChunk)
 		w.AddMetricInfo(float64(cnt))
+		logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	}
 	taskCtx.scanCount = total
 	taskCtx.addedCount = total
