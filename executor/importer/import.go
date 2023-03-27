@@ -56,7 +56,7 @@ const (
 
 	// LogicalImportMode represents the import mode is SQL-like.
 	LogicalImportMode   = "logical"  // tidb backend
-	physicalImportMode  = "physical" // local backend
+	PhysicalImportMode  = "physical" // local backend
 	unlimitedWriteSpeed = config.ByteSize(math.MaxInt64)
 	minDiskQuota        = config.ByteSize(10 << 30) // 10GiB
 	minWriteSpeed       = config.ByteSize(1 << 10)  // 1KiB/s
@@ -134,12 +134,12 @@ type LoadDataController struct {
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
 	// else it's user defined list.
-	fieldMappings []*FieldMapping
-	// see InsertValues.insertColumns
+	FieldMappings []*FieldMapping
+	// see InsertValues.InsertColumns
 	// todo: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
-	insertColumns []*table.Column
+	InsertColumns []*table.Column
 
 	// used for DELIMITED DATA format
 	FieldNullDef         []string
@@ -148,13 +148,13 @@ type LoadDataController struct {
 	IgnoreLines uint64
 
 	// import options
-	importMode        string
+	ImportMode        string
 	diskQuota         config.ByteSize
 	checksum          config.PostOpLevel
 	addIndex          bool
 	analyze           config.PostOpLevel
 	threadCnt         int64
-	batchSize         int64
+	BatchSize         int64
 	maxWriteSpeed     config.ByteSize // per second
 	splitFile         bool
 	maxRecordedErrors int64 // -1 means record all error
@@ -296,13 +296,13 @@ func (e *LoadDataController) initDefaultOptions() {
 		threadCnt = int(math.Max(1, float64(threadCnt)*0.75))
 	}
 
-	e.importMode = LogicalImportMode
+	e.ImportMode = LogicalImportMode
 	_ = e.diskQuota.UnmarshalText([]byte("50GiB")) // todo confirm with pm
 	e.checksum = config.OpLevelRequired
 	e.addIndex = true
 	e.analyze = config.OpLevelOptional
 	e.threadCnt = int64(threadCnt)
-	e.batchSize = 1000
+	e.BatchSize = 1000
 	e.maxWriteSpeed = unlimitedWriteSpeed
 	e.splitFile = false
 	e.maxRecordedErrors = 100
@@ -338,17 +338,17 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		v = strings.ToLower(v)
-		if v != LogicalImportMode && v != physicalImportMode {
+		if v != LogicalImportMode && v != PhysicalImportMode {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		e.importMode = v
+		e.ImportMode = v
 	}
 
-	if e.importMode == LogicalImportMode {
+	if e.ImportMode == LogicalImportMode {
 		// some options are only allowed in physical mode
 		for _, opt := range specifiedOptions {
 			if _, ok := optionsForPhysicalImport[opt.Name]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.importMode)
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, e.ImportMode)
 			}
 		}
 	}
@@ -398,8 +398,8 @@ func (e *LoadDataController) initOptions(seCtx sessionctx.Context, options []*pl
 		}
 	}
 	if opt, ok := specifiedOptions[batchSizeOption]; ok {
-		e.batchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
-		if err != nil || isNull || e.batchSize < 0 {
+		e.BatchSize, isNull, err = opt.Value.EvalInt(seCtx, chunk.Row{})
+		if err != nil || isNull || e.BatchSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
@@ -464,7 +464,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 			fieldMapping := &FieldMapping{
 				Column: v,
 			}
-			e.fieldMappings = append(e.fieldMappings, fieldMapping)
+			e.FieldMappings = append(e.FieldMappings, fieldMapping)
 			columns = append(columns, v.Name.O)
 		}
 
@@ -485,7 +485,7 @@ func (e *LoadDataController) initFieldMappings() []string {
 			Column:  column,
 			UserVar: v.UserVar,
 		}
-		e.fieldMappings = append(e.fieldMappings, fieldMapping)
+		e.FieldMappings = append(e.FieldMappings, fieldMapping)
 	}
 
 	return columns
@@ -512,11 +512,11 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	for _, col := range cols {
 		if !col.IsGenerated() {
 			// todo: should report error here, since in reorderColumns we report error if en(cols) != len(columnNames)
-			e.insertColumns = append(e.insertColumns, col)
+			e.InsertColumns = append(e.InsertColumns, col)
 		}
 	}
 
-	// e.insertColumns is appended according to the original tables' column sequence.
+	// e.InsertColumns is appended according to the original tables' column sequence.
 	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
 	if err = e.reorderColumns(columnNames); err != nil {
 		return err
@@ -531,10 +531,10 @@ func (e *LoadDataController) initLoadColumns(columnNames []string) error {
 	return nil
 }
 
-// reorderColumns reorder the e.insertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
+// reorderColumns reorder the e.InsertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.InsertColumns and columnNames in terms of column name.
 func (e *LoadDataController) reorderColumns(columnNames []string) error {
-	cols := e.insertColumns
+	cols := e.InsertColumns
 
 	if len(cols) != len(columnNames) {
 		return exeerrors.ErrColumnsNotMatched
@@ -556,30 +556,14 @@ func (e *LoadDataController) reorderColumns(columnNames []string) error {
 		reorderedColumns[idx] = col
 	}
 
-	e.insertColumns = reorderedColumns
+	e.InsertColumns = reorderedColumns
 
 	return nil
 }
 
-// GetInsertColumns get column list need to insert into target table.
-// this list include all columns and in the same order as in fieldMappings and ColumnAssignments
-func (e *LoadDataController) GetInsertColumns() []*table.Column {
-	return e.insertColumns
-}
-
-// GetFieldMapping get field mapping.
-func (e *LoadDataController) GetFieldMapping() []*FieldMapping {
-	return e.fieldMappings
-}
-
 // GetFieldCount get field count.
 func (e *LoadDataController) GetFieldCount() int {
-	return len(e.fieldMappings)
-}
-
-// GetBatchSize get batch size.
-func (e *LoadDataController) GetBatchSize() int64 {
-	return e.batchSize
+	return len(e.FieldMappings)
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
@@ -763,6 +747,11 @@ func (e *LoadDataController) GetParser(ctx context.Context, dataFileInfo *LoadDa
 		ignoreLineCnt--
 	}
 	return parser, nil
+}
+
+func (e *LoadDataController) Import(ctx context.Context) (int64, error) {
+	// todo: implement it
+	return 0, nil
 }
 
 // GetMsgFromBRError get msg from BR error.

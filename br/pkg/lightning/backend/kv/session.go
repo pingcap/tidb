@@ -54,6 +54,7 @@ func (*invalidIterator) Valid() bool {
 func (*invalidIterator) Close() {
 }
 
+// BytesBuf bytes buffer.
 type BytesBuf struct {
 	buf []byte
 	idx int
@@ -81,6 +82,7 @@ func (b *BytesBuf) destroy() {
 	}
 }
 
+// MemBuf used to store the data in memory.
 type MemBuf struct {
 	sync.Mutex
 	kv.MemBuffer
@@ -161,7 +163,7 @@ func (mb *MemBuf) Staging() kv.StagingHandle {
 	return 0
 }
 
-// Cleanup cleanup the resources referenced by the StagingHandle.
+// Cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
 func (mb *MemBuf) Cleanup(h kv.StagingHandle) {}
 
@@ -175,33 +177,33 @@ func (t *transaction) Len() int {
 	return t.GetMemBuffer().Len()
 }
 
-type UnionStore struct {
+type kvUnionStore struct {
 	MemBuf
 }
 
-func (s *UnionStore) GetMemBuffer() kv.MemBuffer {
+func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
 	return &s.MemBuf
 }
 
-func (s *UnionStore) GetIndexName(tableID, indexID int64) string {
+func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
 	panic("Unsupported Operation")
 }
 
-func (s *UnionStore) CacheIndexName(tableID, indexID int64, name string) {
+func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
 }
 
-func (s *UnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
+func (s *kvUnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	UnionStore
+	kvUnionStore
 }
 
 func (t *transaction) GetMemBuffer() kv.MemBuffer {
-	return &t.UnionStore.MemBuf
+	return &t.kvUnionStore.MemBuf
 }
 
 func (t *transaction) Discard() {

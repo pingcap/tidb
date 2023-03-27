@@ -213,7 +213,7 @@ func NewLoadDataWorker(
 		GenExprs:       plan.GenCols.Exprs,
 		isLoadData:     true,
 		txnInUse:       syncutil.Mutex{},
-		maxRowsInBatch: uint64(controller.GetBatchSize()),
+		maxRowsInBatch: uint64(controller.BatchSize),
 	}
 	restrictive := sctx.GetSessionVars().SQLMode.HasStrictMode() &&
 		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
@@ -243,7 +243,7 @@ func NewLoadDataWorker(
 }
 
 func (e *LoadDataWorker) initInsertValues() error {
-	e.insertColumns = e.controller.GetInsertColumns()
+	e.insertColumns = e.controller.InsertColumns
 	e.rowLen = len(e.insertColumns)
 
 	for _, col := range e.insertColumns {
@@ -264,8 +264,11 @@ func (e *LoadDataWorker) loadRemote(ctx context.Context) (int64, error) {
 		return 0, err2
 	}
 
-	dataReaderInfos := e.controller.GetLoadDataReaderInfos()
+	if e.controller.ImportMode == importer.PhysicalImportMode {
+		return e.controller.Import(ctx)
+	}
 
+	dataReaderInfos := e.controller.GetLoadDataReaderInfos()
 	return e.Load(ctx, dataReaderInfos)
 }
 
@@ -749,7 +752,7 @@ func (e *LoadDataWorker) parserData2TableData(
 		}
 	}
 
-	fieldMappings := e.controller.GetFieldMapping()
+	fieldMappings := e.controller.FieldMappings
 	for i := 0; i < len(fieldMappings); i++ {
 		if i >= len(parserData) {
 			if fieldMappings[i].Column == nil {
