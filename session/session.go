@@ -421,7 +421,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, true)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -432,7 +432,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s, false)
 	}
 	return s.preparedPlanCache
 }
@@ -946,7 +946,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
-			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit.Load())
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else if !errIsNoisy(err) {
@@ -1210,7 +1210,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				sql := sqlForLog(st.GetTextToLog())
+				sql := sqlForLog(st.GetTextToLog(false))
 				if !sessVars.EnableRedactLog {
 					sql += sessVars.PreparedParams.String()
 				}
@@ -1556,7 +1556,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
 	oldPi := s.ShowProcess()
@@ -1719,7 +1718,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	} else {
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
-	if len(stmts) != 1 {
+	if len(stmts) != 1 && err == nil {
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
@@ -1889,12 +1888,9 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
-	var dbName string
-	if config.GetGlobalConfig().Status.RecordDBLabel {
-		dbName = se.GetSessionVars().CurrentDB
+	for _, dbName := range GetDBNames(se.GetSessionVars()) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	}
-
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
 }
 
@@ -2067,11 +2063,9 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
-		var dbName string
-		if config.GetGlobalConfig().Status.RecordDBLabel {
-			dbName = se.GetSessionVars().CurrentDB
+		for _, dbName := range GetDBNames(se.GetSessionVars()) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		}
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
 }
@@ -2137,9 +2131,20 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	stmtLabel := ast.GetStmtLabel(stmtNode)
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
+	// Backup the original resource group name since sql hint might change it during optimization
+	originalResourceGroup := s.GetSessionVars().ResourceGroupName
+
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	// session resource-group might be changed by query hint, ensure the resoure it back when
+	// the execution finished.
+	if s.GetSessionVars().ResourceGroupName != originalResourceGroup {
+		defer func() {
+			// Restore the resource group for the session
+			s.GetSessionVars().ResourceGroupName = originalResourceGroup
+		}()
+	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2187,7 +2192,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().ResourceGroupName
-	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+	if len(resourceGroupName) > 0 {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
@@ -2556,6 +2561,9 @@ func (s *session) Close() {
 	s.ClearDiskFullOpt()
 	if s.preparedPlanCache != nil {
 		s.preparedPlanCache.Close()
+	}
+	if s.nonPreparedPlanCache != nil {
+		s.nonPreparedPlanCache.Close()
 	}
 }
 
@@ -3301,7 +3309,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	//  Rebuild sysvar cache in a loop
+	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
 	if err != nil {
 		return nil, err
@@ -3366,12 +3374,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[8])
 	dom.StartHistoricalStatsWorker()
+	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		doBootstrapSQLFile(ses[9])
+		if err := doBootstrapSQLFile(ses[9]); err != nil {
+			failToLoadOrParseSQLFile = true
+		}
 	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
@@ -3439,6 +3450,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	// This only happens in testing, since the failure of loading or parsing sql file
+	// would panic the bootstrapping.
+	if failToLoadOrParseSQLFile {
+		dom.Close()
+		return nil, err
+	}
 	return dom, err
 }
 
@@ -3693,7 +3710,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok && !s.isInternal() {
 			panic("tso shouldn't be requested")
 		}
 	})
@@ -3811,7 +3828,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if isPrepared {
 			query = execStmt.OriginText()
 		} else {
-			query = execStmt.GetTextToLog()
+			query = execStmt.GetTextToLog(false)
 		}
 
 		query = executor.QueryReplacer.Replace(query)
@@ -3959,10 +3976,14 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
-	} else if vars.TxnCtx != nil && vars.InTxn() {
-		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
-			is = tmp
+	} else {
+		vars.TxnCtxMu.Lock()
+		if vars.TxnCtx != nil {
+			if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+				is = tmp
+			}
 		}
+		vars.TxnCtxMu.Unlock()
 	}
 
 	if is == nil {
@@ -4259,4 +4280,25 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
+}
+
+// GetDBNames gets the sql layer database names from the session.
+func GetDBNames(seVar *variable.SessionVars) []string {
+	dbNames := make(map[string]struct{})
+	if seVar == nil || !config.GetGlobalConfig().Status.RecordDBLabel {
+		return []string{""}
+	}
+	if seVar.StmtCtx != nil {
+		for _, t := range seVar.StmtCtx.Tables {
+			dbNames[t.DB] = struct{}{}
+		}
+	}
+	if len(dbNames) == 0 {
+		dbNames[seVar.CurrentDB] = struct{}{}
+	}
+	ns := make([]string, 0, len(dbNames))
+	for n := range dbNames {
+		ns = append(ns, n)
+	}
+	return ns
 }

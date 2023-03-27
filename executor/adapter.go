@@ -35,6 +35,7 @@ import (
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -142,7 +144,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog()), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	err = a.stmt.next(ctx, a.executor, req)
@@ -443,12 +445,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
-				a.Ctx.GetSessionVars().TxnCtx.AggressiveLockingUsed = true
+				a.Ctx.GetSessionVars().TxnCtx.FairLockingUsed = true
 				// If this statement is finished when some of the keys are locked with conflict in the last retry, or
-				// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
+				// some of the keys are derived from the previous retry, we consider the optimization of fair locking
 				// takes effect on this statement.
 				if execDetails.LockKeysDetail.LockedWithConflictCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-					a.Ctx.GetSessionVars().TxnCtx.AggressiveLockingEffective = true
+					a.Ctx.GetSessionVars().TxnCtx.FairLockingEffective = true
 				}
 			}
 			return
@@ -457,7 +459,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
@@ -550,19 +552,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
-
-	failpoint.Inject("mockDelayInnerSessionExecute", func() {
-		var curTxnStartTS uint64
-		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
-			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
-		}
-		if sctx.GetSessionVars().SnapshotTS != 0 {
-			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
-		}
-		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
-			zap.Uint64("startTS", curTxnStartTS))
-		time.Sleep(200 * time.Millisecond)
-	})
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
@@ -659,7 +648,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		return nil
 	}
 	if depth > maxForeignKeyCascadeDepth {
-		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+		return exeerrors.ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
 	}
 	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
 	defer func() {
@@ -988,7 +977,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
 			)
 			sctx.GetSessionVars().SetInTxn(false)
-			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
+			err = exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())
 		}
 	}()
 
@@ -1029,7 +1018,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
-				if ErrDeadlock.Equal(err) {
+				if exeerrors.ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
 				return err
@@ -1065,7 +1054,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			// todo: Report deadlock
-			if ErrDeadlock.Equal(err) {
+			if exeerrors.ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
 			return err
@@ -1088,7 +1077,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
-			err = ErrDeadlock
+			err = exeerrors.ErrDeadlock
 		}
 	}()
 
@@ -1364,7 +1353,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
 	}
-	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
+	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
 
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
@@ -1386,25 +1375,25 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		metrics.ReadFromTableCacheCounter.Inc()
 	}
 
-	// Update aggressive locking related counters by stmt
+	// Update fair locking related counters by stmt
 	if execDetail.LockKeysDetail != nil {
 		if execDetail.LockKeysDetail.AggressiveLockNewCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-			executor_metrics.AggressiveLockingStmtUsedCount.Inc()
+			executor_metrics.FairLockingStmtUsedCount.Inc()
 			// If this statement is finished when some of the keys are locked with conflict in the last retry, or
-			// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
+			// some of the keys are derived from the previous retry, we consider the optimization of fair locking
 			// takes effect on this statement.
 			if execDetail.LockKeysDetail.LockedWithConflictCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-				executor_metrics.AggressiveLockingStmtEffectiveCount.Inc()
+				executor_metrics.FairLockingStmtEffectiveCount.Inc()
 			}
 		}
 	}
-	// If the transaction is committed, update aggressive locking related counters by txn
+	// If the transaction is committed, update fair locking related counters by txn
 	if execDetail.CommitDetail != nil {
-		if sessVars.TxnCtx.AggressiveLockingUsed {
-			executor_metrics.AggressiveLockingTxnUsedCount.Inc()
+		if sessVars.TxnCtx.FairLockingUsed {
+			executor_metrics.FairLockingTxnUsedCount.Inc()
 		}
-		if sessVars.TxnCtx.AggressiveLockingEffective {
-			executor_metrics.AggressiveLockingTxnEffectiveCount.Inc()
+		if sessVars.TxnCtx.FairLockingEffective {
+			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
 }
@@ -1455,7 +1444,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	sql := FormatSQL(a.GetTextToLog())
+	sql := FormatSQL(a.GetTextToLog(true))
 	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
@@ -1506,8 +1495,19 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		KeyspaceName:      keyspaceName,
+		KeyspaceID:        keyspaceID,
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
@@ -1798,7 +1798,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.GetTextToLog()
+	sql := a.GetTextToLog(false)
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1820,6 +1820,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+
+	var (
+		keyspaceName string
+		keyspaceID   uint32
+	)
+	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+	}
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:          strings.ToLower(sessVars.CurrentDB),
@@ -1853,6 +1862,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		ResultRows:          resultRows,
 		TiKVExecDetails:     tikvExecDetail,
 		Prepared:            a.isPreparedStmt,
+		KeyspaceName:        keyspaceName,
+		KeyspaceID:          keyspaceID,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1861,11 +1872,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 }
 
 // GetTextToLog return the query text to log.
-func (a *ExecStmt) GetTextToLog() string {
+func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.EnableRedactLog {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+		if keepHint {
+			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL)
+		} else {
+			sql, _ = sessVars.StmtCtx.SQLDigest()
+		}
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

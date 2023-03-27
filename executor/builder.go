@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -72,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"golang.org/x/exp/slices"
 )
 
@@ -301,7 +303,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 			return mp.GetExecutor()
 		}
 
-		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
+		b.err = exeerrors.ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
 }
@@ -794,6 +796,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		GlobalScope:           v.GlobalScope,
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
+		LoadDataJobID:         v.LoadDataJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -834,6 +837,14 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 					break
 				}
 			}
+		}
+	case *ast.CalibrateResourceStmt:
+		return b.buildCalibrateResource(v.Schema())
+	case *ast.LoadDataActionStmt:
+		return &LoadDataActionExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+			tp:           s.Tp,
+			jobID:        s.JobID,
 		}
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
@@ -930,14 +941,15 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		return nil
 	}
 
-	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl, base.getSysSession, base.releaseSysSession)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
 	return &LoadDataExec{
-		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ID()),
+		baseExecutor:   base,
 		FileLocRef:     v.FileLocRef,
 		OnDuplicate:    v.OnDuplicate,
 		loadDataWorker: worker,
@@ -973,11 +985,11 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
 		indexAdviseInfo: &IndexAdviseInfo{
-			Path:        v.Path,
-			MaxMinutes:  v.MaxMinutes,
-			MaxIndexNum: v.MaxIndexNum,
-			LinesInfo:   v.LinesInfo,
-			Ctx:         b.ctx,
+			Path:           v.Path,
+			MaxMinutes:     v.MaxMinutes,
+			MaxIndexNum:    v.MaxIndexNum,
+			LineFieldsInfo: v.LineFieldsInfo,
+			Ctx:            b.ctx,
 		},
 	}
 	return e
@@ -1194,6 +1206,22 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
+		// If the resource group name is not empty, we could collect and display the RU
+		// runtime stats for analyze executor.
+		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
+		// Try to register the RU runtime stats for analyze executor.
+		if store, ok := b.ctx.GetStore().(interface {
+			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
+		}); len(resourceGroupName) > 0 && ok {
+			// StartTS will be used to identify this SQL, so that the runtime stats could
+			// aggregate the RU stats beneath the KV storage client.
+			startTS, err := b.getSnapshotTS()
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			explainExec.ruRuntimeStats = store.CreateRURuntimeStats(startTS)
+		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec
@@ -1205,8 +1233,9 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 		return nil
 	}
 	return &SelectIntoExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
-		intoOpt:      v.IntoOpt,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
+		intoOpt:        v.IntoOpt,
+		LineFieldsInfo: v.LineFieldsInfo,
 	}
 }
 
@@ -1396,7 +1425,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	// optimizer should guarantee that filters on inner table are pushed down
 	// to tikv or extracted to a Selection.
 	if len(e.innerTable.filters) != 0 {
-		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "merge join's inner filter should be empty.")
 		return nil
 	}
 
@@ -1433,12 +1462,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -3107,14 +3136,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		leftTypes, rightTypes = outerTypes, innerTypes
 		outerFilter = v.LeftConditions
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -3219,14 +3248,14 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		leftTypes, rightTypes = outerTypes, innerTypes
 		outerFilter = v.LeftConditions
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -3356,6 +3385,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
 		desc:             ts.Desc,
+		byItems:          ts.ByItems,
 		columns:          ts.Columns,
 		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.TablePlans),
@@ -3665,6 +3695,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		keepOrder:        is.KeepOrder,
 		desc:             is.Desc,
 		columns:          is.Columns,
+		byItems:          is.ByItems,
 		paging:           paging,
 		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
 		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
@@ -3915,7 +3946,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		}
 		tbl, ok1 := tmp.(table.PartitionedTable)
 		if !ok1 {
-			b.err = ErrBuildExecutor
+			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
 		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
@@ -4386,6 +4417,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
+		SetConnID(e.ctx.GetSessionVars().ConnectionID).
 		Build()
 	if err != nil {
 		return nil, err

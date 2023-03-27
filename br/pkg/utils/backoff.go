@@ -86,10 +86,20 @@ func (rs *RetryState) RecordRetry() {
 	rs.retryTimes++
 }
 
+// RetryTimes returns the retry times.
+// usage: unit test.
+func (rs *RetryState) RetryTimes() int {
+	return rs.retryTimes
+}
+
 // Attempt implements the `Backoffer`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
+}
+
+func (rs *RetryState) StopRetry() {
+	rs.retryTimes = rs.maxRetry
 }
 
 // NextBackoff implements the `Backoffer`.

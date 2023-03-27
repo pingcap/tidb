@@ -36,6 +36,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -54,6 +55,7 @@ const (
 	CheckpointStatusAlteredAutoInc  CheckpointStatus = 150
 	CheckpointStatusChecksumSkipped CheckpointStatus = 170
 	CheckpointStatusChecksummed     CheckpointStatus = 180
+	CheckpointStatusIndexAdded      CheckpointStatus = 190
 	CheckpointStatusAnalyzeSkipped  CheckpointStatus = 200
 	CheckpointStatusAnalyzed        CheckpointStatus = 210
 )
@@ -64,7 +66,7 @@ const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
 	CheckpointTableNameTask   = "task_v2"
-	CheckpointTableNameTable  = "table_v7"
+	CheckpointTableNameTable  = "table_v8"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 
@@ -98,6 +100,7 @@ const (
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
 			table_id bigint NOT NULL DEFAULT 0,
+		    table_info text NOT NULL,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			kv_bytes bigint unsigned NOT NULL DEFAULT 0,
@@ -141,7 +144,7 @@ const (
 		REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir, lightning_ver)
 			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
 	InitTableTemplate = `
-		INSERT INTO %s.%s (task_id, table_name, hash, table_id) VALUES (?, ?, ?, ?)
+		INSERT INTO %s.%s (task_id, table_name, hash, table_id, table_info) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE task_id = CASE
 				WHEN hash = VALUES(hash)
 				THEN VALUES(task_id)
@@ -158,7 +161,7 @@ const (
 		FROM %s.%s WHERE table_name = ?
 		ORDER BY engine_id, path, offset;`
 	ReadTableRemainTemplate = `
-		SELECT status, alloc_base, table_id, kv_bytes, kv_kvs, kv_checksum FROM %s.%s WHERE table_name = ?;`
+		SELECT status, alloc_base, table_id, table_info, kv_bytes, kv_kvs, kv_checksum FROM %s.%s WHERE table_name = ?;`
 	ReplaceEngineTemplate = `
 		REPLACE INTO %s.%s (table_name, engine_id, status) VALUES (?, ?, ?);`
 	ReplaceChunkTemplate = `
@@ -211,6 +214,8 @@ func (status CheckpointStatus) MetricName() string {
 		return "altered_auto_inc"
 	case CheckpointStatusChecksummed, CheckpointStatusChecksumSkipped:
 		return "checksum"
+	case CheckpointStatusIndexAdded:
+		return "index_added"
 	case CheckpointStatusAnalyzed, CheckpointStatusAnalyzeSkipped:
 		return "analyzed"
 	case CheckpointStatusMissing:
@@ -285,6 +290,10 @@ func (ccp *ChunkCheckpoint) FinishedSize() int64 {
 	return ccp.Chunk.RealOffset - ccp.Key.Offset
 }
 
+func (ccp *ChunkCheckpoint) GetKey() string {
+	return ccp.Key.String()
+}
+
 type EngineCheckpoint struct {
 	Status CheckpointStatus
 	Chunks []*ChunkCheckpoint // a sorted array
@@ -306,6 +315,10 @@ type TableCheckpoint struct {
 	AllocBase int64
 	Engines   map[int32]*EngineCheckpoint
 	TableID   int64
+	// TableInfo is desired table info what we want to restore. When add-index-by-sql is enabled,
+	// we will first drop indexes from target table, then restore data, then add indexes back. In case
+	// of crash, this field will be used to save the dropped indexes, so we can add them back.
+	TableInfo *model.TableInfo
 	// remote checksum before restore
 	Checksum verify.KVChecksum
 }
@@ -731,7 +744,11 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, CheckpointStatusLoaded, table.ID)
+				tableInfo, err := json.Marshal(table.Desired)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, CheckpointStatusLoaded, table.ID, tableInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -851,10 +868,14 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 		var status uint8
 		var kvs, bytes, checksum uint64
-		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID, &bytes, &kvs, &checksum); err != nil {
+		var rawTableInfo []byte
+		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID, &rawTableInfo, &bytes, &kvs, &checksum); err != nil {
 			if err == sql.ErrNoRows {
 				return errors.NotFoundf("checkpoint for table %s", tableName)
 			}
+		}
+		if err := json.Unmarshal(rawTableInfo, &cp.TableInfo); err != nil {
+			return errors.Trace(err)
 		}
 		cp.Checksum = verify.MakeKVChecksum(bytes, kvs, checksum)
 		cp.Status = CheckpointStatus(status)
@@ -1165,10 +1186,15 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 		for _, table := range db.Tables {
 			tableName := common.UniqueTable(db.Name, table.Name)
 			if _, ok := cpdb.checkpoints.Checkpoints[tableName]; !ok {
+				tableInfo, err := json.Marshal(table.Desired)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				cpdb.checkpoints.Checkpoints[tableName] = &checkpointspb.TableCheckpointModel{
-					Status:  uint32(CheckpointStatusLoaded),
-					Engines: map[int32]*checkpointspb.EngineCheckpointModel{},
-					TableID: table.ID,
+					Status:    uint32(CheckpointStatusLoaded),
+					Engines:   map[int32]*checkpointspb.EngineCheckpointModel{},
+					TableID:   table.ID,
+					TableInfo: tableInfo,
 				}
 			}
 			// TODO check if hash matches
@@ -1214,11 +1240,17 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 		return nil, errors.NotFoundf("checkpoint for table %s", tableName)
 	}
 
+	var tableInfo *model.TableInfo
+	if err := json.Unmarshal(tableModel.TableInfo, &tableInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
 		AllocBase: tableModel.AllocBase,
 		Engines:   make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
 		TableID:   tableModel.TableID,
+		TableInfo: tableInfo,
 		Checksum:  verify.MakeKVChecksum(tableModel.KvBytes, tableModel.KvKvs, tableModel.KvChecksum),
 	}
 

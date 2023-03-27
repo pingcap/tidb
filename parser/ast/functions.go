@@ -62,6 +62,7 @@ const (
 	UnaryMinus         = "unaryminus"
 	In                 = "in"
 	Like               = "like"
+	Ilike              = "ilike"
 	Case               = "case"
 	Regexp             = "regexp"
 	RegexpLike         = "regexp_like"
@@ -266,6 +267,7 @@ const (
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
+	CurrentResourceGroup = "current_resource_group"
 
 	// control functions
 	If     = "if"

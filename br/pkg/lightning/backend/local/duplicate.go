@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -404,7 +405,7 @@ func NewDuplicateManager(
 	tikvCli *tikv.KVStore,
 	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
-	sessOpts *kv.SessionOptions,
+	sessOpts *encode.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,

@@ -99,7 +99,7 @@ type partitionedTable struct {
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
 	reorganizePartitions map[int64]interface{}
-	// doubleWriteParittions are the partitions not visible, but we should double write to
+	// doubleWritePartitions are the partitions not visible, but we should double write to
 	doubleWritePartitions map[int64]interface{}
 	reorgPartitionExpr    *PartitionExpr
 }
@@ -812,6 +812,29 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	return ret, nil
 }
 
+// Clone a copy of ForListPruning
+func (lp *ForListPruning) Clone() *ForListPruning {
+	ret := *lp
+	if ret.LocateExpr != nil {
+		ret.LocateExpr = lp.LocateExpr.Clone()
+	}
+	if ret.PruneExpr != nil {
+		ret.PruneExpr = lp.PruneExpr.Clone()
+	}
+	ret.PruneExprCols = make([]*expression.Column, 0, len(lp.PruneExprCols))
+	for i := range lp.PruneExprCols {
+		c := lp.PruneExprCols[i].Clone().(*expression.Column)
+		ret.PruneExprCols = append(ret.PruneExprCols, c)
+	}
+	ret.ColPrunes = make([]*ForListColumnPruning, 0, len(lp.ColPrunes))
+	for i := range lp.ColPrunes {
+		l := *lp.ColPrunes[i]
+		l.ExprCol = l.ExprCol.Clone().(*expression.Column)
+		ret.ColPrunes = append(ret.ColPrunes, &l)
+	}
+	return &ret
+}
+
 func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, defs []model.PartitionDefinition, exprCols []*expression.Column,
 	columns []*expression.Column, names types.NameSlice) error {
 	pi := tblInfo.GetPartitionInfo()
@@ -1453,6 +1476,9 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	if err != nil {
 		return
 	}
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+		return
+	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
 		// Double write to the ongoing reorganized partition
 		pid, err = t.locateReorgPartition(ctx, r)
@@ -1640,9 +1666,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			// Update needs to be done in StateDeleteOnly as well
 			tbl = t.GetPartition(newTo)
-			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+				err = tbl.RemoveRecord(ctx, h, currData)
+			} else {
+				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}

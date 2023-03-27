@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
@@ -58,7 +59,7 @@ func TestCacheable(t *testing.T) {
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
 	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
@@ -297,6 +298,11 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (1, 2) and b < 15",
 		"select * from test.t where a between 1 and 10",
 		"select * from test.t where a between 1 and 10 and b < 15",
+		"select * from test.t where a+b=13",      // '+'
+		"select * from test.t where mod(a, 3)=1", // mod
+		"select * from test.t where d>now()",     // now
+		"select a+1 from test.t where a<13",
+		"select mod(a, 10) from test.t where a<13",
 	}
 
 	unsupported := []string{
@@ -315,10 +321,6 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 for update",                                                      // lock
 		"select * from test.t1 where a in (select a from t)",                                    // uncorrelated sub-query
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",                // correlated sub-query
-
-		"select * from test.t where a+b=13",      // '+'
-		"select * from test.t where mod(a, 3)=1", // mod
-		"select * from test.t where d>now()",     // now
 	}
 
 	for _, q := range unsupported {
@@ -331,5 +333,32 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
 		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
+	}
+}
+
+func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	p := parser.New()
+	sql := "select * from test.t where a<10"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	sctx := tk.Session()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+
+	core.NonPreparedPlanCacheable(stmt, is)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		if !ok {
+			b.Fatal()
+		}
 	}
 }

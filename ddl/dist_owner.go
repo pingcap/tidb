@@ -50,7 +50,7 @@ const (
 )
 
 func initDistReorg(reorgMeta *model.DDLReorgMeta) {
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	isDistReorg := variable.EnableDistTask.Load()
 	reorgMeta.IsDistReorg = isDistReorg
 	if isDistReorg {
 		metrics.TelemetryDistReorgCnt.Inc()
@@ -326,7 +326,7 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, pTblMeta *BackfillJobRangeMeta) error {
 	isFirstOps := !sJobCtx.isMultiPhyTbl
 	batchSize := sJobCtx.batchSize
-	startKey, endKey := pTblMeta.StartKey, pTblMeta.EndKey
+	startKey, endKey := kv.Key(pTblMeta.StartKey), kv.Key(pTblMeta.EndKey)
 	bJobs := make([]*BackfillJob, 0, batchSize)
 	for {
 		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
@@ -344,21 +344,29 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		isFirstOps = false
 
 		remains := kvRanges[len(batchTasks):]
+		if len(remains) > 0 {
+			startKey = remains[0].StartKey
+		} else {
+			rangeEndKey := kvRanges[len(kvRanges)-1].EndKey
+			startKey = rangeEndKey.Next()
+		}
+		isFinished := startKey.Cmp(endKey) >= 0
 		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
-		logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
+		logutil.BgLogger().Info("[ddl] batch split backfill jobs to the backfill table",
 			zap.Int64("physicalID", pTblMeta.PhyTblID),
 			zap.Int("batchTasksCnt", len(batchTasks)),
 			zap.Int("totalRegionCnt", len(kvRanges)),
 			zap.Int("remainRegionCnt", len(remains)),
 			zap.String("startHandle", hex.EncodeToString(startKey)),
-			zap.String("endHandle", hex.EncodeToString(endKey)))
+			zap.String("endHandle", hex.EncodeToString(endKey)),
+			zap.Bool("isFinished", isFinished))
 
-		if len(remains) == 0 {
+		if isFinished {
 			break
 		}
 
 		for {
-			bJobCnt, err := checkBackfillJobCount(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+			bJobCnt, err := CheckBackfillJobCountWithPhyID(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -367,7 +375,6 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 			}
 			time.Sleep(RetrySQLInterval)
 		}
-		startKey = remains[0].StartKey
 	}
 	return nil
 }
@@ -550,14 +557,15 @@ func cleanupBackfillJobs(sess *session, prefixKey string) error {
 	return err
 }
 
-func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (backfillJobCnt int, err error) {
+// CheckBackfillJobCountWithPhyID checks if the backfill job is interrupted, if not gets the backfill job count.
+func CheckBackfillJobCountWithPhyID(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
 	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEleID, currEleKey)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	backfillJobCnt, err = GetBackfillJobCount(sess, BackgroundSubtaskTable,
-		fmt.Sprintf("task_key like '%s'", backfillJobPrefixKeyString(ddlJobID, currEleKey, currEleID)), "check_backfill_job_count")
+		fmt.Sprintf("task_key like '%s' and ddl_physical_tid = %d", backfillJobPrefixKeyString(ddlJobID, currEleKey, currEleID), pTblID), "check_backfill_job_count")
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
