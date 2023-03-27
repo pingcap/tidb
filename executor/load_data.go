@@ -272,18 +272,16 @@ func NewLoadDataWorker(
 	userSctx sessionctx.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
-	getSysSessionFn2 func() (sessionctx.Context, error),
-	putSysSessionFn2 func(context.Context, sessionctx.Context),
 ) (w *LoadDataWorker, err error) {
 	// debug
 	getSysSessionFn := func() (sessionctx.Context, error) {
-		a, b := getSysSessionFn2()
+		a, b := CreateSession(userSctx)
 		println("lance test get", a, b)
 		return a, b
 	}
 	putSysSessionFn := func(ctx context.Context, sctx sessionctx.Context) {
 		println("lance test put", ctx, sctx)
-		putSysSessionFn2(ctx, sctx)
+		CloseSession(sctx)
 	}
 
 	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
@@ -899,7 +897,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			w.progress.LoadedRowCntSetter.Add(task.cnt)
 			w.progress.LoadedFileSizeSetter.Add(task.fileSize)
 			taskCnt++
-			logutil.Logger(ctx).Debug("commit one task success",
+			logutil.Logger(ctx).Info("commit one task success",
 				zap.Duration("commit time usage", time.Since(start)),
 				zap.Uint64("keys processed", task.cnt),
 				zap.Uint64("taskCnt processed", taskCnt),
