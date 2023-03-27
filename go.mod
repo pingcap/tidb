@@ -72,7 +72,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20230327023446-0d83256af9f4
-	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20230310043643-5362260ee6f7
