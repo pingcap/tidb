@@ -28,8 +28,10 @@ go_library(
 
 go_test(
     name = "loaddata_test",
+    timeout = "short",
     srcs = ["wrapper_test.go"],
     embed = [":loaddata"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",
