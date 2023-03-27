@@ -16,7 +16,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,11 +50,13 @@ func main() {
 		gotest := buildfile.Rules("go_test")
 		if len(gotest) != 0 {
 			if gotest[0].AttrString("timeout") == "" {
-				fmt.Println(path)
+				gotest[0].SetAttr("timeout", &build.StringExpr{Value: "short"})
 			}
-			gotest[0].SetAttr("timeout", "short")
+			if !SkipFlaky(path) && gotest[0].AttrLiteral("flaky") == "" {
+				gotest[0].SetAttr("flaky", &build.LiteralExpr{Token: "True"})
+			}
 		}
-
+		write(path, buildfile)
 		return nil
 	})
 	if err != nil {

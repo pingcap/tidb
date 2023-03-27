@@ -13,3 +13,22 @@
 // limitations under the License.
 
 package main
+
+import (
+	"os"
+
+	bzl "github.com/bazelbuild/buildtools/build"
+	"github.com/pingcap/tidb/util/set"
+)
+
+func write(path string, f *bzl.File) error {
+	bzl.Rewrite(f)
+	out := bzl.Format(f)
+	return os.WriteFile(path, out, 0644)
+}
+
+func SkipFlaky(path string) bool {
+	var pmap = set.NewStringSet()
+	pmap.Insert("tests/realtikvtest/addindextest/BUILD.bazel")
+	return pmap.Exist(path)
+}
