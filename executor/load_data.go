@@ -71,13 +71,11 @@ type LoadDataExec struct {
 func buildCloseSessionOnErr(
 	err *error,
 	sctx sessionctx.Context,
-	putBackFn func(context.Context, sessionctx.Context),
+	closeFn func(sessionctx.Context),
 ) func() {
 	return func() {
 		if err != nil && *err != nil {
-			ctx := context.Background()
-			ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-			putBackFn(ctx, sctx)
+			closeFn(sctx)
 		}
 	}
 }
@@ -95,8 +93,8 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case ast.FileLocServerOrRemote:
 		b, path, err2 := e.loadDataWorker.resolveRemoteStorage()
 		if err2 != nil {
-			e.loadDataWorker.putSysSessionFn(ctx, e.loadDataWorker.encodeWorker.ctx)
-			e.loadDataWorker.putSysSessionFn(ctx, e.loadDataWorker.commitWorker.ctx)
+			CloseSession(e.loadDataWorker.encodeWorker.ctx)
+			CloseSession(e.loadDataWorker.commitWorker.ctx)
 			return err2
 		}
 		jobID, err2 := e.loadFromRemote(ctx, b, path)
@@ -253,10 +251,8 @@ type LoadDataWorker struct {
 
 	controller *importer.LoadDataController
 
-	table           table.Table
-	progress        *asyncloaddata.Progress
-	getSysSessionFn func() (sessionctx.Context, error)
-	putSysSessionFn func(context.Context, sessionctx.Context)
+	table    table.Table
+	progress *asyncloaddata.Progress
 }
 
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
@@ -273,17 +269,6 @@ func NewLoadDataWorker(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {
-	// debug
-	getSysSessionFn := func() (sessionctx.Context, error) {
-		a, b := CreateSession(userSctx)
-		println("lance test get", a, b)
-		return a, b
-	}
-	putSysSessionFn := func(ctx context.Context, sctx sessionctx.Context) {
-		println("lance test put", ctx, sctx)
-		CloseSession(sctx)
-	}
-
 	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
@@ -294,16 +279,16 @@ func NewLoadDataWorker(
 	}
 
 	// TODO: create N InsertValues where N is threadCnt
-	encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller, getSysSessionFn, putSysSessionFn)
+	encodeCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
 	if err2 != nil {
 		return nil, err2
 	}
-	defer buildCloseSessionOnErr(&err, encodeCore.ctx, putSysSessionFn)()
-	commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller, getSysSessionFn, putSysSessionFn)
+	defer buildCloseSessionOnErr(&err, encodeCore.ctx, CloseSession)()
+	commitCore, err2 := createInsertValues(userSctx, plan, tbl, controller)
 	if err2 != nil {
 		return nil, err2
 	}
-	defer buildCloseSessionOnErr(&err, commitCore.ctx, putSysSessionFn)()
+	defer buildCloseSessionOnErr(&err, commitCore.ctx, CloseSession)()
 
 	encode := &encodeWorker{
 		InsertValues: encodeCore,
@@ -318,14 +303,12 @@ func NewLoadDataWorker(
 		progress:     progress,
 	}
 	loadDataWorker := &LoadDataWorker{
-		UserSctx:        userSctx,
-		encodeWorker:    encode,
-		commitWorker:    commit,
-		table:           tbl,
-		controller:      controller,
-		progress:        progress,
-		getSysSessionFn: getSysSessionFn,
-		putSysSessionFn: putSysSessionFn,
+		UserSctx:     userSctx,
+		encodeWorker: encode,
+		commitWorker: commit,
+		table:        tbl,
+		controller:   controller,
+		progress:     progress,
 	}
 	return loadDataWorker, nil
 }
@@ -337,14 +320,12 @@ func createInsertValues(
 	plan *plannercore.LoadData,
 	tbl table.Table,
 	controller *importer.LoadDataController,
-	getSysSessionFn func() (sessionctx.Context, error),
-	putSysSessionFn func(context.Context, sessionctx.Context),
 ) (insertVal *InsertValues, err error) {
-	sysSession, err2 := getSysSessionFn()
+	sysSession, err2 := CreateSession(userSctx)
 	if err2 != nil {
 		return nil, err2
 	}
-	defer buildCloseSessionOnErr(&err, sysSession, putSysSessionFn)()
+	defer buildCloseSessionOnErr(&err, sysSession, CloseSession)()
 
 	err = ResetContextOfStmt(sysSession, &ast.LoadDataStmt{})
 	if err != nil {
@@ -409,11 +390,11 @@ func (e *LoadDataWorker) Load(
 		err   error
 	)
 
-	s, err := e.getSysSessionFn()
+	s, err := CreateSession(e.UserSctx)
 	if err != nil {
 		return 0, err
 	}
-	defer e.putSysSessionFn(ctx, s)
+	defer CloseSession(s)
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
@@ -454,16 +435,16 @@ func (e *LoadDataWorker) doLoad(
 
 		ctx2 := context.Background()
 		ctx2 = kv.WithInternalSourceType(ctx2, kv.InternalLoadData)
-		e.putSysSessionFn(ctx2, e.encodeWorker.ctx)
-		e.putSysSessionFn(ctx2, e.commitWorker.ctx)
+		CloseSession(e.encodeWorker.ctx)
+		CloseSession(e.commitWorker.ctx)
 	}()
 
 	// get a session for UpdateJobProgress.
-	s, err := e.getSysSessionFn()
+	s, err := CreateSession(e.UserSctx)
 	if err != nil {
 		return err
 	}
-	defer e.putSysSessionFn(ctx, s)
+	defer CloseSession(s)
 
 	sqlExec := s.(sqlexec.SQLExecutor)
 
