@@ -788,7 +788,7 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 			defer close(ch)
 		}
 		if r == nil {
-			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -1340,7 +1340,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
-			logutil.BgLogger().Info("worker finish without panic", zap.Any("worker", worker))
+			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
