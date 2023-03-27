@@ -1286,7 +1286,6 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			ss, ok := es.(*S3Storage)
 			require.True(t, ok)
 			require.Equal(t, region, ss.GetOptions().Region)
-
 		}(ca.name, ca.expectRegion, ca.s3)
 	}
 }
