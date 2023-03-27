@@ -724,7 +724,7 @@ func sendTasks(scheduler *backfillScheduler, consumer *resultConsumer, t table.P
 		consumer.taskCnt.Add(1)
 		err := consumer.getErr()
 		if err != nil {
-			return nil, errors.Trace(consumer.err.Load().(error))
+			return nil, errors.Trace(err)
 		}
 	}
 
