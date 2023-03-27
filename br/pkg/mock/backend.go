@@ -14,7 +14,6 @@ import (
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	config "github.com/pingcap/tidb/br/pkg/lightning/config"
-	model "github.com/pingcap/tidb/parser/model"
 	table "github.com/pingcap/tidb/table"
 )
 
@@ -39,20 +38,6 @@ func NewMockBackend(ctrl *gomock.Controller) *MockBackend {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
-}
-
-// CheckRequirements mocks base method.
-func (m *MockBackend) CheckRequirements(arg0 context.Context, arg1 *backend.CheckCtx) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CheckRequirements indicates an expected call of CheckRequirements.
-func (mr *MockBackendMockRecorder) CheckRequirements(arg0, arg1 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements), arg0, arg1)
 }
 
 // CleanupEngine mocks base method.
@@ -139,21 +124,6 @@ func (mr *MockBackendMockRecorder) EngineFileSizes() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EngineFileSizes", reflect.TypeOf((*MockBackend)(nil).EngineFileSizes))
 }
 
-// FetchRemoteTableModels mocks base method.
-func (m *MockBackend) FetchRemoteTableModels(arg0 context.Context, arg1 string) ([]*model.TableInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0, arg1)
-	ret0, _ := ret[0].([]*model.TableInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
-func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0, arg1 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockBackend)(nil).FetchRemoteTableModels), arg0, arg1)
-}
-
 // FlushAllEngines mocks base method.
 func (m *MockBackend) FlushAllEngines(arg0 context.Context) error {
 	m.ctrl.T.Helper()
@@ -209,35 +179,6 @@ func (m *MockBackend) LocalWriter(arg0 context.Context, arg1 *backend.LocalWrite
 func (mr *MockBackendMockRecorder) LocalWriter(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LocalWriter", reflect.TypeOf((*MockBackend)(nil).LocalWriter), arg0, arg1, arg2)
-}
-
-// MakeEmptyRows mocks base method.
-func (m *MockBackend) MakeEmptyRows() encode.Rows {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MakeEmptyRows")
-	ret0, _ := ret[0].(encode.Rows)
-	return ret0
-}
-
-// MakeEmptyRows indicates an expected call of MakeEmptyRows.
-func (mr *MockBackendMockRecorder) MakeEmptyRows() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MakeEmptyRows", reflect.TypeOf((*MockBackend)(nil).MakeEmptyRows))
-}
-
-// NewEncoder mocks base method.
-func (m *MockBackend) NewEncoder(arg0 context.Context, arg1 *encode.EncodingConfig) (encode.Encoder, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1)
-	ret0, _ := ret[0].(encode.Encoder)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// NewEncoder indicates an expected call of NewEncoder.
-func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockBackend)(nil).NewEncoder), arg0, arg1)
 }
 
 // OpenEngine mocks base method.

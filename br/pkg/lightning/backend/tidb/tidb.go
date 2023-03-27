@@ -254,7 +254,6 @@ type tidbBackend struct {
 	db          *sql.DB
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
-	encBuilder  encode.EncodingBuilder
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
@@ -272,7 +271,6 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		db:          db,
 		onDuplicate: onDuplicate,
 		errorMgr:    errorMgr,
-		encBuilder:  NewEncodingBuilder(),
 	})
 }
 
@@ -541,10 +539,6 @@ func (be *tidbBackend) Close() {
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *tidbBackend) MakeEmptyRows() encode.Rows {
-	return be.encBuilder.MakeEmptyRows()
-}
-
 func (be *tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
@@ -558,10 +552,6 @@ func (be *tidbBackend) MaxChunkSize() int {
 
 func (be *tidbBackend) ShouldPostProcess() bool {
 	return true
-}
-
-func (be *tidbBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return be.encBuilder.NewEncoder(ctx, config)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {

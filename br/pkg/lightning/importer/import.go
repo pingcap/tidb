@@ -230,6 +230,7 @@ type Controller struct {
 
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
+	encBuilder          encode.EncodingBuilder
 
 	keyspaceName string
 }
@@ -329,9 +330,11 @@ func NewImportControllerWithPauser(
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
 
+	var encodingBuilder encode.EncodingBuilder
 	var backendObj backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
+		encodingBuilder = tidb.NewEncodingBuilder()
 		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
@@ -356,11 +359,11 @@ func NewImportControllerWithPauser(
 			}
 		}
 
-		encodingBuilder := local.NewEncodingBuilder(ctx)
+		encodingBuilder = local.NewEncodingBuilder(ctx)
 		regionSizeGetter := &local.TableRegionSizeGetterImpl{
 			DB: db,
 		}
-		backendObj, err = local.NewLocalBackend(ctx, tls, cfg, regionSizeGetter, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
+		backendObj, err = local.NewLocalBackend(ctx, tls, cfg, regionSizeGetter, maxOpenFiles, errorMgr, p.KeyspaceName)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -410,7 +413,7 @@ func NewImportControllerWithPauser(
 		p.DumpFileStorage,
 		targetInfoGetter,
 		ioWorkers,
-		backendObj,
+		encodingBuilder,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -454,6 +457,7 @@ func NewImportControllerWithPauser(
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
+		encBuilder:          encodingBuilder,
 
 		keyspaceName: p.KeyspaceName,
 	}

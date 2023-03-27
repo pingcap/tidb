@@ -420,8 +420,6 @@ type local struct {
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 
-	encBuilder encode.EncodingBuilder
-
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
 	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
 	// must check both leader node and followers in client side, because followers will
@@ -456,7 +454,6 @@ func NewLocalBackend(
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
 	keyspaceName string,
-	encodingBuilder encode.EncodingBuilder,
 ) (backend.Backend, error) {
 	localFile := cfg.TikvImporter.SortedKVDir
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
@@ -561,7 +558,6 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
-		encBuilder:              encodingBuilder,
 		shouldCheckWriteStall:   cfg.Cron.SwitchMode.Duration == 0,
 	}
 	if m, ok := metric.FromContext(ctx); ok {
@@ -1665,14 +1661,6 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	localEngine.TotalSize.Store(0)
 	localEngine.Length.Store(0)
 	return nil
-}
-
-func (local *local) MakeEmptyRows() encode.Rows {
-	return local.encBuilder.MakeEmptyRows()
-}
-
-func (local *local) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return local.encBuilder.NewEncoder(ctx, config)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

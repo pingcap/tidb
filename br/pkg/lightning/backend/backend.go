@@ -149,7 +149,6 @@ type TargetInfoGetter interface {
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
 type AbstractBackend interface {
-	encode.EncodingBuilder
 	// Close the connection to the backend.
 	Close()
 
@@ -258,14 +257,6 @@ func MakeBackend(ab AbstractBackend) Backend {
 
 func (be Backend) Close() {
 	be.abstract.Close()
-}
-
-func (be Backend) MakeEmptyRows() encode.Rows {
-	return be.abstract.MakeEmptyRows()
-}
-
-func (be Backend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	return be.abstract.NewEncoder(ctx, config)
 }
 
 func (be Backend) ShouldPostProcess() bool {

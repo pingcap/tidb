@@ -89,7 +89,6 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backe
 
 	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
 	errorMgr := errormanager.New(nil, cfg.Lightning, log.Logger{Logger: logutil.BgLogger()})
-	encodingBuilder := local.NewEncodingBuilder(ctx)
 	db, err := glue.GetDB()
 	if err != nil {
 		return backend.Backend{}, err
@@ -97,7 +96,7 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backe
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: db,
 	}
-	return local.NewLocalBackend(ctx, tls, cfg.Lightning, regionSizeGetter, int(LitRLimit), errorMgr, cfg.KeyspaceName, encodingBuilder)
+	return local.NewLocalBackend(ctx, tls, cfg.Lightning, regionSizeGetter, int(LitRLimit), errorMgr, cfg.KeyspaceName)
 }
 
 func newBackendContext(ctx context.Context, jobID int64, be *backend.Backend,
