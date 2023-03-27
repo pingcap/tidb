@@ -191,7 +191,7 @@ const taskTypeExample = "task_example"
 type NumberExampleHandle struct {
 }
 
-func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Dispatch, gTask *proto.Task) (metas [][]byte, err error) {
+func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.Handle, gTask *proto.Task) (metas [][]byte, err error) {
 	if gTask.State == proto.TaskStatePending {
 		gTask.Step = proto.StepInit
 	}
@@ -211,7 +211,7 @@ func (n NumberExampleHandle) ProcessNormalFlow(_ context.Context, _ dispatcher.D
 	return metas, nil
 }
 
-func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Dispatch, _ *proto.Task, _ string) (meta []byte, err error) {
+func (n NumberExampleHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Handle, _ *proto.Task, _ string) (meta []byte, err error) {
 	// Don't handle not.
 	return nil, nil
 }

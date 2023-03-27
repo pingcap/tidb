@@ -24,7 +24,7 @@ import (
 
 // TaskStep of LoadData.
 const (
-	Import = 1
+	Import int64 = 1
 )
 
 // TaskMeta is the task of LoadData.

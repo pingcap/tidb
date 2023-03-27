@@ -71,7 +71,7 @@ func TestMakeTableRegions(t *testing.T) {
 				Name: model.NewCIStr("test"),
 			},
 		},
-		Dir: "dir",
+		Dir: "/tmp/test",
 	}
 	regions, err = makeTableRegions(context.Background(), task, 1)
 	require.EqualError(t, err, "unknown source type: ")

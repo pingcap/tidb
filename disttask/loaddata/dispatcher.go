@@ -24,11 +24,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Dispatcher is the dispatcher for load data.
-type Dispatcher struct{}
+// FlowHandle is the dispatcher for load data.
+type FlowHandle struct{}
 
 // ProcessNormalFlow implements dispatcher.TaskFlowHandle interface.
-func (*Dispatcher) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Dispatch, gTask *proto.Task) ([][]byte, error) {
+func (*FlowHandle) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Handle, gTask *proto.Task) ([][]byte, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
@@ -65,7 +65,7 @@ func (*Dispatcher) ProcessNormalFlow(ctx context.Context, dispatch dispatcher.Di
 }
 
 // ProcessErrFlow implements dispatcher.ProcessErrFlow interface.
-func (*Dispatcher) ProcessErrFlow(_ context.Context, _ dispatcher.Dispatch, _ *proto.Task, errMsg string) ([]byte, error) {
+func (*FlowHandle) ProcessErrFlow(_ context.Context, _ dispatcher.Handle, _ *proto.Task, errMsg string) ([]byte, error) {
 	logutil.BgLogger().Info("process error flow", zap.String("error message", errMsg))
 	return nil, nil
 }
@@ -103,5 +103,5 @@ func generateSubtaskMetas(ctx context.Context, task *TaskMeta, concurrency int) 
 }
 
 func init() {
-	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &Dispatcher{})
+	dispatcher.RegisterTaskFlowHandle(proto.LoadData, &FlowHandle{})
 }

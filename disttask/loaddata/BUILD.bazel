@@ -29,14 +29,20 @@ go_library(
 go_test(
     name = "loaddata_test",
     timeout = "short",
-    srcs = ["wrapper_test.go"],
+    srcs = [
+        "dispatcher_test.go",
+        "wrapper_test.go",
+    ],
     embed = [":loaddata"],
     flaky = True,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",
+        "//disttask/framework/dispatcher",
+        "//disttask/framework/proto",
         "//executor/importer",
         "//parser/model",
+        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
     ],
 )

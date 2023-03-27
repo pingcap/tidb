@@ -50,6 +50,12 @@ type Dispatch interface {
 	Stop()
 }
 
+// Handle provides the interface for operations needed by task flow handles.
+type Handle interface {
+	// GetTaskAllInstances gets handles the task's all available instances.
+	GetTaskAllInstances(ctx context.Context, gTaskID int64) ([]string, error)
+}
+
 func (d *dispatcher) getRunningGlobalTasks() map[int64]*proto.Task {
 	d.runningGlobalTasks.RLock()
 	defer d.runningGlobalTasks.RUnlock()
