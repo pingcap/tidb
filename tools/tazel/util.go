@@ -17,13 +17,13 @@ package main
 import (
 	"os"
 
-	bzl "github.com/bazelbuild/buildtools/build"
+	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/tidb/util/set"
 )
 
-func write(path string, f *bzl.File) error {
-	bzl.Rewrite(f)
-	out := bzl.Format(f)
+func write(path string, f *build.File) error {
+	build.Rewrite(f)
+	out := build.Format(f)
 	return os.WriteFile(path, out, 0644)
 }
 

@@ -29,16 +29,13 @@ func main() {
 	if _, err := os.Stat("WORKSPACE"); errors.Is(err, os.ErrNotExist) {
 		log.Fatal("It should run from the project root")
 	}
-	log.Info("It should run from the project root")
-	err := filepath.Walk(".", func(path string, d fs.FileInfo, err error) error {
+	err := filepath.Walk(".", func(path string, d fs.FileInfo, _ error) error {
 		if d.IsDir() {
 			return nil
 		}
-
 		if d.Name() != "BUILD.bazel" {
 			return nil
 		}
-		//fmt.Println(path)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			log.Fatal("error", zap.Error(err))
