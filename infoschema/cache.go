@@ -70,13 +70,17 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
 	// this is ok because the size of h.cache is small (currently set to 16)
 	// moreover, the most likely hit element in the array is the first one in steady mode
 	// thus it may have better performance than binary search
-	for _, is := range h.cache {
+	for i, is := range h.cache {
 		if is.timestamp == 0 {
 			// the schema version doesn't have a timestamp
 			// ignore all the schema cache equals or less than this version in search by timestamp
 			break
 		}
 		if ts >= uint64(is.timestamp) {
+			if i > 0 && h.cache[i-1].infoschema.SchemaMetaVersion() != is.infoschema.SchemaMetaVersion()+1 {
+				// there is a gap in schema cache, so there chould be unknown schema version, skip using the cache
+				break
+			}
 			// found the largest version before the given ts
 			return is.infoschema, nil
 		}
@@ -126,7 +130,7 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 
 // GetBySnapshotTS gets the information schema based on snapshotTS.
 // It searches the schema cache and find the schema with max schema ts that equals or smaller than given snapshot ts
-// Where the schema ts is the start ts of the txn creates the schema diff
+// Where the schema ts is the commitTs of the txn creates the schema diff
 func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -142,9 +146,9 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
-// schemaTs is the startTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
+// schemaTs is the commitTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
 func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
-	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS))
+	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
