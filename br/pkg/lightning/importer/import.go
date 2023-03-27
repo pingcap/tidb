@@ -329,10 +329,10 @@ func NewImportControllerWithPauser(
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
 
-	var backend backend.Backend
+	var backendObj backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
-		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
+		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()
@@ -357,7 +357,10 @@ func NewImportControllerWithPauser(
 		}
 
 		encodingBuilder := local.NewEncodingBuilder(ctx)
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
+		regionSizeGetter := &local.TableRegionSizeGetterImpl{
+			DB: db,
+		}
+		backendObj, err = local.NewLocalBackend(ctx, tls, cfg, regionSizeGetter, maxOpenFiles, errorMgr, p.KeyspaceName, encodingBuilder)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -387,12 +390,19 @@ func NewImportControllerWithPauser(
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
+
+	var wrapper backend.TargetInfoGetter
+	if cfg.TikvImporter.Backend == config.BackendLocal {
+		wrapper = local.NewTargetInfoGetter(tls, p.Glue, cfg.TiDB.PdAddr)
+	} else {
+		wrapper = tidb.NewTargetInfoGetter(db)
+	}
 	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
 	targetInfoGetter := &TargetInfoGetterImpl{
 		cfg:          cfg,
 		targetDBGlue: p.Glue,
 		tls:          tls,
-		backend:      backend,
+		backend:      wrapper,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -400,7 +410,7 @@ func NewImportControllerWithPauser(
 		p.DumpFileStorage,
 		targetInfoGetter,
 		ioWorkers,
-		backend,
+		backendObj,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -420,7 +430,7 @@ func NewImportControllerWithPauser(
 		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
-		backend:       backend,
+		backend:       backendObj,
 		tidbGlue:      p.Glue,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,

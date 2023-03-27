@@ -150,7 +150,6 @@ type TargetInfoGetter interface {
 // instance and execute any method anywhere.
 type AbstractBackend interface {
 	encode.EncodingBuilder
-	TargetInfoGetter
 	// Close the connection to the backend.
 	Close()
 
@@ -271,14 +270,6 @@ func (be Backend) NewEncoder(ctx context.Context, config *encode.EncodingConfig)
 
 func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
-}
-
-func (be Backend) CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error {
-	return be.abstract.CheckRequirements(ctx, checkCtx)
-}
-
-func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (be Backend) FlushAll(ctx context.Context) error {

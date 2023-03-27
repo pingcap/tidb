@@ -128,8 +128,9 @@ type LoadDataController struct {
 	ColumnAssignments  []*ast.Assignment
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 
-	Table      table.Table
-	SchemaName string
+	Table  table.Table
+	DBName string
+	DBID   int64
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in load data statement, then it's table's columns
@@ -203,7 +204,8 @@ func NewLoadDataController(sctx sessionctx.Context, plan *plannercore.LoadData, 
 		ColumnsAndUserVars: plan.ColumnsAndUserVars,
 		ColumnAssignments:  plan.ColumnAssignments,
 		OnDuplicate:        plan.OnDuplicate,
-		SchemaName:         plan.Table.Schema.O,
+		DBName:             plan.Table.Schema.O,
+		DBID:               plan.Table.DBInfo.ID,
 		Table:              tbl,
 		LineFieldsInfo:     plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo),
 

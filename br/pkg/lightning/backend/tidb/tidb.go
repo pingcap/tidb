@@ -251,11 +251,10 @@ func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Che
 }
 
 type tidbBackend struct {
-	db               *sql.DB
-	onDuplicate      string
-	errorMgr         *errormanager.ErrorManager
-	encBuilder       encode.EncodingBuilder
-	targetInfoGetter backend.TargetInfoGetter
+	db          *sql.DB
+	onDuplicate string
+	errorMgr    *errormanager.ErrorManager
+	encBuilder  encode.EncodingBuilder
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
@@ -270,11 +269,10 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		onDuplicate = config.ReplaceOnDup
 	}
 	return backend.MakeBackend(&tidbBackend{
-		db:               db,
-		onDuplicate:      onDuplicate,
-		errorMgr:         errorMgr,
-		encBuilder:       NewEncodingBuilder(),
-		targetInfoGetter: NewTargetInfoGetter(db),
+		db:          db,
+		onDuplicate: onDuplicate,
+		errorMgr:    errorMgr,
+		encBuilder:  NewEncodingBuilder(),
 	})
 }
 
@@ -562,10 +560,6 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return true
 }
 
-func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	return be.targetInfoGetter.CheckRequirements(ctx, nil)
-}
-
 func (be *tidbBackend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return be.encBuilder.NewEncoder(ctx, config)
 }
@@ -750,10 +744,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return nil
-}
-
-func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (be *tidbBackend) EngineFileSizes() []backend.EngineFileSize {

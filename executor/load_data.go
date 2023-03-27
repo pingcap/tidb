@@ -294,7 +294,7 @@ func (e *LoadDataWorker) Load(
 		ctx,
 		sqlExec,
 		e.GetInfilePath(),
-		e.controller.SchemaName,
+		e.controller.DBName,
 		e.table.Meta().Name.O,
 		importer.LogicalImportMode,
 		e.Ctx.GetSessionVars().User.String(),
