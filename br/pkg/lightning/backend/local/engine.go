@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -419,6 +420,9 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 	return r, nil
 }
 
+// getSizePropertiesFn is used to let unit test replace the real function.
+var getSizePropertiesFn = getSizeProperties
+
 func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
@@ -754,6 +758,7 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
+	// non overlapping sst is grouped, and ingested in that order
 	metaLevels := make([][]*sstMeta, 0)
 	for _, meta := range metas {
 		inserted := false
@@ -985,10 +990,17 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
+// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+// in the engine. Empty upperBound means unbounded.
 func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
+		upperBound = nil
+	}
 	opt := &pebble.IterOptions{
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
@@ -1063,7 +1075,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
 	for i := 0; i < len(kvs); i++ {
-		keySize := keyAdapter.EncodedLen(kvs[i].Key)
+		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
 		w.batchSize += int64(keySize + len(kvs[i].Val))
 		totalKeySize += keySize
 	}
@@ -1100,7 +1112,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 		}
 		lastKey = pair.Key
 		w.batchSize += int64(len(pair.Key) + len(pair.Val))
-		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key))
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
@@ -1121,7 +1133,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	return nil
 }
 
-func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
+func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	kvs := kv.KvPairsFromRows(rows)
 	if len(kvs) == 0 {
 		return nil

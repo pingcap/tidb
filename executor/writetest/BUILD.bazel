@@ -8,7 +8,6 @@ go_test(
         "write_test.go",
     ],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//br/pkg/lightning/mydump",
@@ -21,7 +20,6 @@ go_test(
         "//planner/core",
         "//session",
         "//sessionctx",
-        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//store/mockstore",

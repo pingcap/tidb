@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -107,7 +107,7 @@ type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
-	Local *LocalEngineConfig
+	Local LocalEngineConfig
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.
@@ -145,19 +145,11 @@ type TargetInfoGetter interface {
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
-// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
-type EncodingBuilder interface {
-	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
-	// MakeEmptyRows creates an empty collection of encoded rows.
-	MakeEmptyRows() kv.Rows
-}
-
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
 type AbstractBackend interface {
-	EncodingBuilder
+	encode.EncodingBuilder
 	TargetInfoGetter
 	// Close the connection to the backend.
 	Close()
@@ -206,11 +198,11 @@ type AbstractBackend interface {
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error)
+	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error)
 
 	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 	// according to the required algorithm.
@@ -229,6 +221,9 @@ type engine struct {
 	backend AbstractBackend
 	logger  log.Logger
 	uuid    uuid.UUID
+	// id of the engine, used to generate uuid and stored in checkpoint
+	// for index engine it's -1
+	id int32
 }
 
 // OpenedEngine is an opened engine, allowing data to be written via WriteRows.
@@ -237,6 +232,7 @@ type engine struct {
 type OpenedEngine struct {
 	engine
 	tableName string
+	config    *EngineConfig
 }
 
 // // import_ the data written to the engine into the target.
@@ -265,12 +261,12 @@ func (be Backend) Close() {
 	be.abstract.Close()
 }
 
-func (be Backend) MakeEmptyRows() kv.Rows {
+func (be Backend) MakeEmptyRows() encode.Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.abstract.NewEncoder(ctx, tbl, options)
+func (be Backend) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
+	return be.abstract.NewEncoder(ctx, config)
 }
 
 func (be Backend) ShouldPostProcess() bool {
@@ -377,16 +373,18 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 			backend: be.abstract,
 			logger:  logger,
 			uuid:    engineUUID,
+			id:      engineID,
 		},
 		tableName: tableName,
+		config:    config,
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName, opts)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName, opts)
 }
 
@@ -395,8 +393,8 @@ func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tab
 }
 
 // Close the opened engine to prepare it for importing.
-func (engine *OpenedEngine) Close(ctx context.Context, cfg *EngineConfig) (*ClosedEngine, error) {
-	closedEngine, err := engine.unsafeClose(ctx, cfg)
+func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
+	closedEngine, err := engine.unsafeClose(ctx, engine.config)
 	if err == nil {
 		if m, ok := metric.FromContext(ctx); ok {
 			m.ImporterEngineCounter.WithLabelValues("closed").Inc()
@@ -423,7 +421,7 @@ func (engine *OpenedEngine) TotalMemoryConsume() int64 {
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
-func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows kv.Rows) error {
+func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows encode.Rows) error {
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, rows)
 }
 
@@ -442,7 +440,7 @@ func (w *LocalEngineWriter) IsSynced() bool {
 // resuming from a checkpoint.
 func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tableName string, engineID int32) (*ClosedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
-	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID)
+	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID, engineID)
 }
 
 // UnsafeCloseEngineWithUUID closes the engine without first opening it.
@@ -450,11 +448,12 @@ func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tabl
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.abstract,
 		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
 		uuid:    engineUUID,
+		id:      id,
 	}.unsafeClose(ctx, cfg)
 }
 
@@ -466,6 +465,11 @@ func (en engine) unsafeClose(ctx context.Context, cfg *EngineConfig) (*ClosedEng
 		return nil, err
 	}
 	return &ClosedEngine{engine: en}, nil
+}
+
+// GetID get engine id.
+func (en engine) GetID() int32 {
+	return en.id
 }
 
 // Import the data written to the engine into the target.
@@ -507,7 +511,7 @@ type EngineWriter interface {
 		ctx context.Context,
 		tableName string,
 		columnNames []string,
-		rows kv.Rows,
+		rows encode.Rows,
 	) error
 	IsSynced() bool
 	Close(ctx context.Context) (ChunkFlushStatus, error)

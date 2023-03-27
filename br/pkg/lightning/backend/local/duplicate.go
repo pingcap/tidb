@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
@@ -404,7 +405,7 @@ func NewDuplicateManager(
 	tikvCli *tikv.KVStore,
 	tikvCodec tikv.Codec,
 	errMgr *errormanager.ErrorManager,
-	sessOpts *kv.SessionOptions,
+	sessOpts *encode.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,
@@ -699,8 +700,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})

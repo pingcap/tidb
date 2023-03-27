@@ -56,7 +56,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session())})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session(), false)})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -733,7 +733,11 @@ func TestColumnStatistics(t *testing.T) {
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
 	store := testkit.CreateMockStore(t)
-	slowLogFileName := "tidb-slow.log"
+	slowLogFileName := "tidb-table-has-column-slow.log"
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFileName
+	})
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	require.NoError(t, err)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
@@ -1716,6 +1720,7 @@ func TestVariablesInfo(t *testing.T) {
 		"tidb_enable_collect_execution_info ON OFF", // for test stability
 		"tidb_enable_mutation_checker OFF ON",       // for new installs
 		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_pessimistic_txn_fair_locking OFF ON",  // for new instances
 		"tidb_row_format_version 1 2",               // for new installs
 		"tidb_txn_assertion_level OFF FAST",         // for new installs
 		"timestamp 0 123456789",                     // always dynamic

@@ -121,10 +121,6 @@ func (pr *paramRestorer) Reset() {
 // RestoreASTWithParams restore this parameterized AST with specific parameters.
 // e.g. `select * from t where a<? and b<?`, [10, 23] --> `select * from t where a<10 and b<23`.
 func RestoreASTWithParams(ctx context.Context, _ sessionctx.Context, stmt ast.StmtNode, params []*driver.ValueExpr) error {
-	if v := ctx.Value("____RestoreASTWithParamsErr"); v != nil {
-		return errors.New("____RestoreASTWithParamsErr")
-	}
-
 	pr := paramRestorerPool.Get().(*paramRestorer)
 	defer func() {
 		pr.Reset()

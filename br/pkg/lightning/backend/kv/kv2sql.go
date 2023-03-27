@@ -17,6 +17,7 @@ package kv
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -90,15 +91,18 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 		if err != nil {
 			return err
 		}
-		indexKey, _, err := index.GenIndexKey(t.se.vars.StmtCtx, indexValues, h, indexBuffer)
-		if err != nil {
-			return err
-		}
-		if err := fn(indexKey); err != nil {
-			return err
-		}
-		if len(indexKey) > len(indexBuffer) {
-			indexBuffer = indexKey
+		iter := index.GenIndexKVIter(t.se.vars.StmtCtx, indexValues, h, nil)
+		for iter.Valid() {
+			indexKey, _, _, err := iter.Next(indexBuffer)
+			if err != nil {
+				return err
+			}
+			if err := fn(indexKey); err != nil {
+				return err
+			}
+			if len(indexKey) > len(indexBuffer) {
+				indexBuffer = indexKey
+			}
 		}
 	}
 
@@ -108,7 +112,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 func NewTableKVDecoder(
 	tbl table.Table,
 	tableName string,
-	options *SessionOptions,
+	options *encode.SessionOptions,
 	logger log.Logger,
 ) (*TableKVDecoder, error) {
 	se := newSession(options, logger)

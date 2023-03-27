@@ -217,45 +217,6 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, lastWarn.Err))
 }
 
-func TestMPPHintsScope(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
-	tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
-	tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
-	tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-	tk.MustExec("set @@session.tidb_allow_mpp=true")
-	tk.MustExec("explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-
-	tk.MustExec("set @@session.tidb_allow_mpp=false")
-	tk.MustExec("explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
-	tk.MustExec("explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
-	tk.MustExec("explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
-	tk.MustExec("explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
-}
-
 func TestMPPHintsWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -303,6 +264,52 @@ func TestMPPHintsWithBinding(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t t1, t t2 where t1.a=t2.a;")
 	res = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, len(res), 0)
+}
+
+func TestJoinHintCompatibilityWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("create global binding for select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b using select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustExec("select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t` as `t1` join `test` . `t` as `t2` ) join `test` . `t` as `t3` where `t1` . `a` = `t2` . `a` and `t2` . `b` = `t3` . `b`")
+	require.Equal(t, res[0][1], "SELECT /*+ leading(`t2`) hash_join(`t2`)*/ * FROM (`test`.`t` AS `t1` JOIN `test`.`t` AS `t2`) JOIN `test`.`t` AS `t3` WHERE `t1`.`a` = `t2`.`a` AND `t2`.`b` = `t3`.`b`")
+	tk.MustExec("select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("drop global binding for select * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
+}
+
+func TestJoinHintCompatibilityWithVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @@session.tidb_opt_advanced_join_hint=0")
+	tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
+	res := tk.MustQuery("show warnings").Rows()
+	require.Equal(t, len(res) > 0, true)
 }
 
 func TestExplainJoinHints(t *testing.T) {

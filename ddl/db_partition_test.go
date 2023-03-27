@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2031,13 +2032,61 @@ func TestMultiPartitionDropAndTruncate(t *testing.T) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func TestDropPartitionWithGlobalIndex(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	store := testkit.CreateMockStore(t)
+func TestCreatePartitionTableWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, unique key p_b(b))
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.p_b'")
+
+	// NULL will not get 'duplicate key' error here
+	tk.MustExec("insert into test_global(a,c) values (1,2)")
+	tk.MustExec("insert into test_global(a,c) values (11,2)")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustGetErrMsg(`create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`, "[ddl:1503]A CLUSTERED INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	tk.MustExec("insert into test_global values (1,2,2)")
+	tk.MustGetErrCode("insert into test_global values (11,2,2)", errno.ErrDupEntry)
+	tk.MustGetErrMsg("insert into test_global values (11,2,2)", "[kv:1062]Duplicate entry '2' for key 'test_global.PRIMARY'")
+}
+
+func TestDropPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -2067,9 +2116,106 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 2, cnt)
+}
+
+func TestGlobalIndexInsertInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = false
+		conf.EnableGlobalIndex = true
 	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("insert into test_global values (9, 9, 9)")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("9 9 9", "11 11 11", "12 12 12"))
+}
+
+func TestUpdateGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+	tk.MustExec("update test_global set a = 2 where a = 11")
+	tk.MustExec("update test_global set a = 13 where a = 12")
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("1 1 1", "2 11 11", "8 8 8", "13 12 12"))
+}
+
+func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tk.MustExec("alter table test_global add unique index idx_b (b);")
+	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionDropTablePartition, job.Type)
+		if job.SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("update test_global set a = 2 where a = 11")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("alter table test_global drop partition p1")
+
+	tk.MustExec("analyze table test_global")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
@@ -4801,4 +4947,23 @@ func TestDropPartitionKeyColumn(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
 	tk.MustExec("alter table t4 drop column b")
+}
+
+func TestRangeExpressions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RangeExpr")
+	tk.MustExec("use RangeExpr")
+	tk.MustExec(`create table t6 (colint int, col1 date)
+partition by range(colint)
+(partition p0 values less than (extract(year from '1998-11-23')),
+partition p1 values less than maxvalue)`)
+	tk.MustQuery(`show create table t6`).Check(testkit.Rows("" +
+		"t6 CREATE TABLE `t6` (\n" +
+		"  `colint` int(11) DEFAULT NULL,\n" +
+		"  `col1` date DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`colint`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1998),\n" +
+		" PARTITION `p1` VALUES LESS THAN (MAXVALUE))"))
 }

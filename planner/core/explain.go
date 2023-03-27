@@ -204,6 +204,19 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.ctx.GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 {
+		buffer.WriteString("pushed down filter:")
+		if len(p.lateMaterializationFilterCondition) > 0 {
+			if normalized {
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+			} else {
+				buffer.Write(expression.SortedExplainExpressionList(p.lateMaterializationFilterCondition))
+			}
+		} else {
+			buffer.WriteString("empty")
+		}
+		buffer.WriteString(", ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
@@ -351,11 +364,25 @@ func (p *PhysicalSort) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExpand) ExplainInfo() string {
 	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
+	str.WriteString("group set num:")
+	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
+	str.WriteString(", groupingID:")
+	str.WriteString(p.GroupingIDCol.String())
+	str.WriteString(", ")
+	str.WriteString(p.GroupingSets.String())
 	return str.String()
 }
 
@@ -601,10 +628,39 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
+// explainPartitionBy: produce text for p.PartitionBy. Common for window functions and TopN.
+func explainPartitionBy(buffer *bytes.Buffer, partitionBy []property.SortItem, normalized bool) *bytes.Buffer {
+	if len(partitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range partitionBy {
+			if normalized {
+				fmt.Fprintf(buffer, "%s", item.Col.ExplainNormalizedInfo())
+			} else {
+				fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
+			}
+			if i+1 < len(partitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	return buffer
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(buffer, p.ByItems)
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		buffer.WriteString(" ")
+	}
+	if len(p.ByItems) > 0 {
+		// Add order by text to separate partition by. Otherwise, do not add order by to
+		// avoid breaking existing TopN tests.
+		if len(p.GetPartitionBy()) > 0 {
+			buffer.WriteString("order by ")
+		}
+		buffer = explainByItems(buffer, p.ByItems)
+	}
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
@@ -612,7 +668,18 @@ func (p *PhysicalTopN) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainNormalizedByItems(buffer, p.ByItems)
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), true)
+		buffer.WriteString(" ")
+	}
+	if len(p.ByItems) > 0 {
+		// Add order by text to separate partition by. Otherwise, do not add order by to
+		// avoid breaking existing TopN tests.
+		if len(p.GetPartitionBy()) > 0 {
+			buffer.WriteString("order by ")
+		}
+		buffer = explainNormalizedByItems(buffer, p.ByItems)
+	}
 	return buffer.String()
 }
 
@@ -649,14 +716,8 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
 	isFirst := true
+	buffer = explainPartitionBy(buffer, p.PartitionBy, false)
 	if len(p.PartitionBy) > 0 {
-		buffer.WriteString("partition by ")
-		for i, item := range p.PartitionBy {
-			fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
-			if i+1 < len(p.PartitionBy) {
-				buffer.WriteString(", ")
-			}
-		}
 		isFirst = false
 	}
 	if len(p.OrderBy) > 0 {
@@ -890,6 +951,10 @@ func (p *LogicalSort) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (lt *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
+	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
+		buffer.WriteString("order by ")
+	}
 	buffer = explainByItems(buffer, lt.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
@@ -897,12 +962,14 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset, 10))
-	str.WriteString(", count:")
-	str.WriteString(strconv.FormatUint(p.Count, 10))
-	return str.String()
+	buffer := bytes.NewBufferString("")
+	if len(p.GetPartitionBy()) > 0 {
+		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

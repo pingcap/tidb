@@ -16,12 +16,10 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
@@ -226,60 +224,6 @@ func (h *HistoryInfo) Clean() {
 	h.MultipleTableInfos = nil
 }
 
-// DDLReorgMeta is meta info of DDL reorganization.
-type DDLReorgMeta struct {
-	// EndHandle is the last handle of the adding indices table.
-	// We should only backfill indices in the range [startHandle, EndHandle].
-	EndHandle int64 `json:"end_handle"`
-
-	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
-	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZoneLocation                `json:"location"`
-	ReorgTp       ReorgType                        `json:"reorg_tp"`
-	IsDistReorg   bool                             `json:"is_dist_reorg"`
-}
-
-// ReorgType indicates which process is used for the data reorganization.
-type ReorgType int8
-
-const (
-	// ReorgTypeNone means the backfill task is not started yet.
-	ReorgTypeNone ReorgType = iota
-	// ReorgTypeTxn means the index records are backfill with transactions.
-	// All the index KVs are written through the transaction interface.
-	// This is the original backfill implementation.
-	ReorgTypeTxn
-	// ReorgTypeLitMerge means the index records are backfill with lightning.
-	// The index KVs are encoded to SST files and imported to the storage directly.
-	// The incremental index KVs written by DML are redirected to a temporary index.
-	// After the backfill is finished, the temporary index records are merged back to the original index.
-	ReorgTypeLitMerge
-	// ReorgTypeTxnMerge means backfill with transactions and merge incremental changes.
-	// The backfill index KVs are written through the transaction interface.
-	// The incremental index KVs written by DML are redirected to a temporary index.
-	// After the backfill is finished, the temporary index records are merged back to the original index.
-	ReorgTypeTxnMerge
-)
-
-// NeedMergeProcess means the incremental changes need to be merged.
-func (tp ReorgType) NeedMergeProcess() bool {
-	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
-}
-
-// String implements fmt.Stringer interface.
-func (tp ReorgType) String() string {
-	switch tp {
-	case ReorgTypeTxn:
-		return "txn"
-	case ReorgTypeLitMerge:
-		return "ingest"
-	case ReorgTypeTxnMerge:
-		return "txn-merge"
-	}
-	return ""
-}
-
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`
@@ -300,13 +244,6 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 		tz.location = time.FixedZone(tz.Name, tz.Offset)
 	}
 	return tz.location, err
-}
-
-// NewDDLReorgMeta new a DDLReorgMeta.
-func NewDDLReorgMeta() *DDLReorgMeta {
-	return &DDLReorgMeta{
-		EndHandle: math.MaxInt64,
-	}
 }
 
 // MultiSchemaInfo keeps some information for multi schema change.
@@ -433,36 +370,6 @@ type JobMeta struct {
 	Query string `json:"query"`
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
-}
-
-// BackfillMeta is meta info of the backfill job.
-type BackfillMeta struct {
-	IsUnique   bool          `json:"is_unique"`
-	EndInclude bool          `json:"end_include"`
-	Error      *terror.Error `json:"err"`
-
-	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
-	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZoneLocation                `json:"location"`
-	ReorgTp       ReorgType                        `json:"reorg_tp"`
-	RowCount      int64                            `json:"row_count"`
-	StartKey      []byte                           `json:"start_key"`
-	EndKey        []byte                           `json:"end_key"`
-	CurrKey       []byte                           `json:"curr_key"`
-	*JobMeta      `json:"job_meta"`
-}
-
-// Encode encodes BackfillMeta with json format.
-func (bm *BackfillMeta) Encode() ([]byte, error) {
-	b, err := json.Marshal(bm)
-	return b, errors.Trace(err)
-}
-
-// Decode decodes BackfillMeta from the json buffer.
-func (bm *BackfillMeta) Decode(b []byte) error {
-	err := json.Unmarshal(b, bm)
-	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.
@@ -851,7 +758,7 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {

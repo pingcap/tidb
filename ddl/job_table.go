@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -44,9 +44,17 @@ import (
 )
 
 var (
-	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
-	addingBackfillJob      = "/tidb/ddl/add_backfill_job"
+	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
+	addingBackfillJob           = "/tidb/ddl/add_backfill_job"
+	dispatchLoopWaitingDuration = 1 * time.Second
 )
+
+func init() {
+	// In test the wait duration can be reduced to make test case run faster
+	if intest.InTest {
+		dispatchLoopWaitingDuration = 50 * time.Millisecond
+	}
+}
 
 func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
 	dc.runningJobs.Lock()
@@ -174,15 +182,15 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !d.isOwner() || d.waiting.Load() {
+		if !d.isOwner() {
 			d.once.Store(true)
-			time.Sleep(time.Second)
+			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
 		select {
@@ -366,7 +374,7 @@ func (d *ddl) getTableByTxn(store kv.Storage, schemaID, tableID int64) (*model.D
 }
 
 func (d *ddl) loadBackfillJobAndRun() {
-	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	isDistReorg := variable.EnableDistTask.Load()
 	if !isDistReorg {
 		return
 	}
@@ -402,12 +410,12 @@ func (d *ddl) loadBackfillJobAndRun() {
 		return
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
-	d.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
+	d.newReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID), bfJob.Meta.StartKey, &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}, bfJob.Meta.RowCount)
 	d.wg.Run(func() {
 		defer func() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
 			d.removeBackfillCtxJobCtx(bfJob.JobID)
-			d.removeReorgCtx(bfJob.JobID)
+			d.removeReorgCtx(genBackfillJobReorgCtxID(bfJob.JobID))
 			d.sessPool.put(se)
 		}()
 
@@ -537,20 +545,6 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	startKey = rows[0].GetBytes(2)
 	endKey = rows[0].GetBytes(3)
 	physicalTableID = rows[0].GetInt64(4)
-	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
-	// update them to table's in this case.
-	if physicalTableID == 0 {
-		if job.ReorgMeta != nil {
-			endKey = kv.IntHandle(job.ReorgMeta.EndHandle).Encoded()
-		} else {
-			endKey = kv.IntHandle(math.MaxInt64).Encoded()
-		}
-		physicalTableID = job.TableID
-		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
-			zap.Int64("partition ID", physicalTableID),
-			zap.Stringer("startHandle", startKey),
-			zap.Stringer("endHandle", endKey))
-	}
 	return
 }
 
@@ -634,8 +628,8 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
-	sql := fmt.Sprintf("update mysql.%s set state = '%s' where task_key like \"%d_%s_%d_%%\" and exec_id = '%s' limit 1;",
-		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, uuid)
+	sql := fmt.Sprintf("update mysql.%s set state = '%s' where task_key like '%s' and exec_id = '%s' limit 1;",
+		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.PrefixKeyString(), uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
 }
@@ -654,8 +648,8 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		if i != 0 {
 			sqlBuilder.WriteString(", ")
 		}
-		sqlBuilder.WriteString(fmt.Sprintf("('%d_%s_%d_%d', %d, %d, '%s', '%s', '%s', %s, %d, %d, %s)",
-			bj.JobID, hex.EncodeToString(bj.EleKey), bj.EleID, bj.ID, bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State.String(), wrapKey2String(bj.Meta.CurrKey),
+		sqlBuilder.WriteString(fmt.Sprintf("('%s', %d, %d, '%s', '%s', '%s', %s, %d, %d, %s)",
+			bj.keyString(), bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State.String(), wrapKey2String(bj.Meta.CurrKey),
 			bj.StartTS, bj.StateUpdateTS, wrapKey2String(mateByte)))
 	}
 	return sqlBuilder.String(), nil
@@ -789,8 +783,8 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 
 // GetInterruptedBackfillJobForOneEle gets an interrupted backfill job that contains only one element.
 func GetInterruptedBackfillJobForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
-	bJobs, err := GetBackfillJobs(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like \"%d_%s_%d_%%\" and state = \"%s\" limit 1",
-		jobID, hex.EncodeToString(eleKey), eleID, model.JobStateCancelled.String()), "get_interrupt_backfill_job")
+	bJobs, err := GetBackfillJobs(sess, BackgroundSubtaskHistoryTable, fmt.Sprintf("task_key like '%s' and state = \"%s\" limit 1",
+		backfillJobPrefixKeyString(jobID, eleKey, eleID), model.JobStateCancelled.String()), "get_interrupt_backfill_job")
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
@@ -940,9 +934,9 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := "delete from mysql.tidb_background_subtask"
 	if !isOneEle {
-		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%d\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
+		sql += fmt.Sprintf(" where task_key = '%s'", backfillJob.keyString())
 	} else {
-		sql += fmt.Sprintf(" where task_key like \"%d_%s_%d_%%\"", backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID)
+		sql += fmt.Sprintf(" where task_key like '%s'", backfillJob.PrefixKeyString())
 	}
 	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
 	return err
@@ -953,9 +947,8 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_expired = '%s', state = '%s', checkpoint = %s, meta = %s where task_key = '%d_%s_%d_%d'",
-		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State.String(), wrapKey2String(backfillJob.Meta.CurrKey),
-		wrapKey2String(mate), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, backfillJob.ID)
+	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_expired = '%s', state = '%s', checkpoint = %s, meta = %s where task_key = '%s'",
+		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State.String(), wrapKey2String(backfillJob.Meta.CurrKey), wrapKey2String(mate), backfillJob.keyString())
 	_, err = sess.execute(context.Background(), sql, label)
 	return err
 }

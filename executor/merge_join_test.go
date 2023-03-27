@@ -741,6 +741,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
 		getTable := func(prefix string, ts []int) string {
@@ -860,6 +861,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
 		getTable := func(prefix string, ts []int) string {

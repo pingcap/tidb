@@ -39,6 +39,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -726,10 +727,6 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if d.waiting.Load() {
-		w.sess.rollback()
-		return 0, nil
-	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
@@ -821,7 +818,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		// which may act like a deadlock.
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		time.Sleep(GetWaitTimeWhenErrorOccurred())
+
+		// In test and job is cancelling we can ignore the sleep
+		if !(intest.InTest && job.IsCancelling()) {
+			time.Sleep(GetWaitTimeWhenErrorOccurred())
+		}
 	}
 
 	return schemaVer, nil

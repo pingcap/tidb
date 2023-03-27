@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
+	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
@@ -132,4 +133,8 @@ func GetJSONPlanSuiteData() testdata.TestData {
 
 func GetDerivedTopNSuiteData() testdata.TestData {
 	return testDataMap["derive_topn_from_window"]
+}
+
+func GetPredicateSimplificationTestData() testdata.TestData {
+	return testDataMap["predicate_simplification"]
 }

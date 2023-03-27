@@ -1565,20 +1565,30 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		return true // plan-cache disabled or no parameter in these args
 	}
 
-	// For these 2 cases below which may affect the index selection a lot, skip plan-cache,
-	// and for all other cases, skip the refining.
-	// 1. int-expr <cmp> string-const
-	// 2. int-expr <cmp> float/double/decimal-const
+	// For these 2 cases below, we skip the refining:
+	// 1. year-expr <cmp> const
+	// 2. int-expr <cmp> string/float/double/decimal-const
 	for conIdx := 0; conIdx < 2; conIdx++ {
-		if args[1-conIdx].GetType().EvalType() != types.ETInt {
-			continue // not a int-expr
-		}
 		if _, isCon := args[conIdx].(*Constant); !isCon {
 			continue // not a constant
 		}
+
+		// case 1: year-expr <cmp> const
+		// refine `year < 12` to `year < 2012` to guarantee the correctness.
+		// see https://github.com/pingcap/tidb/issues/41626 for more details.
+		exprType := args[1-conIdx].GetType()
+		if exprType.GetType() == mysql.TypeYear {
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			return true
+		}
+
+		// case 2: int-expr <cmp> string/float/double/decimal-const
+		// refine `int_key < 1.1` to `int_key < 2` to generate RangeScan instead of FullScan.
 		conType := args[conIdx].GetType().EvalType()
-		if conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal {
-			reason := errors.Errorf("skip plan-cache: '%v' may be converted to INT", args[conIdx].String())
+		if exprType.EvalType() == types.ETInt &&
+			(conType == types.ETString || conType == types.ETReal || conType == types.ETDecimal) {
+			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}

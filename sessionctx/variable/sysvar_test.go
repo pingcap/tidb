@@ -97,6 +97,37 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiFlashMaxBytes(t *testing.T) {
+	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
+	for index, varName := range varNames {
+		sv := GetSysVar(varName)
+		vars := NewSessionVars(nil)
+		val, err := sv.Validate(vars, "-10", ScopeSession)
+		require.NoError(t, err) // it has autoconvert out of range.
+		require.Equal(t, "-1", val)
+		val, err = sv.Validate(vars, "-10", ScopeGlobal)
+		require.NoError(t, err) // it has autoconvert out of range.
+		require.Equal(t, "-1", val)
+		val, err = sv.Validate(vars, "100", ScopeSession)
+		require.NoError(t, err)
+		require.Equal(t, "100", val)
+
+		_, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
+		// can not autoconvert because the input is out of the range of Int64
+		require.Error(t, err)
+
+		require.Nil(t, sv.SetSessionFromHook(vars, "10000")) // sets
+		switch index {
+		case 0:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalJoin)
+		case 1:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalGroupBy)
+		case 2:
+			require.Equal(t, int64(10000), vars.TiFlashMaxBytesBeforeExternalSort)
+		}
+	}
+}
+
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
 	vars := NewSessionVars(nil)
@@ -682,16 +713,16 @@ func TestSetTIDBDistributeReorg(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 
 	// Set to on
-	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, On)
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, On)
 	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err := mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, On, val)
 
 	// Set to off
-	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, Off)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableDistTask, Off)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	val, err = mock.GetGlobalSysVar(TiDBEnableDistTask)
 	require.NoError(t, err)
 	require.Equal(t, Off, val)
 }
@@ -1074,6 +1105,22 @@ func TestSetAggPushDownGlobally(t *testing.T) {
 	require.Equal(t, "ON", val)
 }
 
+func TestSetDeriveTopNGlobally(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBOptDeriveTopN)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptDeriveTopN, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptDeriveTopN)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
+
 func TestSetJobScheduleWindow(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1116,6 +1163,8 @@ func TestSetJobScheduleWindow(t *testing.T) {
 
 func TestTiDBEnableResourceControl(t *testing.T) {
 	// setup the hooks for test
+	// NOTE: the default system variable is true but the switch is false
+	// It is initialized at the first call of `rebuildSysVarCache`
 	enable := false
 	EnableGlobalResourceControlFunc = func() { enable = true }
 	DisableGlobalResourceControlFunc = func() { enable = false }
@@ -1134,24 +1183,31 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
 
-	// Default false
-	require.Equal(t, resourceControlEnabled.Value, Off)
+	// Default true
+	require.Equal(t, resourceControlEnabled.Value, On)
 	require.Equal(t, enable, false)
 
-	// Set to On
+	// Set to On(init at start)
 	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
-
 	require.NoError(t, err)
 	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 	require.Equal(t, enable, true)
 
-	// Set to off
+	// Set to Off
 	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, Off)
 	require.NoError(t, err)
 	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
 	require.NoError(t, err1)
 	require.Equal(t, Off, val)
 	require.Equal(t, enable, false)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, enable, true)
 }

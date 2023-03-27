@@ -17,14 +17,16 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -102,6 +104,8 @@ type JobManager struct {
 	runningJobs []*ttlJob
 
 	taskManager *taskManager
+
+	lastReportDelayMetricsTime time.Time
 }
 
 // NewJobManager creates a new ttl job manager
@@ -125,7 +129,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
-	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
+	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 
 	return
 }
@@ -160,7 +164,7 @@ func (m *JobManager) jobLoop() error {
 	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 	m.taskManager.resizeWorkersWithSysVar()
 	for {
-		m.reportMetrics()
+		m.reportMetrics(se)
 		m.taskManager.reportMetrics()
 		now := se.Now()
 
@@ -345,7 +349,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 	)
 }
 
-func (m *JobManager) reportMetrics() {
+func (m *JobManager) reportMetrics(se session.Session) {
 	var runningJobs, cancellingJobs float64
 	for _, job := range m.runningJobs {
 		switch job.status {
@@ -357,6 +361,16 @@ func (m *JobManager) reportMetrics() {
 	}
 	metrics.RunningJobsCnt.Set(runningJobs)
 	metrics.CancellingJobsCnt.Set(cancellingJobs)
+
+	if time.Since(m.lastReportDelayMetricsTime) > 10*time.Minute {
+		m.lastReportDelayMetricsTime = time.Now()
+		records, err := GetDelayMetricRecords(m.ctx, se, time.Now())
+		if err != nil {
+			logutil.Logger(m.ctx).Info("failed to get TTL delay metrics", zap.Error(err))
+		} else {
+			metrics.UpdateDelayMetrics(records)
+		}
+	}
 }
 
 // checkNotOwnJob removes the job whose current job owner is not yourself
@@ -521,13 +535,12 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	interval := table.TTLInfo.JobInterval
-	d, err := duration.ParseDuration(interval)
+	interval, err := table.TTLInfo.GetJobInterval()
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("illegal job interval", zap.String("interval", interval))
+		logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
 		return false
 	}
-	return startTime.Add(d).Before(now)
+	return startTime.Add(interval).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -792,4 +805,112 @@ func DoGC(ctx context.Context, se session.Session) {
 	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
 	}
+}
+
+// GetDelayMetricRecords gets the records of TTL delay metrics
+func GetDelayMetricRecords(ctx context.Context, se session.Session, now time.Time) (map[int64]*metrics.DelayMetricsRecord, error) {
+	sql := `SELECT
+    parent_table_id as tid,
+    CAST(UNIX_TIMESTAMP(MIN(create_time)) AS SIGNED) as job_ts
+FROM
+    (
+        SELECT
+            table_id,
+            parent_table_id,
+            MAX(create_time) AS create_time
+        FROM
+            mysql.tidb_ttl_job_history
+        WHERE
+            create_time > CURDATE() - INTERVAL 7 DAY
+            AND status = 'finished'
+            AND JSON_VALID(summary_text)
+            AND summary_text ->> "$.scan_task_err" IS NULL
+        GROUP BY
+            table_id,
+            parent_table_id
+    ) t
+GROUP BY
+    parent_table_id;`
+
+	rows, err := se.ExecuteSQL(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make(map[int64]*metrics.DelayMetricsRecord, len(rows))
+	for _, row := range rows {
+		r := &metrics.DelayMetricsRecord{
+			TableID:     row.GetInt64(0),
+			LastJobTime: time.Unix(row.GetInt64(1), 0),
+		}
+
+		if now.After(r.LastJobTime) {
+			r.AbsoluteDelay = now.Sub(r.LastJobTime)
+		}
+		records[r.TableID] = r
+	}
+
+	isVer := se.GetDomainInfoSchema()
+	is, ok := isVer.(infoschema.InfoSchema)
+	if !ok {
+		logutil.Logger(ctx).Error(fmt.Sprintf("failed to cast information schema for type: %v", isVer))
+		return records, nil
+	}
+
+	noRecordTables := make([]string, 0)
+	for _, db := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(db.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.TTLInfo == nil {
+				continue
+			}
+
+			interval, err := tblInfo.TTLInfo.GetJobInterval()
+			if err != nil {
+				logutil.Logger(ctx).Error("failed to get table's job interval",
+					zap.Error(err),
+					zap.String("db", db.Name.String()),
+					zap.String("table", tblInfo.Name.String()),
+				)
+				interval = time.Hour
+			}
+
+			record, ok := records[tblInfo.ID]
+			if !ok {
+				noRecordTables = append(noRecordTables, strconv.FormatInt(tblInfo.ID, 10))
+				continue
+			}
+
+			if record.AbsoluteDelay > interval {
+				record.ScheduleRelativeDelay = record.AbsoluteDelay - interval
+			}
+		}
+	}
+
+	if len(noRecordTables) > 0 {
+		sql = fmt.Sprintf("select TIDB_TABLE_ID, CAST(UNIX_TIMESTAMP(CREATE_TIME) AS SIGNED) from information_schema.tables WHERE TIDB_TABLE_ID in (%s)", strings.Join(noRecordTables, ", "))
+		if rows, err = se.ExecuteSQL(ctx, sql); err != nil {
+			logutil.Logger(ctx).Error("failed to exec sql",
+				zap.Error(err),
+				zap.String("sql", sql),
+			)
+		} else {
+			for _, row := range rows {
+				tblID := row.GetInt64(0)
+				tblCreateTime := time.Unix(row.GetInt64(1), 0)
+				r := &metrics.DelayMetricsRecord{
+					TableID: tblID,
+				}
+
+				if now.After(tblCreateTime) {
+					r.AbsoluteDelay = now.Sub(tblCreateTime)
+					r.ScheduleRelativeDelay = r.AbsoluteDelay
+				}
+
+				records[tblID] = r
+			}
+		}
+	}
+
+	return records, nil
 }

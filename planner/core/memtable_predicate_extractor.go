@@ -334,14 +334,14 @@ func (helper extractHelper) extractLikePattern(
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
-	case ast.EQ, ast.Like, ast.Regexp, ast.RegexpLike:
+	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
 	if colName == extractColName {
 		switch fn.FuncName.L {
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
-		case ast.Like:
+		case ast.Like, ast.Ilike:
 			if needLike2Regexp {
 				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 			}

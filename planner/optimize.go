@@ -75,26 +75,45 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		sctx.GetSessionVars().StmtCtx.InRestrictedSQL || // is internal SQL
-		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) { // not support
+		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
+		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		stmtCtx.InRestrictedSQL || // is internal SQL
+		isExplain || // explain external
+		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
+	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	if !ok {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason))
+		}
+		return nil, nil, false, nil
+	}
+
 	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	defer func() {
-		if err != nil {
-			// keep the stmt unchanged if err so that it can fallback to the normal optimization path.
+		// If some error occurs, just return the error directly.
+		// If no error but this stmt is not supported, restore the AST node so that it can fallback to the normal optimization path
+		if err == nil && !ok {
 			// TODO: add metrics
 			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
 		}
 	}()
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
+	paramExprs := core.Params2Expressions(params)
+
 	if val == nil {
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, paramSQL, stmt)
+		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
+		if err := core.SetParameterValuesIntoSCtx(sctx, nil, paramExprs); err != nil {
+			return nil, nil, false, err
+		}
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, stmt)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -103,7 +122,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
 
-	paramExprs := core.Params2Expressions(params)
 	cachedPlan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
 		return nil, nil, false, err
@@ -149,6 +167,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	for name, val := range originStmtHints.SetVars {
 		err := sessVars.SetStmtVar(name, val)
 		if err != nil {
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+	}
+
+	// Override the resource group if necessary
+	// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+	if originStmtHints.HasResourceGroup {
+		if variable.EnableResourceControl.Load() {
+			sessVars.ResourceGroupName = originStmtHints.ResourceGroup
+		} else {
+			err := infoschema.ErrResourceGroupSupportDisabled
 			sessVars.StmtCtx.AppendWarning(err)
 		}
 	}
@@ -468,12 +497,12 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 }
 
 func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, builder *core.PlanBuilder) (core.Plan, error) {
-	sctx.GetSessionVars().PlanID = 0
-	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().PlanID.Store(0)
+	sctx.GetSessionVars().PlanColumnID.Store(0)
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
 	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Intn(1000) // nolint:gosec
+		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
 	})
 
 	// reset fields about rewrite
@@ -607,7 +636,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -615,6 +644,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "memory_quota":
 			hintOffs[hint.HintName.L] = i
 			memoryQuotaHintCnt++
+		case "resource_group":
+			hintOffs[hint.HintName.L] = i
+			resourceGroupHintCnt++
 		case "use_toja":
 			hintOffs[hint.HintName.L] = i
 			useToJAHintCnt++
@@ -737,6 +769,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle RESOURCE_GROUP
+	if resourceGroupHintCnt != 0 {
+		resourceGroup := hints[hintOffs["resource_group"]]
+		if resourceGroupHintCnt > 1 {
+			warn := errors.Errorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasResourceGroup = true
+		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
 	}
 	// Handle NTH_PLAN
 	if forceNthPlanCnt != 0 {
