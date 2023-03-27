@@ -204,7 +204,7 @@ func defineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3SseKmsKeyIDOption, "", "KMS CMK key id to use with S3 server-side encryption."+
 		"Leave empty to use S3 owned key.")
 	flags.String(s3ACLOption, "", "(experimental) Set the S3 canned ACLs, e.g. authenticated-read")
-	flags.String(s3ProviderOption, "aws", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
+	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
 }
@@ -361,7 +361,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	c := s3.New(ses, s3CliConfigs...)
 
 	var region string
-	if qs.Provider == "aws" {
+	if len(qs.Provider) == 0 || qs.Provider == "aws" {
 		confCred := ses.Config.Credentials
 		setCredOpt := func(req *request.Request) {
 			// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
