@@ -78,7 +78,7 @@ func TestMakeTableRegions(t *testing.T) {
 	require.Nil(t, regions)
 
 	// parquet
-	dir := "../../br/pkg/lightning/mydump/parquet"
+	dir := "testdata"
 	filename := "000000_0.parquet"
 	task = &TaskMeta{
 		Table: Table{
@@ -115,7 +115,6 @@ func TestMakeTableRegions(t *testing.T) {
 		config.MaxRegionSize = originRegionSize
 		config.DefaultBatchSize = originBatchSize
 	}()
-	dir = "../../br/pkg/lightning/mydump/csv"
 	filename = "split_large_file.csv"
 	dataFileInfo, err := os.Stat(filepath.Join(dir, filename))
 	require.NoError(t, err)

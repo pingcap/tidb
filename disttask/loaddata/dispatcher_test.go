@@ -49,7 +49,7 @@ func TestProcessNormalFlow(t *testing.T) {
 		Table: Table{
 			DBName:        "db",
 			Info:          &model.TableInfo{},
-			TargetColumns: []string{"a", "b", "c"},
+			TargetColumns: []string{"a", "b"},
 			IsRowOrdered:  true,
 		},
 		Format: Format{
@@ -92,15 +92,15 @@ func TestProcessNormalFlow(t *testing.T) {
 		EndOffset:    13,
 		RealOffset:   0,
 		PrevRowIDMax: 0,
-		RowIDMax:     4,
+		RowIDMax:     6,
 	})
 	require.Equal(t, subtaskMeta.Chunks[1], Chunk{
 		Path:         path2,
 		Offset:       0,
 		EndOffset:    13,
 		RealOffset:   0,
-		PrevRowIDMax: 4,
-		RowIDMax:     8,
+		PrevRowIDMax: 6,
+		RowIDMax:     12,
 	})
 
 	subtaskMetas, err = flowHandle.ProcessNormalFlow(context.Background(), mockDispatcherHandle, task)

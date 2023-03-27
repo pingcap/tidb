@@ -33,6 +33,7 @@ go_test(
         "dispatcher_test.go",
         "wrapper_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":loaddata"],
     flaky = True,
     deps = [
