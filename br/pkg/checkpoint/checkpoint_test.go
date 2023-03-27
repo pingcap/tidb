@@ -17,6 +17,7 @@ package checkpoint_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -276,10 +277,10 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
 			d, ok = data2[string(resp.StartKey)]
-			require.Equal(t, tableID, 2)
+			require.Equal(t, tableID, int64(2))
 			require.True(t, ok)
 		} else {
-			require.Equal(t, tableID, 1)
+			require.Equal(t, tableID, int64(1))
 		}
 		require.Equal(t, d.StartKey, string(resp.StartKey))
 		require.Equal(t, d.EndKey, string(resp.EndKey))
@@ -299,6 +300,8 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	require.NoError(t, err)
 	meta, err := checkpoint.LoadCheckpointMetadata(ctx, s)
 	require.NoError(t, err)
+	meta.CheckpointChecksum, _, err = checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+	require.NoError(t, err)
 
 	var i int64
 	for i = 1; i <= 4; i++ {
@@ -307,7 +310,8 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	// only 2 checksum files exists, they are t2_and__ and t4_and__
 	count := 0
-	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checkpoint.CheckpointChecksumDirForBackup}, func(s string, i int64) error {
+	checksumDir := fmt.Sprintf(checkpoint.CheckpointChecksumDirForRestoreFormat, taskName)
+	err = s.WalkDir(ctx, &storage.WalkOption{SubDir: checksumDir}, func(s string, i int64) error {
 		count += 1
 		if !strings.Contains(s, "t2") {
 			require.True(t, strings.Contains(s, "t4"))

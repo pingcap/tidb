@@ -642,6 +642,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		cfg.UseCheckpoint = false
+	}
 	tree, gcID, err := client.InitCheckpoint(ctx, s, &restoreTS, cfg.UseCheckpoint)
 	if err != nil {
 		return errors.Trace(err)
