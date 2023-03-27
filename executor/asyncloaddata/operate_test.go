@@ -101,7 +101,7 @@ func (s *mockGCSSuite) TestOperateRunningJob() {
 		jobStatus:      "canceled",
 		sourceFileSize: row[10].(string),
 		loadedFileSize: row[11].(string),
-		resultCode:     "0",
+		resultCode:     "<nil>",
 		resultMessage:  "canceled by user",
 	}
 	e.checkIgnoreTimes(s.T(), row)

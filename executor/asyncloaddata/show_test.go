@@ -313,7 +313,7 @@ func (s *mockGCSSuite) TestInternalStatus() {
 			jobStatus:      "pending",
 			sourceFileSize: "<nil>",
 			loadedFileSize: "<nil>",
-			resultCode:     "0",
+			resultCode:     "<nil>",
 			resultMessage:  "",
 		}
 		r.checkIgnoreTimes(s.T(), row)
