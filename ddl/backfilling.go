@@ -590,7 +590,10 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 			zap.Int64("job ID", reorgInfo.ID),
 			zap.String("result next key", hex.EncodeToString(result.nextKey)),
 			zap.Error(result.err))
-		drainTasks(scheduler.taskCh)
+		// Drain tasks to make it quit early.
+		for len(scheduler.taskCh) > 0 {
+			<-scheduler.taskCh
+		}
 		return result.err
 	}
 	*totalAddedCount += int64(result.addedCount)
@@ -599,7 +602,10 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
-			drainTasks(scheduler.taskCh)
+			// Drain tasks to make it quit early.
+			for len(scheduler.taskCh) > 0 {
+				<-scheduler.taskCh
+			}
 			return err
 		}
 		failpoint.Inject("MockGetIndexRecordErr", func() {
@@ -622,15 +628,6 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 		}
 	}
 	return nil
-}
-
-func drainTasks(taskCh chan *reorgBackfillTask) int {
-	cnt := 0
-	for len(taskCh) > 0 {
-		<-taskCh
-		cnt++
-	}
-	return cnt
 }
 
 func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
