@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -267,9 +268,20 @@ func NewLoadDataWorker(
 	userSctx sessionctx.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
-	getSysSessionFn func() (sessionctx.Context, error),
-	putSysSessionFn func(context.Context, sessionctx.Context),
+	getSysSessionFn2 func() (sessionctx.Context, error),
+	putSysSessionFn2 func(context.Context, sessionctx.Context),
 ) (w *LoadDataWorker, err error) {
+	// debug
+	getSysSessionFn := func() (sessionctx.Context, error) {
+		a, b := getSysSessionFn2()
+		println("lance test ", a, b)
+		return a, b
+	}
+	putSysSessionFn := func(ctx context.Context, sctx sessionctx.Context) {
+		println("lance test ", ctx, sctx)
+		putSysSessionFn2(ctx, sctx)
+	}
+
 	controller, err := importer.NewLoadDataController(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
@@ -995,8 +1007,15 @@ func (e *LoadDataWorker) mergeAndSetMessage() string {
 	if !e.controller.Detached {
 		userStmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 		userStmtCtx.SetMessage(msg)
-		warns := e.encodeWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		warns = append(warns, e.commitWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()...)
+		encodeWarns := e.encodeWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		commitWarns := e.commitWorker.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		warnsLen := math.MaxUint16
+		if len(encodeWarns)+len(commitWarns) < math.MaxUint16 {
+			warnsLen = len(encodeWarns) + len(commitWarns)
+		}
+		warns := make([]stmtctx.SQLWarn, warnsLen)
+		n := copy(warns, encodeWarns)
+		copy(warns[n:], commitWarns)
 		userStmtCtx.SetWarnings(warns)
 	}
 	return msg
