@@ -15,7 +15,6 @@
 package infoschema
 
 import (
-	"errors"
 	"sort"
 	"sync"
 
@@ -64,30 +63,26 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	return nil
 }
 
-func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
+func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
 	// this is ok because the size of h.cache is small (currently set to 16)
 	// moreover, the most likely hit element in the array is the first one in steady mode
 	// thus it may have better performance than binary search
 	for i, is := range h.cache {
-		if is.timestamp == 0 {
-			// the schema version doesn't have a timestamp
+		if is.timestamp == 0 || (i > 0 && h.cache[i-1].infoschema.SchemaMetaVersion() != is.infoschema.SchemaMetaVersion()+1) {
+			// the schema version doesn't have a timestamp or there is a gap in the schema cache
 			// ignore all the schema cache equals or less than this version in search by timestamp
 			break
 		}
 		if ts >= uint64(is.timestamp) {
-			if i > 0 && h.cache[i-1].infoschema.SchemaMetaVersion() != is.infoschema.SchemaMetaVersion()+1 {
-				// there is a gap in schema cache, so there chould be unknown schema version, skip using the cache
-				break
-			}
 			// found the largest version before the given ts
-			return is.infoschema, nil
+			return is.infoschema, false
 		}
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
-	return nil, errors.New("no cached schema")
+	return nil, true
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
@@ -136,7 +131,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	defer h.mu.RUnlock()
 
 	infoschema_metrics.GetTSCounter.Inc()
-	if schema, err := h.getSchemaByTimestampNoLock(snapshotTS); err == nil {
+	if schema, ok := h.getSchemaByTimestampNoLock(snapshotTS); ok {
 		infoschema_metrics.HitTSCounter.Inc()
 		return schema
 	}
