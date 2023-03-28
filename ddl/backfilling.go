@@ -598,7 +598,7 @@ func handleOneResult(result *backfillResult, scheduler *backfillScheduler, consu
 	}
 	*totalAddedCount += int64(result.addedCount)
 	keeper.updateNextKey(result.taskID, result.nextKey)
-	if taskSeq%scheduler.workerSize()*4 == 0 {
+	if taskSeq%(scheduler.workerSize()*4) == 0 {
 		err := consumer.dc.isReorgRunnable(reorgInfo.ID, false)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] backfill worker is not runnable", zap.Error(err))
