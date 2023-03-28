@@ -462,6 +462,20 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	case model.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
+		if enable && !ctx.GetSessionVars().EnableDefaultListPartition {
+			// Check for DEFAULT list partition
+			for _, def := range s.Definitions {
+				valIn, ok := def.Clause.(*ast.PartitionDefinitionClauseIn)
+				if !ok {
+					return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+				}
+				for _, val := range valIn.Values {
+					if _, ok := val[0].(*ast.DefaultExpr); ok {
+						return dbterror.ErrUnsupportedCreatePartition.GenWithStack("VALUES IN (DEFAULT) is not supported, please use 'tidb_enable_default_list_partition'")
+					}
+				}
+			}
+		}
 	}
 
 	if !enable {

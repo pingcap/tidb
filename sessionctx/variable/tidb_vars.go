@@ -271,6 +271,11 @@ const (
 
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
+
+	// TiDBEnableDefaultListPartition is used to control
+	// table partition DEFAULT list partition feature.
+	// The valid value include on/off
+	TiDBEnableDefaultListPartition = "tidb_enable_default_list_partition"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1248,6 +1253,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold             = 0
 	DefTiDBOptEnableLateMaterialization              = false
 	DefTiDBOptOrderingIdxSelThresh                   = 0.0
+	DefTiDBEnableDefaultListPartition                = false
 )
 
 // Process global variables.

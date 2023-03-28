@@ -3794,6 +3794,7 @@ type PartitionDefinitionClauseIn struct {
 
 func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	// we special-case an empty list of values to mean MariaDB's "DEFAULT" clause.
+	// TODO: Support in TiDB?
 	if len(n.Values) == 0 {
 		ctx.WriteKeyWord(" DEFAULT")
 		return nil
